@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,24 +40,26 @@
 #endif
 
 #if defined(_ARM64)
-    static inline uint32_t bit_scan_forward(uint32_t a) {
-        uint32_t r;
-        __asm("rbit %w0, %w1; clz %w0, %w0;" : "=r"(r) : "r"(a) : );
-        return r;
-    }
-    static inline uint32_t bit_scan_forward(uint64_t a) {
+static inline uint32_t bit_scan_forward(uint32_t a) {
+    uint32_t r;
+    __asm("rbit %w0, %w1; clz %w0, %w0;" : "=r"(r) : "r"(a) : );
+    return r;
+}
+static inline uint32_t bit_scan_forward(uint64_t a) {
 #ifdef __APPLE__
-        return __builtin_ffsll(a) - 1;
+    return __builtin_ffsll(a) - 1;
 #else
-        uint64_t r;
-        __asm("rbit %0, %1; clz %0, %0;" : "=r"(r) : "r"(a) : );
-        return r;
+    uint64_t r;
+    __asm("rbit %0, %1; clz %0, %0;" : "=r"(r) : "r"(a) : );
+    return r;
 #endif
-    }
+}
 #define BITS_SHIFT 3
 #else
-    #include "vcl/vectorclass.h"
-    #define BITS_SHIFT 0
+
+#include "vcl/vectorclass.h"
+
+#define BITS_SHIFT 0
 #endif
 
 using ctrl_t = signed char;
@@ -188,6 +190,7 @@ struct GroupPortableImpl {
 };
 using Group = GroupPortableImpl;
 #else
+
 struct GroupSse2Impl {
 
     explicit GroupSse2Impl(const ctrl_t *pos) {
@@ -211,6 +214,7 @@ struct GroupSse2Impl {
 
     Vec16c ctrl;
 };
+
 using Group = GroupSse2Impl;
 #endif
 
@@ -248,7 +252,7 @@ inline uint64_t H1(uint64_t hash, const ctrl_t *ctrl) {
     return (hash >> 7u) ^ HashSeed(ctrl);
 }
 
-inline ctrl_t H2(uint64_t hash) { return hash & 0x7Fu; }
+inline ctrl_t H2(uint64_t hash) { return (ctrl_t) (hash & 0x7Fu); }
 
 template<uint64_t Width>
 class probe_seq {
@@ -319,11 +323,11 @@ inline void clear(rosti_t *map) {
 
 //returns amount of memory allocated to this rosti instance
 inline int64_t memorySize(rosti_t *map) {
-    return (int64_t)(sizeof(rosti_t) +
-           sizeof(int32_t) * 1 + //inexact because we don't have count of columns
-           map->slot_size_ +
-           2 * sizeof(Group) * (map->capacity_ + 1) +
-           map->slot_size_ * (map->capacity_ + 1));
+    return (int64_t) (sizeof(rosti_t) +
+                      sizeof(int32_t) * 1 + //inexact because we don't have count of columns
+                      map->slot_size_ +
+                      2 * sizeof(Group) * (map->capacity_ + 1) +
+                      map->slot_size_ * (map->capacity_ + 1));
 }
 
 inline bool IsEmpty(ctrl_t c) { return c == kEmpty; }
@@ -429,7 +433,7 @@ inline std::pair<uint64_t, bool> find_or_prepare_insert(
     auto seq = probe(map, hash);
     while (true) {
         Group g{map->ctrl_ + seq.offset()};
-        for (int i : g.Match(H2(hash))) {
+        for (int i: g.Match(H2(hash))) {
             const uint64_t offset = seq.offset(i) << map->slot_size_shift_;
             if (PREDICT_TRUE(eq_f(map->slots_ + offset, key))) {
                 return {offset, false};
@@ -472,8 +476,8 @@ inline std::pair<uint64_t, bool> find(rosti_t *map, const int32_t key) {
 }
 
 
-inline bool reset(rosti_t *map, int newSize) {
-    if ( map->capacity_ > newSize ){
+inline bool reset(rosti_t *map, uint64_t newSize) {
+    if (map->capacity_ > newSize) {
         auto *old_init = map->slot_initial_values_;
         const uint64_t old_capacity = map->capacity_;
         map->capacity_ = newSize;

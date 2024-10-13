@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -60,20 +59,11 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         if (rightFn.isConstant()) {
             return new EqTimestampStrConstantFunction(
                     args.getQuick(0),
-                    rightFn.getStr(null),
+                    rightFn.getStrA(null),
                     argPositions.getQuick(1)
             );
         }
         return new EqTimestampStrFunction(args.getQuick(0), rightFn);
-    }
-
-    private static void parseAndApplyIntervalEx(CharSequence seq, LongList out, int position) throws SqlException {
-        if (seq != null) {
-            parseIntervalEx(seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT);
-        } else {
-            addHiLoInterval(Numbers.LONG_NaN, Numbers.LONG_NaN, IntervalOperation.INTERSECT, out);
-        }
-        applyLastEncodedIntervalEx(out);
     }
 
     private static class EqTimestampStrConstantFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -122,10 +112,10 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long ts = left.getTimestamp(rec);
-            if (ts == Numbers.LONG_NaN) {
+            if (ts == Numbers.LONG_NULL) {
                 return negated;
             }
-            CharSequence timestampAsString = right.getStr(rec);
+            CharSequence timestampAsString = right.getStrA(rec);
             if (timestampAsString == null) {
                 return negated;
             }
@@ -134,9 +124,9 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
                 // we are ignoring exception contents here, so we do not need the exact position
                 parseAndApplyIntervalEx(timestampAsString, intervals, 0);
             } catch (SqlException e) {
-                return false;
+                return negated;
             }
-            return negated != isInIntervals(intervals, left.getTimestamp(rec));
+            return negated != isInIntervals(intervals, ts);
         }
 
         @Override
@@ -149,10 +139,18 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
             return right;
         }
 
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return false;
+        public void toPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(" not");
+            }
+            sink.val(" in ").val(right);
         }
     }
 }

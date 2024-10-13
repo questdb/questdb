@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,9 +46,9 @@ public class DateFormatUtils {
     public static final DateFormat PG_DATE_Z_FORMAT;
     public static final DateFormat UTC_FORMAT;
     public static final String UTC_PATTERN = "yyyy-MM-ddTHH:mm:ss.SSSz";
-    private static final DateFormat HTTP_FORMAT;
-    private static final int DATE_FORMATS_SIZE;
     private static final DateFormat[] DATE_FORMATS;
+    private static final int DATE_FORMATS_SIZE;
+    private static final DateFormat HTTP_FORMAT;
     static long referenceYear;
     static int thisCenturyLimit;
     static int thisCenturyLow;
@@ -105,35 +105,31 @@ public class DateFormatUtils {
     }
 
     public static void appendHour12(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            Numbers.append(sink, hour);
-        } else {
-            Numbers.append(sink, hour - 12);
-        }
+        Numbers.append(sink, hour % 12);
     }
 
     public static void appendHour121(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            Numbers.append(sink, hour + 1);
-        } else {
-            Numbers.append(sink, hour - 11);
-        }
+        int h12 = (hour + 11) % 12 + 1;
+        Numbers.append(sink, h12);
     }
 
     public static void appendHour121Padded(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            append0(sink, hour + 1);
-        } else {
-            append0(sink, hour - 11);
-        }
+        int h12 = (hour + 11) % 12 + 1;
+        append0(sink, h12);
     }
 
     public static void appendHour12Padded(@NotNull CharSink<?> sink, int hour) {
-        if (hour < 12) {
-            append0(sink, hour);
-        } else {
-            append0(sink, hour - 12);
-        }
+        append0(sink, hour % 12);
+    }
+
+    public static void appendHour241(@NotNull CharSink<?> sink, int hour) {
+        int h24 = (hour + 23) % 24 + 1;
+        Numbers.append(sink, h24);
+    }
+
+    public static void appendHour241Padded(@NotNull CharSink<?> sink, int hour) {
+        int h24 = (hour + 23) % 24 + 1;
+        append0(sink, h24);
     }
 
     public static void assertChar(char c, @NotNull CharSequence in, int pos, int hi) throws NumericException {
@@ -197,20 +193,21 @@ public class DateFormatUtils {
             throw NumericException.INSTANCE;
         }
 
-        switch (hourType) {
-            case HOUR_PM:
+        if (hourType == HOUR_24) {
+            // wrong 24-hour clock hour
+            if (hour < 0 || hour > 24) {
+                throw NumericException.INSTANCE;
+            }
+            hour %= 24;
+        } else {
+            // wrong 12-hour clock hour
+            if (hour < 0 || hour > 12) {
+                throw NumericException.INSTANCE;
+            }
+            hour %= 12;
+            if (hourType == HOUR_PM) {
                 hour += 12;
-            case HOUR_24:
-                // wrong hour
-                if (hour < 0 || hour > 23) {
-                    throw NumericException.INSTANCE;
-                }
-                break;
-            default:
-                // wrong 12-hour clock hour
-                if (hour < 0 || hour > 11) {
-                    throw NumericException.INSTANCE;
-                }
+            }
         }
 
         // wrong day of month
@@ -269,11 +266,6 @@ public class DateFormatUtils {
         return referenceYear;
     }
 
-    // YYYY-MM-DDThh:mm:ss.mmm
-    public static long parseUTCDate(@NotNull CharSequence value) throws NumericException {
-        return UTC_FORMAT.parse(value, 0, value.length(), EN_LOCALE);
-    }
-
     /**
      * Parse date and return number of <b>milliseconds</b> since epoch.
      * <p>
@@ -286,7 +278,7 @@ public class DateFormatUtils {
      */
     public static long parseDate(CharSequence value) throws NumericException {
         if (value == null) {
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
 
         final int hi = value.length();
@@ -297,6 +289,11 @@ public class DateFormatUtils {
             }
         }
         return Numbers.parseLong(value, 0, hi);
+    }
+
+    // YYYY-MM-DDThh:mm:ss.mmm
+    public static long parseUTCDate(@NotNull CharSequence value) throws NumericException {
+        return UTC_FORMAT.parse(value, 0, value.length(), EN_LOCALE);
     }
 
     public static long parseYearGreedy(@NotNull CharSequence in, int pos, int hi) throws NumericException {

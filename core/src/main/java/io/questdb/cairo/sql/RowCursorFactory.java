@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.cairo.TableReader;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -34,23 +33,23 @@ public interface RowCursorFactory extends Plannable {
 
     static void init(
             ObjList<? extends RowCursorFactory> factories,
-            TableReader tableReader,
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         for (int i = 0, n = factories.size(); i < n; i++) {
-            factories.getQuick(i).init(tableReader, sqlExecutionContext);
+            factories.getQuick(i).init(pageFrameCursor, sqlExecutionContext);
         }
     }
 
-    static void prepareCursor(ObjList<? extends RowCursorFactory> factories, TableReader tableReader) {
+    static void prepareCursor(ObjList<? extends RowCursorFactory> factories, PageFrameCursor pageFrameCursor) {
         for (int i = 0, n = factories.size(); i < n; i++) {
-            factories.getQuick(i).prepareCursor(tableReader);
+            factories.getQuick(i).prepareCursor(pageFrameCursor);
         }
     }
 
-    RowCursor getCursor(DataFrame dataFrame);
+    RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory);
 
-    default void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    default void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         // no-op
     }
 
@@ -65,7 +64,7 @@ public interface RowCursorFactory extends Plannable {
         return false;
     }
 
-    default void prepareCursor(TableReader tableReader) {
+    default void prepareCursor(PageFrameCursor pageFrameCursor) {
         // no-op
     }
 }

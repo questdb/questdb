@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,11 @@ package io.questdb.cairo.frm;
 
 import java.io.Closeable;
 
+/**
+ * Used for partition squashing in {@link io.questdb.cairo.TableWriter}.
+ */
 public interface Frame extends Closeable {
+
     void close();
 
     int columnCount();
@@ -35,13 +39,11 @@ public interface Frame extends Closeable {
 
     long getOffset();
 
-    long getSize();
-
-    void rebuildIndexes(long offset);
+    long getRowCount();
 
     void saveChanges(FrameColumn column);
 
     void setOffset(long offset);
 
-    void setSize(long size);
+    void setRowCount(long rowCount);
 }

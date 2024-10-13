@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,10 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cutlass.auth.AuthUtils;
@@ -37,11 +40,13 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -114,7 +119,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
     };
     protected int partitionByDefault = PartitionBy.DAY;
-    protected boolean symbolAsFieldSupported;
+    protected boolean useLegacyStringDefault = true;
+
     protected final LineTcpReceiverConfiguration lineConfiguration = new DefaultLineTcpReceiverConfiguration() {
         @Override
         public boolean getAutoCreateNewColumns() {
@@ -196,8 +202,8 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean isSymbolAsFieldSupported() {
-            return symbolAsFieldSupported;
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyStringDefault;
         }
     };
 
@@ -215,8 +221,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         TestUtils.assertEventually(() -> {
             assertTableExists(engine, tableName);
 
-            try (TableReader reader = getReader(tableName)) {
-                long size = reader.getCursor().size();
+            try (
+                    TableReader reader = getReader(tableName);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                long size = cursor.size();
                 assertEquals(expectedSize, size);
             } catch (EntryLockedException e) {
                 // if table is busy we want to fail this round and have the assertEventually() to retry later
@@ -244,13 +253,15 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         commitIntervalDefault = 2000;
         partitionByDefault = PartitionBy.DAY;
         disconnectOnError = false;
-        symbolAsFieldSupported = false;
         nf = NetworkFacadeImpl.INSTANCE;
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = getReader(tableName)) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+        try (
+                TableReader reader = getReader(tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
+            assertCursorTwoPass(expected, cursor, reader.getMetadata());
         }
     }
 
@@ -273,7 +284,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected Socket newSocket() {
         final int ipv4address = Net.parseIPv4("127.0.0.1");
         final long sockaddr = Net.sockaddr(ipv4address, bindPort);
-        final int fd = Net.socketTcp(true);
+        final long fd = Net.socketTcp(true);
         final Socket socket = new Socket(sockaddr, fd);
 
         if (TestUtils.connect(fd, sockaddr) != 0) {
@@ -290,7 +301,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         this.minIdleMsBeforeWriterRelease = minIdleMsBeforeWriterRelease;
         assertMemoryLeak(ff, () -> {
             try (LineTcpReceiver receiver = createLineTcpReceiver(lineConfiguration, engine, sharedWorkerPool)) {
-                O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
+                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 if (needMaintenanceJob) {
                     sharedWorkerPool.assign(engine.getEngineMaintenanceJob());
                 }
@@ -381,7 +392,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
             sendToSocket(socket, lineData);
         } catch (Exception e) {
             Assert.fail("Data sending failed [e=" + e + "]");
-            LOG.error().$(e).$();
         }
     }
 
@@ -391,10 +401,10 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected class Socket implements AutoCloseable {
-        private final int fd;
+        private final long fd;
         private final long sockaddr;
 
-        private Socket(long sockaddr, int fd) {
+        private Socket(long sockaddr, long fd) {
             this.sockaddr = sockaddr;
             this.fd = fd;
         }

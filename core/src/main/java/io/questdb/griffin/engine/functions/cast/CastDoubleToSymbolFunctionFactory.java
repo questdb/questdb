@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -80,7 +80,7 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
+            if (Numbers.isNull(value)) {
                 return SymbolTable.VALUE_IS_NULL;
             }
 
@@ -100,7 +100,7 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getSymbol(Record rec) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
+            if (Numbers.isNull(value)) {
                 return null;
             }
 

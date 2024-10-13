@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,21 +25,17 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
-
+class LatestByValuesIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;
     private final IntHashSet found = new IntHashSet();
@@ -51,13 +47,14 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     private int keyCount;
 
     public LatestByValuesIndexedRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
             int columnIndex,
             @NotNull IntHashSet symbolKeys,
             @Nullable IntHashSet deferredSymbolKeys,
-            DirectLongList rows,
-            @NotNull IntList columnIndexes
+            DirectLongList rows
     ) {
-        super(columnIndexes);
+        super(configuration, metadata);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
@@ -72,7 +69,8 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
         }
         if (index > -1) {
             final long rowId = rows.get(index);
-            recordA.jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
+            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
+            recordA.setRowIndex(Rows.toLocalRowID(rowId));
             index--;
             return true;
         }
@@ -80,15 +78,17 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) {
+        this.frameCursor = pageFrameCursor;
+        recordA.of(pageFrameCursor);
+        recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         keyCount = -1;
         rows.clear();
         found.clear();
         isTreeMapBuilt = false;
+        // prepare for page frame iteration
+        super.init();
     }
 
     @Override
@@ -106,13 +106,13 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
         index = rows.size() - 1;
     }
 
-    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, DataFrame frame, long rowLo, long rowHi) {
+    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
         int index = found.keyIndex(symbolKey);
         if (index > -1) {
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
             if (cursor.hasNext()) {
-                final long row = Rows.toRowID(frame.getPartitionIndex(), cursor.next());
-                rows.add(row);
+                final long rowId = Rows.toRowID(frameIndex, cursor.next());
+                rows.add(rowId);
                 found.addAt(index, symbolKey);
             }
         }
@@ -126,29 +126,31 @@ class LatestByValuesIndexedRecordCursor extends AbstractDataFrameRecordCursor {
             }
         }
 
-        DataFrame frame;
-        // frame metadata is based on TableReader, which is "full" metadata
-        // this cursor works with subset of columns, which warrants column index remap
-        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-        while ((frame = this.dataFrameCursor.next()) != null && found.size() < keyCount) {
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null && found.size() < keyCount) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
+            final int frameIndex = frameCount;
+            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
+
+            frameAddressCache.add(frameCount, frame);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
 
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);
-                addFoundKey(symbolKey, indexReader, frame, rowLo, rowHi);
+                addFoundKey(symbolKey, indexReader, frameIndex, partitionLo, partitionHi);
             }
             if (deferredSymbolKeys != null) {
                 for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
                     int symbolKey = deferredSymbolKeys.get(i);
                     if (!symbolKeys.contains(symbolKey)) {
-                        addFoundKey(symbolKey, indexReader, frame, rowLo, rowHi);
+                        addFoundKey(symbolKey, indexReader, frameIndex, partitionLo, partitionHi);
                     }
                 }
             }
         }
+
         index = rows.size() - 1;
     }
 }

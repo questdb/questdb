@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -46,25 +47,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
         this.root = Chars.toString(root);
-        this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + "snapshot";
+        this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + TableUtils.CHECKPOINT_DIRECTORY;
         this.telemetryConfiguration = telemetryConfiguration;
         this.overrides = overrides;
     }
 
-    @Override
-    protected CairoConfiguration getDelegate() {
-        return overrides.getConfiguration(root);
-    }
-
-    @Override
-    public @NotNull String getRoot() {
-        return root;
-    }
-
-    @Override
-    public @NotNull CharSequence getSnapshotRoot() {
-        return snapshotRoot;
-    }
     @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return overrides.getCircuitBreakerConfiguration() != null ? overrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
@@ -118,8 +105,18 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public @NotNull String getRoot() {
+        return root;
+    }
+
+    @Override
     public @NotNull RostiAllocFacade getRostiAllocFacade() {
         return overrides.getRostiAllocFacade() != null ? overrides.getRostiAllocFacade() : super.getRostiAllocFacade();
+    }
+
+    @Override
+    public @NotNull CharSequence getCheckpointRoot() {
+        return snapshotRoot;
     }
 
     @Override
@@ -150,5 +147,10 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public boolean mangleTableDirNames() {
         return overrides.mangleTableDirNames();
+    }
+
+    @Override
+    protected CairoConfiguration getDelegate() {
+        return overrides.getConfiguration(root);
     }
 }

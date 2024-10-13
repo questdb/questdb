@@ -8,7 +8,7 @@
 #    \__\_\\__,_|\___||___/\__|____/|____/
 #
 #  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2023 QuestDB
+#  Copyright (c) 2019-2024 QuestDB
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -25,23 +25,10 @@
 ################################################################################
 
 if [ ! -f "/var/lib/questdb/conf/server.conf" ]; then
-  cp /etc/questdb/server.conf /var/lib/questdb/conf/server.conf
-fi
-
-if [ ! -f "/var/lib/questdb/conf/full_auth.json" ]; then
-    # influxdb and postgres auth
-    jose jwk gen -i '{"alg":"ES256", "kid": "testUser1"}' -o /var/lib/questdb/conf/full_auth.json
-fi
-
 # setting variables in subshell for cloudinit script
-{ KID=$(cat /var/lib/questdb/conf/full_auth.json | jq -r '.kid'); X=$(cat /var/lib/questdb/conf/full_auth.json | jq -r '.x'); Y=$(cat /var/lib/questdb/conf/full_auth.json | jq -r '.y'); }
-{ PASS=$(< /dev/urandom tr -dc _A-Z-a-z-0-9 | head -c${1:-32}; echo;); }
-
-sed -i "s/PG_PASSWORD_REPLACE/$PASS/g" /var/lib/questdb/conf/server.conf
-
-if [ ! -f "/var/lib/questdb/conf/auth.txt" ]; then
-echo "$KID ec-p-256-sha256 $X $Y" | tee /var/lib/questdb/conf/auth.txt
+  { PASS=$(< /dev/urandom tr -dc _A-Z-a-z-0-9 | head -c${1:-32}; echo;); }
+  sed -i "s/PG_PASSWORD_REPLACE/$PASS/g" /var/lib/questdb/conf/server.conf
 fi
- 
+
 systemctl enable questdb
 systemctl start questdb

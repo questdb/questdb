@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,26 +30,41 @@ import org.jetbrains.annotations.NotNull;
  * A view on top of an ASCII-only {@link Utf8Sequence}.
  */
 public class AsciiCharSequence implements CharSequence {
+    private int len;
     private Utf8Sequence original;
+    private int start;
+    private AsciiCharSequence subSequence;
 
     @Override
     public char charAt(int i) {
-        return (char) original.byteAt(i);
+        return (char) original.byteAt(i + start);
     }
 
     @Override
     public int length() {
-        return original.size();
+        return len;
     }
 
     public AsciiCharSequence of(Utf8Sequence original) {
         this.original = original;
+        this.start = 0;
+        this.len = original.size();
+        return this;
+    }
+
+    public AsciiCharSequence of(Utf8Sequence original, int start, int len) {
+        this.original = original;
+        this.start = start;
+        this.len = len;
         return this;
     }
 
     @Override
     public @NotNull CharSequence subSequence(int start, int end) {
-        throw new UnsupportedOperationException();
+        if (subSequence == null) {
+            subSequence = new AsciiCharSequence();
+        }
+        return subSequence.of(original, start, end - start);
     }
 
     @Override

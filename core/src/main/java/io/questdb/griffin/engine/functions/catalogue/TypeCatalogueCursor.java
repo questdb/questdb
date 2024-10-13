@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,7 +61,7 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
     public boolean hasNext() {
         if (++row < rowCount) {
             intValues[0] = PG_TYPE_OIDS.get(row);
-            intValues[9] = Numbers.INT_NaN;
+            intValues[9] = Numbers.INT_NULL;
             intValues[10] = 0;
             intValues[11] = 0;
             intValues[12] = 0;
@@ -87,10 +87,8 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public boolean getBool(int col) {
-            if (col == 18) {//typisdefined
-                return true;
-            }
-            return false;
+            //typisdefined
+            return col == 18;
         }
 
         @Override
@@ -122,7 +120,7 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             if (col == 1) {
                 return PG_TYPE_TO_NAME[row];
             }
@@ -134,13 +132,12 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
         @Override
         public CharSequence getStrB(int col) {
-            return getStr(col);
+            return getStrA(col);
         }
 
         @Override
         public int getStrLen(int col) {
-            CharSequence str = getStr(col);
-            return str == null ? TableUtils.NULL_LEN : str.length();
+            return TableUtils.lengthOf(getStrA(col));
         }
     }
 

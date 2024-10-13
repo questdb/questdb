@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,9 +26,10 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
 
 public class JoinRecord implements Record {
     protected final int split;
@@ -152,6 +153,14 @@ public class JoinRecord implements Record {
     }
 
     @Override
+    public Interval getInterval(int col) {
+        if (col < split) {
+            return master.getInterval(col);
+        }
+        return slave.getInterval(col - split);
+    }
+
+    @Override
     public long getLong(int col) {
         if (col < split) {
             return master.getLong(col);
@@ -222,20 +231,11 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public CharSequence getStrA(int col) {
         if (col < split) {
-            return master.getStr(col);
+            return master.getStrA(col);
         }
-        return slave.getStr(col - split);
-    }
-
-    @Override
-    public void getStr(int col, Utf16Sink sink) {
-        if (col < split) {
-            master.getStr(col, sink);
-        } else {
-            slave.getStr(col - split, sink);
-        }
+        return slave.getStrA(col - split);
     }
 
     @Override
@@ -255,11 +255,11 @@ public class JoinRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int col) {
+    public CharSequence getSymA(int col) {
         if (col < split) {
-            return master.getSym(col);
+            return master.getSymA(col);
         }
-        return slave.getSym(col - split);
+        return slave.getSymA(col - split);
     }
 
     @Override
@@ -281,6 +281,30 @@ public class JoinRecord implements Record {
     @Override
     public long getUpdateRowId() {
         return master.getUpdateRowId();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        if (col < split) {
+            return master.getVarcharA(col);
+        }
+        return slave.getVarcharA(col - split);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        if (col < split) {
+            return master.getVarcharB(col);
+        }
+        return slave.getVarcharB(col - split);
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        if (col < split) {
+            return master.getVarcharSize(col);
+        }
+        return slave.getVarcharSize(col - split);
     }
 
     void of(Record master, Record slave) {

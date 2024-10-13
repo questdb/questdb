@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -66,6 +66,7 @@ public class FuzzRunner {
     protected int partitionCount;
     private double cancelRowsProb;
     private double colRenameProb;
+    private double colTypeChangeProb;
     private double collAddProb;
     private double collRemoveProb;
     private double dataAddProb;
@@ -202,7 +203,7 @@ public class FuzzRunner {
         TableReader rdr1 = getReader(tableName);
         TableReader rdr2 = getReader(tableName);
         try (
-                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1)
+                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)
         ) {
             int transactionSize = transactions.size();
             Rnd rnd = new Rnd();
@@ -241,7 +242,7 @@ public class FuzzRunner {
         }
     }
 
-    public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
+    public void applyToWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
         ObjList<WalWriter> writers = new ObjList<>();
         for (int i = 0; i < walWriterCount; i++) {
             writers.add((WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
@@ -273,7 +274,13 @@ public class FuzzRunner {
         }
 
         Misc.freeObjList(writers);
+    }
+
+    public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
+        TableToken tableToken = engine.verifyTableName(tableName);
+        applyToWal(transactions, tableName, walWriterCount, applyRnd);
         drainWalQueue(applyRnd, tableName);
+        Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
     }
 
     public void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
@@ -281,9 +288,15 @@ public class FuzzRunner {
             if (reader.size() > 0) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 for (int columnIndex = 0; columnIndex < metadata.getColumnCount(); columnIndex++) {
-                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
-                            && metadata.isColumnIndexed(columnIndex)) {
-                        checkIndexRandomValueScan(tableNameNoWal, tableNameWal, rnd, reader.size(), metadata.getColumnName(columnIndex));
+                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isColumnIndexed(columnIndex)) {
+                        checkIndexRandomValueScan(
+                                tableNameNoWal,
+                                tableNameWal,
+                                rnd,
+                                reader.size(),
+                                metadata.getColumnName(columnIndex),
+                                metadata.getColumnName(metadata.getTimestampIndex())
+                        );
                     }
                 }
             }
@@ -304,7 +317,7 @@ public class FuzzRunner {
         SharedRandom.RANDOM.set(new Rnd());
         if (engine.getTableTokenIfExists(tableName) == null) {
             engine.ddl(
-                    "create table " + tableName + " as (" +
+                    "create atomic table " + tableName + " as (" +
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
                             " timestamp_sequence('2022-02-24', 1000000L) ts, " +
@@ -323,6 +336,7 @@ public class FuzzRunner {
             engine.ddl("alter table " + tableName + " add column str_top long", sqlExecutionContext);
             engine.ddl("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
             engine.ddl("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
+            engine.ddl("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
         return engine.verifyTableName(tableName);
     }
@@ -350,6 +364,7 @@ public class FuzzRunner {
             String tableName
     ) {
         return FuzzTransactionGenerator.generateSet(
+                initialRowCount,
                 sequencerMetadata,
                 tableMetadata,
                 rnd,
@@ -365,6 +380,7 @@ public class FuzzRunner {
                 collAddProb,
                 collRemoveProb,
                 colRenameProb,
+                colTypeChangeProb,
                 dataAddProb,
                 truncateProb,
                 equalTsRowsProb,
@@ -390,6 +406,10 @@ public class FuzzRunner {
         }
     }
 
+    public int getTransactionCount() {
+        return transactionCount;
+    }
+
     public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
         setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1);
     }
@@ -406,7 +426,7 @@ public class FuzzRunner {
         this.parallelWalCount = parallelWalCount;
     }
 
-    public void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb) {
+    public void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb, double colTypeChangeProb) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -414,6 +434,7 @@ public class FuzzRunner {
         this.collAddProb = collAddProb;
         this.collRemoveProb = collRemoveProb;
         this.colRenameProb = colRenameProb;
+        this.colTypeChangeProb = colTypeChangeProb;
         this.dataAddProb = dataAddProb;
         this.truncateProb = truncateProb;
         this.equalTsRowsProb = equalTsRowsProb;
@@ -453,17 +474,27 @@ public class FuzzRunner {
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true);
     }
 
-    private void checkIndexRandomValueScan(String expectedTableName, String actualTableName, Rnd rnd, long recordCount, String columnName) throws SqlException {
+    private void checkIndexRandomValueScan(
+            String expectedTableName,
+            String actualTableName,
+            Rnd rnd,
+            long recordCount,
+            String symbolColumnName,
+            String tsColumnName
+    ) throws SqlException {
         long randomRow = rnd.nextLong(recordCount);
         sink.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + columnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + symbolColumnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
             String prefix = "a\n";
             String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
-            String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
+            String indexedWhereClause = " where \"" + symbolColumnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
             LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
             String limit = ""; // For debugging
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
+            // Now let's do backward order assertion
+            String orderBy = " order by " + tsColumnName + " desc";
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + orderBy + limit, actualTableName + indexedWhereClause + orderBy + limit, LOG);
         }
     }
 
@@ -585,7 +616,7 @@ public class FuzzRunner {
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);
-             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1);
+             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
              TableReader rdr1 = getReaderHandleTableDropped(tableName);
              TableReader rdr2 = getReaderHandleTableDropped(tableName)
         ) {
@@ -663,7 +694,7 @@ public class FuzzRunner {
     private void runPurgePartitionJob(AtomicInteger done, AtomicInteger forceReaderReload, ConcurrentLinkedQueue<Throwable> errors, Rnd runRnd, String tableNameBase, int tableCount, boolean multiTable) {
         ObjList<TableReader> readers = new ObjList<>();
         try {
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1)) {
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
                 int forceReloadNum = forceReaderReload.get();
                 for (int i = 0; i < tableCount; i++) {
                     String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
@@ -724,7 +755,7 @@ public class FuzzRunner {
             TableReaderMetadata metadata = reader.getMetadata();
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
-                if (ColumnType.isVariableLength(columnType)) {
+                if (ColumnType.isVarSize(columnType)) {
                     for (int partitionIndex = 0; partitionIndex < reader.getPartitionCount(); partitionIndex++) {
                         reader.openPartition(partitionIndex);
                         int columnBase = reader.getColumnBase(partitionIndex);
@@ -733,7 +764,8 @@ public class FuzzRunner {
 
                         long colTop = reader.getColumnTop(columnBase, i);
                         long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
-                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dCol.getPageAddress(0), columnType)) {
+                        long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
+                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
                             Assert.fail("var column " + reader.getMetadata().getColumnName(i)
                                     + " is not dense, .i file record size is different from .d file record size");
                         }
@@ -827,6 +859,7 @@ public class FuzzRunner {
                         rnd.nextDouble(),
                         rnd.nextDouble(),
                         0.1 * rnd.nextDouble(), 0.01,
+                        rnd.nextDouble(),
                         rnd.nextDouble()
                 );
             }

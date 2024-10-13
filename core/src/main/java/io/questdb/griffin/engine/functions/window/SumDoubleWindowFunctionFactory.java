@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -138,7 +138,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                             SUM_COLUMN_TYPES
                     );
 
-                    //same as for rows because calculation stops at current rows even if there are 'equal' following rows
+                    // same as for rows because calculation stops at current rows even if there are 'equal' following rows
                     return new SumOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
@@ -154,37 +154,47 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                     int timestampIndex = windowContext.getTimestampIndex();
 
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.DOUBLE);// current frame sum
-                    columnTypes.add(ColumnType.LONG);  // number of (non-null) values in current frame
-                    columnTypes.add(ColumnType.LONG);  // native array start offset, requires updating on resize
-                    columnTypes.add(ColumnType.LONG);   // native buffer size
-                    columnTypes.add(ColumnType.LONG);   // native buffer capacity
-                    columnTypes.add(ColumnType.LONG);   // index of first buffered element
+                    columnTypes.add(ColumnType.DOUBLE); // current frame sum
+                    columnTypes.add(ColumnType.LONG); // number of (non-null) values in current frame
+                    columnTypes.add(ColumnType.LONG); // native array start offset, requires updating on resize
+                    columnTypes.add(ColumnType.LONG); // native buffer size
+                    columnTypes.add(ColumnType.LONG); // native buffer capacity
+                    columnTypes.add(ColumnType.LONG); // index of first buffered element
 
-                    Map map = MapFactory.createUnorderedMap(
-                            configuration,
-                            partitionByKeyTypes,
-                            columnTypes
-                    );
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(
+                                configuration,
+                                partitionByKeyTypes,
+                                columnTypes
+                        );
+                        mem = Vm.getARWInstance(
+                                configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(),
+                                MemoryTag.NATIVE_CIRCULAR_BUFFER
+                        );
 
-                    final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(), configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-
-                    // moving sum over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
-                    return new SumOverPartitionRangeFrameFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            rowsLo,
-                            rowsHi,
-                            args.get(0),
-                            mem,
-                            initialBufferSize,
-                            timestampIndex
-                    );
+                        // moving sum over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                        return new SumOverPartitionRangeFrameFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                rowsLo,
+                                rowsHi,
+                                args.get(0),
+                                mem,
+                                configuration.getSqlWindowInitialRangeBufferSize(),
+                                timestampIndex
+                        );
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
-                //between unbounded preceding and current row
+                // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
@@ -216,34 +226,41 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                             args.get(0)
                     );
                 }
-                //between [unbounded | x] preceding and [x preceding | current row]
+                // between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.DOUBLE);// sum
-                    columnTypes.add(ColumnType.LONG);// current frame size
-                    columnTypes.add(ColumnType.LONG);// position of current oldest element
-                    columnTypes.add(ColumnType.LONG);// start offset of native array
+                    columnTypes.add(ColumnType.DOUBLE); // sum
+                    columnTypes.add(ColumnType.LONG); // current frame size
+                    columnTypes.add(ColumnType.LONG); // position of current oldest element
+                    columnTypes.add(ColumnType.LONG); // start offset of native array
 
-                    Map map = MapFactory.createUnorderedMap(
-                            configuration,
-                            partitionByKeyTypes,
-                            columnTypes
-                    );
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(
+                                configuration,
+                                partitionByKeyTypes,
+                                columnTypes
+                        );
+                        mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
+                        );
 
-                    MemoryARW mem = Vm.getARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
-                    );
-
-                    // moving sum over preceding N rows
-                    return new SumOverPartitionRowsFrameFunction(
-                            map,
-                            partitionByRecord,
-                            partitionBySink,
-                            rowsLo,
-                            rowsHi,
-                            args.get(0),
-                            mem
-                    );
+                        // moving sum over preceding N rows
+                        return new SumOverPartitionRowsFrameFunction(
+                                map,
+                                partitionByRecord,
+                                partitionBySink,
+                                rowsLo,
+                                rowsHi,
+                                args.get(0),
+                                mem
+                        );
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else { // no partition key
@@ -253,7 +270,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                     return new SumOverWholeResultSetFunction(args.get(0));
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    //same as for rows because calculation stops at current rows even if there are 'equal' following rows
+                    // same as for rows because calculation stops at current rows even if there are 'equal' following rows
                     return new SumOverUnboundedRowsFrameFunction(args.get(0));
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
@@ -282,7 +299,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     return new SumOverWholeResultSetFunction(args.get(0));
-                } //between [unbounded | x] preceding and [x preceding | current row]
+                } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     MemoryARW mem = Vm.getARWInstance(
                             configuration.getSqlWindowStorePageSize(),
@@ -347,7 +364,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value.
-    static class SumOverPartitionRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRangeFrameFunction {
+    public static class SumOverPartitionRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRangeFrameFunction {
 
         public SumOverPartitionRangeFrameFunction(
                 Map map,
@@ -376,7 +393,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
 
     // handles sum() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    static class SumOverPartitionRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRowsFrameFunction {
+    public static class SumOverPartitionRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverPartitionRowsFrameFunction {
         public SumOverPartitionRowsFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
@@ -409,7 +426,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
     // Handles sum() over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
     // When lower bound is unbounded we add but immediately discard any values that enter the frame so buffer should only contain values
     // between upper bound and current row's value .
-    static class SumOverRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRangeFrameFunction {
+    public static class SumOverRangeFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRangeFrameFunction {
         public SumOverRangeFrameFunction(
                 long rangeLo,
                 long rangeHi,
@@ -418,6 +435,17 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
                 int timestampIdx
         ) {
             super(rangeLo, rangeHi, arg, configuration, timestampIdx);
+        }
+
+        public SumOverRangeFrameFunction(
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                long initialCapacity,
+                MemoryARW memory,
+                int timestampIdx
+        ) {
+            super(rangeLo, rangeHi, arg, initialCapacity, memory, timestampIdx);
         }
 
 
@@ -434,7 +462,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
 
     // Handles sum() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    static class SumOverRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRowsFrameFunction {
+    public static class SumOverRowsFrameFunction extends AvgDoubleWindowFunctionFactory.AvgOverRowsFrameFunction {
 
         public SumOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
             super(arg, rowsLo, rowsHi, memory);
@@ -538,7 +566,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     // Handles sum() over (rows between unbounded preceding and current row); there's no partition by.
-    static class SumOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
+    public static class SumOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
 
         private long count = 0;
         private double externalSum;

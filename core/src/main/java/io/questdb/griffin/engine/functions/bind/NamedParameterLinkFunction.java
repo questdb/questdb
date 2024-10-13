@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
 
 public class NamedParameterLinkFunction implements ScalarFunction {
     private final int type;
@@ -114,7 +114,7 @@ public class NamedParameterLinkFunction implements ScalarFunction {
 
     @Override
     public final int getIPv4(Record rec) {
-        throw new UnsupportedOperationException();
+        return getBase().getIPv4(rec);
     }
 
     @Override
@@ -163,13 +163,8 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return getBase().getStr(rec);
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink sink) {
-        getBase().getStr(rec, sink);
+    public CharSequence getStrA(Record rec) {
+        return getBase().getStrA(rec);
     }
 
     @Override
@@ -202,6 +197,21 @@ public class NamedParameterLinkFunction implements ScalarFunction {
         return type;
     }
 
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        return getBase().getVarcharA(rec);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return getBase().getVarcharB(rec);
+    }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        return getBase().getVarcharSize(rec);
+    }
+
     public String getVariableName() {
         return variableName;
     }
@@ -217,16 +227,8 @@ public class NamedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        switch (type) {
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-            case ColumnType.LONG256:
-            case ColumnType.BINARY:
-                return false;
-            default:
-                return true;
-        }
+    public boolean isThreadSafe() {
+        return true;
     }
 
     @Override

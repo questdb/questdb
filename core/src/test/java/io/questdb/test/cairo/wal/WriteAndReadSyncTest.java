@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,7 +62,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                     // barrier to make sure both threads kick in at the same time;
                     final CyclicBarrier barrier = new CyclicBarrier(2);
                     final AtomicInteger errorCount = new AtomicInteger();
-                    int fd1 = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
+                    long fd1 = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
                     long size = longCount * 8 / Files.PAGE_SIZE + 1;
 
                     // have this thread write another page
@@ -86,7 +86,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                     th.start();
                     barrier.await();
 
-                    int fd2 = TableUtils.openRO(ff, path, LOG);
+                    long fd2 = TableUtils.openRO(ff, path.$(), LOG);
                     try {
                         readLatch.await();
                         long mem = TableUtils.mapRO(ff, fd2, longCount * 8, MemoryTag.NATIVE_DEFAULT);

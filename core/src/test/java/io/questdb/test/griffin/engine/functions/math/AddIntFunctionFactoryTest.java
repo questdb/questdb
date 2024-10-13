@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,32 +25,30 @@
 package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.AddIntFunctionFactory;
-import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testLeftNull() throws SqlException {
-        call(Numbers.INT_NaN, 10).andAssert(Numbers.INT_NaN);
+    public void testLeftNull() throws Exception {
+        assertQuery("column\n\n", "SELECT (null + 10)");
     }
 
     @Test
-    public void testOverflow() throws SqlException {
-        call(5, Integer.MAX_VALUE).andAssert(-2147483644);
+    public void testOverflow() throws Exception {
+        assertQuery("column\n2147483650\n", "SELECT 2147483647 + 3");
     }
 
     @Test
-    public void testRightNull() throws SqlException {
-        call(4, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+    public void testRightNull() throws Exception {
+        assertQuery("column\n\n", "SELECT (4 + null)");
     }
 
     @Test
-    public void testSimple() throws SqlException {
-        call(5, 8).andAssert(13);
+    public void testSimple() throws Exception {
+        assertQuery("column\n15\n", "SELECT 10 + 5");
     }
 
     @Override

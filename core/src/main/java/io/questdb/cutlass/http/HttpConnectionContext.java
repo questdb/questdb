@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.ex.*;
+import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.*;
@@ -55,6 +56,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final boolean dumpNetworkTraffic;
     private final int forceFragmentationReceiveChunkSize;
     private final HttpHeaderParser headerParser;
+    private final boolean preAllocateBuffers;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final Metrics metrics;
     private final HttpHeaderParser multipartContentHeaderParser;
@@ -63,7 +65,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final NetworkFacade nf;
     private final int recvBufferSize;
-    private final RejectProcessor rejectProcessor = new RejectProcessor();
+    private final RejectProcessor rejectProcessor;
     private final HttpResponseSink responseSink;
     private final RetryAttemptAttributes retryAttemptAttributes = new RetryAttemptAttributes();
     private final RescheduleContext retryRescheduleContext = retry -> {
@@ -71,6 +73,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         throw RetryOperationException.INSTANCE;
     };
     private final AssociativeCache<RecordCursorFactory> selectCache;
+    private long authenticationNanos = 0L;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private int receivedBytes;
@@ -83,8 +86,19 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long totalReceived;
 
     @TestOnly
-    public HttpConnectionContext(HttpMinServerConfiguration configuration, Metrics metrics, SocketFactory socketFactory) {
-        this(configuration, metrics, socketFactory, DefaultHttpCookieHandler.INSTANCE, DefaultHttpHeaderParserFactory.INSTANCE);
+    public HttpConnectionContext(
+            HttpMinServerConfiguration configuration,
+            Metrics metrics,
+            SocketFactory socketFactory
+    ) {
+        this(
+                configuration,
+                metrics,
+                socketFactory,
+                DefaultHttpCookieHandler.INSTANCE,
+                DefaultHttpHeaderParserFactory.INSTANCE,
+                HttpServer.NO_OP_CACHE
+        );
     }
 
     public HttpConnectionContext(
@@ -92,7 +106,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             Metrics metrics,
             SocketFactory socketFactory,
             HttpCookieHandler cookieHandler,
-            HttpHeaderParserFactory headerParserFactory
+            HttpHeaderParserFactory headerParserFactory,
+            AssociativeCache<RecordCursorFactory> selectCache
     ) {
         super(
                 socketFactory,
@@ -110,30 +125,20 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.responseSink = new HttpResponseSink(contextConfiguration);
         this.recvBufferSize = contextConfiguration.getRecvBufferSize();
+        this.preAllocateBuffers = configuration.preAllocateBuffers();
+        if (preAllocateBuffers) {
+            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.responseSink.open();
+        }
         this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
         // This is default behaviour until the security context is overridden with correct principal.
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.metrics = metrics;
         this.authenticator = contextConfiguration.getFactoryProvider().getHttpAuthenticatorFactory().getHttpAuthenticator();
-        this.forceFragmentationReceiveChunkSize = configuration.getHttpContextConfiguration().getForceRecvFragmentationChunkSize();
-
-        if (configuration instanceof HttpServerConfiguration) {
-            final HttpServerConfiguration serverConfiguration = (HttpServerConfiguration) configuration;
-            final boolean enableQueryCache = serverConfiguration.isQueryCacheEnabled();
-            final int blockCount = enableQueryCache ? serverConfiguration.getQueryCacheBlockCount() : 1;
-            final int rowCount = enableQueryCache ? serverConfiguration.getQueryCacheRowCount() : 1;
-            this.selectCache = new AssociativeCache<>(
-                    blockCount,
-                    rowCount,
-                    metrics.jsonQuery().cachedQueriesGauge(),
-                    metrics.jsonQuery().cacheHitCounter(),
-                    metrics.jsonQuery().cacheMissCounter()
-            );
-        } else {
-            // Min server doesn't need select cache, so we use no-op settings.
-            this.selectCache = new AssociativeCache<>(1, 1);
-        }
+        this.rejectProcessor = contextConfiguration.getFactoryProvider().getRejectProcessorFactory().getRejectProcessor(this);
+        this.forceFragmentationReceiveChunkSize = contextConfiguration.getForceRecvFragmentationChunkSize();
+        this.selectCache = selectCache;
     }
 
     @Override
@@ -145,7 +150,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             LOG.error().$("reused context with retry pending").$();
         }
         this.pendingRetry = false;
-        this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        if (!preAllocateBuffers) {
+            this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.responseSink.close();
+        }
         this.localValueMap.disconnect();
     }
 
@@ -156,7 +164,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     @Override
     public void close() {
-        final int fd = getFd();
+        final long fd = getFd();
         LOG.debug().$("close [fd=").$(fd).I$();
         super.close();
         if (this.pendingRetry) {
@@ -189,6 +197,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     @Override
     public RetryAttemptAttributes getAttemptDetails() {
         return retryAttemptAttributes;
+    }
+
+    public long getAuthenticationNanos() {
+        return authenticationNanos;
     }
 
     public HttpChunkedResponse getChunkedResponse() {
@@ -245,6 +257,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return totalBytesSent;
     }
 
+    public long getTotalReceived() {
+        return totalReceived;
+    }
+
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
             throws HeartBeatException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         boolean keepGoing;
@@ -289,7 +305,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     @Override
-    public HttpConnectionContext of(int fd, @NotNull IODispatcher<HttpConnectionContext> dispatcher) {
+    public HttpConnectionContext of(long fd, @NotNull IODispatcher<HttpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
         // The context is obtained from the pool, so we should initialize the memory.
         if (recvBuffer == 0) {
@@ -304,21 +320,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public HttpRequestProcessor rejectRequest(int code, byte authenticationType) {
-        return rejectRequest(code, null, null, null, authenticationType);
+        LOG.error().$("rejecting request [code=").$(code).I$();
+        return rejectProcessor.rejectRequest(code, null, null, null, authenticationType);
     }
 
     public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue) {
-        return rejectRequest(code, userMessage, cookieName, cookieValue, AUTH_TYPE_NONE);
-    }
-
-    public HttpRequestProcessor rejectRequest(int code, CharSequence userMessage, CharSequence cookieName, CharSequence cookieValue, byte authenticationType) {
         LOG.error().$(userMessage).$(" [code=").$(code).I$();
-        rejectProcessor.rejectCode = code;
-        rejectProcessor.rejectMessage = userMessage;
-        rejectProcessor.rejectCookieName = cookieName;
-        rejectProcessor.rejectCookieValue = cookieValue;
-        rejectProcessor.authenticationType = authenticationType;
-        return rejectProcessor;
+        return rejectProcessor.rejectRequest(code, userMessage, cookieName, cookieValue, AUTH_TYPE_NONE);
     }
 
     public void reset() {
@@ -337,6 +345,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.retryAttemptAttributes.lastRunTimestamp = 0;
         this.retryAttemptAttributes.attempt = 0;
         this.receivedBytes = 0;
+        this.authenticationNanos = 0L;
         this.securityContext = DenyAllSecurityContext.INSTANCE;
         this.authenticator.clear();
         this.totalReceived = 0;
@@ -425,6 +434,47 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
     }
 
+    private HttpRequestProcessor checkProcessorValidForRequest(
+            Utf8Sequence method,
+            HttpRequestProcessor processor,
+            boolean chunked,
+            boolean multipartRequest,
+            long contentLength,
+            boolean multipartProcessor
+    ) {
+
+        if (processor.isErrorProcessor()) {
+            return processor;
+        }
+
+        if (Utf8s.equalsNcAscii("POST", method) || Utf8s.equalsNcAscii("PUT", method)) {
+            if (!multipartProcessor) {
+                if (multipartRequest) {
+                    return rejectRequest(HTTP_NOT_FOUND, "Method (multipart POST) not supported");
+                } else {
+                    return rejectRequest(HTTP_NOT_FOUND, "Method not supported");
+                }
+            }
+            if (chunked && contentLength > 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "Invalid chunked request; content-length specified");
+            }
+            if (!chunked && !multipartRequest && contentLength < 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "Content-length not specified for POST/PUT request");
+            }
+        } else if (Utf8s.equalsNcAscii("GET", method)) {
+            if (chunked || multipartRequest || contentLength > 0) {
+                return rejectRequest(HTTP_BAD_REQUEST, "GET request method cannot have content");
+            }
+            if (multipartProcessor) {
+                return rejectRequest(HTTP_NOT_FOUND, "Method GET not supported");
+            }
+        } else {
+            return rejectRequest(HTTP_BAD_REQUEST, "Method not supported");
+        }
+
+        return processor;
+    }
+
     private void completeRequest(
             HttpRequestProcessor processor,
             RescheduleContext rescheduleContext
@@ -441,7 +491,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     private boolean configureSecurityContext() {
         if (securityContext == DenyAllSecurityContext.INSTANCE) {
+            final long authenticationStart = configuration.getNanosecondClock().getTicks();
             if (!authenticator.authenticate(headerParser)) {
+                // authenticationNanos stays 0, when it fails this value is irrelevant
                 return false;
             }
             securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
@@ -450,6 +502,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     authenticator.getAuthType(),
                     SecurityContextFactory.HTTP
             );
+            authenticationNanos = configuration.getNanosecondClock().getTicks() - authenticationStart;
         }
         return true;
     }
@@ -810,7 +863,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (url == null) {
                 throw HttpException.instance("missing URL");
             }
-            HttpRequestProcessor processor = isRequestBeingRejected() ? rejectProcessor : getHttpRequestProcessor(selector);
+            HttpRequestProcessor processor = rejectProcessor.isRequestBeingRejected() ? rejectProcessor : getHttpRequestProcessor(selector);
             long contentLength = headerParser.getContentLength();
             final boolean chunked = Utf8s.equalsNcAscii("chunked", headerParser.getHeader(HEADER_TRANSFER_ENCODING));
             final boolean multipartRequest = Utf8s.equalsNcAscii("multipart/form-data", headerParser.getContentType())
@@ -842,29 +895,22 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     }
                 }
 
+                processor = checkProcessorValidForRequest(
+                        headerParser.getMethod(),
+                        processor,
+                        chunked,
+                        multipartRequest,
+                        contentLength,
+                        multipartProcessor
+                );
+
                 if (chunked) {
-                    if (!multipartProcessor) {
-                        // bad request - regular request for processor that expects multipart
-                        processor = rejectRequest(HTTP_NOT_FOUND, "method (chunked POST) not supported");
-                    }
                     busyRecv = consumeChunked(processor, headerEnd, read, newRequest);
                 } else if (multipartRequest) {
-                    if (!multipartProcessor) {
-                        // bad request - multipart request for processor that doesn't expect multipart
-                        processor = rejectRequest(HTTP_NOT_FOUND, "method (multipart POST) not supported");
-                    }
                     busyRecv = consumeMultipart(socket, processor, headerEnd, read, newRequest, rescheduleContext);
-                } else if (contentLength > -1) {
-                    if (!multipartProcessor) {
-                        processor = rejectRequest(HTTP_NOT_FOUND, "method (POST) not supported");
-                    }
+                } else if (contentLength > 0) {
                     busyRecv = consumeContent(contentLength, socket, processor, headerEnd, read, newRequest);
                 } else {
-                    if (multipartProcessor) {
-                        // bad request - regular request for processor that expects multipart
-                        processor = rejectRequest(HTTP_BAD_REQUEST, "Bad request. Multipart POST expected.");
-                    }
-
                     // Do not expect any more bytes to be sent to us before
                     // we respond back to client. We will disconnect the client when
                     // they abuse protocol. In addition, we will not call processor
@@ -945,10 +991,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return false;
     }
 
-    private boolean isRequestBeingRejected() {
-        return rejectProcessor.rejectCode != 0;
-    }
-
     private boolean parseMultipartResult(
             long start,
             long buf,
@@ -983,48 +1025,4 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         LOG.debug().$("peer is slow, waiting for bigger part to parse [multipart]").$();
     }
 
-    private class RejectProcessor implements HttpRequestProcessor, HttpMultipartContentListener {
-        private byte authenticationType = AUTH_TYPE_NONE;
-        private int rejectCode;
-        private CharSequence rejectCookieName = null;
-        private CharSequence rejectCookieValue = null;
-        private CharSequence rejectMessage = null;
-
-        public void clear() {
-            rejectCode = 0;
-            authenticationType = AUTH_TYPE_NONE;
-            rejectCookieName = null;
-            rejectCookieValue = null;
-            rejectMessage = null;
-        }
-
-        @Override
-        public void onChunk(long lo, long hi) {
-        }
-
-        @Override
-        public void onPartBegin(HttpRequestHeader partHeader) {
-        }
-
-        @Override
-        public void onPartEnd() {
-        }
-
-        @Override
-        public void onRequestComplete(
-                HttpConnectionContext context
-        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            if (rejectCode == HTTP_UNAUTHORIZED) {
-                if (authenticationType == SecurityContext.AUTH_TYPE_CREDENTIALS) {
-                    // Special case, include WWW-Authenticate header
-                    simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED, "WWW-Authenticate: Basic realm=\"questdb\", charset=\"UTF-8\"");
-                } else {
-                    simpleResponse().sendStatusTextContent(HTTP_UNAUTHORIZED);
-                }
-            } else {
-                simpleResponse().sendStatusWithCookie(rejectCode, rejectMessage, rejectCookieName, rejectCookieValue);
-            }
-            reset();
-        }
-    }
 }

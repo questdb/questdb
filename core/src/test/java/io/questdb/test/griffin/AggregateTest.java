@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,19 +33,17 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
-import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.*;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -78,7 +76,7 @@ public class AggregateTest extends AbstractCairoTest {
     public void setUp() {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, enableParallelGroupBy);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, enableParallelGroupBy);
     }
 
     @Test
@@ -103,39 +101,37 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testCountAggregationWithConst() throws Exception {
-        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
-            tt1.col("tts", ColumnType.LONG).timestamp("ts");
-            createPopulateTable(tt1, 100, "2020-01-01", 2);
-        }
+        TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY);
+        tt1.col("tts", ColumnType.LONG).timestamp("ts");
+        createPopulateTable(tt1, 100, "2020-01-01", 2);
 
         String expected = "ts\tcount\n" +
                 "2020-01-01T00:28:47.990000Z:TIMESTAMP\t51:LONG\n" +
                 "2020-01-02T00:28:47.990000Z:TIMESTAMP\t49:LONG\n";
 
-        String sql = "select ts, count() from tt1 SAMPLE BY d";
+        String sql = "select ts, count() from tt1 SAMPLE BY d ALIGN TO FIRST OBSERVATION";
 
-        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(expected, sql);
     }
 
     @Test
     public void testCountAggregations() throws Exception {
-        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
-            tt1.col("tts", ColumnType.LONG);
-            CreateTableTestUtils.create(tt1);
-        }
+        TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE);
+        tt1.col("tts", ColumnType.LONG);
+        AbstractCairoTest.create(tt1);
 
         String expected = "max\tcount\n" +
-                "NaN:LONG\t0:LONG\n";
+                "null:LONG\t0:LONG\n";
         String sql = "select max(tts), count() from tt1";
 
-        assertSqlWithTypes(sql, expected);
-        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+        assertSqlWithTypes(expected, sql);
+        assertSqlWithTypes(expected, sql + " where now() > '1000-01-01'");
 
         expected = "count\n" +
                 "0:LONG\n";
         sql = "select count() from tt1";
-        assertSqlWithTypes(sql, expected);
-        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+        assertSqlWithTypes(expected, sql);
+        assertSqlWithTypes(expected, sql + " where now() > '1000-01-01'");
     }
 
     @Test
@@ -162,11 +158,10 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testCountCaseInsensitive() throws Exception {
-        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY)) {
-            tt1.col("tts", ColumnType.LONG).timestamp("ts")
-                    .col("ID", ColumnType.LONG);
-            createPopulateTable(tt1, 100, "2020-01-01", 2);
-        }
+        TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.DAY);
+        tt1.col("tts", ColumnType.LONG).timestamp("ts")
+                .col("ID", ColumnType.LONG);
+        createPopulateTable(tt1, 100, "2020-01-01", 2);
 
         String expected = "ts\tcount\n" +
                 "2020-01-01T00:28:47.990000Z:TIMESTAMP\t1:LONG\n" +
@@ -174,7 +169,7 @@ public class AggregateTest extends AbstractCairoTest {
 
         String sql = "select ts, count() from tt1 WHERE id > 0 ORDER BY ts LIMIT 2";
 
-        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(expected, sql);
     }
 
     @Test
@@ -202,12 +197,12 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.BYTE, "0:BYTE", "0:BYTE"),
                 new TypeVal(ColumnType.CHAR, ":CHAR", ":CHAR"),
                 new TypeVal(ColumnType.SHORT, "0:SHORT", "0:SHORT"),
-                new TypeVal(ColumnType.INT, "NaN:INT", "NaN:INT"),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "NaN:LONG"),
+                new TypeVal(ColumnType.INT, "null:INT", "null:INT"),
+                new TypeVal(ColumnType.LONG, "null:LONG", "null:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", ":DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", ":TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "NaN:FLOAT"),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "NaN:DOUBLE"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "null:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "null:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", ":IPv4"),
                 new TypeVal(ColumnType.UUID, ":UUID", ":UUID"),
                 new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)", ":GEOHASH(3b)"),
@@ -228,7 +223,8 @@ public class AggregateTest extends AbstractCairoTest {
             testAggregations(aggregateFunctions, aggregateColTypes);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: first");
+            Assert.assertEquals(7, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "there is no matching function `first` with the argument types: (BINARY)");
         }
     }
 
@@ -238,12 +234,12 @@ public class AggregateTest extends AbstractCairoTest {
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.SYMBOL, ":SYMBOL", "abc:SYMBOL"),
                 new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR"),
-                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT"),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG"),
+                new TypeVal(ColumnType.INT, "null:INT", "1:INT"),
+                new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT"),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4"),
                 new TypeVal(ColumnType.UUID, ":UUID", "00000000-0000-0001-0000-000000000001:UUID"),
                 new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)", "001:GEOHASH(3b)"),
@@ -272,7 +268,7 @@ public class AggregateTest extends AbstractCairoTest {
                     "    and ts < '2023-02-02' " +
                     "order by 1 asc";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [account_uuid]\n" +
@@ -286,7 +282,7 @@ public class AggregateTest extends AbstractCairoTest {
                             "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "account_uuid\trequest_count\n" +
                             "s0\t0\n" +
                             "s1\t100\n" +
@@ -318,20 +314,22 @@ public class AggregateTest extends AbstractCairoTest {
                     "    and ts < '2023-02-02' " +
                     "order by 1 asc";
 
-            assertPlan(
-                    query,
-                    "Sort light\n" +
-                            "  keys: [account_uuid]\n" +
-                            "    GroupBy vectorized: true workers: 1\n" +
-                            "      keys: [account_uuid]\n" +
-                            "      values: [sum(requests)]\n" +
-                            "        DataFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Interval forward scan on: records\n" +
-                            "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
-            );
+            if (enableParallelGroupBy) {
+                assertPlanNoLeakCheck(
+                        query,
+                        "Sort light\n" +
+                                "  keys: [account_uuid]\n" +
+                                "    GroupBy vectorized: true workers: 1\n" +
+                                "      keys: [account_uuid]\n" +
+                                "      values: [sum(requests)]\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Interval forward scan on: records\n" +
+                                "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
+                );
+            }
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "account_uuid\trequest_count\n" +
                             "s0\t0\n" +
                             "s1\t100\n" +
@@ -372,7 +370,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "      keys: [org_uuid,account_uuid]\n" +
                         "      values: [sum(price)]\n" +
                         "      filter: null\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Interval forward scan on: records\n" +
                         "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n";
@@ -382,14 +380,14 @@ public class AggregateTest extends AbstractCairoTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [org_uuid,account_uuid]\n" +
                         "      values: [sum(price)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Interval forward scan on: records\n" +
                         "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n";
             }
-            assertPlan(query, plan);
+            assertPlanNoLeakCheck(query, plan);
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "org_uuid\taccount_uuid\ttotal_price\n" +
                             "o0\ts0\t0.0\n" +
                             "o1\ts1\t100.0\n" +
@@ -408,10 +406,10 @@ public class AggregateTest extends AbstractCairoTest {
     public void testHourDouble() throws Exception {
         assertQuery(
                 "hour\tsum\tksum\tnsum\tmin\tmax\tavg\tmax1\tmin1\n" +
-                        "0\t15104.996921874219\t15104.996921874184\t15104.996921874175\t1.8362081935174857E-5\t0.999916269120484\t0.5030304023536106\t1970-01-01T00:59:59.900000Z\t1970-01-01T00:00:00.000000Z\n" +
-                        "1\t15097.837814466568\t15097.837814466722\t15097.837814466713\t3.921217994906634E-5\t0.9999575311567217\t0.50183938223256\t1970-01-01T01:59:59.900000Z\t1970-01-01T01:00:00.000000Z\n" +
-                        "2\t11641.765471468498\t11641.76547146845\t11641.765471468458\t1.8566421983501336E-5\t0.9999768905891359\t0.500376750256533\t1970-01-01T02:46:39.900000Z\t1970-01-01T02:00:00.000000Z\n",
-                "select hour(ts), sum(val), ksum(val), nsum(val), min(val), max(val), avg(val), max(ts), min(ts) from tab order by 1",
+                        "0\t15105.0\t15105.0\t15105.0\t1.8362081935174857E-5\t0.999916269120484\t1.0\t1970-01-01T00:59:59.900000Z\t1970-01-01T00:00:00.000000Z\n" +
+                        "1\t15098.0\t15098.0\t15098.0\t3.921217994906634E-5\t0.9999575311567217\t1.0\t1970-01-01T01:59:59.900000Z\t1970-01-01T01:00:00.000000Z\n" +
+                        "2\t11642.0\t11642.0\t11642.0\t1.8566421983501336E-5\t0.9999768905891359\t1.0\t1970-01-01T02:46:39.900000Z\t1970-01-01T02:00:00.000000Z\n",
+                "select hour(ts), round(sum(val)) sum, round(ksum(val)) ksum, round(nsum(val)) nsum, min(val), max(val), round(avg(val)) avg, max(ts), min(ts) from tab order by 1",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_double(2) val from long_sequence(100000))",
                 null,
                 true,
@@ -602,7 +600,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return null;
                             }
                         },
@@ -613,7 +611,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a1";
                             }
                         },
@@ -624,7 +622,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a2";
                             }
                         },
@@ -635,32 +633,13 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a3";
                             }
                         },
                 };
                 assertCursorRawRecords(expected, factory, false);
             }
-        });
-    }
-
-    @Test
-    public void testIntSymbolAddValueMidTableAvgDate() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val date");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(-200, 100000, 2) from long_sequence(1000000)");
-            String expected = "s1\tavg\n" +
-                    "\t49882.75926752372\n" +
-                    "a1\t49866.12261939713\n" +
-                    "a2\t49846.02279713851\n" +
-                    "a3\t49881.23256562667\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
-
-            assertSql(expected, "select s1, avg(val) from tab order by s1");
         });
     }
 
@@ -676,9 +655,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t0.5000679244171367\n" +
                     "a2\t0.5009444360765845\n" +
                     "a3\t0.5009102098429884\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
             assertSql(expected, "select s1, avg(val) from tab order by s1");
         });
     }
@@ -694,9 +673,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t50088.55552935175\n" +
                     "a2\t49983.07087654782\n" +
                     "a3\t50056.666352728615\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
 
             assertSql(expected, "select s1, avg(val) from tab order by s1");
         });
@@ -714,28 +693,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t49866.12261939713\n" +
                     "a2\t49846.02279713851\n" +
                     "a3\t49881.23256562667\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
-            assertSql(expected, "select s1, avg(val) from tab order by s1");
-        });
-    }
-
-    @Test
-    public void testIntSymbolAddValueMidTableAvgTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val timestamp");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(-200, 100000, 2) from long_sequence(1000000)");
-            String expected = "s1\tavg\n" +
-                    "\t49882.75926752372\n" +
-                    "a1\t49866.12261939713\n" +
-                    "a2\t49846.02279713851\n" +
-                    "a3\t49881.23256562667\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
-
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
             assertSql(expected, "select s1, avg(val) from tab order by s1");
         });
     }
@@ -766,15 +726,15 @@ public class AggregateTest extends AbstractCairoTest {
             ddl("alter table tab add column val double");
             ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_double(2) from long_sequence(1000000)");
             String expected = "s1\tksum\n" +
-                    "\t104083.7796906751\n" +
-                    "a1\t103982.62399952601\n" +
-                    "a2\t104702.89752880314\n" +
-                    "a3\t104299.02298329599\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "\t104084.0\n" +
+                    "a1\t103983.0\n" +
+                    "a2\t104703.0\n" +
+                    "a3\t104299.0\n" +
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
 
-            assertSql(expected, "select s1, ksum(val) from tab order by s1");
+            assertSql(expected, "select s1, round(ksum(val)) ksum from tab order by s1");
         });
     }
 
@@ -808,9 +768,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t0.9999894690287568\n" +
                     "a2\t0.9999985075169716\n" +
                     "a3\t0.9999835673064604\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
 
             assertSql(expected, "select s1, max(val) from tab order by s1");
         });
@@ -828,9 +788,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t889991\n" +
                     "a2\t889988\n" +
                     "a3\t889992\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
 
             assertSql(expected, "select s1, max(val) from tab order by s1");
         });
@@ -848,9 +808,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t889992\n" +
                     "a2\t889982\n" +
                     "a3\t889988\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
 
             assertSql(expected, "select s1, max(val) from tab order by s1");
         });
@@ -887,9 +847,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t1.400472531098984E-5\n" +
                     "a2\t1.0686711945373517E-6\n" +
                     "a3\t8.125933586233813E-6\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
 
             assertSql(expected, "select s1, min(val) from tab order by s1");
         });
@@ -906,9 +866,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t33\n" +
                     "a2\t40\n" +
                     "a3\t34\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
 
             assertSql(expected, "select s1, min(val) from tab order by s1");
         });
@@ -926,9 +886,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t35\n" +
                     "a2\t39\n" +
                     "a3\t39\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
 
             assertSql(expected, "select s1, min(val) from tab order by s1");
         });
@@ -945,31 +905,12 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t103982.62399952546\n" +
                     "a2\t104702.89752880397\n" +
                     "a3\t104299.02298329656\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
 
 
             assertSql(expected, "select s1, nsum(val) from tab order by s1");
-        });
-    }
-
-    @Test
-    public void testIntSymbolAddValueMidTableSumDate() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_symbol('s1','s2','s3', null) s1 from long_sequence(1000000))");
-            ddl("alter table tab add column val date");
-            ddl("insert into tab select rnd_symbol('a1','a2','a3', null), rnd_long(0, 100000, 2) from long_sequence(1000000)");
-
-            String expected = "s1\tsum\n" +
-                    "\t1970-05-01T15:06:23.318Z\n" +
-                    "a1\t1970-05-01T04:03:16.338Z\n" +
-                    "a2\t1970-05-01T17:13:47.313Z\n" +
-                    "a3\t1970-05-01T06:34:46.269Z\n" +
-                    "s1\t\n" +
-                    "s2\t\n" +
-                    "s3\t\n";
-            assertSql(expected, "select s1, sum(val) from tab order by s1");
         });
     }
 
@@ -985,9 +926,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t103982.62399952614\n" +
                     "a2\t104702.89752880299\n" +
                     "a3\t104299.02298329721\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
             assertSql(expected, "select s1, sum(val) from tab order by s1");
         });
     }
@@ -1004,9 +945,9 @@ public class AggregateTest extends AbstractCairoTest {
                     "a1\t-5133\n" +
                     "a2\t-18204\n" +
                     "a3\t175\n" +
-                    "s1\tNaN\n" +
-                    "s2\tNaN\n" +
-                    "s3\tNaN\n";
+                    "s1\tnull\n" +
+                    "s2\tnull\n" +
+                    "s3\tnull\n";
 
             assertSql(expected, "select s1, sum(val) from tab order by s1");
         });
@@ -1025,9 +966,9 @@ public class AggregateTest extends AbstractCairoTest {
                             "a1\t10382596338\n" +
                             "a2\t10430027313\n" +
                             "a3\t10391686269\n" +
-                            "s1\tNaN\n" +
-                            "s2\tNaN\n" +
-                            "s3\tNaN\n",
+                            "s1\tnull\n" +
+                            "s2\tnull\n" +
+                            "s3\tnull\n",
                     "select s1, sum(val) from tab order by s1"
             );
         });
@@ -1035,6 +976,8 @@ public class AggregateTest extends AbstractCairoTest {
 
     @Test
     public void testIntSymbolResolution() throws Exception {
+        // Fractional part is slightly different between parallel and non-parallel factories.
+        Assume.assumeTrue(enableParallelGroupBy);
         assertQuery(
                 "s2\tsum\n" +
                         "\t104119.88094816262\n" +
@@ -1084,7 +1027,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return null;
                             }
                         },
@@ -1102,7 +1045,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return null;
                             }
                         },
@@ -1113,7 +1056,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a1";
                             }
                         },
@@ -1124,7 +1067,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a2";
                             }
                         },
@@ -1135,7 +1078,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a3";
                             }
                         },
@@ -1155,10 +1098,10 @@ public class AggregateTest extends AbstractCairoTest {
             // test with key falling within null columns
             assertSql(
                     "s1\tsum\n" +
-                            "\tNaN\n" +
-                            "s1\tNaN\n" +
-                            "s2\tNaN\n" +
-                            "s3\tNaN\n",
+                            "\tnull\n" +
+                            "s1\tnull\n" +
+                            "s2\tnull\n" +
+                            "s3\tnull\n",
                     "select s1, sum(val) from tab where t > '1970-01-04T12:00' and t < '1970-01-07T11:00' order by s1"
             );
 
@@ -1190,7 +1133,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return null;
                             }
                         },
@@ -1201,7 +1144,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a1";
                             }
                         },
@@ -1212,7 +1155,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a2";
                             }
                         },
@@ -1223,7 +1166,7 @@ public class AggregateTest extends AbstractCairoTest {
                             }
 
                             @Override
-                            public CharSequence getSym(int col) {
+                            public CharSequence getSymA(int col) {
                                 return "a3";
                             }
                         },
@@ -1242,12 +1185,12 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.BYTE, "0:BYTE", "1:BYTE"),
                 new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR"),
                 new TypeVal(ColumnType.SHORT, "0:SHORT", "1:SHORT"),
-                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT"),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG"),
+                new TypeVal(ColumnType.INT, "null:INT", "1:INT"),
+                new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT"),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4"),
                 new TypeVal(ColumnType.UUID, ":UUID", "00000000-0000-0001-0000-000000000001:UUID"),
                 new TypeVal(ColumnType.getGeoHashTypeWithBits(3), ":GEOHASH(3b)", "001:GEOHASH(3b)"),
@@ -1266,12 +1209,12 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.BYTE, "0:INT", "1:INT"),
                 new TypeVal(ColumnType.CHAR, ":CHAR", "a:CHAR"),
                 new TypeVal(ColumnType.SHORT, "0:INT", "1:INT"),
-                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT"),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG"),
+                new TypeVal(ColumnType.INT, "null:INT", "1:INT"),
+                new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT"),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4")
         };
 
@@ -1285,12 +1228,12 @@ public class AggregateTest extends AbstractCairoTest {
                 new TypeVal(ColumnType.BYTE, "0:INT", "0:INT"),
                 new TypeVal(ColumnType.CHAR, ":CHAR", ":CHAR"),
                 new TypeVal(ColumnType.SHORT, "0:INT", "0:INT"),
-                new TypeVal(ColumnType.INT, "NaN:INT", "1:INT"),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG"),
+                new TypeVal(ColumnType.INT, "null:INT", "1:INT"),
+                new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
                 new TypeVal(ColumnType.DATE, ":DATE", "1970-01-01T00:00:00.001Z:DATE"),
                 new TypeVal(ColumnType.TIMESTAMP, ":TIMESTAMP", "1970-01-01T00:00:00.000001Z:TIMESTAMP"),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT"),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.IPv4, ":IPv4", "0.0.0.1:IPv4")
         };
 
@@ -1350,7 +1293,7 @@ public class AggregateTest extends AbstractCairoTest {
             compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(1000))", sqlExecutionContext);
             long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         compiler,
                         "",
                         "select i, sum(d) from tab group by i",
@@ -1483,16 +1426,15 @@ public class AggregateTest extends AbstractCairoTest {
 
             final String[] functions = {
                     "sum(d)", "min(d)", "max(d)", "avg(d)", "nsum(d)", "ksum(d)",
-                    "sum(tstmp)", "min(tstmp)", "max(tstmp)",
+                    "min(tstmp)", "max(tstmp)",
                     "sum(l)", "min(l)", "max(l)", "avg(l)",
                     "sum(i)", "min(i)", "min(i)", "avg(i)",
-                    "sum(dat)", "min(dat)", "max(dat)"
+                    "min(dat)", "max(dat)"
             };
 
             for (String function : functions) {
                 String query = "select s, " + function + " from tab group by s";
                 LOG.infoW().$(function).$();
-                //String query = "select s, sum(d) from tab group by s";
                 assertRostiMemory(engine, query, sqlExecutionContext);
                 sizeCounter.set(0);
             }
@@ -1652,10 +1594,10 @@ public class AggregateTest extends AbstractCairoTest {
         TypeVal[] aggregateColTypes = {
                 new TypeVal(ColumnType.BYTE, "0:LONG", "1:LONG"),
                 new TypeVal(ColumnType.SHORT, "0:LONG", "1:LONG"),
-                new TypeVal(ColumnType.INT, "NaN:LONG", "1:LONG"),
-                new TypeVal(ColumnType.LONG, "NaN:LONG", "1:LONG"),
-                new TypeVal(ColumnType.FLOAT, "NaN:FLOAT", "1.0000:FLOAT"),
-                new TypeVal(ColumnType.DOUBLE, "NaN:DOUBLE", "1.0:DOUBLE"),
+                new TypeVal(ColumnType.INT, "null:LONG", "1:LONG"),
+                new TypeVal(ColumnType.LONG, "null:LONG", "1:LONG"),
+                new TypeVal(ColumnType.FLOAT, "null:FLOAT", "1.0000:FLOAT"),
+                new TypeVal(ColumnType.DOUBLE, "null:DOUBLE", "1.0:DOUBLE"),
                 new TypeVal(ColumnType.LONG256, ":LONG256", "0x01000000000000000100000000000000010000000000000001:LONG256")
         };
 
@@ -1673,7 +1615,7 @@ public class AggregateTest extends AbstractCairoTest {
             for (long ts = 0; ts < count; ts += increment) {
                 String value = String.valueOf((ts - 1) * 0.5);
                 String expected = "s\n" +
-                        (ts > 0 ? value : "NaN") + "\n";
+                        (ts > 0 ? value : "null") + "\n";
                 assertSql(expected, "select sum(val) s from tab where t >= CAST(" + step + " AS TIMESTAMP) AND t < CAST(" + (ts * step) + " AS TIMESTAMP)"
                 );
             }
@@ -1696,7 +1638,7 @@ public class AggregateTest extends AbstractCairoTest {
             // [step, ts * step)
             for (long ts = increment; ts < 2 * count; ts += increment) {
                 String expected = "s1\ts2\n" +
-                        ((ts - 1) * 0.5) + "\t" + (ts <= count ? "NaN" : (ts - count) * 1.0) + "\n";
+                        ((ts - 1) * 0.5) + "\t" + (ts <= count ? "null" : (ts - count) * 1.0) + "\n";
                 assertSql(
                         expected,
                         "select sum(val) s1,  sum(val2) s2 from tab where t >= CAST(" + step + " AS TIMESTAMP) " +
@@ -1754,7 +1696,7 @@ public class AggregateTest extends AbstractCairoTest {
         try {
             assertCursor(
                     "k\tc1\tcstar\tci\tcl\tcd\tcdat\tcts\n" +
-                            "NaN\t3\t3\t0\t0\t0\t0\t0\n" +
+                            "null\t3\t3\t0\t0\t0\t0\t0\n" +
                             "0\t1\t1\t0\t0\t0\t0\t0\n" +
                             "1\t1\t1\t0\t0\t0\t0\t0\n" +
                             "2\t1\t1\t1\t1\t1\t1\t1\n" +
@@ -1822,7 +1764,7 @@ public class AggregateTest extends AbstractCairoTest {
         try {
             assertCursor(
                     "k\tc1\tcstar\tci\tcl\n" +
-                            "NaN\t5\t5\t1\t1\n" +
+                            "null\t5\t5\t1\t1\n" +
                             "6\t1\t1\t0\t0\n",
                     query.getRecordCursorFactory(),
                     true,
@@ -1883,8 +1825,8 @@ public class AggregateTest extends AbstractCairoTest {
                 "select count(*) cnt from " +
                         "(select i, count(*), min(i), avg(i), max(i), sum(i), " +
                         "min(l), avg(l), max(l), sum(l), " +
-                        "min(dat), avg(dat), max(dat), sum(dat), " +
-                        "min(ts), avg(ts), max(ts), sum(ts), " +
+                        "min(dat), max(dat), " +
+                        "min(ts), max(ts), " +
                         "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
                         "sum(l256), count(i), count(l) from tab group by i )",
                 sqlExecutionContext
@@ -1941,8 +1883,8 @@ public class AggregateTest extends AbstractCairoTest {
                 "select count(*) cnt from " +
                         "(select count(*), min(i), avg(i), max(i), sum(i), " +
                         "min(l), avg(l), max(l), sum(l), " +
-                        "min(dat), avg(dat), max(dat), sum(dat), " +
-                        "min(ts), avg(ts), max(ts), sum(ts), " +
+                        "min(dat), max(dat), " +
+                        "min(ts), max(ts), " +
                         "min(d), avg(d), max(d), sum(d), nsum(d), ksum(d)," +
                         "sum(l256), count(i), count(l) from tab )",
                 sqlExecutionContext
@@ -1990,10 +1932,10 @@ public class AggregateTest extends AbstractCairoTest {
                 }
 
                 String expected = resultHeader.append("\n").append(resultData).append("\n").toString();
-                assertSqlWithTypes(sql, expected);
+                assertSqlWithTypes(expected, sql);
 
                 // Force to go to non-vector execution
-                assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+                assertSqlWithTypes(expected, sql + " where now() > '1000-01-01'");
             }
         }
     }
@@ -2070,15 +2012,14 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     private void testAggregations(String[] aggregateFunctions, TypeVal[] aggregateColTypes) throws SqlException {
-        try (TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE)) {
-            for (TypeVal colType : aggregateColTypes) {
-                tt1.col(colType.colName, colType.columnType);
-            }
-            CreateTableTestUtils.create(tt1);
+        TableModel tt1 = new TableModel(configuration, "tt1", PartitionBy.NONE);
+        for (TypeVal colType : aggregateColTypes) {
+            tt1.col(colType.colName, colType.columnType);
         }
+        AbstractCairoTest.create(tt1);
 
         // Insert a lot of empty rows to test function's merge correctness.
-        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"))) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"), engine)) {
             for (int i = 0; i < 2 * PAGE_FRAME_MAX_ROWS; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.append();
@@ -2162,10 +2103,7 @@ public class AggregateTest extends AbstractCairoTest {
         ) {
             try {
                 if (pool != null) {
-                    GroupByVectorAggregateJob vectorAggregateJob = new GroupByVectorAggregateJob(engine.getMessageBus());
-                    pool.assign(vectorAggregateJob);
-                    GroupByMergeShardJob mergeShardJob = new GroupByMergeShardJob(engine.getMessageBus());
-                    pool.assign(mergeShardJob);
+                    TestUtils.setupWorkerPool(pool, engine);
                     pool.start(LOG);
                 }
 

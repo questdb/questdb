@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -105,32 +105,26 @@ namespace questdb::avx2 {
         return c.newConst(ConstPool::kScopeLocal, &broadcast_value, 32);
     }
 
-    jit_value_t read_mem_varlen(Compiler &c,
-                                uint32_t header_size,
-                                int32_t column_idx,
-                                const Gp &column_address,
-                                const Gp &varlen_indexes_ptr,
-                                const Gp &input_index) {
+    // Reads length of variable size column with header stored in data vector (string, binary).
+    jit_value_t read_mem_varsize(Compiler &c,
+                                 uint32_t header_size,
+                                 int32_t column_idx,
+                                 const Gp &data_ptr,
+                                 const Gp &varsize_aux_ptr,
+                                 const Gp &input_index) {
         Label l_nonzero = c.newLabel();
         auto offset_shift = type_shift(data_type_t::i64);
-        auto offset_size = 1 << offset_shift;
 
-        Gp varlen_index_address = c.newInt64("varlen_index_address");
-        c.mov(varlen_index_address, ptr(varlen_indexes_ptr, 8 * column_idx, 8));
-        Ymm index_data = c.newYmm();
-        Ymm length_data = c.newYmm();
+        Gp varsize_aux_address = c.newInt64("varsize_aux_address");
+        c.mov(varsize_aux_address, ptr(varsize_aux_ptr, 8 * column_idx, 8));
+        Ymm index_data = c.newYmm("index_data");
+        Ymm next_index_data = c.newYmm("next_index_data");
+        Ymm length_data = c.newYmm("length_data");
 
-        // Load data from the varlen index at input_index to index_data
-        c.vmovdqu(index_data, ymmword_ptr(varlen_index_address, input_index, offset_shift, 0));
-
-        // Load data from the varlen index at input_index + 1 to next_index_data.
-        // Achieve it by reusing the three qwords already loaded into index_data.
-        Gp next_index_qword = c.newInt64("next_index_qword");
-        c.mov(next_index_qword, qword_ptr(varlen_index_address, input_index, offset_shift, 32));
-        Ymm next_index_data = c.newYmm();
-        c.vmovdqa(next_index_data, index_data);
-        c.pinsrq(next_index_data.xmm(), next_index_qword, 0);
-        c.vpermq(next_index_data, next_index_data, 0b00111001);
+        // Load data from the aux vector at input_index to index_data
+        c.vmovdqu(index_data, ymmword_ptr(varsize_aux_address, input_index, offset_shift, 0));
+        // Load data from the aux vector at input_index + 1 to next_index_data
+        c.vmovdqu(next_index_data, ymmword_ptr(varsize_aux_address, input_index, offset_shift, 1 << offset_shift));
 
         // Subtract the data at input_index from data at input_index + 1
         c.vpsubq(length_data, next_index_data, index_data);
@@ -153,9 +147,12 @@ namespace questdb::avx2 {
         c.test(eq_result_compressed, eq_result_compressed);
         c.jz(l_nonzero);
 
+        Gp column_address = c.newInt64("column_address");
+        c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+
         // Slow path: some value lengths are zero, load all the headers. The value in the header
         // may be either 0 (empty value) or -1 (NULL value) and we must distinguish the two.
-        // index_data contains four items of the varlen_index column. The items are offsets into
+        // index_data contains four items of the varsize_index column. The items are offsets into
         // the data column (based at column_address). For each offset:
         // 1: move the offset into a Gp register
         // 2: load the header at column_address + offset
@@ -195,20 +192,58 @@ namespace questdb::avx2 {
         }
 
         // Combine the four header values into length_data
-        c.pinsrq(length_data.xmm(), header_0, 0);
-        c.pinsrq(length_data.xmm(), header_1, 1);
-        c.pinsrq(next_index_data.xmm(), header_2, 0);
-        c.pinsrq(next_index_data.xmm(), header_3, 1);
-        c.vinserti128(length_data, length_data, next_index_data.xmm(), 1);
+        c.vpinsrq(length_data.xmm(), length_data.xmm(), header_0, 0);
+        c.vpinsrq(length_data.xmm(), length_data.xmm(), header_1, 1);
+        Ymm acc = c.newYmm("acc");
+        c.vpinsrq(acc.xmm(), acc.xmm(), header_2, 0);
+        c.vpinsrq(acc.xmm(), acc.xmm(), header_3, 1);
+        c.vinserti128(length_data, length_data, acc.xmm(), 1);
 
         c.bind(l_nonzero);
         return {length_data, data_type_t::i64, data_kind_t::kMemory};
     }
 
+    // Reads length part of the varchar header for aux vector.
+    // This part is stored in the lowest bytes of the header
+    // (see VarcharTypeDriver to understand the format).
+    //
+    // Note: unlike read_mem_varsize this method doesn't return the length,
+    //       so it can only be used in NULL checks.
+    jit_value_t read_mem_varchar_header(Compiler &c,
+                                        int32_t column_idx,
+                                        const Gp &varsize_aux_ptr,
+                                        const Gp &input_index) {
+        Gp varsize_aux_address = c.newInt64("varsize_aux_address");
+        c.mov(varsize_aux_address, ptr(varsize_aux_ptr, 8 * column_idx, 8));
+
+        Gp header_offset = c.newInt64("header_offset");
+
+        c.mov(header_offset, input_index);
+        auto header_shift = type_shift(data_type_t::i128);
+        c.sal(header_offset, header_shift);
+
+        Ymm headers_0_1 = c.newYmm("headers_0_1");
+        Ymm headers_2_3 = c.newYmm("headers_2_3");
+
+        // Load 4 headers into two YMMs.
+        c.vmovdqu(headers_0_1, ymmword_ptr(varsize_aux_address, header_offset, 0));
+        c.vmovdqu(headers_2_3, ymmword_ptr(varsize_aux_address, header_offset, 0, 32));
+
+        // Permute the first i64 of each header and combine them into single YMM.
+        // 0th and 1st i64 go to the first YMM lane in headers_0_1.
+        c.vpermq(headers_0_1, headers_0_1, 0b00001000);
+        // 2nd and 3rd i64 go to the second YMM lane in headers_2_3.
+        c.vpermq(headers_2_3, headers_2_3, 0b10000000);
+        c.vinserti128(headers_2_3, headers_2_3, headers_0_1.xmm(), 0);
+
+        return {headers_2_3, data_type_t::i64, data_kind_t::kMemory};
+    }
+
     jit_value_t
-    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &cols_ptr, const Gp &varlen_indexes_ptr, const Gp &input_index) {
-        Gp column_address = c.newInt64("column_address");
-        c.mov(column_address, ptr(cols_ptr, 8 * column_idx, 8));
+    read_mem(Compiler &c, data_type_t type, int32_t column_idx, const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &input_index) {
+        if (type == data_type_t::varchar_header) {
+            return read_mem_varchar_header(c, column_idx, varsize_aux_ptr, input_index);
+        }
 
         uint32_t header_size;
         switch (type) {
@@ -222,10 +257,14 @@ namespace questdb::avx2 {
                 header_size = 0;
         }
         if (header_size != 0) {
-            return read_mem_varlen(c, header_size, column_idx, column_address, varlen_indexes_ptr, input_index);
+            return read_mem_varsize(c, header_size, column_idx, data_ptr, varsize_aux_ptr, input_index);
         }
 
         // Simple case: a fixed-width column
+
+        Gp column_address = c.newInt64("column_address");
+        c.mov(column_address, ptr(data_ptr, 8 * column_idx, 8));
+
         Mem m;
         uint32_t shift = type_shift(type);
         if (shift < 4) {
@@ -508,7 +547,7 @@ namespace questdb::avx2 {
 
     void
     emit_code(Compiler &c, const instruction_t *istream, size_t size, ZoneStack<jit_value_t> &values, bool ncheck,
-              const Gp &cols_ptr, const Gp &varlen_indexes_ptr, const Gp &vars_ptr, const Gp &input_index) {
+              const Gp &data_ptr, const Gp &varsize_aux_ptr, const Gp &vars_ptr, const Gp &input_index) {
         for (size_t i = 0; i < size; ++i) {
             auto instr = istream[i];
             switch (instr.opcode) {
@@ -525,7 +564,7 @@ namespace questdb::avx2 {
                 case opcodes::Mem: {
                     auto type = static_cast<data_type_t>(instr.options);
                     auto idx = static_cast<int32_t>(instr.ipayload.lo);
-                    values.append(read_mem(c, type, idx, cols_ptr, varlen_indexes_ptr, input_index));
+                    values.append(read_mem(c, type, idx, data_ptr, varsize_aux_ptr, input_index));
                 }
                     break;
                 case opcodes::Imm:

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.cutlass.http.client.ser.JsonToTableSerializer;
 import io.questdb.cutlass.json.JsonException;
 
 public class HttpClientMain {
+
     public static void main(String[] args) throws JsonException {
         DefaultCairoConfiguration configuration = new DefaultCairoConfiguration("C:\\qdb2\\db");
         try (
@@ -40,10 +41,9 @@ public class HttpClientMain {
             for (int i = 0; i < 1; i++) {
                 HttpClient.Request req = client.newRequest("localhost", 9000);
                 try (
-                        HttpClient.ResponseHeaders rsp = req
+                        HttpClient.ResponseHeaders responseHeaders = req
                                 .GET()
                                 .url("/exec")
-                                //.query("query", "cpu%20limit%20400000")
                                 .query("query", "cpu limit 2")
                                 //.query("query", "cpu")
                                 .header("Accept", "gzip, deflate, br")
@@ -51,23 +51,22 @@ public class HttpClientMain {
                                 .authBasic("vlad", "hello")
                                 .send()
                 ) {
-                    rsp.await();
+                    responseHeaders.await();
 
-                    if (rsp.isChunked()) {
-                        jsonToTableSerializer.clear();
+                    jsonToTableSerializer.clear();
 
-                        ChunkedResponse chunkedRsp = rsp.getChunkedResponse();
-                        Chunk chunk;
+                    Response response = responseHeaders.getResponse();
+                    Fragment fragment;
 
-                        long t = System.currentTimeMillis();
-                        int chunkCount = 0;
-                        while ((chunk = chunkedRsp.recv()) != null) {
-                            jsonToTableSerializer.parse(chunk.lo(), chunk.hi());
-                            chunkCount++;
-                        }
-                        System.out.println(System.currentTimeMillis() - t);
-                        System.out.println("done: " + i + ", chunks: " + chunkCount);
+                    long t = System.currentTimeMillis();
+                    int chunkCount = 0;
+                    while ((fragment = response.recv()) != null) {
+                        jsonToTableSerializer.parse(fragment.lo(), fragment.hi());
+                        chunkCount++;
                     }
+
+                    System.out.println(System.currentTimeMillis() - t);
+                    System.out.println("done: " + i + ", chunks: " + chunkCount);
                 }
             }
         }

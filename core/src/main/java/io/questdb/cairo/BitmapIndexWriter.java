@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
@@ -183,7 +184,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         return keyMem.isOpen();
     }
 
-    public final void of(CairoConfiguration configuration, int keyFd, int valueFd, boolean init, int indexBlockCapacity) {
+    public final void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int indexBlockCapacity) {
         close();
         final FilesFacade ff = configuration.getFilesFacade();
         boolean kFdUnassigned = true;
@@ -272,17 +273,17 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         final int plen = path.size();
         try {
             boolean init = indexBlockCapacity > 0;
-            BitmapIndexUtils.keyFileName(path, name, columnNameTxn);
+            LPSZ keyFile = BitmapIndexUtils.keyFileName(path, name, columnNameTxn);
             if (init) {
-                this.keyMem.of(ff, path, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
+                this.keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
                 initKeyMemory(this.keyMem, indexBlockCapacity);
             } else {
-                boolean exists = ff.exists(path);
+                boolean exists = ff.exists(keyFile);
                 if (!exists) {
                     LOG.error().$(path).$(" not found").$();
                     throw CairoException.critical(0).put("Index does not exist: ").put(path);
                 }
-                this.keyMem.of(ff, path, configuration.getDataIndexKeyAppendPageSize(), ff.length(path), MemoryTag.MMAP_INDEX_WRITER);
+                this.keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), ff.length(keyFile), MemoryTag.MMAP_INDEX_WRITER);
             }
 
             long keyMemSize = this.keyMem.getAppendOffset();

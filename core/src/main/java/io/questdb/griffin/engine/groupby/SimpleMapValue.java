@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -207,17 +207,17 @@ public class SimpleMapValue implements MapValue {
 
     @Override
     public void minInt(int index, int value) {
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             final int current = (int) values[4 * index];
-            values[4 * index] = (current != Numbers.INT_NaN) ? Math.min(value, current) : value;
+            values[4 * index] = (current != Numbers.INT_NULL) ? Math.min(value, current) : value;
         }
     }
 
     @Override
     public void minLong(int index, long value) {
-        if (value != Numbers.LONG_NaN) {
+        if (value != Numbers.LONG_NULL) {
             final long current = values[4 * index];
-            values[4 * index] = (current != Numbers.LONG_NaN) ? Math.min(value, current) : value;
+            values[4 * index] = (current != Numbers.LONG_NULL) ? Math.min(value, current) : value;
         }
     }
 

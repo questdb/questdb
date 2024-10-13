@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,7 +63,6 @@ public class IntervalUtilsTest {
         int intervalB = 0;
 
         while (intervalA != sizeA && intervalB != sizeB) {
-
             long aLo = getIntervalLo(a, intervalA);
             long aHi = getIntervalHi(a, intervalA);
 
@@ -79,7 +78,6 @@ public class IntervalUtilsTest {
                 // b loses
                 intervalB++;
             } else {
-
                 append(out, Math.max(aLo, bLo), Math.min(aHi, bHi));
 
                 if (aHi < bHi) {
@@ -93,24 +91,6 @@ public class IntervalUtilsTest {
                 }
             }
         }
-    }
-
-    @Test
-    public void testParseFloorPartialTimestamp_truncateNanos() throws NumericException {
-        long expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456Z");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789Z");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678Z");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567Z");
-
-        // with offset
-        expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456+01:00");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789+01:00");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678+01:00");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567+01:00");
-    }
-
-    private static void assertParseFloorPartialTimestampEquals(long expectedTimestamp, CharSequence actual) throws NumericException {
-        Assert.assertEquals(expectedTimestamp, IntervalUtils.parseFloorPartialTimestamp(actual));
     }
 
     @Test
@@ -245,7 +225,7 @@ public class IntervalUtilsTest {
         // B
         add(intervals, 1, 2);
 
-        runTestInvertInplace(intervals, 2, "[NaN,0], [3,9223372036854775807]");
+        runTestInvertInplace(intervals, 2, "[null,0], [3,9223372036854775807]");
     }
 
     @Test
@@ -258,7 +238,7 @@ public class IntervalUtilsTest {
         add(intervals, 2, 100);
         add(intervals, 200, Long.MAX_VALUE);
 
-        runTestInvertInplace(intervals, 1, "[NaN,1], [101,199]");
+        runTestInvertInplace(intervals, 1, "[null,1], [101,199]");
     }
 
     @Test
@@ -334,6 +314,20 @@ public class IntervalUtilsTest {
     }
 
     @Test
+    public void testParseFloorPartialTimestamp_truncateNanos() throws NumericException {
+        long expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456Z");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789Z");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678Z");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567Z");
+
+        // with offset
+        expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456+01:00");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789+01:00");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678+01:00");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567+01:00");
+    }
+
+    @Test
     public void testUnionAllAfterB() {
         LongList intervals = new LongList();
         // A
@@ -395,6 +389,10 @@ public class IntervalUtilsTest {
         runTestUnionInplace(intervals, 4, "[-1,4], [6,7]");
     }
 
+    private static void assertParseFloorPartialTimestampEquals(long expectedTimestamp, CharSequence actual) throws NumericException {
+        Assert.assertEquals(expectedTimestamp, IntervalUtils.parseFloorPartialTimestamp(actual));
+    }
+
     private void add(LongList intervals, long lo, long hi) {
         intervals.add(lo);
         intervals.add(hi);
@@ -405,10 +403,10 @@ public class IntervalUtilsTest {
         copy.add(intervals, divider, intervals.size());
         copy.add(intervals, 0, divider);
 
-        IntervalUtils.intersectInplace(intervals, divider);
+        IntervalUtils.intersectInPlace(intervals, divider);
         TestUtils.assertEquals(expected, toIntervalString(intervals, 0));
 
-        IntervalUtils.intersectInplace(copy, copy.size() - divider);
+        IntervalUtils.intersectInPlace(copy, copy.size() - divider);
         TestUtils.assertEquals(expected, toIntervalString(copy, 0));
     }
 

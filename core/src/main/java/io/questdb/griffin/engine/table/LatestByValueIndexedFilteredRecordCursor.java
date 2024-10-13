@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,12 +25,12 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueRecordCursor {
@@ -38,12 +38,13 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
     private SqlExecutionCircuitBreaker circuitBreaker;
 
     public LatestByValueIndexedFilteredRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
             int columnIndex,
             int symbolKey,
-            @NotNull Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull Function filter
     ) {
-        super(columnIndexes, columnIndex, symbolKey);
+        super(configuration, metadata, columnIndex, symbolKey);
         this.filter = filter;
     }
 
@@ -62,14 +63,16 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.frameCursor = pageFrameCursor;
+        recordA.of(pageFrameCursor);
+        recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
-        filter.init(this, executionContext);
+        filter.init(pageFrameCursor, executionContext);
         isRecordFound = false;
         isFindPending = false;
+        // prepare for page frame iteration
+        super.init();
     }
 
     @Override
@@ -95,22 +98,19 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
     }
 
     private void findRecord() {
-        DataFrame frame;
-        // frame metadata is based on TableReader, which is "full" metadata
-        // this cursor works with subset of columns, which warrants column index remap
-        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-        while ((frame = dataFrameCursor.next()) != null) {
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            final int partitionIndex = frame.getPartitionIndex();
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
-            recordA.jumpTo(partitionIndex, 0);
+            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+            frameAddressCache.add(frameCount, frame);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
+
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
             while (cursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(cursor.next());
+                recordA.setRowIndex(cursor.next() - partitionLo);
                 if (filter.getBool(recordA)) {
                     isRecordFound = true;
                     return;

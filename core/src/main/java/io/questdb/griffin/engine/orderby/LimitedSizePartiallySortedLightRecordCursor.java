@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,6 @@ import io.questdb.std.Numbers;
  * Base record cursor processing is stopped when enough records with different timestamp values are found.
  */
 public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRecordCursor {
-
     private final LimitedSizeLongTreeChain chain;
     private final LimitedSizeLongTreeChain.TreeCursor chainCursor;
     private final RecordComparator comparator;
@@ -44,7 +43,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     private final long skipFirst; // skip first N rows
     private final long skipLast;  // skip last N rows
     private final int timestampIndex;
-    private RecordCursor base;
+    private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long groupTimestamp;
@@ -76,8 +75,8 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     @Override
     public void close() {
         if (isOpen) {
+            baseCursor = Misc.free(baseCursor);
             Misc.free(chain);
-            Misc.free(base);
             isOpen = false;
         }
     }
@@ -89,12 +88,12 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
 
     @Override
     public Record getRecordB() {
-        return base.getRecordB();
+        return baseCursor.getRecordB();
     }
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(columnIndex);
+        return baseCursor.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -104,7 +103,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
             isChainBuilt = true;
         }
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
-            base.recordAt(baseRecord, chainCursor.next());
+            baseCursor.recordAt(baseRecord, chainCursor.next());
             return true;
         }
         return false;
@@ -112,30 +111,29 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return base.newSymbolTable(columnIndex);
+        return baseCursor.newSymbolTable(columnIndex);
     }
 
     @Override
-    public void of(RecordCursor base, SqlExecutionContext executionContext) {
+    public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
+        this.baseCursor = baseCursor;
+        baseRecord = baseCursor.getRecord();
         if (!isOpen) {
-            chain.reopen();
             isOpen = true;
+            chain.reopen();
         }
-
-        this.base = base;
-        baseRecord = base.getRecord();
         circuitBreaker = executionContext.getCircuitBreaker();
         isChainBuilt = false;
         rowsInGroup = 0;
         rowsSoFar = 0;
-        groupTimestamp = Numbers.LONG_NaN;
+        groupTimestamp = Numbers.LONG_NULL;
         timestampInitialized = false;
         chain.clear();
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        base.recordAt(record, atRowId);
+        baseCursor.recordAt(record, atRowId);
     }
 
     @Override
@@ -156,14 +154,14 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
     }
 
     private void buildChain() {
-        final Record placeHolderRecord = base.getRecordB();
+        final Record placeHolderRecord = baseCursor.getRecordB();
         if (limit != 0) {
             // first record ever, we've to find the timestamp value
             if (!timestampInitialized) {
-                if (base.hasNext()) {
+                if (baseCursor.hasNext()) {
                     chain.put(
                             baseRecord,
-                            base,
+                            baseCursor,
                             placeHolderRecord,
                             comparator
                     );
@@ -173,7 +171,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
                 }
             }
 
-            while (base.hasNext()) {
+            while (baseCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
 
                 long currentTimestamp = baseRecord.getTimestamp(timestampIndex);
@@ -195,7 +193,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
                 // state in the record it returns.
                 chain.put(
                         baseRecord,
-                        base,
+                        baseCursor,
                         placeHolderRecord,
                         comparator
                 );
@@ -204,4 +202,3 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         toTop();
     }
 }
-

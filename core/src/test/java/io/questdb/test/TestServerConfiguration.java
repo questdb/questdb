@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,8 +42,10 @@ import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -91,13 +93,18 @@ public class TestServerConfiguration extends DefaultServerConfiguration {
     private final int workerCountHttp;
     private final HttpServerConfiguration confHttp = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
         @Override
-        public MillisecondClock getClock() {
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
+        }
+
+        @Override
+        public MillisecondClock getMillisecondClock() {
             return StationaryMillisClock.INSTANCE;
         }
 
         @Override
-        public FactoryProvider getFactoryProvider() {
-            return factoryProvider;
+        public NanosecondClock getNanosecondClock() {
+            return StationaryNanosClock.INSTANCE;
         }
     }) {
         @Override

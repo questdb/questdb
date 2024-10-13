@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,28 +55,21 @@ public class LtIPv4FunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new LtIPv4FunctionFactory.LtIPv4Function(args.getQuick(0), args.getQuick(1));
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    static class LtIPv4Function extends NegatableBooleanFunction implements BinaryFunction {
+    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
-        public LtIPv4Function(Function left, Function right) {
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            long left = Numbers.ipv4ToLong(this.left.getIPv4(rec));
-            if (left != Numbers.IPv4_NULL) {
-                long right = Numbers.ipv4ToLong(this.right.getIPv4(rec));
-                if (right != Numbers.IPv4_NULL) {
-                    return negated == (left >= right);
-                }
-            }
-            return false;
+            return Numbers.lessThanIPv4(left.getIPv4(rec), right.getIPv4(rec), negated);
         }
 
         @Override

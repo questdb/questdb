@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -54,10 +54,8 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "aFFF");
         assertType(LineTcpParser.ENTITY_TYPE_TAG, "e");
 
-        assertError(LineTcpParser.ENTITY_TYPE_TAG, "\"errt\"");
-        assertType(LineTcpParser.ENTITY_TYPE_TAG, "\"errt\"", true, false);
+        assertTypeComplete(LineTcpParser.ENTITY_TYPE_TAG, "\"errt\"");
         assertError(LineTcpParser.ENTITY_TYPE_SYMBOL, "errt");
-        assertType(LineTcpParser.ENTITY_TYPE_SYMBOL, "errt", false, true);
 
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "t");
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "T");
@@ -69,7 +67,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
         assertType(LineTcpParser.ENTITY_TYPE_BOOLEAN, "tRuE");
 
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4\"");
-        assertType(LineTcpParser.ENTITY_TYPE_STRING, LineTcpParser.ENTITY_UNIT_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", "\"0x123a4 looks \" like=long256,\n but tis not!\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, false, false);
+        assertType(LineTcpParser.ENTITY_TYPE_STRING, LineTcpParser.ENTITY_UNIT_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!\"", "\"0x123a4 looks \" like=long256,\n but tis not!\"", LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
         assertType(LineTcpParser.ENTITY_TYPE_STRING, "\"0x123a4 looks like=long256, but tis not!\"");
         assertError(LineTcpParser.ENTITY_TYPE_NONE, "\"0x123a4 looks \\\" like=long256,\\\n but tis not!"); // missing closing '"'
         assertError(LineTcpParser.ENTITY_TYPE_TAG, "0x123a4 looks \\\" like=long256,\\\n but tis not!\""); // wanted to be a string, missing opening '"'
@@ -116,7 +114,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
     }
 
     private static void assertError(byte type, String value) throws Exception {
-        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value, value, LineTcpParser.ParseResult.ERROR, false, false);
+        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value, value, LineTcpParser.ParseResult.ERROR);
     }
 
     private static void assertType(byte type, String value) throws Exception {
@@ -124,11 +122,7 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
     }
 
     private static void assertType(byte type, byte unit, String value) throws Exception {
-        assertType(type, unit, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, false, false);
-    }
-
-    private static void assertType(byte type, String value, boolean stringAsTagSupported, boolean symbolAsFieldSupported) throws Exception {
-        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE, stringAsTagSupported, symbolAsFieldSupported);
+        assertType(type, unit, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
     }
 
     private static void assertType(
@@ -136,11 +130,9 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
             byte unit,
             String value,
             String expectedValue,
-            LineTcpParser.ParseResult expectedParseResult,
-            boolean stringAsTagSupported,
-            boolean symbolAsFieldSupported
+            LineTcpParser.ParseResult expectedParseResult
     ) throws Exception {
-        final LineTcpParser lineTcpParser = new LineTcpParser(stringAsTagSupported, symbolAsFieldSupported);
+        final LineTcpParser lineTcpParser = new LineTcpParser();
         TestUtils.assertMemoryLeak(() -> {
             sink.clear();
             sink.put(type == LineTcpParser.ENTITY_TYPE_TAG ? "t,v=" : "t v=").put(value).put('\n'); // SYMBOLS are in tag set, not field set
@@ -189,5 +181,9 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
                 Unsafe.free(mem, bytes.length, MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    private static void assertTypeComplete(byte type, String value) throws Exception {
+        assertType(type, LineTcpParser.ENTITY_UNIT_NONE, value, value, LineTcpParser.ParseResult.MEASUREMENT_COMPLETE);
     }
 }

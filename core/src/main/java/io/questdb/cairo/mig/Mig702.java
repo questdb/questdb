@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -68,14 +68,14 @@ public class Mig702 {
         final FilesFacade ff = migrationContext.getFf();
         final Path path = migrationContext.getTablePath();
 
-        path.concat(TXN_FILE_NAME_MIG).$();
-        if (!ff.exists(path)) {
+        path.concat(TXN_FILE_NAME_MIG);
+        if (!ff.exists(path.$())) {
             // no transaction file, nothing to do. Broken table.
             LOG.error().$("7.0.2 migration is skipped for the table, no _txn file exists [path=").$(path).I$();
             return;
         }
 
-        try (MemoryMARW txMemory = openFileSafe(ff, path, TX_BASE_OFFSET_B_32)) {
+        try (MemoryMARW txMemory = openFileSafe(ff, path.$(), TX_BASE_OFFSET_B_32)) {
             long version = txMemory.getLong(TXN_VERSION_OFFSET_MIG);
             boolean isA = (version & 1L) == 0L;
 

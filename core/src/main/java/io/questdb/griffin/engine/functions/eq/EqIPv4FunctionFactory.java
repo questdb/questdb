@@ -4,16 +4,16 @@
  *   | | | | | | |/ _ \/ __| __| | | |  _ \
  *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
  *    \__\_\\__,_|\___||___/\__|____/|____/
- * <p>
+ *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
- * <p>
+ *  Copyright (c) 2019-2024 QuestDB
+ *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
  *  You may obtain a copy of the License at
- * <p>
+ *
  *  http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ *
  *  Unless required by applicable law or agreed to in writing, software
  *  distributed under the License is distributed on an "AS IS" BASIS,
  *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -58,28 +58,22 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
-
-
         if (!a.isConstant() && b.isConstant()) {
             return createHalfConstantFunc(b, a);
         } else if (a.isConstant() && !b.isConstant()) {
             return createHalfConstantFunc(a, b);
         }
-
-        return new EqIPv4FunctionFactory.Func(a, b);
+        return new Func(a, b);
     }
 
-    static Function createHalfConstantFunc(Function constFunc, Function varFunc) {
+    private static Function createHalfConstantFunc(Function constFunc, Function varFunc) {
         int constValue = constFunc.getIPv4(null);
-
         if (constValue == IPv4_NULL) {
-            return new EqIPv4FunctionFactory.NullCheckFunc(varFunc);
+            return new NullCheckFunc(varFunc);
         }
-
-        return new EqIPv4FunctionFactory.ConstCheckFunc(varFunc, constValue);
+        return new ConstCheckFunc(varFunc, constValue);
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -111,7 +105,7 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
         }
     }
 
-    static class Func extends AbstractEqBinaryFunction {
+    private static class Func extends AbstractEqBinaryFunction {
         public Func(Function left, Function right) {
             super(left, right);
         }
@@ -131,7 +125,7 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
         }
     }
 
-    public static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
 
         public NullCheckFunc(Function arg) {

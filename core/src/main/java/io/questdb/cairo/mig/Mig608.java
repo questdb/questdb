@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,8 +46,8 @@ final class Mig608 {
         final Path path = migrationContext.getTablePath();
         final int plen = path.size();
 
-        path.concat(META_FILE_NAME).$();
-        if (!ff.exists(path)) {
+        path.concat(META_FILE_NAME);
+        if (!ff.exists(path.$())) {
             MigrationActions.LOG.error().$("meta file does not exist, nothing to migrate [path=").$(path).I$();
             return;
         }
@@ -57,7 +57,7 @@ final class Mig608 {
             final long thatMetaColumnDataSize = 16;
             final long thisMetaColumnDataSize = 32;
 
-            rwMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_MIG_MMAP);
+            rwMem.of(ff, path.$(), ff.getPageSize(), ff.length(path.$()), MemoryTag.NATIVE_MIG_MMAP);
 
             // column count
             final int columnCount = rwMem.getInt(TableUtils.META_OFFSET_COUNT);
@@ -97,8 +97,8 @@ final class Mig608 {
         }
 
         // update _txn file
-        path.trimTo(plen).concat(TXN_FILE_NAME).$();
-        if (!ff.exists(path)) {
+        path.trimTo(plen).concat(TXN_FILE_NAME);
+        if (!ff.exists(path.$())) {
             MigrationActions.LOG.error().$("tx file does not exist, nothing to migrate [path=").$(path).I$();
             return;
         }

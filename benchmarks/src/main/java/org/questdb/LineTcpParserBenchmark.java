@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,10 +25,9 @@
 package org.questdb;
 
 import io.questdb.cutlass.line.tcp.LineTcpParser;
-import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.FlyweightDirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.infra.Blackhole;
 import org.openjdk.jmh.runner.Runner;
@@ -43,21 +42,33 @@ import java.util.concurrent.TimeUnit;
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 public class LineTcpParserBenchmark {
 
-    private static final long BUFFER_SIZE = 32768;
-    private final long bufHi;
-    private final long bufLo;
-    private final LineTcpParser parser;
+    private static final long BUFFER_SIZE = 1024 * 1024;
 
-    public LineTcpParserBenchmark() {
-        this.bufLo = Unsafe.malloc(BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-        this.parser = new LineTcpParser(false, false);
+    private DirectUtf8Sink input;
+    private LineTcpParser parser;
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(LineTcpParserBenchmark.class.getSimpleName())
+                .warmupIterations(1)
+                .measurementIterations(3)
+                // Uncomment to collect a flame graph via async-profiler:
+                //.addProfiler(AsyncProfiler.class, "output=flamegraph")
+                .forks(1)
+                .build();
+
+        new Runner(opt).run();
+    }
+
+    @Setup
+    public void setup() {
+        this.input = new DirectUtf8Sink(BUFFER_SIZE);
+        this.parser = new LineTcpParser();
 
         Rnd rnd = new Rnd();
         long lineLenEstimate = 0;
-        FlyweightDirectUtf16Sink sink = new FlyweightDirectUtf16Sink();
-        sink.of(bufLo, bufLo + BUFFER_SIZE);
-        while (sink.length() < (BUFFER_SIZE - lineLenEstimate)) {
-            sink.put("cpu")
+        while (input.size() < (BUFFER_SIZE - lineLenEstimate)) {
+            input.put("cpu")
                     .put(",hostname=host_").put(String.valueOf(rnd.nextInt(1000)))
                     .put(",region=central_").put(rnd.nextString(32))
                     .put(",rack=").put(String.valueOf(rnd.nextInt(16)))
@@ -80,28 +91,21 @@ public class LineTcpParserBenchmark {
                     .put(",usage_guest_nice=").put(String.valueOf(rnd.nextInt(100))).put("i")
                     .put(" 1451606400000000000\n");
             if (lineLenEstimate == 0) {
-                lineLenEstimate = 3L * sink.length();
+                lineLenEstimate = 3L * input.size();
             }
         }
-
-        this.bufHi = bufLo + sink.length();
     }
 
-    public static void main(String[] args) throws RunnerException {
-        Options opt = new OptionsBuilder()
-                .include(LineTcpParserBenchmark.class.getSimpleName())
-                .warmupIterations(1)
-                .measurementIterations(3)
-                // Uncomment to collect a flame graph via async-profiler:
-//                .addProfiler(AsyncProfiler.class, "output=flamegraph")
-                .forks(1)
-                .build();
-
-        new Runner(opt).run();
+    @TearDown
+    public void tearDown() {
+        this.input = Misc.free(input);
     }
 
     @Benchmark
     public void testParse(Blackhole bh) {
+        long bufLo = input.lo();
+        long bufHi = input.hi();
+
         long bufPos = bufLo;
         while (bufPos < bufHi) {
             parser.of(bufPos);

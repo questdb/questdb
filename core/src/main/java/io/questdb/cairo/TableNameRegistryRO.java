@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,8 +29,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.function.Predicate;
-
 public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private final long autoReloadTimeout;
     private final MillisecondClock clockMs;
@@ -40,8 +38,8 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private ConcurrentHashMap<TableToken> tableNameToTableTokenMap1 = new ConcurrentHashMap<>(false);
     private ConcurrentHashMap<TableToken> tableNameToTableTokenMap2 = new ConcurrentHashMap<>(false);
 
-    public TableNameRegistryRO(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
-        super(configuration, protectedTableResolver);
+    public TableNameRegistryRO(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
+        super(configuration, tableFlagResolver);
         this.clockMs = configuration.getMillisecondClock();
         long timeout = configuration.getTableRegistryAutoReloadFrequency();
         this.autoReloadTimeout = timeout > 0 ? timeout : Long.MAX_VALUE;

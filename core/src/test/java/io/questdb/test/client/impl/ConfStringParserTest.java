@@ -1,3 +1,27 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.test.client.impl;
 
 import io.questdb.client.impl.ConfStringParser;
@@ -134,7 +158,7 @@ public final class ConfStringParserTest {
         assertHasNext(config, pos);
         pos = assertNextKeyValueOk(config, pos, "host", "localhost");
         pos = assertNextKeyOk(config, pos, "port");
-        pos = assertNextValueError(config, pos, "missing trailing semicolon at position 30");
+        pos = assertNextValueOk(config, pos, "9000");
         assertNoNext(config, pos);
     }
 
@@ -153,10 +177,10 @@ public final class ConfStringParserTest {
     }
 
     @Test
-    public void testSchemaCaseInsensitive() {
+    public void testSchemaCaseSensitive() {
         assertSchemaOk("http::addr=localhost;USER=joe;pAsS=bloggs;", "http");
-        assertSchemaOk("HTTP::addr=localhost;USER=joe;pAsS=bloggs;", "http");
-        assertSchemaOk("HtTp::addr=localhost;USER=joe;pAsS=bloggs;", "http");
+        assertSchemaOk("HTTP::addr=localhost;USER=joe;pAsS=bloggs;", "HTTP");
+        assertSchemaOk("HtTp::addr=localhost;USER=joe;pAsS=bloggs;", "HtTp");
     }
 
     @Test
@@ -171,9 +195,9 @@ public final class ConfStringParserTest {
         assertSchemaError("x:;host=localhost;", "bad separator, expected '::' got ':;' at position 1");
         assertSchemaError("http://localhost:9000;host=localhost;", "bad separator, expected '::' got ':/' at position 4");
         assertSchemaOk("http::;", "http");
-        assertSchemaOk("HTTP::;", "http");
+        assertSchemaOk("HTTP::;", "HTTP");
         assertSchemaOk("http::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "http");
-        assertSchemaOk("TCP::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "tcp");
+        assertSchemaOk("TCP::addr=localhost;user=joe;pass=bloggs;auto_flush_rows=1000;", "TCP");
     }
 
     @Test
@@ -193,7 +217,7 @@ public final class ConfStringParserTest {
         pos = assertSchemaOk(config, "http");
         assertHasNext(config, pos);
         pos = assertNextKeyOk(config, pos, "foo");
-        pos = assertNextValueError(config, pos, "missing trailing semicolon at position 15");
+        pos = assertNextValueOk(config, pos, "bar;");
         assertNoNext(config, pos);
 
         config = "https::foo=;;;;;";

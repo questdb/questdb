@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,8 +62,8 @@ public class AddIntFunctionFactory implements FunctionFactory {
             final int left = this.left.getInt(rec);
             final int right = this.right.getInt(rec);
 
-            if (left == Numbers.INT_NaN || right == Numbers.INT_NaN) {
-                return Numbers.INT_NaN;
+            if (left == Numbers.INT_NULL || right == Numbers.INT_NULL) {
+                return Numbers.INT_NULL;
             }
 
             return left + right;
@@ -72,6 +72,18 @@ public class AddIntFunctionFactory implements FunctionFactory {
         @Override
         public Function getLeft() {
             return left;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final int left = this.left.getInt(rec);
+            final int right = this.right.getInt(rec);
+
+            if (left == Numbers.INT_NULL || right == Numbers.INT_NULL) {
+                return Numbers.LONG_NULL;
+            }
+
+            return ((long) left) + right;
         }
 
         @Override
@@ -84,8 +96,8 @@ public class AddIntFunctionFactory implements FunctionFactory {
             boolean leftIsConstant = left.isConstant();
             boolean rightIsConstant = right.isConstant();
             return leftIsConstant && rightIsConstant
-                    || (leftIsConstant && left.getInt(null) == Numbers.INT_NaN)
-                    || (rightIsConstant && right.getInt(null) == Numbers.INT_NaN);
+                    || (leftIsConstant && left.getInt(null) == Numbers.INT_NULL)
+                    || (rightIsConstant && right.getInt(null) == Numbers.INT_NULL);
         }
 
         @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,19 +30,29 @@ import io.questdb.std.Unsafe;
 /**
  * An immutable flyweight for a UTF-16 string stored in native memory.
  */
-public class DirectString extends AbstractCharSequence implements DirectSequence, Mutable {
+public class DirectString extends AbstractCharSequence implements DirectCharSequence, Mutable {
+    private final StableStringSource stableSource;
     private long hi;
     private int len;
     private long lo;
 
+    public DirectString() {
+        this.stableSource = StableStringSource.UNSTABLE_SOURCE;
+    }
+
+    public DirectString(StableStringSource stableSource) {
+        this.stableSource = stableSource;
+    }
+
     @Override
     public char charAt(int index) {
-        return Unsafe.getUnsafe().getChar(lo + ((long) index * 2L));
+        return Unsafe.getUnsafe().getChar(lo + ((long) index << 1));
     }
 
     @Override
     public void clear() {
         hi = lo = 0;
+        len = 0;
     }
 
     @Override
@@ -63,6 +73,16 @@ public class DirectString extends AbstractCharSequence implements DirectSequence
         return hi;
     }
 
+    /**
+     * Returns true if the pointer returned by {@link #ptr()} method is stable during a query execution.
+     * Stable is defined as:
+     * - the pointer remains valid for the duration of the query execution
+     * - the sequence of bytes pointed to by the pointer does not change during the query execution
+     */
+    public boolean isStable() {
+        return stableSource.isStable();
+    }
+
     @Override
     public int length() {
         return len;
@@ -76,7 +96,14 @@ public class DirectString extends AbstractCharSequence implements DirectSequence
     public DirectString of(long lo, long hi) {
         this.lo = lo;
         this.hi = hi;
-        this.len = (int) ((hi - lo) / 2);
+        this.len = (int) ((hi - lo) >>> 1);
+        return this;
+    }
+
+    public DirectString of(long address, int len) {
+        this.lo = address;
+        this.hi = address + ((long) len << 1);
+        this.len = len;
         return this;
     }
 
@@ -93,8 +120,9 @@ public class DirectString extends AbstractCharSequence implements DirectSequence
     @Override
     protected CharSequence _subSequence(int start, int end) {
         DirectString seq = new DirectString();
-        seq.lo = this.lo + start;
-        seq.hi = this.lo + end;
+        seq.lo = this.lo + ((long) start << 1);
+        seq.hi = this.lo + ((long) end << 1);
+        seq.len = end - start;
         return seq;
     }
 }

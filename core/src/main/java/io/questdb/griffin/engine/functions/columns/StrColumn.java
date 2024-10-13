@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 
 import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
@@ -49,13 +48,8 @@ public class StrColumn extends StrFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return rec.getStr(columnIndex);
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink sink) {
-        rec.getStr(columnIndex, sink);
+    public CharSequence getStrA(Record rec) {
+        return rec.getStrA(columnIndex);
     }
 
     @Override
@@ -66,11 +60,6 @@ public class StrColumn extends StrFunction implements ScalarFunction {
     @Override
     public int getStrLen(Record rec) {
         return rec.getStrLen(columnIndex);
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return true;
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -129,7 +129,7 @@ public class LineTCPSenderMain {
         long start = System.nanoTime();
         MicrosecondClock clock = new MicrosecondClockImpl();
         String tab = "quotes";
-        try (Sender sender = Sender.builder()
+        try (Sender sender = Sender.builder(Sender.Transport.TCP)
                 .address("wet-crimson-879-30b0c6db.ilp.c7at.questdb.com:32495")
                 .enableTls()
                 .enableAuth("admin").authToken("eRNONc_PZfJTwVuFoOr_YZJRfVnyfCRYZvJ9asABFzs")

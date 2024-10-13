@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,8 +36,8 @@ import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 public class ReplaceStrFunctionFactory implements FunctionFactory {
@@ -79,11 +79,10 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends StrFunction implements TernaryFunction {
-
         private final int maxLength;
         private final Function newSubStr;
         private final Function oldSubStr;
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function value;
 
@@ -110,21 +109,13 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
-            final CharSequence value = this.value.getStr(rec);
+        public CharSequence getStrA(Record rec) {
+            final CharSequence value = this.value.getStrA(rec);
             if (value != null) {
-                sink.clear();
-                return (CharSequence) replace(value, oldSubStr.getStr(rec), newSubStr.getStr(rec), sink);
+                sinkA.clear();
+                return (CharSequence) replace(value, oldSubStr.getStrA(rec), newSubStr.getStrA(rec), sinkA);
             }
             return null;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            final CharSequence value = this.value.getStrB(rec);
-            if (value != null) {
-                replace(value, oldSubStr.getStr(rec), newSubStr.getStr(rec), sink);
-            }
         }
 
         @Override
@@ -138,8 +129,8 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isConstant() {
-            return value.isConstant() && oldSubStr.isConstant() && newSubStr.isConstant();
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Override
@@ -156,7 +147,7 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             }
         }
 
-        //if result is null then return null; otherwise return sink
+        // if result is null then return null; otherwise return sink
         private Utf16Sink replace(@NotNull CharSequence value, CharSequence term, CharSequence withWhat, Utf16Sink sink) throws CairoException {
             int valueLen = value.length();
             if (valueLen < 1) {

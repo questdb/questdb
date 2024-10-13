@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -171,13 +171,7 @@ final class Unordered2MapValue implements MapValue {
 
     @Override
     public Long256 getLong256A(int index) {
-        final long p = address0(index);
-        long256.setAll(
-                Unsafe.getUnsafe().getLong(p),
-                Unsafe.getUnsafe().getLong(p + 8L),
-                Unsafe.getUnsafe().getLong(p + 16L),
-                Unsafe.getUnsafe().getLong(p + 24L)
-        );
+        long256.fromAddress(address0(index));
         return long256;
     }
 
@@ -215,19 +209,19 @@ final class Unordered2MapValue implements MapValue {
 
     @Override
     public void minInt(int index, int value) {
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             final long p = address0(index);
             final int current = Unsafe.getUnsafe().getInt(p);
-            Unsafe.getUnsafe().putInt(p, current != Numbers.INT_NaN ? Math.min(value, current) : value);
+            Unsafe.getUnsafe().putInt(p, current != Numbers.INT_NULL ? Math.min(value, current) : value);
         }
     }
 
     @Override
     public void minLong(int index, long value) {
-        if (value != Numbers.LONG_NaN) {
+        if (value != Numbers.LONG_NULL) {
             final long p = address0(index);
             final long current = Unsafe.getUnsafe().getLong(p);
-            Unsafe.getUnsafe().putLong(p, current != Numbers.LONG_NaN ? Math.min(value, current) : value);
+            Unsafe.getUnsafe().putLong(p, current != Numbers.LONG_NULL ? Math.min(value, current) : value);
         }
     }
 

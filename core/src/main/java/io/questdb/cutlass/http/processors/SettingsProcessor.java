@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
-import io.questdb.cairo.CairoConfiguration;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -35,19 +35,21 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8StringSink;
 
+import java.net.HttpURLConnection;
+
 public class SettingsProcessor implements HttpRequestProcessor {
     private final Utf8StringSink sink = new Utf8StringSink();
 
-    public SettingsProcessor(CairoConfiguration cairoConfiguration) {
+    public SettingsProcessor(ServerConfiguration serverConfiguration) {
         final CharSequenceObjHashMap<CharSequence> settings = new CharSequenceObjHashMap<>();
-        cairoConfiguration.populateSettings(settings);
-
+        serverConfiguration.getCairoConfiguration().populateSettings(settings);
+        serverConfiguration.getPublicPassthroughConfiguration().populateSettings(settings);
         sink.putAscii('{');
         final ObjList<CharSequence> keys = settings.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final CharSequence key = keys.getQuick(i);
             final CharSequence value = settings.get(key);
-            sink.putQuoted(key).putAscii(':').putQuoted(value);
+            sink.putQuoted(key).putAscii(':').put(value);
             if (i != n - 1) {
                 sink.putAscii(',');
             }
@@ -63,7 +65,7 @@ public class SettingsProcessor implements HttpRequestProcessor {
     @Override
     public void onRequestComplete(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
         final HttpChunkedResponse r = context.getChunkedResponse();
-        r.status(200, "application/json");
+        r.status(HttpURLConnection.HTTP_OK, "application/json");
         r.sendHeader();
         r.put(sink);
         r.sendChunk(true);

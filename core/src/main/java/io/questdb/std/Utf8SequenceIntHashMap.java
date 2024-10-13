@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ package io.questdb.std;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -60,7 +61,7 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
         Arrays.fill(values, noEntryValue);
     }
 
-    public int get(Utf8Sequence key) {
+    public int get(@NotNull Utf8Sequence key) {
         return valueAt(keyIndex(key));
     }
 
@@ -68,15 +69,25 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
         return list;
     }
 
-    public boolean put(Utf8String key, int value) {
+    public boolean put(@NotNull Utf8String key, int value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean put(Utf8Sequence key, int value) {
+    public boolean put(@NotNull Utf8Sequence key, int value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean putAt(int index, Utf8Sequence key, int value) {
+    public void putAll(@NotNull Utf8SequenceIntHashMap other) {
+        Utf8Sequence[] otherKeys = other.keys;
+        int[] otherValues = other.values;
+        for (int i = 0, n = otherKeys.length; i < n; i++) {
+            if (otherKeys[i] != noEntryKey) {
+                put(otherKeys[i], otherValues[i]);
+            }
+        }
+    }
+
+    public boolean putAt(int index, @NotNull Utf8Sequence key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
             return false;
@@ -92,7 +103,7 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
         return true;
     }
 
-    public boolean putAt(int index, Utf8String key, int value) {
+    public boolean putAt(int index, @NotNull Utf8String key, int value) {
         if (index < 0) {
             values[-index - 1] = value;
             return false;
@@ -109,7 +120,7 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
 
     public void removeAt(int index) {
         if (index < 0) {
-            Utf8String key = keys[-index - 1];
+            Utf8Sequence key = keys[-index - 1];
             super.removeAt(index);
             list.remove(key);
         }
@@ -133,10 +144,10 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
         free = capacity = newCapacity;
         int len = Numbers.ceilPow2((int) (newCapacity / loadFactor));
 
-        Utf8String[] oldKeys = keys;
+        Utf8Sequence[] oldKeys = keys;
         int[] oldHashCodes = hashCodes;
         int[] oldValues = values;
-        this.keys = new Utf8String[len];
+        this.keys = new Utf8Sequence[len];
         this.hashCodes = new int[len];
         this.values = new int[len];
         Arrays.fill(keys, null);
@@ -144,7 +155,7 @@ public class Utf8SequenceIntHashMap extends AbstractUtf8SequenceHashSet {
 
         free -= size;
         for (int i = oldKeys.length; i-- > 0; ) {
-            Utf8String key = oldKeys[i];
+            Utf8Sequence key = oldKeys[i];
             if (key != null) {
                 final int index = keyIndex(key);
                 keys[index] = key;

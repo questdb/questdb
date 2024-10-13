@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ import static org.junit.Assert.fail;
 public class PlainTcpLineChannelTest extends AbstractLineTcpReceiverTest {
     private static final NetworkFacade FD_EXHAUSTED_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int socketTcp(boolean blocking) {
+        public long socketTcp(boolean blocking) {
             return -1;
         }
     };

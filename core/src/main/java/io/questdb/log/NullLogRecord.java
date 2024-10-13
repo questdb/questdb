@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,21 +45,6 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public Utf8Sink putUtf8(long lo, long hi) {
-        return this;
-    }
-
-    @Override
-    public Utf8Sink put(@Nullable Utf8Sequence us) {
-        return this;
-    }
-
-    @Override
-    public Utf8Sink put(byte b) {
-        return this;
-    }
-
-    @Override
     public LogRecord $(@Nullable CharSequence sequence) {
         return this;
     }
@@ -71,6 +56,11 @@ final class NullLogRecord implements LogRecord {
 
     @Override
     public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
         return this;
     }
 
@@ -120,6 +110,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $uuid(long lo, long hi) {
+        return this;
+    }
+
+    @Override
     public LogRecord $(@Nullable Sinkable x) {
         return this;
     }
@@ -145,6 +140,11 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $size(long memoryBytes) {
+        return this;
+    }
+
+    @Override
     public LogRecord $ts(long x) {
         return this;
     }
@@ -165,7 +165,22 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public Utf8Sink put(@Nullable Utf8Sequence us) {
+        return this;
+    }
+
+    @Override
+    public Utf8Sink put(byte b) {
+        return this;
+    }
+
+    @Override
     public LogRecord put(char c) {
+        return this;
+    }
+
+    @Override
+    public Utf8Sink putNonAscii(long lo, long hi) {
         return this;
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -76,28 +76,28 @@ public class TimestampsTest {
     @Test
     public void testAddYears() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("1988-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 10));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 10));
         TestUtils.assertEquals("1998-05-12T23:45:51.045Z", sink);
     }
 
     @Test
     public void testAddYears3() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2014-01-01T00:00:00.000Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 1));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 1));
         TestUtils.assertEquals("2015-01-01T00:00:00.000Z", sink);
     }
 
     @Test
     public void testAddYearsNonLeapToLeap() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("2015-01-01T00:00:00.000Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 1));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 1));
         TestUtils.assertEquals("2016-01-01T00:00:00.000Z", sink);
     }
 
     @Test
     public void testAddYearsPrevEpoch() throws Exception {
         long micros = TimestampFormatUtils.parseTimestamp("1888-05-12T23:45:51.045Z");
-        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYear(micros, 10));
+        TimestampFormatUtils.appendDateTime(sink, Timestamps.addYears(micros, 10));
         TestUtils.assertEquals("1898-05-12T23:45:51.045Z", sink);
     }
 
@@ -664,7 +664,7 @@ public class TimestampsTest {
 
     @Test(expected = NumericException.class)
     public void testParseWrongHour() throws Exception {
-        TimestampFormatUtils.parseTimestamp("2013-09-30T24:00:00.000Z");
+        TimestampFormatUtils.parseTimestamp("2013-09-30T25:00:00.000Z");
     }
 
     @Test(expected = NumericException.class)

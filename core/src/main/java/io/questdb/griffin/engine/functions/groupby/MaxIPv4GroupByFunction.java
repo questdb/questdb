@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,12 +45,12 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putInt(valueIndex, arg.getIPv4(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         long max = Numbers.ipv4ToLong(mapValue.getIPv4(valueIndex));
         long next = Numbers.ipv4ToLong(arg.getIPv4(record));
         if (next > max) {
@@ -79,18 +79,24 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.IPv4);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return UnaryFunction.super.isReadThreadSafe();
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override
@@ -100,12 +106,6 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
         if (srcMax > destMax || destMax == Numbers.IPv4_NULL) {
             destValue.putInt(valueIndex, (int) srcMax);
         }
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.IPv4);
     }
 
     @Override
@@ -119,8 +119,8 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 
 }

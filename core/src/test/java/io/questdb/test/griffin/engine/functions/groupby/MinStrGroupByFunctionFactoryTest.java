@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -93,20 +93,22 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
-        String expected = "min\n" +
-                "a\n";
-        assertQuery(
-                expected,
-                "select min(s) from x",
-                "create table x as (select * from (select rnd_str('a','b','c') s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
-                null,
-                false,
-                true
-        );
+        assertMemoryLeak(() -> {
+            String expected = "min\n" +
+                    "a\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select min(s) from x",
+                    "create table x as (select * from (select rnd_str('a','b','c') s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
+                    null,
+                    false,
+                    true
+            );
 
-        insert("insert into x values(cast(null as STRING), '2021-05-21')");
-        insert("insert into x values(cast(null as STRING), '1970-01-01')");
-        assertSql(expected, "select min(s) from x");
+            insert("insert into x values(cast(null as STRING), '2021-05-21')");
+            insert("insert into x values(cast(null as STRING), '1970-01-01')");
+            assertSql(expected, "select min(s) from x");
+        });
     }
 
     @Test
@@ -156,7 +158,7 @@ public class MinStrGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "c\tдве\t1970-01-01T00:00:05.000000Z\n" +
                         "f\tдве\t1970-01-01T00:00:05.000000Z\n" +
                         "e\tдве\t1970-01-01T00:00:05.000000Z\n",
-                "select a, min(s), ts from x sample by 5s",
+                "select a, min(s), ts from x sample by 5s align to first observation",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('едно','две','три') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false

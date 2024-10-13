@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,6 +49,11 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
         this.memoryTag = memoryTag;
         this.maxPages = maxPages;
         setPageSize(pageSize);
+    }
+
+    @Override
+    public long addressHi() {
+        return lim;
     }
 
     @Override
@@ -97,6 +102,11 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     @Override
     public long getExtendSegmentSize() {
         return 1L << sizeMsb;
+    }
+
+    @Override
+    public long getFd() {
+        return -1;
     }
 
     @Override
@@ -158,7 +168,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     private void extend0(long size) {
-
         if (size == 0 && pageAddress == 0) {
             return;
         }

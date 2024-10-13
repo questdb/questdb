@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,33 +40,33 @@ public class DateFunctionTest {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testChar() {
+    public void testGetChar() {
         function.getChar(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
+    public void testGetGeoByte() {
         function.getGeoByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
+    public void testGetGeoInt() {
         function.getGeoInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
+    public void testGetGeoLong() {
         function.getGeoLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
+    public void testGetGeoShort() {
         function.getGeoShort(null);
     }
 
@@ -120,15 +120,15 @@ public class DateFunctionTest {
         final DateFunction function = new DateFunction() {
             @Override
             public long getDate(Record rec) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
 
             @Override
-            public boolean isReadThreadSafe() {
+            public boolean isThreadSafe() {
                 return true;
             }
         };
-        Assert.assertEquals(Numbers.LONG_NaN, function.getTimestamp(null));
+        Assert.assertEquals(Numbers.LONG_NULL, function.getTimestamp(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -143,12 +143,7 @@ public class DateFunctionTest {
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetStr() {
-        function.getStr(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr2() {
-        function.getStr(null, null);
+        function.getStrA(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -177,17 +172,37 @@ public class DateFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256() {
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
         function.getLong256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256A() {
+    public void testGetLong256A() {
         function.getLong256A(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256B() {
+    public void testGetLong256B() {
         function.getLong256B(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharA() {
+        function.getVarcharA(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetVarcharB() {
+        function.getVarcharB(null);
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,12 +44,12 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putTimestamp(valueIndex, arg.getTimestamp(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         mapValue.maxLong(valueIndex, arg.getTimestamp(record));
     }
 
@@ -74,42 +74,42 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.TIMESTAMP);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return UnaryFunction.super.isReadThreadSafe();
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMax = srcValue.getLong(valueIndex);
         long destMax = destValue.getLong(valueIndex);
-        if (srcMax > destMax || destMax == Numbers.LONG_NaN) {
+        if (srcMax > destMax) {
             destValue.putLong(valueIndex, srcMax);
         }
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.TIMESTAMP);
-    }
-
-    @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putTimestamp(valueIndex, Numbers.LONG_NaN);
+        mapValue.putTimestamp(valueIndex, Numbers.LONG_NULL);
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

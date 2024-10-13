@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,8 +27,10 @@ package io.questdb.test.cutlass.json;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.test.ServerMainVectorGroupByTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.AfterClass;
@@ -229,7 +231,7 @@ public class JsonLexerTest {
                 p.of(path);
             }
             long l = Files.length(p.$());
-            int fd = TestFilesFacadeImpl.INSTANCE.openRO(p);
+            long fd = TestFilesFacadeImpl.INSTANCE.openRO(p.$());
             JsonParser listener = new NoOpParser();
             try {
                 long buf = Unsafe.malloc(l, MemoryTag.NATIVE_DEFAULT);
@@ -792,5 +794,10 @@ public class JsonLexerTest {
         @Override
         public void onEvent(int code, CharSequence tag, int position) {
         }
+    }
+
+    static {
+        // needed to prevent a false positive in memory leak detection
+        LogFactory.getLog(ServerMainVectorGroupByTest.class);
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,23 +26,42 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
+import io.questdb.std.ex.BytecodeException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class RecordSinkFactory {
     private static final int FIELD_POOL_OFFSET = 3;
+    private static final Log LOG = LogFactory.getLog(RecordSinkFactory.class);
+
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter
+    ) {
+        return getInstance(asm, columnTypes, columnFilter, null, null, null, null);
+    }
 
     public static RecordSink getInstance(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
-            boolean symAsString
+            @Nullable BitSet writeSymbolAsString
     ) {
-        return getInstance(asm, columnTypes, columnFilter, null, symAsString, null);
+        return getInstance(asm, columnTypes, columnFilter, null, null, writeSymbolAsString, null);
+    }
+
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar
+    ) {
+        return getInstance(asm, columnTypes, columnFilter, null, null, writeSymbolAsString, writeStringAsVarchar);
     }
 
     public static RecordSink getInstance(
@@ -50,19 +69,19 @@ public class RecordSinkFactory {
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
             @Nullable ObjList<Function> keyFunctions,
-            boolean symAsString
+            @Nullable BitSet writeSymbolAsString
     ) {
-        return getInstance(asm, columnTypes, columnFilter, keyFunctions, symAsString, null);
+        return getInstance(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null);
     }
 
     public static RecordSink getInstance(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
-            boolean symAsString,
-            @Transient @Nullable IntList skewIndex
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString
     ) {
-        return getInstance(asm, columnTypes, columnFilter, null, symAsString, skewIndex);
+        return getInstance(asm, columnTypes, columnFilter, null, skewIndex, writeSymbolAsString, null);
     }
 
     public static RecordSink getInstance(
@@ -70,8 +89,110 @@ public class RecordSinkFactory {
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
             @Nullable ObjList<Function> keyFunctions,
-            boolean symAsString,
+            @Nullable BitSet writeSymbolAsString,
             @Transient @Nullable IntList skewIndex
+    ) {
+        return getInstance(asm, columnTypes, columnFilter, keyFunctions, skewIndex, writeSymbolAsString, null);
+    }
+
+    public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar
+    ) {
+        final Class<RecordSink> clazz = getInstanceClass(
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar
+        );
+        return getInstance(clazz, keyFunctions);
+    }
+
+    /**
+     * Creates an instance of a record sink class previously generated via the
+     * {@link #getInstanceClass(BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, BitSet)} method.
+     */
+    public static RecordSink getInstance(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
+        try {
+            final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
+            if (keyFunctions != null) {
+                sink.setFunctions(keyFunctions);
+            }
+            return sink;
+        } catch (Exception e) {
+            LOG.critical().$("could not create an instance of RecordSink, cause: ").$(e).$();
+            throw BytecodeException.INSTANCE;
+        }
+    }
+
+    /**
+     * Same as the getInstance() methods, but returns the generated class instead of its instance.
+     * An instance can be later created via the {@link #getInstance(Class, ObjList)} method.
+     * <p>
+     * Used when creating per-worker sinks for parallel GROUP BY.
+     */
+    public static Class<RecordSink> getInstanceClass(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable BitSet writeSymbolAsString
+    ) {
+        return getInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null);
+    }
+
+    /**
+     * Sets function keys to the respective fields.
+     * Generates bytecode equivalent of the following Java code:
+     * <pre>
+     *  public void setFunctions(ObjList<Function> keyFunctions) {
+     *      this.f1 = keyFunctions.get(0);
+     *      this.f2 = keyFunctions.get(1);
+     *      // ...
+     *  }
+     * </pre>
+     */
+    private static void generateSetFunctions(
+            BytecodeAssembler asm,
+            int functionSize,
+            int firstFieldIndex,
+            int setFunctionsIndex,
+            int setFunctionsSigIndex,
+            int getIndex
+    ) {
+        asm.startMethod(setFunctionsIndex, setFunctionsSigIndex, 3, 3);
+        for (int i = 0; i < functionSize; i++) {
+            asm.aload(0);
+            asm.aload(1);
+            asm.iconst(i);
+            asm.invokeVirtual(getIndex);
+            asm.putfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+        }
+        asm.return_();
+        asm.endMethodCode();
+        // exceptions
+        asm.putShort(0);
+        // attributes
+        asm.putShort(0);
+        asm.endMethod();
+    }
+
+    private static Class<RecordSink> getInstanceClass(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar
     ) {
         asm.init(RecordSink.class);
         asm.setupPool();
@@ -96,10 +217,12 @@ public class RecordSinkFactory {
         final int rGetBool = asm.poolInterfaceMethod(Record.class, "getBool", "(I)Z");
         final int rGetFloat = asm.poolInterfaceMethod(Record.class, "getFloat", "(I)F");
         final int rGetDouble = asm.poolInterfaceMethod(Record.class, "getDouble", "(I)D");
-        final int rGetStr = asm.poolInterfaceMethod(Record.class, "getStr", "(I)Ljava/lang/CharSequence;");
-        final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSym", "(I)Ljava/lang/CharSequence;");
+        final int rGetStr = asm.poolInterfaceMethod(Record.class, "getStrA", "(I)Ljava/lang/CharSequence;");
+        final int rGetVarchar = asm.poolInterfaceMethod(Record.class, "getVarcharA", "(I)Lio/questdb/std/str/Utf8Sequence;");
+        final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSymA", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
+        final int rGetInterval = asm.poolInterfaceMethod(Record.class, "getInterval", "(I)Lio/questdb/std/Interval;");
 
         final int fGetInt = asm.poolInterfaceMethod(Function.class, "getInt", "(Lio/questdb/cairo/sql/Record;)I");
         final int fGetIPv4 = asm.poolInterfaceMethod(Function.class, "getIPv4", "(Lio/questdb/cairo/sql/Record;)I");
@@ -119,13 +242,16 @@ public class RecordSinkFactory {
         final int fGetBool = asm.poolInterfaceMethod(Function.class, "getBool", "(Lio/questdb/cairo/sql/Record;)Z");
         final int fGetFloat = asm.poolInterfaceMethod(Function.class, "getFloat", "(Lio/questdb/cairo/sql/Record;)F");
         final int fGetDouble = asm.poolInterfaceMethod(Function.class, "getDouble", "(Lio/questdb/cairo/sql/Record;)D");
-        final int fGetStr = asm.poolInterfaceMethod(Function.class, "getStr", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
+        final int fGetStr = asm.poolInterfaceMethod(Function.class, "getStrA", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
+        final int fGetVarchar = asm.poolInterfaceMethod(Function.class, "getVarcharA", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/str/Utf8Sequence;");
         final int fGetSym = asm.poolInterfaceMethod(Function.class, "getSymbol", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
         final int fGetBin = asm.poolInterfaceMethod(Function.class, "getBin", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/BinarySequence;");
         final int fGetRecord = asm.poolInterfaceMethod(Function.class, "getRecord", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/sql/Record;");
+        final int fGetInterval = asm.poolInterfaceMethod(Function.class, "getInterval", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/Interval;");
 
-        final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
         final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
+        final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
+        final int wPutIPv4 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putIPv4", "(I)V");
         final int wPutLong = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong", "(J)V");
         final int wPutLong256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong256", "(Lio/questdb/std/Long256;)V");
         final int wPutLong128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putLong128", "(JJ)V");
@@ -136,10 +262,13 @@ public class RecordSinkFactory {
         final int wPutFloat = asm.poolInterfaceMethod(RecordSinkSPI.class, "putFloat", "(F)V");
         final int wPutDouble = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDouble", "(D)V");
         final int wPutStr = asm.poolInterfaceMethod(RecordSinkSPI.class, "putStr", "(Ljava/lang/CharSequence;)V");
+        final int wPutVarchar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putVarchar", "(Lio/questdb/std/str/Utf8Sequence;)V");
+        final int wPutStrAsVarchar = asm.poolInterfaceMethod(RecordSinkSPI.class, "putVarchar", "(Ljava/lang/CharSequence;)V");
         final int wPutDate = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDate", "(J)V");
         final int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, "putTimestamp", "(J)V");
         final int wPutBin = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBin", "(Lio/questdb/std/BinarySequence;)V");
         final int wPutRecord = asm.poolInterfaceMethod(RecordSinkSPI.class, "putRecord", "(Lio/questdb/cairo/sql/Record;)V");
+        final int wPutInterval = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInterval", "(Lio/questdb/std/Interval;)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
@@ -194,7 +323,8 @@ public class RecordSinkFactory {
                     continue;
                 }
             }
-
+            final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
+            final boolean strAsVarchar = writeStringAsVarchar != null && writeStringAsVarchar.get(index);
             switch (factor * ColumnType.tagOf(type)) {
                 case ColumnType.INT:
                     asm.aload(2);
@@ -208,7 +338,7 @@ public class RecordSinkFactory {
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetIPv4, 1);
-                    asm.invokeInterface(wPutInt, 1);
+                    asm.invokeInterface(wPutIPv4, 1);
                     break;
                 case ColumnType.SYMBOL:
                     asm.aload(2);
@@ -216,7 +346,11 @@ public class RecordSinkFactory {
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     if (symAsString) {
                         asm.invokeInterface(rGetSym, 1);
-                        asm.invokeInterface(wPutStr, 1);
+                        if (strAsVarchar) {
+                            asm.invokeInterface(wPutStrAsVarchar, 1);
+                        } else {
+                            asm.invokeInterface(wPutStr, 1);
+                        }
                     } else {
                         asm.invokeInterface(rGetInt, 1);
                         asm.invokeInterface(wPutInt, 1);
@@ -290,7 +424,18 @@ public class RecordSinkFactory {
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetStr, 1);
-                    asm.invokeInterface(wPutStr, 1);
+                    if (strAsVarchar) {
+                        asm.invokeInterface(wPutStrAsVarchar, 1);
+                    } else {
+                        asm.invokeInterface(wPutStr, 1);
+                    }
+                    break;
+                case ColumnType.VARCHAR:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetVarchar, 1);
+                    asm.invokeInterface(wPutVarchar, 1);
                     break;
                 case ColumnType.BINARY:
                     asm.aload(2);
@@ -360,6 +505,13 @@ public class RecordSinkFactory {
 
                     asm.invokeInterface(wPutLong128, 4);
                     break;
+                case ColumnType.INTERVAL:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetInterval, 1);
+                    asm.invokeInterface(wPutInterval, 1);
+                    break;
                 case ColumnType.NULL:
                     break; // ignore
                 default:
@@ -373,6 +525,7 @@ public class RecordSinkFactory {
         //   w.putInt(f1.getInt(r));
         //   w.putStr(f2.getStr(r));
         //   ...
+        boolean fnStrAsVarchar = false; // TODO: pass as bitflag
         for (int i = 0; i < functionSize; i++) {
             final Function func = keyFunctions.getQuick(i);
             final int type = func.getType();
@@ -392,7 +545,7 @@ public class RecordSinkFactory {
                     asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
                     asm.aload(1);
                     asm.invokeInterface(fGetIPv4, 1);
-                    asm.invokeInterface(wPutInt, 1);
+                    asm.invokeInterface(wPutIPv4, 1);
                     break;
                 case ColumnType.SYMBOL:
                     asm.aload(2);
@@ -400,7 +553,11 @@ public class RecordSinkFactory {
                     asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
                     asm.aload(1);
                     asm.invokeInterface(fGetSym, 1);
-                    asm.invokeInterface(wPutStr, 1);
+                    if (fnStrAsVarchar) {
+                        asm.invokeInterface(wPutStrAsVarchar, 1);
+                    } else {
+                        asm.invokeInterface(wPutStr, 1);
+                    }
                     break;
                 case ColumnType.LONG:
                     asm.aload(2);
@@ -480,7 +637,19 @@ public class RecordSinkFactory {
                     asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
                     asm.aload(1);
                     asm.invokeInterface(fGetStr, 1);
-                    asm.invokeInterface(wPutStr, 1);
+                    if (fnStrAsVarchar) {
+                        asm.invokeInterface(wPutStrAsVarchar, 1);
+                    } else {
+                        asm.invokeInterface(wPutStr, 1);
+                    }
+                    break;
+                case ColumnType.VARCHAR:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetVarchar, 1);
+                    asm.invokeInterface(wPutVarchar, 1);
                     break;
                 case ColumnType.BINARY:
                     asm.aload(2);
@@ -558,6 +727,14 @@ public class RecordSinkFactory {
 
                     asm.invokeInterface(wPutLong128, 4);
                     break;
+                case ColumnType.INTERVAL:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetInterval, 1);
+                    asm.invokeInterface(wPutInterval, 1);
+                    break;
                 default:
                     throw new IllegalArgumentException("Unexpected function type: " + ColumnType.nameOf(type));
             }
@@ -582,47 +759,7 @@ public class RecordSinkFactory {
         // class attribute count
         asm.putShort(0);
 
-        RecordSink sink = asm.newInstance();
-        if (keyFunctions != null) {
-            sink.setFunctions(keyFunctions);
-        }
-        return sink;
-    }
-
-    /**
-     * Sets function keys to the respective fields.
-     * Generates bytecode equivalent of the following Java code:
-     * <pre>
-     *  public void setFunctions(ObjList<Function> keyFunctions) {
-     *      this.f1 = keyFunctions.get(0);
-     *      this.f2 = keyFunctions.get(1);
-     *      // ...
-     *  }
-     * </pre>
-     */
-    private static void generateSetFunctions(
-            BytecodeAssembler asm,
-            int functionSize,
-            int firstFieldIndex,
-            int setFunctionsIndex,
-            int setFunctionsSigIndex,
-            int getIndex
-    ) {
-        asm.startMethod(setFunctionsIndex, setFunctionsSigIndex, 3, 3);
-        for (int i = 0; i < functionSize; i++) {
-            asm.aload(0);
-            asm.aload(1);
-            asm.iconst(i);
-            asm.invokeVirtual(getIndex);
-            asm.putfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-        }
-        asm.return_();
-        asm.endMethodCode();
-        // exceptions
-        asm.putShort(0);
-        // attributes
-        asm.putShort(0);
-        asm.endMethod();
+        return asm.loadClass();
     }
 
     private static int getSkewedIndex(int src, @Transient @Nullable IntList skewIndex) {

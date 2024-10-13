@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,6 +40,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     private final IntList _histogram = new IntList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ObjList<TypeAdapter> columnTypes = new ObjList<>();
+    private final int defaultColumnType;
     private final CharSequenceObjHashMap<TypeAdapter> schemaColumns = new CharSequenceObjHashMap<>();
     private final StringSink tempSink = new StringSink();
     private final TypeManager typeManager;
@@ -56,6 +57,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
     ) {
         this.typeManager = typeManager;
         this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
+        this.defaultColumnType = textConfiguration.isUseLegacyStringDefault() ? ColumnType.STRING : ColumnType.VARCHAR;
     }
 
     @Override
@@ -202,7 +204,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
             }
 
             if (setDefault && unprobed) {
-                columnTypes.setQuick(i, typeManager.getTypeAdapter(ColumnType.STRING));
+                columnTypes.setQuick(i, typeManager.getTypeAdapter(defaultColumnType));
             }
         }
 
@@ -287,6 +289,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
                 columnNames.setQuick(i, normalise(utf8Sink));
             } else {
                 LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();
+                columnNames.setQuick(i, "");
             }
         }
     }

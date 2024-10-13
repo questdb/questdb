@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,20 +25,28 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.mp.TestWorkerPool;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
+
+import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
 public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;
@@ -111,6 +119,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(), 0.01,
+                rnd.nextDouble(),
                 rnd.nextDouble()
         );
 
@@ -149,8 +158,12 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             }
         }
 
+        Utf8StringSink sink = new Utf8StringSink();
         for (; symbolIndex < totalSymbols; symbolIndex++) {
-            symbols[symbolIndex] = strLen > 0 ? Chars.toString(rnd.nextChars(rnd.nextInt(strLen))) : "";
+            // Create strings with unicode chars
+            sink.clear();
+            rnd.nextUtf8Str(rnd.nextInt(strLen), sink);
+            symbols[symbolIndex] = strLen > 0 ? Utf8s.toString(sink) : "";
         }
         return symbols;
     }
@@ -169,10 +182,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     protected void runFuzz(Rnd rnd) throws Exception {
         assertMemoryLeak(() -> {
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
-            sharedWorkerPool.start(LOG);
-
             try {
+                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                sharedWorkerPool.start(LOG);
+
                 int size = rnd.nextInt(16 * 1024 * 1024);
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
                 setZeroWalPurgeInterval();
@@ -185,10 +198,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
         assertMemoryLeak(() -> {
-            O3Utils.setupWorkerPool(sharedWorkerPool, engine, null);
-            sharedWorkerPool.start(LOG);
-
             try {
+                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                sharedWorkerPool.start(LOG);
+
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(rnd, tableNameBase, tableCount, false, false);
             } finally {
@@ -201,8 +214,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         fuzzer.setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount);
     }
 
-    protected void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb) {
-        fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb, collAddProb, collRemoveProb, colRenameProb, dataAddProb, truncateProb, equalTsRowsProb, tableDropProb);
+    protected void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb, double colTypeChangeProb) {
+        fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb, collAddProb, collRemoveProb, colRenameProb, dataAddProb, truncateProb, equalTsRowsProb, tableDropProb, colTypeChangeProb);
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount) {
@@ -217,6 +230,23 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, o3PartitionSplitMaxCount);
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, walMaxLagSize);
         node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, maxWalFdCache);
+    }
+
+    protected void setFuzzProperties(Rnd rnd) {
+        node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, rnd.nextLong(MAX_WAL_APPLY_TIME_PER_TABLE_CEIL));
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, getRndO3PartitionSplit(rnd));
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, getRndO3PartitionSplitMaxCount(rnd));
+        node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, getMaxWalSize(rnd));
+        node1.setProperty(PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, getMaxWalFdCache(rnd));
+
+        int txnCount = Math.max(10, fuzzer.getTransactionCount());
+        long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, walChunk);
+
+        boolean mixedIOSupported = configuration.getFilesFacade().allowMixedIO(root);
+        if (mixedIOSupported) {
+            node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, rnd.nextBoolean());
+        }
     }
 
     protected void setRandomAppendPageSize(Rnd rnd) {

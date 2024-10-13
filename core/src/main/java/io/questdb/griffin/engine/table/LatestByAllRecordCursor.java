@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,26 +24,32 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 
 class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
-
     private final Map map;
     private final RecordSink recordSink;
 
-    public LatestByAllRecordCursor(Map map, DirectLongList rows, RecordSink recordSink, @NotNull IntList columnIndexes) {
-        super(rows, columnIndexes);
+    public LatestByAllRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull Map map,
+            @NotNull DirectLongList rows,
+            @NotNull RecordSink recordSink
+    ) {
+        super(configuration, metadata, rows);
         this.map = map;
         this.recordSink = recordSink;
     }
@@ -57,11 +63,12 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        if (!isOpen()) {
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        if (!isOpen) {
+            isOpen = true;
             map.reopen();
         }
-        super.of(dataFrameCursor, executionContext);
+        super.of(pageFrameCursor, executionContext);
     }
 
     @Override
@@ -71,20 +78,23 @@ class LatestByAllRecordCursor extends AbstractDescendingRecordListCursor {
 
     @Override
     protected void buildTreeMap() {
-        DataFrame frame;
-        while ((frame = dataFrameCursor.next()) != null) {
-            final int partitionIndex = frame.getPartitionIndex();
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            final int frameIndex = frameCount;
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
-            recordA.jumpTo(frame.getPartitionIndex(), rowHi);
-            for (long row = rowHi; row >= rowLo; row--) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                recordA.setRecordIndex(row);
+            frameAddressCache.add(frameCount, frame);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
+            recordA.setRowIndex(partitionHi);
+
+            for (long row = partitionHi - partitionLo; row >= 0; row--) {
+                recordA.setRowIndex(row);
                 MapKey key = map.withKey();
                 key.put(recordA, recordSink);
                 if (key.create()) {
-                    rows.add(Rows.toRowID(partitionIndex, row));
+                    rows.add(Rows.toRowID(frameIndex, row));
                 }
             }
         }

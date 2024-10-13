@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,6 +42,30 @@ public class CompactCharSequenceHashSetTest {
         }
 
         Assert.assertEquals(n, set.size());
+    }
+
+    @Test
+    public void testResetCapacity() {
+        Rnd rnd = new Rnd();
+        CompactCharSequenceHashSet set = new CompactCharSequenceHashSet();
+        int n = 1000;
+
+        for (int i = 0; i < n; i++) {
+            set.add(next(rnd).toString());
+        }
+
+        rnd.reset();
+        Assert.assertEquals(n, set.size());
+        for (int i = 0; i < n; i++) {
+            Assert.assertTrue(set.contains(next(rnd).toString()));
+        }
+
+        rnd.reset();
+        set.resetCapacity();
+        Assert.assertEquals(0, set.size());
+        for (int i = 0; i < n; i++) {
+            Assert.assertFalse(set.contains(next(rnd).toString()));
+        }
     }
 
     @Test

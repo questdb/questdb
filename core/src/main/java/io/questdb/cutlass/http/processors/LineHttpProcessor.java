@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.*;
 import io.questdb.log.Log;
@@ -152,6 +153,7 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
             state.setSendStatus(SendStatus.CONTENT);
             sendErrorContent(context);
         }
+        engine.getMetrics().line().totalIlpHttpBytesGauge().add(context.getTotalReceived());
     }
 
     @Override

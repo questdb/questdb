@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ public class CastStrToBooleanFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function arg0 = args.getQuick(0);
         if (arg0.isConstant()) {
-            return resolveBoolean(arg0.getStr(null)) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
+            return resolveBoolean(arg0.getStrA(null)) ? BooleanConstant.TRUE : BooleanConstant.FALSE;
         }
         return new Func(arg0);
     }
@@ -60,7 +60,7 @@ public class CastStrToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return resolveBoolean(arg.getStr(rec));
+            return resolveBoolean(arg.getStrA(rec));
         }
     }
 }

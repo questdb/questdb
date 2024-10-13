@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,13 +27,17 @@ package io.questdb.griffin.engine.functions.constants;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.CharFunction;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 
 public class CharConstant extends CharFunction implements ConstantFunction {
     public static final CharConstant ZERO = new CharConstant((char) 0);
+    private final Utf8String utf8Value;
     private final char value;
 
     public CharConstant(char value) {
         this.value = value;
+        this.utf8Value = value != 0 ? new Utf8String(value) : null;
     }
 
     public static CharConstant newInstance(char value) {
@@ -43,6 +47,16 @@ public class CharConstant extends CharFunction implements ConstantFunction {
     @Override
     public char getChar(Record rec) {
         return value;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        return utf8Value;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return utf8Value;
     }
 
     @Override

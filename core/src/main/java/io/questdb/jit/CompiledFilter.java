@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,14 +37,20 @@ public class CompiledFilter implements Closeable {
     private long fnAddress;
 
     public long call(
-            long colsAddress, long colsSize,
-            long varLenIndexesAddress,
-            long varsAddress, long varsSize, long rowsAddress, long rowsSize, long rowsStartOffset) {
+            long dataAddress,
+            long dataSize,
+            long varSizeAuxAddress,
+            long varsAddress,
+            long varsSize,
+            long rowsAddress,
+            long rowsSize,
+            long rowsStartOffset
+    ) {
         return FiltersCompiler.callFunction(
                 fnAddress,
-                colsAddress,
-                colsSize,
-                varLenIndexesAddress,
+                dataAddress,
+                dataSize,
+                varSizeAuxAddress,
                 varsAddress,
                 varsSize,
                 rowsAddress,

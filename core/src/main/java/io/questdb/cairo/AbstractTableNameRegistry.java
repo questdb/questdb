@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,20 +29,19 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 
 import java.util.Map;
-import java.util.function.Predicate;
 
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     protected final CairoConfiguration configuration;
     // drop marker must contain special symbols to avoid a table created by the same name
     protected final TableNameRegistryStore nameStore;
-    protected final Predicate<CharSequence> protectedTableResolver;
+    protected final TableFlagResolver tableFlagResolver;
     protected ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap;
     protected ConcurrentHashMap<TableToken> tableNameToTableTokenMap;
 
-    public AbstractTableNameRegistry(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
+    public AbstractTableNameRegistry(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
         this.configuration = configuration;
-        this.nameStore = new TableNameRegistryStore(configuration, protectedTableResolver);
-        this.protectedTableResolver = protectedTableResolver;
+        this.nameStore = new TableNameRegistryStore(configuration, tableFlagResolver);
+        this.tableFlagResolver = tableFlagResolver;
     }
 
     @Override
@@ -94,8 +93,8 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public boolean isTableDropped(TableToken tableToken) {
-        ReverseTableMapItem rmi = dirNameToTableTokenMap.get(tableToken.getDirName());
+    public boolean isTableDropped(CharSequence tableDir) {
+        ReverseTableMapItem rmi = dirNameToTableTokenMap.get(tableDir);
         return rmi != null && rmi.isDropped();
     }
 

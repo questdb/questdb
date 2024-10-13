@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -131,7 +131,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
                 int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {
                     tableToken = tableBucket.get(tableIndex);
-                    if (!TableUtils.isPendingRenameTempTableName(tableToken.getTableName(), tempPendingRenameTablePrefix) &&
+                    if (TableUtils.isFinalTableName(tableToken.getTableName(), tempPendingRenameTablePrefix) &&
                             !isSystemTable(tableToken)) {
                         break;
                     }
@@ -165,7 +165,7 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
-                public CharSequence getStr(int col) {
+                public CharSequence getStrA(int col) {
                     if (col == COLUMN_NAME) {
                         return tableToken.getTableName();
                     }
@@ -183,13 +183,12 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrB(int col) {
-                    return getStr(col);
+                    return getStrA(col);
                 }
 
                 @Override
                 public int getStrLen(int col) {
-                    CharSequence str = getStr(col);
-                    return str != null ? str.length() : TableUtils.NULL_LEN;
+                    return TableUtils.lengthOf(getStrA(col));
                 }
             }
         }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,6 +55,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final WindowContextImpl windowContext = new WindowContextImpl();
     private final int workerCount;
     private BindVariableService bindVariableService;
+    private boolean cacheHit = false;
     private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
     private MicrosecondClock clock;
     private boolean cloneSymbolTables = false;
@@ -65,7 +66,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final MicrosecondClock nowClock = () -> now;
     private boolean parallelFilterEnabled;
     private Rnd random;
-    private int requestFd = -1;
+    private long requestFd = -1;
     private SecurityContext securityContext;
     private boolean useSimpleCircuitBreaker;
 
@@ -130,7 +131,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 rowsHiKindPos,
                 exclusionKind,
                 exclusionKindPos,
-                timestampIndex);
+                timestampIndex
+        );
     }
 
     @Override
@@ -193,7 +195,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public int getRequestFd() {
+    public long getRequestFd() {
         return requestFd;
     }
 
@@ -224,7 +226,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void initNow() {
-        now = clock.getTicks();
+        this.now = clock.getTicks();
+    }
+
+    public boolean isCacheHit() {
+        return cacheHit;
     }
 
     @Override
@@ -255,6 +261,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
         timestampRequiredStack.push(flag ? 1 : 0);
+    }
+
+    @Override
+    public void setCacheHit(boolean value) {
+        cacheHit = value;
     }
 
     @Override
@@ -310,11 +321,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.random = rnd;
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
+        this.cacheHit = false;
         return this;
     }
 
-    public void with(int requestFd) {
+    public void with(long requestFd) {
         this.requestFd = requestFd;
+        this.cacheHit = false;
+        this.containsSecret = false;
     }
 
     public void with(BindVariableService bindVariableService) {
@@ -325,6 +339,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.circuitBreaker = circuitBreaker;
     }
 
+    public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext) {
+        return with(securityContext, null, null, -1, null);
+    }
+
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService) {
         return with(securityContext, bindVariableService, null, -1, null);
     }
@@ -333,7 +351,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             @NotNull SecurityContext securityContext,
             @Nullable BindVariableService bindVariableService,
             @Nullable Rnd rnd,
-            int requestFd,
+            long requestFd,
             @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
         this.securityContext = securityContext;
@@ -343,6 +361,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
         this.containsSecret = false;
         this.useSimpleCircuitBreaker = false;
+        this.cacheHit = false;
         return this;
     }
 

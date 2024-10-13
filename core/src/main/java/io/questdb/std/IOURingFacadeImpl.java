@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -98,7 +98,7 @@ public class IOURingFacadeImpl implements IOURingFacade {
     }
 
     static {
-        if (Os.type != Os.LINUX_AMD64 && Os.type != Os.LINUX_ARM64) {
+        if (Os.type != Os.LINUX) {
             available = false;
         } else {
             String kernelVersion = IOUringAccessor.kernelVersion();

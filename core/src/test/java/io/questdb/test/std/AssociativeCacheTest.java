@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,57 +24,151 @@
 
 package io.questdb.test.std;
 
-import io.questdb.metrics.Counter;
-import io.questdb.metrics.CounterImpl;
-import io.questdb.metrics.LongGauge;
-import io.questdb.metrics.LongGaugeImpl;
+import io.questdb.metrics.*;
 import io.questdb.std.*;
 import io.questdb.std.str.FlyweightDirectUtf16Sink;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
+
+@RunWith(Parameterized.class)
 public class AssociativeCacheTest {
+    private final CacheType cacheType;
+
+    public AssociativeCacheTest(CacheType cacheType) {
+        this.cacheType = cacheType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {CacheType.SIMPLE},
+                {CacheType.CONCURRENT},
+        });
+    }
 
     @Test
     public void testBasic() {
-        AssociativeCache<String> cache = new AssociativeCache<>(8, 64);
-        cache.put("X", "1");
-        cache.put("Y", "2");
-        cache.put("Z", "3");
-        Assert.assertEquals("1", cache.peek("X"));
-        Assert.assertEquals("2", cache.peek("Y"));
-        Assert.assertEquals("3", cache.peek("Z"));
-        Assert.assertEquals("1", cache.poll("X"));
-        Assert.assertEquals("2", cache.poll("Y"));
-        Assert.assertEquals("3", cache.poll("Z"));
-        Assert.assertNull(cache.poll("X"));
-        Assert.assertNull(cache.poll("Y"));
-        Assert.assertNull(cache.poll("Z"));
+        try (AssociativeCache<String> cache = createCache(8, 64)) {
+            cache.put("X", "1");
+            cache.put("Y", "2");
+            cache.put("Z", "3");
+            Assert.assertEquals("1", cache.poll("X"));
+            Assert.assertEquals("2", cache.poll("Y"));
+            Assert.assertEquals("3", cache.poll("Z"));
+            Assert.assertNull(cache.poll("X"));
+            Assert.assertNull(cache.poll("Y"));
+            Assert.assertNull(cache.poll("Z"));
+        }
+    }
+
+    @Test
+    public void testClear() {
+        try (AssociativeCache<String> cache = createCache(8, 8)) {
+            cache.put("X", "1");
+            cache.put("Y", "2");
+            cache.put("Z", "3");
+
+            cache.clear();
+
+            Assert.assertNull(cache.poll("X"));
+            Assert.assertNull(cache.poll("Y"));
+            Assert.assertNull(cache.poll("Z"));
+        }
+    }
+
+    @Test
+    public void testConcurrent() throws Exception {
+        Assume.assumeTrue(cacheType == CacheType.CONCURRENT);
+
+        final int N = 100_000;
+        try (AssociativeCache<AtomicInteger> cache = createCache(4, 4)) {
+            final int threadCount = 8;
+
+            final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+            final AtomicInteger errors = new AtomicInteger();
+            final ObjList<Thread> threads = new ObjList<>();
+            for (int t = 0; t < threadCount; t++) {
+                final int threadId = t;
+                Thread thread = new Thread(() -> {
+                    Rnd rnd = new Rnd(threadId, threadId);
+                    try {
+                        barrier.await();
+
+                        for (int i = 0; i < N; i++) {
+                            CharSequence k = rnd.nextString(2);
+                            AtomicInteger counter = cache.poll(k);
+                            if (counter != null) {
+                                // Manifest that we've acquired the counter.
+                                int c = counter.incrementAndGet();
+                                // Do some sleep.
+                                Os.pause();
+                                // Check that no one else acquired the counter.
+                                Assert.assertEquals(c, counter.get());
+                                cache.put(k, counter);
+                            } else {
+                                cache.put(k, new AtomicInteger());
+                            }
+                        }
+                    } catch (Throwable e) {
+                        errors.incrementAndGet();
+                    }
+                });
+                threads.add(thread);
+                thread.start();
+            }
+
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).join();
+            }
+
+            Assert.assertEquals(0, errors.get());
+        }
     }
 
     @Test
     public void testFull() {
-        AssociativeCache<String> cache = new AssociativeCache<>(8, 64);
-        CharSequenceHashSet all = new CharSequenceHashSet();
-        CharSequenceHashSet reject = new CharSequenceHashSet();
-        Rnd rnd = new Rnd();
-
-        for (int i = 0; i < 16 * 64; i++) {
-            CharSequence k = rnd.nextString(10);
-            all.add(k);
-            CharSequence o = cache.put(k, rnd.nextString(10));
-            if (o != null) {
-                reject.add(o);
+        final CharSequenceHashSet all = new CharSequenceHashSet();
+        final HashSet<Object> closed = new HashSet<>();
+        class CloseTracker implements QuietCloseable {
+            @Override
+            public void close() {
+                closed.add(this);
             }
         }
 
-        for (int i = 0; i < all.size(); i++) {
-            CharSequence k = all.get(i);
-            if (cache.peek(k) == null) {
-                Assert.assertTrue(reject.contains(k));
+        final int blocks = 8;
+        final int rows = 64;
+        try (AssociativeCache<CloseTracker> cache = createCache(blocks, rows)) {
+            final int N = 2 * blocks * rows;
+            final Rnd rnd = new Rnd();
+
+            Assert.assertEquals(blocks * rows, cache.capacity());
+
+            for (int i = 0; i < N; i++) {
+                CharSequence k = rnd.nextString(10);
+                all.add(k);
+                cache.put(k, new CloseTracker());
             }
+
+            for (int i = 0; i < all.size(); i++) {
+                CharSequence k = all.get(i);
+                CloseTracker v = cache.poll(k);
+                if (v != null) {
+                    Assert.assertFalse(closed.contains(v));
+                }
+            }
+            // At least cache.capacity() objects should be evicted.
+            Assert.assertTrue(closed.size() >= cache.capacity());
         }
-        Assert.assertEquals(512, reject.size());
     }
 
     @Test
@@ -82,33 +176,34 @@ public class AssociativeCacheTest {
         LongGauge gauge = new LongGaugeImpl("foobar");
         Counter hitCounter = new CounterImpl("hits");
         Counter missCounter = new CounterImpl("misses");
-        AssociativeCache<String> cache = new AssociativeCache<>(8, 64, gauge, hitCounter, missCounter);
 
-        Assert.assertEquals(0, gauge.getValue());
-        Assert.assertEquals(0, hitCounter.getValue());
-        Assert.assertEquals(0, missCounter.getValue());
+        try (AssociativeCache<String> cache = createCache(8, 64, gauge, hitCounter, missCounter)) {
+            Assert.assertEquals(0, gauge.getValue());
+            Assert.assertEquals(0, hitCounter.getValue());
+            Assert.assertEquals(0, missCounter.getValue());
 
-        for (int i = 0; i < 10; i++) {
-            cache.put(Integer.toString(i), Integer.toString(i));
-            Assert.assertEquals(i + 1, gauge.getValue());
+            for (int i = 0; i < 10; i++) {
+                cache.put(Integer.toString(i), Integer.toString(i));
+                Assert.assertEquals(i + 1, gauge.getValue());
+            }
+
+            cache.poll("0");
+            Assert.assertEquals(9, gauge.getValue());
+            Assert.assertEquals(1, hitCounter.getValue());
+            Assert.assertEquals(0, missCounter.getValue());
+            // Second poll() on the same key should be ignored.
+            Assert.assertNull(cache.poll("0"));
+            Assert.assertEquals(9, gauge.getValue());
+            Assert.assertEquals(1, hitCounter.getValue());
+            Assert.assertEquals(1, missCounter.getValue());
+            // put() should insert value for key-value pair cleared by poll().
+            cache.put("0", "42");
+            Assert.assertEquals(10, gauge.getValue());
+            Assert.assertEquals(1, hitCounter.getValue());
+            Assert.assertEquals(1, missCounter.getValue());
         }
 
-        cache.poll("0");
-        Assert.assertEquals(9, gauge.getValue());
-        Assert.assertEquals(1, hitCounter.getValue());
-        Assert.assertEquals(0, missCounter.getValue());
-        // Second poll() on the same key should be ignored.
-        Assert.assertNull(cache.poll("0"));
-        Assert.assertEquals(9, gauge.getValue());
-        Assert.assertEquals(1, hitCounter.getValue());
-        Assert.assertEquals(1, missCounter.getValue());
-        // put() should insert value for key-value pair cleared by poll().
-        cache.put("0", "42");
-        Assert.assertEquals(10, gauge.getValue());
-        Assert.assertEquals(1, hitCounter.getValue());
-        Assert.assertEquals(1, missCounter.getValue());
-
-        cache.clear();
+        // Cached gauge should go to zero once the cache is closed.
         Assert.assertEquals(0, gauge.getValue());
         Assert.assertEquals(1, hitCounter.getValue());
         Assert.assertEquals(1, missCounter.getValue());
@@ -116,56 +211,136 @@ public class AssociativeCacheTest {
 
     @Test
     public void testImmutableKeys() {
-        final AssociativeCache<String> cache = new AssociativeCache<>(8, 8);
-        long mem = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
-        final FlyweightDirectUtf16Sink dcs = new FlyweightDirectUtf16Sink();
+        try (AssociativeCache<String> cache = createCache(8, 8)) {
+            long mem = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
+            final FlyweightDirectUtf16Sink dcs = new FlyweightDirectUtf16Sink();
 
-        try {
-            Unsafe.getUnsafe().putChar(mem, 'A');
-            Unsafe.getUnsafe().putChar(mem + 2, 'B');
+            try {
+                Unsafe.getUnsafe().putChar(mem, 'A');
+                Unsafe.getUnsafe().putChar(mem + 2, 'B');
 
-            dcs.of(mem, mem + 4);
-            dcs.clear(4);
+                dcs.of(mem, mem + 4);
+                dcs.clear(4);
 
-            cache.put(dcs, "hello1");
+                cache.put(dcs, "hello1");
 
-            Unsafe.getUnsafe().putChar(mem, 'C');
-            Unsafe.getUnsafe().putChar(mem + 2, 'D');
+                Unsafe.getUnsafe().putChar(mem, 'C');
+                Unsafe.getUnsafe().putChar(mem + 2, 'D');
 
-            cache.put(dcs, "hello2");
+                cache.put(dcs, "hello2");
 
-            Unsafe.getUnsafe().putChar(mem, 'A');
-            Unsafe.getUnsafe().putChar(mem + 2, 'B');
+                Unsafe.getUnsafe().putChar(mem, 'A');
+                Unsafe.getUnsafe().putChar(mem + 2, 'B');
 
-            Assert.assertEquals("hello1", cache.peek(dcs));
+                Assert.assertEquals("hello1", cache.poll(dcs));
 
-            Unsafe.getUnsafe().putChar(mem, 'C');
-            Unsafe.getUnsafe().putChar(mem + 2, 'D');
+                Unsafe.getUnsafe().putChar(mem, 'C');
+                Unsafe.getUnsafe().putChar(mem + 2, 'D');
 
-            Assert.assertEquals("hello2", cache.peek(dcs));
-        } finally {
-            Unsafe.free(mem, 1024, MemoryTag.NATIVE_DEFAULT);
+                Assert.assertEquals("hello2", cache.poll(dcs));
+            } finally {
+                Unsafe.free(mem, 1024, MemoryTag.NATIVE_DEFAULT);
+            }
         }
     }
 
     @Test
     public void testMinSize() {
-        AssociativeCache<String> cache = new AssociativeCache<>(1, 1);
-        cache.put("X", "1");
-        cache.put("Y", "2");
-        cache.put("Z", "3");
-        Assert.assertNull(cache.peek("X"));
-        Assert.assertNull(cache.peek("Y"));
-        Assert.assertEquals("3", cache.peek("Z"));
+        try (AssociativeCache<String> cache = createCache(1, 1)) {
+            cache.put("X", "1");
+            cache.put("Y", "2");
+            cache.put("Z", "3");
+            Assert.assertNull(cache.poll("X"));
+            Assert.assertNull(cache.poll("Y"));
+            Assert.assertEquals("3", cache.poll("Z"));
+        }
+    }
+
+    @Test
+    public void testNoOpCache() {
+        Assume.assumeTrue(cacheType == CacheType.SIMPLE);
+
+        final AtomicInteger closed = new AtomicInteger();
+        class CloseTracker implements QuietCloseable {
+            @Override
+            public void close() {
+                closed.incrementAndGet();
+            }
+        }
+
+        try (AssociativeCache<CloseTracker> cache = new NoOpAssociativeCache<>()) {
+            final int N = 100;
+            final Rnd rnd = new Rnd();
+
+            Assert.assertEquals(0, cache.capacity());
+
+            for (int i = 0; i < N; i++) {
+                CharSequence k = rnd.nextString(10);
+                cache.put(k, new CloseTracker());
+            }
+            Assert.assertEquals(N, closed.get());
+
+            rnd.reset();
+
+            for (int i = 0; i < N; i++) {
+                CharSequence k = rnd.nextString(10);
+                Assert.assertNull(cache.poll(k));
+            }
+        }
     }
 
     @Test
     public void testNoUnnecessaryShift() {
-        final AssociativeCache<String> cache = new AssociativeCache<>(8, 8);
-        String value = "myval";
+        try (AssociativeCache<String> cache = createCache(8, 8)) {
+            String value = "myval";
 
-        cache.put("x", value);
-        Assert.assertEquals(value, cache.poll("x"));
-        cache.put("x", value);
+            cache.put("x", value);
+            Assert.assertEquals(value, cache.poll("x"));
+            cache.put("x", value);
+        }
+    }
+
+    @Test
+    public void testSimpleAssociativeCachePeek() {
+        Assume.assumeTrue(cacheType == CacheType.SIMPLE);
+
+        try (SimpleAssociativeCache<String> cache = new SimpleAssociativeCache<>(8, 64)) {
+            cache.put("X", "1");
+            cache.put("Y", "2");
+            cache.put("Z", "3");
+
+            Assert.assertEquals("1", cache.peek("X"));
+            Assert.assertEquals("2", cache.peek("Y"));
+            Assert.assertEquals("3", cache.peek("Z"));
+            Assert.assertEquals("1", cache.peek("X"));
+            Assert.assertEquals("2", cache.peek("Y"));
+            Assert.assertEquals("3", cache.peek("Z"));
+
+            Assert.assertEquals("1", cache.poll("X"));
+            Assert.assertEquals("2", cache.poll("Y"));
+            Assert.assertEquals("3", cache.poll("Z"));
+            Assert.assertNull(cache.poll("X"));
+            Assert.assertNull(cache.poll("Y"));
+            Assert.assertNull(cache.poll("Z"));
+        }
+    }
+
+    private <V> AssociativeCache<V> createCache(int blocks, int rows) {
+        return createCache(blocks, rows, NullLongGauge.INSTANCE, NullCounter.INSTANCE, NullCounter.INSTANCE);
+    }
+
+    private <V> AssociativeCache<V> createCache(int blocks, int rows, LongGauge cachedGauge, Counter hitCounter, Counter missCounter) {
+        switch (cacheType) {
+            case SIMPLE:
+                return new SimpleAssociativeCache<>(blocks, rows, cachedGauge, hitCounter, missCounter);
+            case CONCURRENT:
+                return new ConcurrentAssociativeCache<>(blocks, rows, cachedGauge, hitCounter, missCounter);
+            default:
+                throw new IllegalArgumentException("Unexpected cache type: " + cacheType);
+        }
+    }
+
+    public enum CacheType {
+        SIMPLE, CONCURRENT
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -157,7 +157,7 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             public long getLong(int col) {
                 switch (col) {
                     case OWNER_THREAD_COLUMN_INDEX:
-                        return owner_thread == -1 ? Numbers.LONG_NaN : owner_thread;
+                        return owner_thread == -1 ? Numbers.LONG_NULL : owner_thread;
                     case CURRENT_TXN_COLUMN_INDEX:
                         return currentTxn;
                     default:
@@ -166,14 +166,14 @@ public final class ReaderPoolRecordCursorFactory extends AbstractRecordCursorFac
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 assert col == TABLE_NAME_COLUMN_INDEX;
                 return tableToken.getTableName();
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override

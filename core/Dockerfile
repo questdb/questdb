@@ -1,14 +1,14 @@
-FROM debian:bullseye
+FROM debian:bookworm AS builder
 ARG tag_name
 
 ENV GOSU_VERSION=1.14
-ENV JDK_VERSION=17.0.7.7-1
+ENV JDK_VERSION=17.0.11.9-1
 
 RUN apt-get update \
-  && apt-get install --no-install-recommends git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
+    && apt-get install --no-install-recommends git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
 
-RUN wget -O- https://apt.corretto.aws/corretto.key | gpg --dearmor | tee /etc/apt/trusted.gpg.d/winehq.gpg >/dev/null && \
-    add-apt-repository 'deb https://apt.corretto.aws stable main' && \
+RUN wget -O - https://apt.corretto.aws/corretto.key | gpg --dearmor -o /usr/share/keyrings/corretto-keyring.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/corretto-keyring.gpg] https://apt.corretto.aws stable main" | tee /etc/apt/sources.list.d/corretto.list && \
     apt-get update && \
     apt-get install --no-install-recommends -y java-17-amazon-corretto-jdk=1:${JDK_VERSION} && \
     apt-get -y install maven
@@ -42,12 +42,62 @@ RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
     ./gosu --version && \
     ./gosu nobody true
 
-FROM debian:bullseye-slim
+##############################################################################
+######################### Build for RedHat OpenShift #########################
+##############################################################################
+
+FROM registry.access.redhat.com/ubi9/ubi AS rhel
+ARG tag_name
 
 WORKDIR /app
 
-COPY --from=0 /build/questdb/core/target/questdb-*-rt-* .
-COPY --from=0 /build/questdb/core/target/gosu /usr/local/bin/gosu
+COPY --from=builder /build/questdb/core/target/questdb-*-rt-* .
+
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+# Add license information
+RUN mkdir /licenses
+COPY LICENSE.txt /licenses
+
+LABEL name=QuestDB \
+    vendor=QuestDB \
+    summary="Provides the latest release of QuestDB" \
+    description="QuestDB is an open source time-series database for fast ingest and SQL queries" \
+    version=${tag_name:-master} \
+    release=${tag_name:-master} \
+    maintainer=QuestDB \
+    url="https://github.com/questdb/questdb"
+
+# Create questdb user and group
+RUN groupadd -g 10001 questdb && \
+    useradd -u 10001 -g 10001 -d /var/lib/questdb -M -s /sbin/nologin questdb && \
+    mkdir -p /var/lib/questdb && \
+    chown -R questdb:questdb /var/lib/questdb
+
+USER questdb
+
+WORKDIR /var/lib/questdb
+
+# Make port 9000 available to the world outside this container
+EXPOSE 9000/tcp
+EXPOSE 8812/tcp
+EXPOSE 9009/tcp
+
+ENV DO_CHOWN="false"
+ENTRYPOINT ["/docker-entrypoint.sh"]
+
+##############################################################################
+########################## General-use Docker build ##########################
+##############################################################################
+
+FROM debian:bookworm-slim AS questdb
+ARG tag_name
+
+WORKDIR /app
+
+COPY --from=builder /build/questdb/core/target/questdb-*-rt-* .
+COPY --from=builder /build/questdb/core/target/gosu /usr/local/bin/gosu
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh

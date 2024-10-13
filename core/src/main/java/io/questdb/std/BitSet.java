@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import java.util.Arrays;
  */
 public class BitSet implements Mutable {
     public static final int BITS_PER_WORD = 64;
+    private final int initialNBits;
     private long[] words;
 
     public BitSet() {
@@ -38,6 +39,7 @@ public class BitSet implements Mutable {
     }
 
     public BitSet(int nBits) {
+        this.initialNBits = nBits;
         this.words = new long[wordIndex(nBits - 1) + 1];
     }
 
@@ -51,17 +53,31 @@ public class BitSet implements Mutable {
     }
 
     public boolean get(int bitIndex) {
-        assert bitIndex >= 0;
-
         int wordIndex = wordIndex(bitIndex);
         return wordIndex < words.length && (words[wordIndex] & 1L << bitIndex) != 0L;
     }
 
-    public void set(int bitIndex) {
-        assert bitIndex >= 0;
-
+    /**
+     * Sets the given bit to 1 and returns its old value.
+     */
+    public boolean getAndSet(int bitIndex) {
         int wordIndex = wordIndex(bitIndex);
-        checkCapactiy(wordIndex + 1);
+        checkCapacity(wordIndex + 1);
+        boolean old = (words[wordIndex] & 1L << bitIndex) != 0L;
+        words[wordIndex] |= 1L << bitIndex;
+        return old;
+    }
+
+    public void resetCapacity() {
+        this.words = new long[wordIndex(initialNBits - 1) + 1];
+    }
+
+    /**
+     * Sets the given bit to 1.
+     */
+    public void set(int bitIndex) {
+        int wordIndex = wordIndex(bitIndex);
+        checkCapacity(wordIndex + 1);
         words[wordIndex] |= 1L << bitIndex;
     }
 
@@ -69,7 +85,7 @@ public class BitSet implements Mutable {
         return bitIndex >> 6;
     }
 
-    private void checkCapactiy(int wordsRequired) {
+    private void checkCapacity(int wordsRequired) {
         if (words.length < wordsRequired) {
             int newLen = Math.max(2 * words.length, wordsRequired);
             words = Arrays.copyOf(words, newLen);

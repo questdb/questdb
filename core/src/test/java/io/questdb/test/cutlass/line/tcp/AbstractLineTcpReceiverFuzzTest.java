@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,9 @@
 package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -33,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
 import org.junit.Assert;
@@ -88,7 +91,6 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
     private boolean exerciseTags = true;
     private int newColumnFactor = -1;
     private int nonAsciiValueFactor = -1;
-    private boolean sendStringsAsSymbols = false;
     private boolean sendSymbolsWithSpace = false;
     private SOCountDownLatch threadPushFinished;
     private long timestampMark = -1;
@@ -207,20 +209,21 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
 
             if (timestampMark < 0L) {
-                final TableReaderRecordCursor cursor = reader.getCursor();
-                // Assert reader min timestamp
-                long txnMinTs = reader.getMinTimestamp();
-                int timestampIndex = reader.getMetadata().getTimestampIndex();
-                if (cursor.hasNext()) {
-                    long dataMinTs = cursor.getRecord().getLong(timestampIndex);
-                    Assert.assertEquals(dataMinTs, txnMinTs);
-                    cursor.toTop();
-                }
+                try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+                    // Assert reader min timestamp
+                    long txnMinTs = reader.getMinTimestamp();
+                    int timestampIndex = reader.getMetadata().getTimestampIndex();
+                    if (cursor.hasNext()) {
+                        long dataMinTs = cursor.getRecord().getLong(timestampIndex);
+                        Assert.assertEquals(dataMinTs, txnMinTs);
+                        cursor.toTop();
+                    }
 
-                try {
-                    assertCursorTwoPass(expected, cursor, metadata);
-                } catch (AssertionError e) {
-                    throw new AssertionError("Table: " + table.getName(), e);
+                    try {
+                        assertCursorTwoPass(expected, cursor, metadata);
+                    } catch (AssertionError e) {
+                        throw new AssertionError("Table: " + table.getName(), e);
+                    }
                 }
             } else {
                 final String sql = tableName + " where timestamp > " + timestampMark;
@@ -291,7 +294,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
                 return valueBase + postfix;
             case STRING:
                 postfix = Character.toString(shouldFuzz(nonAsciiValueFactor) ? nonAsciiChars[random.nextInt(nonAsciiChars.length)] : random.nextChar());
-                return sendStringsAsSymbols ? valueBase + postfix : "\"" + valueBase + postfix + "\"";
+                return "\"" + valueBase + postfix + "\"";
             default:
                 return valueBase;
         }
@@ -449,7 +452,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
 
     void initFuzzParameters(
             int duplicatesFactor, int columnReorderingFactor, int columnSkipFactor, int newColumnFactor, int nonAsciiValueFactor,
-            boolean diffCasesInColNames, boolean exerciseTags, boolean sendStringsAsSymbols, boolean sendSymbolsWithSpace
+            boolean diffCasesInColNames, boolean exerciseTags, boolean sendSymbolsWithSpace
     ) {
         this.duplicatesFactor = duplicatesFactor;
         this.columnReorderingFactor = columnReorderingFactor;
@@ -458,10 +461,7 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
         this.newColumnFactor = newColumnFactor;
         this.diffCasesInColNames = diffCasesInColNames;
         this.exerciseTags = exerciseTags;
-        this.sendStringsAsSymbols = sendStringsAsSymbols;
         this.sendSymbolsWithSpace = sendSymbolsWithSpace;
-
-        symbolAsFieldSupported = sendStringsAsSymbols;
     }
 
     void initLoadParameters(int numOfLines, int numOfIterations, int numOfThreads, int numOfTables, long waitBetweenIterationsMillis) {

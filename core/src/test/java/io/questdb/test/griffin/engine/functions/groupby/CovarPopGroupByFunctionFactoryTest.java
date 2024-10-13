@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,17 +30,20 @@ import org.junit.Test;
 public class CovarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testCovarPopOneColumnAllNull() throws Exception {
+    public void testCovarPopAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "covar_pop\nNaN\n", "select covar_pop(x, y) from (select cast(null as double) x, x as y from long_sequence(100))"
+                "covar_pop\nnull\n", "select covar_pop(x, y) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))"
         ));
     }
 
     @Test
-    public void testCovarPopAllNull() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "covar_pop\nNaN\n", "select covar_pop(x, y) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))"
-        ));
+    public void testCovarPopNoValues() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tbl1(x int, y int)");
+            assertSql(
+                    "covar_pop\nnull\n", "select covar_pop(x, y) from tbl1"
+            );
+        });
     }
 
     @Test
@@ -96,13 +99,10 @@ public class CovarPopGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCovarPopNoValues() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int, y int)");
-            assertSql(
-                    "covar_pop\nNaN\n", "select covar_pop(x, y) from tbl1"
-            );
-        });
+    public void testCovarPopOneColumnAllNull() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "covar_pop\nnull\n", "select covar_pop(x, y) from (select cast(null as double) x, x as y from long_sequence(100))"
+        ));
     }
 
     @Test

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,18 +26,18 @@ package io.questdb.test.griffin.engine.functions.eq;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.eq.EqLong256FunctionFactory;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class EqLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void tesEqualNull() throws SqlException {
         CharSequence tok1 = "0x7ae65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
-        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
+        Long256 l1 = Numbers.parseLong256(tok1, new Long256Impl());
         Long256 l2 = Long256Impl.NULL_LONG256;
         callBySignature("=(HH)", l1, l2).andAssert(false);
         callBySignature("=(HH)", l2, l1).andAssert(false);
@@ -47,8 +47,8 @@ public class EqLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testEqual() throws SqlException {
         CharSequence tok1 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
         CharSequence tok2 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
-        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
-        Long256 l2 = Numbers.parseLong256(tok2, tok2.length(), new Long256Impl());
+        Long256 l1 = Numbers.parseLong256(tok1, new Long256Impl());
+        Long256 l2 = Numbers.parseLong256(tok2, new Long256Impl());
         callBySignature("=(HH)", l1, l2).andAssert(true);
         callBySignature("=(HH)", l2, l1).andAssert(true);
     }
@@ -74,8 +74,8 @@ public class EqLong256FunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testNotEqual() throws SqlException {
         CharSequence tok1 = "0x7ae65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
         CharSequence tok2 = "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7";
-        Long256 l1 = Numbers.parseLong256(tok1, tok1.length(), new Long256Impl());
-        Long256 l2 = Numbers.parseLong256(tok2, tok2.length(), new Long256Impl());
+        Long256 l1 = Numbers.parseLong256(tok1, new Long256Impl());
+        Long256 l2 = Numbers.parseLong256(tok2, new Long256Impl());
         callBySignature("=(HH)", l1, l2).andAssert(false);
         callBySignature("=(HH)", l2, l1).andAssert(false);
     }

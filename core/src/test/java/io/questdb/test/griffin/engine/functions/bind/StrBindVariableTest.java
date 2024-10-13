@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,8 @@
 package io.questdb.test.griffin.engine.functions.bind;
 
 import io.questdb.griffin.engine.functions.bind.StrBindVariable;
-import io.questdb.std.Numbers;
-import io.questdb.std.str.StringSink;
+import io.questdb.griffin.engine.functions.bind.VarcharBindVariable;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -34,27 +34,35 @@ import org.junit.Test;
 public class StrBindVariableTest {
     @Test
     public void testNull() {
-        StrBindVariable variable = new StrBindVariable(Numbers.MAX_SCALE);
-        Assert.assertNull(variable.getStr(null));
+        StrBindVariable variable = new StrBindVariable();
+        Assert.assertNull(variable.getStrA(null));
         Assert.assertNull(variable.getStrB(null));
         Assert.assertEquals(-1, variable.getStrLen(null));
+    }
 
-        StringSink sink = new StringSink();
-        variable.getStr(null, sink);
-        Assert.assertEquals(0, sink.length());
+    @Test
+    public void testNullVarchar() {
+        VarcharBindVariable variable = new VarcharBindVariable();
+        Assert.assertNull(variable.getVarcharA(null));
+        Assert.assertNull(variable.getVarcharB(null));
     }
 
     @Test
     public void testSimple() {
         String expected = "xyz";
-        StrBindVariable variable = new StrBindVariable(Numbers.MAX_SCALE);
+        StrBindVariable variable = new StrBindVariable();
         variable.setValue(expected);
-        TestUtils.assertEquals(expected, variable.getStr(null));
+        TestUtils.assertEquals(expected, variable.getStrA(null));
         TestUtils.assertEquals(expected, variable.getStrB(null));
         Assert.assertEquals(expected.length(), variable.getStrLen(null));
+    }
 
-        StringSink sink = new StringSink();
-        variable.getStr(null, sink);
-        TestUtils.assertEquals(expected, sink);
+    @Test
+    public void testSimpleVarchar() {
+        Utf8String expected = new Utf8String("йцукен");
+        VarcharBindVariable variable = new VarcharBindVariable();
+        variable.setValue(expected);
+        TestUtils.assertEquals(expected, variable.getVarcharA(null));
+        TestUtils.assertEquals(expected, variable.getVarcharB(null));
     }
 }

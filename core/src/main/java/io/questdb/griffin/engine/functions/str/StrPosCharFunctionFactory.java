@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -97,9 +97,9 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence str = this.strFunc.getStr(rec);
+            final CharSequence str = this.strFunc.getStrA(rec);
             if (str == null) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return strpos(str, substr);
         }
@@ -122,13 +122,13 @@ public class StrPosCharFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence str = this.strFunc.getStr(rec);
+            final CharSequence str = this.strFunc.getStrA(rec);
             if (str == null) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             final char substr = this.substrFunc.getChar(rec);
             if (substr == CharConstant.ZERO.getChar(null)) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return strpos(str, substr);
         }

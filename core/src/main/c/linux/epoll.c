@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@
 #include <sys/eventfd.h>
 #include <unistd.h>
 #include <stddef.h>
+#include "../share/sysutil.h"
 
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollCreate
@@ -41,7 +42,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollCtl
 
 JNIEXPORT jint JNICALL Java_io_questdb_network_EpollAccessor_epollWait
         (JNIEnv *e, jclass cl, jint epfd, jlong eventPtr, jint eventCount, jint timeout) {
-    return epoll_wait((int) epfd, (struct epoll_event *) eventPtr, eventCount, timeout);
+    int res;
+    RESTARTABLE(epoll_wait((int) epfd, (struct epoll_event *) eventPtr, eventCount, timeout), res);
+    return res;
 }
 
 JNIEXPORT jshort JNICALL Java_io_questdb_network_EpollAccessor_getDataOffset

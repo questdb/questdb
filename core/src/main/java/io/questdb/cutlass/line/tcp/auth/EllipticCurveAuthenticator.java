@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,9 +27,9 @@ package io.questdb.cutlass.line.tcp.auth;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.auth.AuthUtils;
-import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.ChallengeResponseMatcher;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Socket;
@@ -42,7 +42,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.security.SecureRandom;
 
-public class EllipticCurveAuthenticator implements Authenticator {
+public class EllipticCurveAuthenticator implements SocketAuthenticator {
     private static final Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
     private static final int MIN_BUF_SIZE = AuthUtils.CHALLENGE_LEN + 1;
 
@@ -233,11 +233,11 @@ public class EllipticCurveAuthenticator implements Authenticator {
     }
 
     private enum AuthState {
-        WAITING_FOR_KEY_ID(Authenticator.NEEDS_READ),
-        SENDING_CHALLENGE(Authenticator.NEEDS_WRITE),
-        WAITING_FOR_RESPONSE(Authenticator.NEEDS_READ),
-        COMPLETE(Authenticator.OK),
-        FAILED(Authenticator.NEEDS_DISCONNECT);
+        WAITING_FOR_KEY_ID(SocketAuthenticator.NEEDS_READ),
+        SENDING_CHALLENGE(SocketAuthenticator.NEEDS_WRITE),
+        WAITING_FOR_RESPONSE(SocketAuthenticator.NEEDS_READ),
+        COMPLETE(SocketAuthenticator.OK),
+        FAILED(SocketAuthenticator.NEEDS_DISCONNECT);
 
         private final int ioContextResult;
 

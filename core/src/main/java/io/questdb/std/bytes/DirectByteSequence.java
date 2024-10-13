@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import io.questdb.std.Unsafe;
 /**
  * Read-only interface for a sequence of bytes with native ptr access.
  */
-public interface DirectByteSequence extends ByteSequence {
+public interface DirectByteSequence extends ByteSequence, DirectSequence {
 
     /**
      * Returns byte at index.
@@ -42,23 +42,4 @@ public interface DirectByteSequence extends ByteSequence {
     default byte byteAt(int index) {
         return Unsafe.getUnsafe().getByte(ptr() + index);
     }
-
-    /**
-     * Address one past the last byte.
-     */
-    default long hi() {
-        return ptr() + size();
-    }
-
-    /**
-     * Address of the first byte (alias of `.ptr()`).
-     */
-    default long lo() {
-        return ptr();
-    }
-
-    /**
-     * Address of the first byte.
-     */
-    long ptr();
 }

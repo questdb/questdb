@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
@@ -43,15 +44,15 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putDouble(valueIndex, arg.getDouble(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         double max = mapValue.getDouble(valueIndex);
         double next = arg.getDouble(record);
-        if (next > max || Double.isNaN(max)) {
+        if (next > max || Numbers.isNull(max)) {
             mapValue.putDouble(valueIndex, next);
         }
     }
@@ -77,33 +78,33 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.DOUBLE);
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
-        return UnaryFunction.super.isReadThreadSafe();
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcMax = srcValue.getDouble(valueIndex);
         double destMax = destValue.getDouble(valueIndex);
-        if (srcMax > destMax || Double.isNaN(destMax)) {
+        if (srcMax > destMax || Numbers.isNull(destMax)) {
             destValue.putDouble(valueIndex, srcMax);
         }
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DOUBLE);
     }
 
     @Override
@@ -117,7 +118,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

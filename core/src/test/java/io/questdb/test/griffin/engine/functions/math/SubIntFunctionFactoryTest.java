@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,31 +25,36 @@
 package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.SubIntFunctionFactory;
-import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class SubIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
-    public void testLeftNan() throws SqlException {
-        call(Numbers.INT_NaN, 5).andAssert(Numbers.INT_NaN);
+    public void testLeftNan() throws Exception {
+        assertQuery("column\n\n", "SELECT null - 5");
     }
 
     @Test
-    public void testNegative() throws SqlException {
-        call(-3, 4).andAssert(-7);
+    public void testNegative() throws Exception {
+        assertQuery("column\n-7\n", "SELECT -3-4");
+        assertQuery("column\n-7\n", "SELECT -3- 4");
+        assertQuery("column\n-7\n", "SELECT -3 -4");
     }
 
     @Test
-    public void testRightNan() throws SqlException {
-        call(123, Numbers.INT_NaN).andAssert(Numbers.INT_NaN);
+    public void testRightNan() throws Exception {
+        assertQuery("column\nnull\n", "SELECT 123 - null");
     }
 
     @Test
-    public void testSimple() throws SqlException {
-        call(10, 8).andAssert(2);
+    public void testSimple() throws Exception {
+        assertQuery("column\n2\n", "SELECT 10 - 8");
+    }
+
+    @Test
+    public void testUnderflow() throws Exception {
+        assertQuery("column\n-2147483650\n", "SELECT -2147483648 - 2");
     }
 
     @Override

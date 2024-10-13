@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,13 +24,18 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -40,6 +45,8 @@ import org.jetbrains.annotations.Nullable;
  * getInt() are not cached.*
  */
 public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
+    private final Utf8StringSink utf8SinkA = new Utf8StringSink();
+    private final Utf8StringSink utf8SinkB = new Utf8StringSink();
 
     @Override
     public final BinarySequence getBin(Record rec) {
@@ -152,13 +159,8 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return getSymbol(rec);
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink sink) {
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -173,7 +175,15 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+        final CharSequence value = getSymbol(rec);
+        if (value != null) {
+            try {
+                return IntervalUtils.parseFloorPartialTimestamp(value);
+            } catch (NumericException e) {
+                throw CairoException.nonCritical().put("invalid timestamp: [").put(value).put(']');
+            }
+        }
+        return Numbers.LONG_NULL;
     }
 
     @Override
@@ -182,8 +192,30 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
+    public Utf8Sequence getVarcharA(Record rec) {
+        final CharSequence cs = getStrA(rec);
+        if (cs != null) {
+            utf8SinkA.clear();
+            utf8SinkA.put(cs);
+            return utf8SinkA;
+        }
+        return null;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        final CharSequence cs = getStrB(rec);
+        if (cs != null) {
+            utf8SinkB.clear();
+            utf8SinkB.put(cs);
+            return utf8SinkB;
+        }
+        return null;
+    }
+
+    @Override
+    public final int getVarcharSize(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     public abstract boolean isSymbolTableStatic();
@@ -198,5 +230,10 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     @Nullable
     public SymbolTable newSymbolTable() {
         return null;
+    }
+
+    @Override
+    public boolean supportsParallelism() {
+        return false;
     }
 }

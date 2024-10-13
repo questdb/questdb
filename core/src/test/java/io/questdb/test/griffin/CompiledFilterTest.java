@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -138,7 +138,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
             final String query = "select * from t1 where x = $1";
             final String expected = "x\tts\tj\n" +
-                    "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
+                    "3\t1970-01-01T00:00:02.000000Z\tnull\n" +
                     "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n";
 
             testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED, false);
@@ -347,8 +347,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
             final String query = "select * from x where l > 3 and j = null";
             final String expected = "l\tts\tj\n" +
-                    "4\t1970-01-05T15:31:40.000000Z\tNaN\n" +
-                    "5\t1970-01-05T15:40:00.000000Z\tNaN\n";
+                    "4\t1970-01-05T15:31:40.000000Z\tnull\n" +
+                    "5\t1970-01-05T15:40:00.000000Z\tnull\n";
 
             assertSql(expected, query);
             assertSqlRunWithJit(query);
@@ -459,7 +459,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 Assert.assertTrue("JIT was not enabled for query: " + query, factory.usesCompiledFilter());
 
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                    println(factory, cursor);
                 }
                 TestUtils.assertEquals("ts\tsym\n" +
                         "1970-01-05T15:23:20.000000Z\tB\n", sink);
@@ -470,7 +470,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                         SqlExecutionContext context2 = TestUtils.createSqlExecutionCtx(engine, bindService2);
                         RecordCursor cursor = factory.getCursor(context2)
                 ) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                    println(factory, cursor);
                 }
                 TestUtils.assertEquals("ts\tsym\n" +
                         "1970-01-05T15:31:40.000000Z\tC\n" +
@@ -510,7 +510,6 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     private void indexBindVariableReplacedContext(boolean jit) throws SqlException {
-
         bindVariableService.clear();
         bindVariableService.setInt(0, 1);
         bindVariableService.setInt(1, 1000);
@@ -523,7 +522,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
             }
 
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals("a\tl\n" +
                     "1000\t1\n", sink);
@@ -535,7 +534,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     SqlExecutionContext context2 = TestUtils.createSqlExecutionCtx(engine, bindService2);
                     RecordCursor cursor = factory.getCursor(context2)
             ) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals("a\tl\n" +
                     "1002\t2\n", sink);
@@ -556,7 +555,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
             }
 
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals("a\tl\n" +
                     "1000\t1\n", sink);
@@ -569,7 +568,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     SqlExecutionContext context2 = TestUtils.createSqlExecutionCtx(engine, bindService2);
                     RecordCursor cursor = factory.getCursor(context2)
             ) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                println(factory, cursor);
             }
             TestUtils.assertEquals("a\tl\n" +
                     "1002\t2\n", sink);
@@ -586,11 +585,11 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     " from long_sequence(1)) timestamp(ts)");
 
             bindVariableService.clear();
-            bindVariableService.setLong("l", Numbers.LONG_NaN);
+            bindVariableService.setLong("l", Numbers.LONG_NULL);
 
             // Here we expect a NULL value on the left side of the predicate,
             // so no rows should be returned
-            final String query = "select * from x where l + :l = " + (Numbers.LONG_NaN + value);
+            final String query = "select * from x where l + :l = " + (Numbers.LONG_NULL + value);
             final String expected = "l\tts\n";
 
             assertSql(expected, query);
@@ -624,8 +623,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
     private void testSelectAllBothPageFramesFilterWithColTops(int jitMode, boolean preTouch) throws Exception {
         final String query = "select * from t1 where x >= 3 and x <= 4";
         final String expected = "x\tts\tj\n" +
-                "3\t1970-01-01T00:00:02.000000Z\tNaN\n" +
-                "4\t1970-01-01T00:00:03.000000Z\tNaN\n" +
+                "3\t1970-01-01T00:00:02.000000Z\tnull\n" +
+                "4\t1970-01-01T00:00:03.000000Z\tnull\n" +
                 "3\t1970-01-01T00:01:42.000000Z\t7746536061816329025\n" +
                 "4\t1970-01-01T00:01:43.000000Z\t-6945921502384501475\n";
 

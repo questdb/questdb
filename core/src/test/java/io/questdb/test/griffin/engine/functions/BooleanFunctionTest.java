@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -47,7 +46,7 @@ public class BooleanFunctionTest {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
     };
@@ -63,13 +62,13 @@ public class BooleanFunctionTest {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
     };
 
     @Test
-    public void testChar() {
+    public void testGetChar() {
         Assert.assertEquals('F', functionA.getChar(null));
         final BooleanFunction function = new BooleanFunction() {
             @Override
@@ -78,7 +77,7 @@ public class BooleanFunctionTest {
             }
 
             @Override
-            public boolean isReadThreadSafe() {
+            public boolean isThreadSafe() {
                 return true;
             }
         };
@@ -86,22 +85,22 @@ public class BooleanFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
+    public void testGetGeoByte() {
         functionA.getGeoByte(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
+    public void testGetGeoInt() {
         functionA.getGeoInt(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
+    public void testGetGeoLong() {
         functionA.getGeoLong(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
+    public void testGetGeoShort() {
         functionA.getGeoShort(null);
     }
 
@@ -170,26 +169,8 @@ public class BooleanFunctionTest {
 
     @Test
     public void testGetStr() {
-        Assert.assertEquals("false", functionA.getStr(null));
-        Assert.assertEquals("true", functionB.getStr(null));
-    }
-
-    @Test
-    public void testGetStr2() {
-        final StringSink sink = new StringSink();
-        functionA.getStr(null, sink);
-        TestUtils.assertEquals("false", sink);
-
-        sink.clear();
-
-        functionB.getStr(null, sink);
-        TestUtils.assertEquals("true", sink);
-    }
-
-    @Test
-    public void testGetStrB() {
-        Assert.assertEquals("false", functionA.getStr(null));
-        Assert.assertEquals("true", functionB.getStr(null));
+        Assert.assertEquals("false", functionA.getStrA(null));
+        Assert.assertEquals("true", functionB.getStrA(null));
     }
 
     @Test
@@ -217,17 +198,39 @@ public class BooleanFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256() {
+    public void testGetLong128Hi() {
+        functionA.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        functionA.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
         functionA.getLong256(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256A() {
+    public void testGetLong256A() {
         functionA.getLong256A(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256B() {
+    public void testGetLong256B() {
         functionA.getLong256B(null);
+    }
+
+    @Test
+    public void testGetVarcharA() {
+        TestUtils.assertEquals("false", functionA.getVarcharA(null));
+        TestUtils.assertEquals("true", functionB.getVarcharA(null));
+    }
+
+    @Test
+    public void testGetVarcharB() {
+        TestUtils.assertEquals("false", functionA.getVarcharB(null));
+        TestUtils.assertEquals("true", functionB.getVarcharB(null));
     }
 }

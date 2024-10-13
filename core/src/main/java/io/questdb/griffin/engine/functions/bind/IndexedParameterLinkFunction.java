@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
 
 public class IndexedParameterLinkFunction implements ScalarFunction {
     private final int position;
@@ -170,13 +170,8 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return getBase().getStr(rec);
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink sink) {
-        getBase().getStr(rec, sink);
+    public CharSequence getStrA(Record rec) {
+        return getBase().getStrA(rec);
     }
 
     @Override
@@ -209,6 +204,21 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         return type;
     }
 
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        return getBase().getVarcharA(rec);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        return getBase().getVarcharB(rec);
+    }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        return getBase().getVarcharSize(rec);
+    }
+
     public int getVariableIndex() {
         return variableIndex;
     }
@@ -217,21 +227,15 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         base = executionContext.getBindVariableService().getFunction(variableIndex);
         if (base == null) {
-            throw SqlException.position(0).put("undefined bind variable: ").put(variableIndex);
+            throw SqlException.position(position).put("undefined bind variable: ").put(variableIndex);
         }
+        this.type = base.getType();
         base.init(symbolTableSource, executionContext);
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        switch (type) {
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-            case ColumnType.LONG256:
-                return false;
-            default:
-                return true;
-        }
+    public boolean isThreadSafe() {
+        return true;
     }
 
     @Override

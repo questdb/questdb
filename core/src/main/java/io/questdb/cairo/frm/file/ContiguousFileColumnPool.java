@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -70,37 +70,43 @@ public class ContiguousFileColumnPool implements FrameColumnPool, Closeable {
     private class ColumnTypePool implements FrameColumnTypePool {
 
         @Override
-        public FrameColumn create(Path partitionPath, CharSequence columnName, long columnTxn, int columnType, int indexBlockCapacity, long columnTop, int columnIndex, boolean isEmpty) {
+        public FrameColumn create(
+                Path partitionPath,
+                CharSequence columnName,
+                long columnTxn,
+                int columnType,
+                int indexBlockCapacity,
+                long columnTop,
+                int columnIndex,
+                boolean isEmpty
+        ) {
             boolean isIndexed = indexBlockCapacity > 0;
-            switch (columnType) {
-                case ColumnType.SYMBOL:
-                    if (canWrite && isIndexed) {
-                        ContiguousFileIndexedFrameColumn indexedColumn = getIndexedColumn();
-                        indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex, isEmpty);
-                        return indexedColumn;
-                    }
 
-                default: {
-                    ContiguousFileFixFrameColumn column = getFixColumn();
-                    if (canWrite) {
-                        column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
-                    } else {
-                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
-                    }
-                    return column;
+            if (ColumnType.isVarSize(columnType)) {
+                ContiguousFileVarFrameColumn column = getVarColumn();
+                if (canWrite) {
+                    column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+                } else {
+                    column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
                 }
+                return column;
+            }
 
-                case ColumnType.STRING:
-                case ColumnType.BINARY: {
-                    ContiguousFileVarFrameColumn column = getVarColumn();
-                    if (canWrite) {
-                        column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
-                    } else {
-                        column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
-                    }
-                    return column;
+            if (columnType == ColumnType.SYMBOL) {
+                if (canWrite && isIndexed) {
+                    ContiguousFileIndexedFrameColumn indexedColumn = getIndexedColumn();
+                    indexedColumn.ofRW(partitionPath, columnName, columnTxn, columnType, indexBlockCapacity, columnTop, columnIndex, isEmpty);
+                    return indexedColumn;
                 }
             }
+
+            ContiguousFileFixFrameColumn column = getFixColumn();
+            if (canWrite) {
+                column.ofRW(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex);
+            } else {
+                column.ofRO(partitionPath, columnName, columnTxn, columnType, columnTop, columnIndex, isEmpty);
+            }
+            return column;
         }
 
         private ContiguousFileFixFrameColumn getFixColumn() {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import org.jetbrains.annotations.Nullable;
 public class TableColumnMetadata implements Plannable {
     @Nullable
     private final RecordMetadata metadata;
+    private final int replacingIndex;
     private final boolean symbolTableStatic;
     private final int writerIndex;
     private int indexValueBlockCapacity;
@@ -45,7 +46,7 @@ public class TableColumnMetadata implements Plannable {
     }
 
     public TableColumnMetadata(String name, int type, @Nullable RecordMetadata metadata) {
-        this(name, type, false, 0, false, metadata, -1, false);
+        this(name, type, false, 0, false, metadata, -1, false, 0);
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
         assert !ColumnType.isSymbol(type);
@@ -59,7 +60,7 @@ public class TableColumnMetadata implements Plannable {
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata
     ) {
-        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1, false);
+        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1, false, 0);
     }
 
     public TableColumnMetadata(
@@ -72,6 +73,20 @@ public class TableColumnMetadata implements Plannable {
             int writerIndex,
             boolean dedupKeyFlag
     ) {
+        this(name, type, indexed, indexValueBlockCapacity, symbolTableStatic, metadata, writerIndex, dedupKeyFlag, 0);
+    }
+
+    public TableColumnMetadata(
+            String name,
+            int type,
+            boolean indexed,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic,
+            @Nullable RecordMetadata metadata,
+            int writerIndex,
+            boolean dedupKeyFlag,
+            int replacingIndex
+    ) {
         this.name = name;
         this.type = type;
         this.indexed = indexed;
@@ -80,6 +95,7 @@ public class TableColumnMetadata implements Plannable {
         this.metadata = GenericRecordMetadata.copyOf(metadata);
         this.writerIndex = writerIndex;
         this.isDedupKey = dedupKeyFlag;
+        this.replacingIndex = replacingIndex;
     }
 
     public int getIndexValueBlockCapacity() {
@@ -93,6 +109,10 @@ public class TableColumnMetadata implements Plannable {
 
     public String getName() {
         return name;
+    }
+
+    public int getReplacingIndex() {
+        return replacingIndex;
     }
 
     public int getType() {

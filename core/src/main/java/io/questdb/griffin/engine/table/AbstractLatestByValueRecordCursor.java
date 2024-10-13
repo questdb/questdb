@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,12 +23,12 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-abstract class AbstractLatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
-
+abstract class AbstractLatestByValueRecordCursor extends AbstractPageFrameRecordCursor {
     protected final int columnIndex;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean hasNext;
@@ -36,8 +36,13 @@ abstract class AbstractLatestByValueRecordCursor extends AbstractDataFrameRecord
     protected boolean isRecordFound;
     protected int symbolKey;
 
-    AbstractLatestByValueRecordCursor(@NotNull IntList columnIndexes, int columnIndex, int symbolKey) {
-        super(columnIndexes);
+    AbstractLatestByValueRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            int columnIndex,
+            int symbolKey
+    ) {
+        super(configuration, metadata);
         this.columnIndex = columnIndex;
         this.symbolKey = symbolKey;
     }

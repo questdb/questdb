@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,6 +34,11 @@ import io.questdb.cairo.vm.api.MemoryFR;
 public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR, MemoryCR {
 
     @Override
+    public long addressHi() {
+        return lim;
+    }
+
+    @Override
     public void close() {
         // nothing to do, we do not own the memory
         this.pageAddress = 0;
@@ -42,6 +47,11 @@ public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR, MemoryC
     @Override
     public void extend(long size) {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public long getFd() {
+        return -1;
     }
 
     @Override

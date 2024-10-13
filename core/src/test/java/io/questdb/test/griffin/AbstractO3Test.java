@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,13 +44,10 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Rule;
+import org.jetbrains.annotations.Nullable;
+import org.junit.*;
 import org.junit.rules.Timeout;
 
-import java.io.File;
 import java.util.concurrent.TimeUnit;
 
 public class AbstractO3Test extends AbstractTest {
@@ -58,6 +55,7 @@ public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink2 = new StringSink();
     protected static int commitMode = CommitMode.NOSYNC;
     protected static int dataAppendPageSize = -1;
+    protected static int o3ColumnMemorySize = -1;
     protected static boolean mixedIOEnabled;
     protected static boolean mixedIOEnabledFFDefault;
     protected static int o3MemMaxPages = -1;
@@ -69,6 +67,11 @@ public class AbstractO3Test extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private RecordToRowCopier copier;
+
+    @BeforeClass
+    public static void setUpClass() {
+        ColumnType.makeUtf8DefaultString();
+    }
 
     @Before
     public void clearRecordToRowCopier() {
@@ -91,6 +94,7 @@ public class AbstractO3Test extends AbstractTest {
         commitMode = CommitMode.NOSYNC;
         mixedIOEnabled = mixedIOEnabledFFDefault;
         dataAppendPageSize = -1;
+        o3ColumnMemorySize = -1;
         o3MemMaxPages = -1;
         partitionO3SplitThreshold = -1;
         super.tearDown();
@@ -137,19 +141,8 @@ public class AbstractO3Test extends AbstractTest {
         );
     }
 
-    static void assertMaxTimestamp(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext executionContext,
-            String expectedSql
-    ) throws SqlException {
-        TestUtils.printSql(
-                compiler,
-                executionContext,
-                expectedSql,
-                sink2
-        );
-
+    static void assertMaxTimestamp(CairoEngine engine, SqlExecutionContext executionContext) throws SqlException {
+        engine.print("select max(ts) from y", sink2, executionContext);
         assertMaxTimestamp(engine, sink2);
     }
 
@@ -212,15 +205,15 @@ public class AbstractO3Test extends AbstractTest {
             final CairoEngine engine,
             final SqlCompiler compiler,
             final SqlExecutionContext sqlExecutionContext,
-            final String referenceTableDDL,
-            final String o3InsertSQL
+            final @Nullable String referenceTableDDL,
+            final @Nullable String o3InsertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         if (referenceTableDDL != null) {
-            compiler.compile(referenceTableDDL, sqlExecutionContext);
+            engine.ddl(referenceTableDDL, sqlExecutionContext);
         }
         if (o3InsertSQL != null) {
-            compiler.compile(o3InsertSQL, sqlExecutionContext);
+            engine.ddl(o3InsertSQL, sqlExecutionContext);
         }
 
         TestUtils.assertEqualsExactOrder(
@@ -240,17 +233,6 @@ public class AbstractO3Test extends AbstractTest {
         );
     }
 
-
-    protected static void assertSqlResultAgainstFile(
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext,
-            String sql,
-            String resourceName
-    ) throws SqlException {
-        AbstractO3Test.printSqlResult(compiler, sqlExecutionContext, sql);
-        TestUtils.assertEquals(new File(TestUtils.getTestResourcePath(resourceName)), sink);
-    }
-
     static void assertXCount(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         printSqlResult(compiler, sqlExecutionContext, "select count() from x");
         TestUtils.assertEquals(sink2, sink);
@@ -258,7 +240,7 @@ public class AbstractO3Test extends AbstractTest {
 
     protected static void assertXCountY(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         TestUtils.assertEquals(compiler, sqlExecutionContext, "select count() from x", "select count() from y");
-        assertMaxTimestamp(engine, compiler, sqlExecutionContext, "select max(ts) from y");
+        assertMaxTimestamp(engine, sqlExecutionContext);
     }
 
     protected static void assertXY(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -311,6 +293,12 @@ public class AbstractO3Test extends AbstractTest {
 
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        // reuse root as input root for tests
+                        return root;
+                    }
+
+                    @Override
                     public boolean disableColumnPurgeJob() {
                         return false;
                     }
@@ -332,6 +320,9 @@ public class AbstractO3Test extends AbstractTest {
 
                     @Override
                     public int getO3ColumnMemorySize() {
+                        if (o3ColumnMemorySize != -1) {
+                            return o3ColumnMemorySize;
+                        }
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
 
@@ -356,6 +347,11 @@ public class AbstractO3Test extends AbstractTest {
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        return root;
+                    }
+
                     @Override
                     public boolean disableColumnPurgeJob() {
                         return false;
@@ -383,6 +379,9 @@ public class AbstractO3Test extends AbstractTest {
 
                     @Override
                     public int getO3ColumnMemorySize() {
+                        if (o3ColumnMemorySize != -1) {
+                            return o3ColumnMemorySize;
+                        }
                         return dataAppendPageSize > 0 ? dataAppendPageSize : super.getO3ColumnMemorySize();
                     }
 
@@ -466,7 +465,7 @@ public class AbstractO3Test extends AbstractTest {
         }
     }
 
-    protected enum ParallelMode {
+    public enum ParallelMode {
         CONTENDED, PARALLEL
     }
 }

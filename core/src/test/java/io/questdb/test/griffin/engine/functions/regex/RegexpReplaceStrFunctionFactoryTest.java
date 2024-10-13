@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,17 +36,21 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullRegex() throws Exception {
-        assertFailure(
-                "[29] NULL regex",
-                "select regexp_replace('abc', null, 'def')"
+        assertQuery(
+                "regexp_replace\n" +
+                        "\n",
+                "select regexp_replace('abc', null, 'def')",
+                true
         );
     }
 
     @Test
     public void testNullReplacement() throws Exception {
-        assertFailure(
-                "[34] NULL replacement",
-                "select regexp_replace('abc', 'a', null)"
+        assertQuery(
+                "regexp_replace\n" +
+                        "\n",
+                "select regexp_replace('abc', 'a', null)",
+                true
         );
     }
 
@@ -68,14 +72,10 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
                     "\n" +
                     "example2.com\n";
             ddl("create table x as (select rnd_str('https://example1.com/abc','https://example2.com/def','http://example3.com',null) url from long_sequence(5))");
-
-            try (RecordCursorFactory factory = select("select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x")) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
-                    TestUtils.assertEquals(expected, sink);
-                }
-            }
+            assertSql(
+                    expected,
+                    "select regexp_replace(url, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') from x"
+            );
         });
     }
 
@@ -92,7 +92,7 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testWhenChainedCallsExceedsMaxLengthExceptionIsThrown() throws Exception {
         assertFailure(
-                "[-1] breached memory limit set for regexp_replace(SSS) [maxLength=1048576]",
+                "breached memory limit set for regexp_replace(SSS) [maxLength=1048576]",
                 "select regexp_replace(regexp_replace(regexp_replace(regexp_replace( 'aaaaaaaaaaaaaaaaaaaa', 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa')"
         );
     }
@@ -103,8 +103,7 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
                     final RecordCursorFactory factory = select(sql);
                     final RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
-                sink.clear();
-                printer.print(cursor, factory.getMetadata(), true, sink);
+                println(factory, cursor);
                 Assert.fail();
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), expectedMsg);

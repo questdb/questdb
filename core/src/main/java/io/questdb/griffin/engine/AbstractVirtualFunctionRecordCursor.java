@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,6 +53,9 @@ public abstract class AbstractVirtualFunctionRecordCursor implements RecordCurso
     @Override
     public void close() {
         baseCursor = Misc.free(baseCursor);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).cursorClosed();
+        }
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
 
 public class ShardedMapCursor implements MapRecordCursor {
     private final ShardedMapRecord recordA = new ShardedMapRecord(true);
@@ -249,13 +249,8 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public CharSequence getStr(int columnIndex) {
-            return baseRecord.getStr(columnIndex);
-        }
-
-        @Override
-        public void getStr(int columnIndex, Utf16Sink sink) {
-            baseRecord.getStr(columnIndex, sink);
+        public CharSequence getStrA(int columnIndex) {
+            return baseRecord.getStrA(columnIndex);
         }
 
         @Override
@@ -269,8 +264,8 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public CharSequence getSym(int columnIndex) {
-            return baseRecord.getSym(columnIndex);
+        public CharSequence getSymA(int columnIndex) {
+            return baseRecord.getSymA(columnIndex);
         }
 
         @Override
@@ -284,7 +279,22 @@ public class ShardedMapCursor implements MapRecordCursor {
         }
 
         @Override
-        public int keyHashCode() {
+        public Utf8Sequence getVarcharA(int col) {
+            return baseRecord.getVarcharA(col);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(int col) {
+            return baseRecord.getVarcharB(col);
+        }
+
+        @Override
+        public int getVarcharSize(int columnIndex) {
+            return baseRecord.getVarcharSize(columnIndex);
+        }
+
+        @Override
+        public long keyHashCode() {
             return baseRecord.keyHashCode();
         }
 

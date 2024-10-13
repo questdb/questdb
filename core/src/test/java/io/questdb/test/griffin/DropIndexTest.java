@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -92,11 +92,10 @@ public class DropIndexTest extends AbstractCairoTest {
 
     @Test
     public void dropIndexColumnTop() throws SqlException, NumericException {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
-            model.col("a", ColumnType.INT);
-            model.timestamp("ts");
-            createPopulateTable(model, 5, "2022-02-24", 2);
-        }
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+        model.col("a", ColumnType.INT);
+        model.timestamp("ts");
+        createPopulateTable(model, 5, "2022-02-24", 2);
         compile("alter table " + tableName + " add column sym symbol index");
         compile("insert into " + tableName +
                 " select x, timestamp_sequence('2022-02-24T01:30', 1000000000), rnd_symbol('A', 'B', 'C') from long_sequence(5)");
@@ -149,11 +148,10 @@ public class DropIndexTest extends AbstractCairoTest {
 
     @Test
     public void dropIndexColumnTopLastPartition() throws SqlException, NumericException {
-        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)) {
-            model.col("a", ColumnType.INT);
-            model.timestamp("ts");
-            createPopulateTable(model, 5, "2022-02-24", 2);
-        }
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR);
+        model.col("a", ColumnType.INT);
+        model.timestamp("ts");
+        createPopulateTable(model, 5, "2022-02-24", 2);
         compile("alter table " + tableName + " add column sym symbol index");
 
         assertSql("a\tts\tsym\n" +
@@ -216,7 +214,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 ddl(dropIndexStatement(), sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot remove index for [txn=1, table=sensors, column=sensor_id]");
                 TestUtils.assertContains(e.getFlyweightMessage(), "[-1] cannot hardLink ");
                 path.trimTo(tablePathLen);
                 checkMetadataAndTxn(

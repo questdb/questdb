@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     private boolean isHasNextPending;
     private boolean isMapBuildPending;
     private boolean isOpen;
+    private long rowId;
 
     public SampleByFillNoneRecordCursor(
             CairoConfiguration configuration,
@@ -56,7 +57,11 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         super(
                 configuration,
@@ -68,7 +73,11 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,
-                offsetFuncPos
+                offsetFuncPos,
+                sampleFromFunc,
+                sampleFromFuncPos,
+                sampleToFunc,
+                sampleToFuncPos
         );
         this.map = map;
         this.keyMapSink = keyMapSink;
@@ -107,9 +116,10 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
         super.of(base, executionContext);
         if (!isOpen) {
-            map.reopen();
             isOpen = true;
+            map.reopen();
         }
+        rowId = 0;
         isHasNextPending = false;
         isMapBuildPending = true;
     }
@@ -117,6 +127,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
     @Override
     public void toTop() {
         super.toTop();
+        rowId = 0;
         isHasNextPending = false;
         isMapBuildPending = true;
     }
@@ -141,9 +152,9 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor {
                     keyMapSink.copy(baseRecord, key);
                     MapValue value = key.createValue();
                     if (value.isNew()) {
-                        groupByFunctionsUpdater.updateNew(value, baseRecord);
+                        groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
                     } else {
-                        groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                     }
                 } else {
                     // map value is conditional and only required when clock goes back

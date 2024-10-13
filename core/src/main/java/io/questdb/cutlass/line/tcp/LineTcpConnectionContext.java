@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,8 +30,8 @@ import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -50,7 +50,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
-    private final Authenticator authenticator;
+    private final SocketAuthenticator authenticator;
     private final DirectUtf8String byteCharSequence = new DirectUtf8String();
     private final long checkIdleInterval;
     private final long commitInterval;
@@ -80,21 +80,26 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 LOG,
                 metrics.line().connectionCountGauge()
         );
-        this.configuration = configuration;
-        nf = configuration.getNetworkFacade();
-        disconnectOnError = configuration.getDisconnectOnError();
-        this.scheduler = scheduler;
-        this.metrics = metrics;
-        this.milliClock = configuration.getMillisecondClock();
-        parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
-        this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
-        clear();
-        this.checkIdleInterval = configuration.getMaintenanceInterval();
-        this.commitInterval = configuration.getCommitInterval();
-        long now = milliClock.getTicks();
-        this.nextCheckIdleTime = now + checkIdleInterval;
-        this.nextCommitTime = now + commitInterval;
-        this.idleTimeout = configuration.getWriterIdleTimeout();
+        try {
+            this.configuration = configuration;
+            nf = configuration.getNetworkFacade();
+            disconnectOnError = configuration.getDisconnectOnError();
+            this.scheduler = scheduler;
+            this.metrics = metrics;
+            this.milliClock = configuration.getMillisecondClock();
+            parser = new LineTcpParser();
+            this.authenticator = configuration.getFactoryProvider().getLineAuthenticatorFactory().getLineTCPAuthenticator();
+            clear();
+            this.checkIdleInterval = configuration.getMaintenanceInterval();
+            this.commitInterval = configuration.getCommitInterval();
+            long now = milliClock.getTicks();
+            this.nextCheckIdleTime = now + checkIdleInterval;
+            this.nextCommitTime = now + commitInterval;
+            this.idleTimeout = configuration.getWriterIdleTimeout();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     public void checkIdle(long millis) {
@@ -206,7 +211,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     @Override
-    public LineTcpConnectionContext of(int fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
+    public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
         if (recvBufStart == 0) {
             recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
@@ -258,9 +263,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         try {
             int result = authenticator.handleIO();
             switch (result) {
-                case Authenticator.NEEDS_WRITE:
+                case SocketAuthenticator.NEEDS_WRITE:
                     return IOContextResult.NEEDS_WRITE;
-                case Authenticator.OK:
+                case SocketAuthenticator.OK:
                     assert authenticator.isAuthenticated();
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
                     securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
@@ -277,11 +282,11 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     recvBufPos = authenticator.getRecvBufPos();
                     resetParser(authenticator.getRecvBufPseudoStart());
                     return parseMeasurements(netIoJob);
-                case Authenticator.NEEDS_READ:
+                case SocketAuthenticator.NEEDS_READ:
                     return IOContextResult.NEEDS_READ;
-                case Authenticator.NEEDS_DISCONNECT:
+                case SocketAuthenticator.NEEDS_DISCONNECT:
                     return IOContextResult.NEEDS_DISCONNECT;
-                case Authenticator.QUEUE_FULL:
+                case SocketAuthenticator.QUEUE_FULL:
                     return IOContextResult.QUEUE_FULL;
                 default:
                     LOG.error().$("unexpected authenticator result [result=").$(result).I$();
@@ -300,7 +305,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 .$("] could not parse measurement, ").$(parser.getErrorCode())
                 .$(" at ").$(position)
                 .$(", line (may be mangled due to partial parsing): '")
-                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress())).$("'")
+                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress(), false)).$("'")
                 .$();
     }
 
@@ -427,6 +432,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         final int orig = bufferRemaining;
         if (bufferRemaining > 0 && !peerDisconnected) {
             int bytesRead = socket.recv(recvBufPos, bufferRemaining);
+            metrics.line().totalIlpTcpBytesGauge().add(bytesRead);
             if (bytesRead > 0) {
                 recvBufPos += bytesRead;
                 bufferRemaining -= bytesRead;

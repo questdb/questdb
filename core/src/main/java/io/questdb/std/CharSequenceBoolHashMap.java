@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -23,6 +23,8 @@
  ******************************************************************************/
 
 package io.questdb.std;
+
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -56,6 +58,7 @@ public class CharSequenceBoolHashMap extends AbstractCharSequenceHashSet {
         Arrays.fill(values, noEntryValue);
     }
 
+    @Override
     public boolean equals(Object obj) {
         if (obj == null) {
             return false;
@@ -81,7 +84,7 @@ public class CharSequenceBoolHashMap extends AbstractCharSequenceHashSet {
         return true;
     }
 
-    public boolean get(CharSequence key) {
+    public boolean get(@NotNull CharSequence key) {
         return valueAt(keyIndex(key));
     }
 
@@ -89,11 +92,11 @@ public class CharSequenceBoolHashMap extends AbstractCharSequenceHashSet {
         return list;
     }
 
-    public boolean put(CharSequence key, boolean value) {
+    public boolean put(@NotNull CharSequence key, boolean value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public void putAll(CharSequenceBoolHashMap other) {
+    public void putAll(@NotNull CharSequenceBoolHashMap other) {
         CharSequence[] otherKeys = other.keys;
         boolean[] otherValues = other.values;
         for (int i = 0, n = otherKeys.length; i < n; i++) {
@@ -114,7 +117,7 @@ public class CharSequenceBoolHashMap extends AbstractCharSequenceHashSet {
         return true;
     }
 
-    public void putIfAbsent(CharSequence key, boolean value) {
+    public void putIfAbsent(@NotNull CharSequence key, boolean value) {
         int index = keyIndex(key);
         if (index > -1) {
             String keyString = Chars.toString(key);

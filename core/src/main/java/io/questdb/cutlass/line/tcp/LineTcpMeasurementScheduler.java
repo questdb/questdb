@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -80,90 +80,95 @@ public class LineTcpMeasurementScheduler implements Closeable {
             IODispatcher<LineTcpConnectionContext> dispatcher,
             WorkerPool writerWorkerPool
     ) {
-        this.engine = engine;
-        this.telemetry = engine.getTelemetry();
-        CairoConfiguration cairoConfiguration = engine.getConfiguration();
-        this.configuration = lineConfiguration;
-        this.clock = cairoConfiguration.getMillisecondClock();
-        this.spinLockTimeoutMs = cairoConfiguration.getSpinLockTimeout();
-        this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
-        final int ioWorkerPoolSize = ioWorkerPool.getWorkerCount();
-        this.netIoJobs = new NetworkIOJob[ioWorkerPoolSize];
-        this.tableNameSinks = new StringSink[ioWorkerPoolSize];
-        for (int i = 0; i < ioWorkerPoolSize; i++) {
-            tableNameSinks[i] = new StringSink();
-            NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
-            netIoJobs[i] = netIoJob;
-            ioWorkerPool.assign(i, netIoJob);
-            ioWorkerPool.freeOnExit(netIoJob);
-        }
+        try {
+            this.engine = engine;
+            this.telemetry = engine.getTelemetry();
+            CairoConfiguration cairoConfiguration = engine.getConfiguration();
+            this.configuration = lineConfiguration;
+            this.clock = cairoConfiguration.getMillisecondClock();
+            this.spinLockTimeoutMs = cairoConfiguration.getSpinLockTimeout();
+            this.defaultColumnTypes = new DefaultColumnTypes(lineConfiguration);
+            final int ioWorkerPoolSize = ioWorkerPool.getWorkerCount();
+            this.netIoJobs = new NetworkIOJob[ioWorkerPoolSize];
+            this.tableNameSinks = new StringSink[ioWorkerPoolSize];
+            for (int i = 0; i < ioWorkerPoolSize; i++) {
+                tableNameSinks[i] = new StringSink();
+                NetworkIOJob netIoJob = createNetworkIOJob(dispatcher, i);
+                netIoJobs[i] = netIoJob;
+                ioWorkerPool.assign(i, netIoJob);
+                ioWorkerPool.freeOnExit(netIoJob);
+            }
 
-        // Worker count is set to 1 because we do not use this execution context
-        // in worker threads.
-        tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
-        idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
-        loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
-        autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
-        autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
-        int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
-        int queueSize = lineConfiguration.getWriterQueueCapacity();
-        long commitInterval = configuration.getCommitInterval();
-        int nWriterThreads = writerWorkerPool.getWorkerCount();
-        pubSeq = new MPSequence[nWriterThreads];
-        //noinspection unchecked
-        queue = new RingQueue[nWriterThreads];
-        //noinspection unchecked
-        assignedTables = new ObjList[nWriterThreads];
-        for (int i = 0; i < nWriterThreads; i++) {
-            MPSequence ps = new MPSequence(queueSize);
-            pubSeq[i] = ps;
+            // Worker count is set to 1 because we do not use this execution context
+            // in worker threads.
+            tableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
+            idleTableUpdateDetailsUtf16 = new LowerCaseCharSequenceObjHashMap<>();
+            loadByWriterThread = new long[writerWorkerPool.getWorkerCount()];
+            autoCreateNewTables = lineConfiguration.getAutoCreateNewTables();
+            autoCreateNewColumns = lineConfiguration.getAutoCreateNewColumns();
+            int maxMeasurementSize = lineConfiguration.getMaxMeasurementSize();
+            int queueSize = lineConfiguration.getWriterQueueCapacity();
+            long commitInterval = configuration.getCommitInterval();
+            int nWriterThreads = writerWorkerPool.getWorkerCount();
+            pubSeq = new MPSequence[nWriterThreads];
+            //noinspection unchecked
+            queue = new RingQueue[nWriterThreads];
+            //noinspection unchecked
+            assignedTables = new ObjList[nWriterThreads];
+            for (int i = 0; i < nWriterThreads; i++) {
+                MPSequence ps = new MPSequence(queueSize);
+                pubSeq[i] = ps;
 
-            RingQueue<LineTcpMeasurementEvent> q = new RingQueue<>(
-                    (address, addressSize) -> new LineTcpMeasurementEvent(
-                            address,
-                            addressSize,
-                            lineConfiguration.getMicrosecondClock(),
-                            lineConfiguration.getTimestampAdapter(),
-                            defaultColumnTypes,
-                            lineConfiguration.isStringToCharCastAllowed(),
-                            lineConfiguration.getMaxFileNameLength(),
-                            lineConfiguration.getAutoCreateNewColumns()
-                    ),
-                    getEventSlotSize(maxMeasurementSize),
-                    queueSize,
-                    MemoryTag.NATIVE_ILP_RSS
+                RingQueue<LineTcpMeasurementEvent> q = new RingQueue<>(
+                        (address, addressSize) -> new LineTcpMeasurementEvent(
+                                address,
+                                addressSize,
+                                lineConfiguration.getMicrosecondClock(),
+                                lineConfiguration.getTimestampAdapter(),
+                                defaultColumnTypes,
+                                lineConfiguration.isStringToCharCastAllowed(),
+                                lineConfiguration.getMaxFileNameLength(),
+                                lineConfiguration.getAutoCreateNewColumns()
+                        ),
+                        getEventSlotSize(maxMeasurementSize),
+                        queueSize,
+                        MemoryTag.NATIVE_ILP_RSS
+                );
+
+                queue[i] = q;
+                SCSequence subSeq = new SCSequence();
+                ps.then(subSeq).then(ps);
+
+                assignedTables[i] = new ObjList<>();
+
+                final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
+                        i,
+                        q,
+                        subSeq,
+                        clock,
+                        commitInterval, this, engine.getMetrics(), assignedTables[i]
+                );
+                writerWorkerPool.assign(i, lineTcpWriterJob);
+                writerWorkerPool.freeOnExit(lineTcpWriterJob);
+            }
+            this.tableStructureAdapter = new TableStructureAdapter(
+                    cairoConfiguration,
+                    defaultColumnTypes,
+                    configuration.getDefaultPartitionBy(),
+                    cairoConfiguration.getWalEnabledDefault()
             );
-
-            queue[i] = q;
-            SCSequence subSeq = new SCSequence();
-            ps.then(subSeq).then(ps);
-
-            assignedTables[i] = new ObjList<>();
-
-            final LineTcpWriterJob lineTcpWriterJob = new LineTcpWriterJob(
-                    i,
-                    q,
-                    subSeq,
-                    clock,
-                    commitInterval, this, engine.getMetrics(), assignedTables[i]
+            writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
+            lineWalAppender = new LineWalAppender(
+                    autoCreateNewColumns,
+                    configuration.isStringToCharCastAllowed(),
+                    configuration.getTimestampAdapter(),
+                    cairoConfiguration.getMaxFileNameLength(),
+                    configuration.getMicrosecondClock()
             );
-            writerWorkerPool.assign(i, lineTcpWriterJob);
-            writerWorkerPool.freeOnExit(lineTcpWriterJob);
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
-        this.tableStructureAdapter = new TableStructureAdapter(
-                cairoConfiguration,
-                defaultColumnTypes,
-                configuration.getDefaultPartitionBy(),
-                cairoConfiguration.getWalEnabledDefault()
-        );
-        writerIdleTimeout = lineConfiguration.getWriterIdleTimeout();
-        lineWalAppender = new LineWalAppender(
-                autoCreateNewColumns,
-                configuration.isStringToCharCastAllowed(),
-                configuration.getTimestampAdapter(),
-                cairoConfiguration.getMaxFileNameLength(),
-                configuration.getMicrosecondClock()
-        );
     }
 
     @Override

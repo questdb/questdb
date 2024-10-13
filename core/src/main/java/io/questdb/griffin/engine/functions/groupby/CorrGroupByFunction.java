@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,7 +53,7 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double x = xFunction.getDouble(record);
         final double y = yFunction.getDouble(record);
         mapValue.putDouble(valueIndex, 0);
@@ -69,7 +69,7 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double x = xFunction.getDouble(record);
         final double y = yFunction.getDouble(record);
         if (Numbers.isFinite(x) && Numbers.isFinite(y)) {
@@ -113,17 +113,12 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     @Override
-    public boolean isConstant() {
-        return false;
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
-    }
-
-    @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.DOUBLE);
@@ -131,6 +126,11 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.LONG);
+    }
+
+    @Override
+    public boolean isConstant() {
+        return false;
     }
 
     @Override
@@ -150,8 +150,8 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+    public boolean supportsParallelism() {
+        return false;
     }
 
     protected void aggregate(MapValue mapValue, double x, double y) {

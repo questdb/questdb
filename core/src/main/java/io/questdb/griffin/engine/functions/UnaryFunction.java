@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,9 +31,15 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public interface UnaryFunction extends Function {
+
     @Override
     default void close() {
         getArg().close();
+    }
+
+    @Override
+    default void cursorClosed() {
+        getArg().cursorClosed();
     }
 
     Function getArg();
@@ -54,17 +60,18 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default boolean isParallelismSupported() {
-        return getArg().isParallelismSupported();
+    default boolean isThreadSafe() {
+        return getArg().isThreadSafe();
     }
 
     @Override
-    default boolean isReadThreadSafe() {
-        return getArg().isReadThreadSafe();
-    }
-
     default boolean isRuntimeConstant() {
         return getArg().isRuntimeConstant();
+    }
+
+    @Override
+    default boolean supportsParallelism() {
+        return getArg().supportsParallelism();
     }
 
     @Override

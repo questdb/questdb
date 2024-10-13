@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,20 +24,17 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 /**
- * Returns rows from current data frame in order of cursors list :
+ * Returns rows from current page frame in order of cursors list:
  * - first fetches and returns all records from first cursor
  * - then from second cursor, third, ...
- * until all cursors are exhausted .
+ * until all cursors are exhausted.
  */
 public class SequentialRowCursorFactory implements RowCursorFactory {
     private final SequentialRowCursor cursor;
@@ -53,17 +50,17 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public RowCursor getCursor(DataFrame dataFrame) {
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         for (int i = 0, n = cursorFactoriesIdx[0]; i < n; i++) {
-            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(dataFrame));
+            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
         }
         cursor.init();
         return cursor;
     }
 
     @Override
-    public void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        RowCursorFactory.init(cursorFactories, tableReader, sqlExecutionContext);
+    public void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        RowCursorFactory.init(cursorFactories, pageFrameCursor, sqlExecutionContext);
     }
 
     @Override
@@ -76,13 +73,13 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader) {
-        RowCursorFactory.prepareCursor(cursorFactories, tableReader);
+    public void prepareCursor(PageFrameCursor pageFrameCursor) {
+        RowCursorFactory.prepareCursor(cursorFactories, pageFrameCursor);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Cursor-order scan");//postgres uses 'Append' node
+        sink.type("Cursor-order scan"); // postgres uses 'Append' node
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             sink.child(cursorFactories.getQuick(i));
         }

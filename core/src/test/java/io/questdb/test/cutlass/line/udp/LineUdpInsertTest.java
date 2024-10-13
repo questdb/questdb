@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,7 +45,14 @@ import java.util.function.Consumer;
 public abstract class LineUdpInsertTest extends AbstractCairoTest {
 
     protected static final int LOCALHOST = Net.parseIPv4("127.0.0.1");
-    protected static final LineUdpReceiverConfiguration RCVR_CONF = new DefaultLineUdpReceiverConfiguration();
+    protected static boolean useLegacyString = true;
+    protected static final LineUdpReceiverConfiguration RCVR_CONF = new DefaultLineUdpReceiverConfiguration() {
+        @Override
+        public boolean isUseLegacyStringDefault() {
+            return useLegacyString;
+        }
+    };
+
     protected static final int PORT = RCVR_CONF.getPort();
 
     protected static void assertReader(String tableName, String expected) {
@@ -84,9 +91,8 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                 });
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     if (columnType != ColumnType.UNDEFINED) {
-                        try (TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                            TestUtils.create(model.col(targetColumnName, columnType).timestamp(), engine);
-                        }
+                        TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
+                        TestUtils.create(model.col(targetColumnName, columnType).timestamp(), engine);
                     }
                     receiver.start();
                     try (AbstractLineSender sender = createLineProtoSender()) {
@@ -108,7 +114,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
 
     protected static AbstractLineProtoUdpReceiver createLineProtoReceiver(CairoEngine engine) {
         AbstractLineProtoUdpReceiver lpr;
-        if (Os.type == Os.LINUX_AMD64) {
+        if (Os.isLinux()) {
             lpr = new LinuxMMLineUdpReceiver(RCVR_CONF, engine, null);
         } else {
             lpr = new LineUdpReceiver(RCVR_CONF, engine, null);

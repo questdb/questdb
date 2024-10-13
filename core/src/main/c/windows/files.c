@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -235,6 +235,21 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_readNonNegativeInt
         && ReadFile(handle, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
         if (count == 4) {
             return result;
+        }
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_readIntAsUnsignedLong
+        (JNIEnv *e, jclass cl, jint fd, jlong offset) {
+    DWORD count;
+    uint32_t result;
+    HANDLE handle = FD_TO_HANDLE(fd);
+    if (set_file_pos(handle, offset)
+        && ReadFile(handle, (LPVOID) &result, (DWORD) 4, &count, NULL)) {
+        if (count == 4) {
+            return (jlong) result;
         }
     }
     SaveLastError();
@@ -737,8 +752,6 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_rmdir
     return FALSE;
 }
 
-#define UTF8_MAX_PATH (MAX_PATH * 4)
-
 typedef struct {
     WIN32_FIND_DATAW *find_data;
     HANDLE hFind;
@@ -797,8 +810,16 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Files_findClose
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findName
         (JNIEnv *e, jclass cl, jlong findPtr) {
-    WideCharToMultiByte(CP_UTF8, 0, ((FIND *) findPtr)->find_data->cFileName, -1, ((FIND *) findPtr)->utf8Name,
-                        UTF8_MAX_PATH, NULL, NULL);
+    WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            ((FIND *) findPtr)->find_data->cFileName,
+            -1,
+            ((FIND *) findPtr)->utf8Name,
+            UTF8_MAX_PATH,
+            NULL,
+            NULL
+    );
     return (jlong) ((FIND *) findPtr)->utf8Name;
 }
 

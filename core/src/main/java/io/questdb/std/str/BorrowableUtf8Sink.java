@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,7 +28,9 @@ import io.questdb.std.bytes.BorrowableAsNativeByteSink;
 
 /**
  * A growable Utf8 buffer that can be written as a utf-8 sink and borrowed for writing in native code.
+ * <p>
+ * This is an interface abstraction of the sink, used by Prometheus scraping job. The "borrowable" part
+ * is used in Ent by rust code.
  */
 public interface BorrowableUtf8Sink extends Utf8Sink, BorrowableAsNativeByteSink {
-
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,9 +45,18 @@ import java.util.ArrayDeque;
 
 public class GroupByUtils {
 
+    public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!functions.getQuick(i).isEarlyExitSupported()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean isParallelismSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
-            if (!functions.getQuick(i).isParallelismSupported()) {
+            if (!functions.getQuick(i).supportsParallelism()) {
                 return false;
             }
         }
@@ -85,7 +94,7 @@ public class GroupByUtils {
                     // some functions may need more than one column in values,
                     // so we have them do all the work
                     GroupByFunction func = (GroupByFunction) function;
-                    func.pushValueTypes(valueTypes);
+                    func.initValueTypes(valueTypes);
                     groupByFunctions.add(func);
                     groupByFunctionPositions.add(node.position);
                 } else {
@@ -290,7 +299,7 @@ public class GroupByUtils {
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             final GroupByFunction workerGroupByFunction = workerGroupByFunctions.getQuick(i);
             final GroupByFunction groupByFunction = groupByFunctions.getQuick(i);
-            workerGroupByFunction.setValueIndex(groupByFunction.getValueIndex());
+            workerGroupByFunction.initValueIndex(groupByFunction.getValueIndex());
         }
     }
 
@@ -369,12 +378,7 @@ public class GroupByUtils {
                     throw SqlException.$(key.position, "bind variable is not allowed here");
                 case ExpressionNode.FUNCTION:
                 case ExpressionNode.OPERATION:
-                    ObjList<QueryColumn> availableColumns = nested.getTopDownColumns();
-                    if (availableColumns.size() == 0) {
-                        // Looks like we have merged inner virtual model in to the group-by one,
-                        // so we should look up in the group-by model.
-                        availableColumns = model.getTopDownColumns();
-                    }
+                    ObjList<QueryColumn> availableColumns = model.getBottomUpColumns();
                     boolean invalid = true;
                     for (int j = 0, n = availableColumns.size(); j < n; j++) {
                         final QueryColumn qc = availableColumns.getQuick(j);
@@ -496,6 +500,9 @@ public class GroupByUtils {
             case ColumnType.STRING:
                 func = StrColumn.newInstance(keyColumnIndex - 1);
                 break;
+            case ColumnType.VARCHAR:
+                func = VarcharColumn.newInstance(keyColumnIndex - 1);
+                break;
             case ColumnType.SYMBOL:
                 if (metadata != null) {
                     // must be a column key
@@ -531,6 +538,9 @@ public class GroupByUtils {
                 break;
             case ColumnType.UUID:
                 func = UuidColumn.newInstance(keyColumnIndex - 1);
+                break;
+            case ColumnType.INTERVAL:
+                func = IntervalColumn.newInstance(keyColumnIndex - 1);
                 break;
             default:
                 func = BinColumn.newInstance(keyColumnIndex - 1);

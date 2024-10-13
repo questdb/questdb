@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,8 +63,8 @@ public class SignIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             int val = arg.getInt(rec);
-            if (Numbers.INT_NaN == val) {
-                return Numbers.INT_NaN;
+            if (Numbers.INT_NULL == val) {
+                return Numbers.INT_NULL;
             }
 
             return Integer.signum(val);

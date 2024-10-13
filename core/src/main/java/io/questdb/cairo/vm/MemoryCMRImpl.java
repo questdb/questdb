@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,6 +40,7 @@ import static io.questdb.cairo.vm.Vm.PARANOIA_MODE;
 //contiguous mapped readable 
 public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     private static final Log LOG = LogFactory.getLog(MemoryCMRImpl.class);
+    protected long fd = -1;
     protected int memoryTag = MemoryTag.MMAP_DEFAULT;
     private int madviseOpts = -1;
 
@@ -49,6 +50,11 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
 
     public MemoryCMRImpl() {
         // intentionally left empty
+    }
+
+    @Override
+    public long addressHi() {
+        return pageAddress + size;
     }
 
     @Override
@@ -70,10 +76,23 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
+    public long detachFdClose() {
+        long fd = this.fd;
+        this.fd = -1;
+        close();
+        return fd;
+    }
+
+    @Override
     public void extend(long newSize) {
         if (newSize > size) {
             setSize0(newSize);
         }
+    }
+
+    @Override
+    public long getFd() {
+        return fd;
     }
 
     @Override
@@ -85,16 +104,21 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         this.memoryTag = memoryTag;
         this.madviseOpts = madviseOpts;
-        openFile(ff, name);
-        if (size < 0) {
-            size = ff.length(fd);
+        try {
+            openFile(ff, name);
             if (size < 0) {
-                close();
-                throw CairoException.critical(ff.errno()).put("could not get length: ").put(name);
+                size = ff.length(fd);
+                if (size < 0) {
+                    close();
+                    throw CairoException.critical(ff.errno()).put("could not get length: ").put(name);
+                }
             }
+            assert !PARANOIA_MODE || size <= ff.length(fd) || size <= ff.length(fd); // Some tests simulate ff.length() to be 0 once.
+            map(ff, name, size);
+        } catch (Throwable e) {
+            close();
+            throw e;
         }
-        assert !PARANOIA_MODE || size <= ff.length(fd) || size <= ff.length(fd); // Some tests simulate ff.length() to be 0 once.
-        map(ff, name, size);
     }
 
     @Override

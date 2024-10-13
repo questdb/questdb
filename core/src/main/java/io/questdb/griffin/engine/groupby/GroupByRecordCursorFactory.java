@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -70,7 +70,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.keyFunctions = keyFunctions;
             this.recordFunctions = recordFunctions;
             // sink will be storing record columns to map key
-            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, false);
+            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, null);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new GroupByRecordCursor(configuration, recordFunctions, groupByFunctions, updater, keyTypes, valueTypes);
         } catch (Throwable e) {
@@ -103,11 +103,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
+        }
+
+        try {
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable e) {
-            baseCursor.close();
-            throw e;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
         }
     }
 
@@ -150,6 +156,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isDataMapBuilt;
         private boolean isOpen;
+        private long rowId;
 
         public GroupByRecordCursor(
                 CairoConfiguration configuration,
@@ -160,11 +167,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 @Transient @NotNull ArrayColumnTypes valueTypes
         ) {
             super(functions);
-            this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
-            this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.allocator = new GroupByAllocator(configuration);
-            GroupByUtils.setAllocator(groupByFunctions, allocator);
-            this.isOpen = true;
+            try {
+                this.isOpen = true;
+                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+                this.groupByFunctionsUpdater = groupByFunctionsUpdater;
+                this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                GroupByUtils.setAllocator(groupByFunctions, allocator);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override
@@ -195,14 +207,22 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {
+            this.managedCursor = managedCursor;
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.managedCursor = managedCursor;
             Function.init(keyFunctions, managedCursor, executionContext);
             isDataMapBuilt = false;
+            rowId = 0;
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            isDataMapBuilt = false;
+            rowId = 0;
         }
 
         private void buildDataMap() {
@@ -213,9 +233,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 mapSink.copy(baseRecord, key);
                 MapValue value = key.createValue();
                 if (value.isNew()) {
-                    groupByFunctionsUpdater.updateNew(value, baseRecord);
+                    groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
                 } else {
-                    groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                    groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                 }
             }
             super.of(dataMap.getCursor());

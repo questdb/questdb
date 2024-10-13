@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,11 +63,10 @@ public class RPadStrFunctionFactory implements FunctionFactory {
     }
 
     public static class RPadStrFunc extends StrFunction implements TernaryFunction {
-
         private final Function fillTextFunc;
         private final Function lenFunc;
         private final int maxLength;
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function strFunc;
 
@@ -99,25 +98,30 @@ public class RPadStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(final Record rec) {
-            return rPadStr(strFunc.getStr(rec), lenFunc.getInt(rec), fillTextFunc.getStr(rec), sink);
+        public CharSequence getStrA(final Record rec) {
+            return rPadStr(strFunc.getStrA(rec), lenFunc.getInt(rec), fillTextFunc.getStrA(rec), sinkA);
         }
 
         @Override
         public CharSequence getStrB(final Record rec) {
-            return rPadStr(strFunc.getStr(rec), lenFunc.getInt(rec), fillTextFunc.getStr(rec), sinkB);
+            return rPadStr(strFunc.getStrB(rec), lenFunc.getInt(rec), fillTextFunc.getStrB(rec), sinkB);
         }
 
         @Override
         public int getStrLen(Record rec) {
-            final CharSequence str = strFunc.getStr(rec);
+            final CharSequence str = strFunc.getStrA(rec);
             final int len = lenFunc.getInt(rec);
-            final CharSequence fillText = fillTextFunc.getStr(rec);
+            final CharSequence fillText = fillTextFunc.getStrA(rec);
             if (str != null && len >= 0 && fillText != null && fillText.length() > 0) {
                 return len;
             } else {
                 return TableUtils.NULL_LEN;
             }
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Nullable

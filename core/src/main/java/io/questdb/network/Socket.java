@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,18 +32,29 @@ import org.jetbrains.annotations.Nullable;
  * to accumulate messages, so they require extra calls to convert encrypted data to raw data.
  * <p>
  * {@link #close()} implementations must be idempotent. Also, supports object reuse after
- * {@link #close()}: see {@link #of(int)}.
+ * {@link #close()}: see {@link #of(long)}.
  */
 public interface Socket extends QuietCloseable {
+    int HAS_MORE_PLAINTEXT_FLAG = 1 << 2;
     int READ_FLAG = 1 << 1;
     int WRITE_FLAG = 1;
 
     /**
      * @return file descriptor associated with the socket.
      */
-    int getFd();
+    long getFd();
 
     boolean isClosed();
+
+    /**
+     * Some sockets, like encrypted ones, may have more plaintext in an internal
+     * buffer after a {@link #recv(long, int)} call. This method returns true
+     * if there is more plaintext to read from the buffer.
+     *
+     * @return true if there is more plaintext to read from internal buffer.
+     * @see #recv(long, int)
+     */
+    boolean isMorePlaintextBuffered();
 
     /**
      * @return true if TLS session was already started.
@@ -56,12 +67,16 @@ public interface Socket extends QuietCloseable {
      *
      * @param fd file descriptor
      */
-    void of(int fd);
+    void of(long fd);
 
     /**
      * Receives plain data into the given buffer from the socket. On encrypted
      * sockets this call includes {@link #tlsIO(int)}, so an extra tlsIO()
      * call is not required.
+     * <p>
+     * If data from the socket doesn't fit into the provided buffer then part of the data stays in the
+     * internal buffer and can be read with a subsequent call to this method. Use {@link #isMorePlaintextBuffered()}
+     * to check if there is more data to read.
      *
      * @param bufferPtr pointer to the buffer
      * @param bufferLen buffer length

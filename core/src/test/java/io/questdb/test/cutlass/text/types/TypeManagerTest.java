@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf16Sink;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
@@ -47,18 +48,20 @@ import java.io.IOException;
 
 public class TypeManagerTest extends AbstractTest {
     private static JsonLexer jsonLexer;
-    private static DirectUtf16Sink utf8Sink;
+    private static DirectUtf16Sink utf16Sink;
+    private static DirectUtf8Sink utf8Sink;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractTest.setUpStatic();
-        utf8Sink = new DirectUtf16Sink(64);
+        utf16Sink = new DirectUtf16Sink(64);
+        utf8Sink = new DirectUtf8Sink(64);
         jsonLexer = new JsonLexer(1024, 2048);
     }
 
     @AfterClass
     public static void tearDownStatic() {
-        Misc.free(utf8Sink);
+        Misc.free(utf16Sink);
         Misc.free(jsonLexer);
         AbstractTest.tearDownStatic();
     }
@@ -239,12 +242,12 @@ public class TypeManagerTest extends AbstractTest {
         );
 
         inputFormatConfiguration.parseConfiguration(getClass(), jsonLexer, root, fileResource);
-        return new TypeManager(new DefaultTextConfiguration(getClass(), root, fileResource), utf8Sink);
+        return new TypeManager(new DefaultTextConfiguration(getClass(), root, fileResource), utf16Sink, utf8Sink);
     }
 
     private void testIllegalParameterForGetTypeAdapter(int columnType) {
         TextConfiguration textConfiguration = new DefaultTextConfiguration();
-        TypeManager typeManager = new TypeManager(textConfiguration, utf8Sink);
+        TypeManager typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
         try {
             typeManager.getTypeAdapter(columnType);
             Assert.fail();

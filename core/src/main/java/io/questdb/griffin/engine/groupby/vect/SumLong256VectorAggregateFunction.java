@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,10 +60,9 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
+    public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            final long count = addressSize / (Long.BYTES * 4);
-            Long256Impl value = sumLong256(partialSums.get(), address, count);
+            Long256Impl value = sumLong256(partialSums.get(), address, frameRowCount);
             if (value != Long256Impl.NULL_LONG256) {
                 lock.lock();
                 try {
@@ -77,11 +76,11 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     }
 
     @Override
-    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount) {
         if (valueAddress == 0) {
-            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / (4 * Long.BYTES));
+            return distinctFunc.run(pRosti, keyAddress, frameRowCount);
         } else {
-            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / (4 * Long.BYTES), valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
         }
     }
 
@@ -166,10 +165,10 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
             final long l2 = Unsafe.getUnsafe().getLong(address + offset + Long.BYTES * 2);
             final long l3 = Unsafe.getUnsafe().getLong(address + offset + Long.BYTES * 3);
 
-            boolean isNull = l0 == Numbers.LONG_NaN &&
-                    l1 == Numbers.LONG_NaN &&
-                    l2 == Numbers.LONG_NaN &&
-                    l3 == Numbers.LONG_NaN;
+            boolean isNull = l0 == Numbers.LONG_NULL &&
+                    l1 == Numbers.LONG_NULL &&
+                    l2 == Numbers.LONG_NULL &&
+                    l3 == Numbers.LONG_NULL;
 
             if (!isNull) {
                 Long256Util.add(sum, l0, l1, l2, l3);

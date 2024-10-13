@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
@@ -52,7 +53,7 @@ public final class BitmapIndexUtils {
         return key * KEY_ENTRY_SIZE + KEY_FILE_RESERVED;
     }
 
-    public static Path keyFileName(Path path, CharSequence name, long columnNameTxn) {
+    public static LPSZ keyFileName(Path path, CharSequence name, long columnNameTxn) {
         path.concat(name).put(".k");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
             path.put('.').put(columnNameTxn);
@@ -121,7 +122,7 @@ public final class BitmapIndexUtils {
                 .put(']');
     }
 
-    public static Path valueFileName(Path path, CharSequence name, long columnNameTxn) {
+    public static LPSZ valueFileName(Path path, CharSequence name, long columnNameTxn) {
         path.concat(name).put(".v");
         if (columnNameTxn > COLUMN_NAME_TXN_NONE) {
             path.put('.').put(columnNameTxn);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,11 +37,12 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -62,7 +63,7 @@ import java.util.concurrent.CyclicBarrier;
 
 import static org.junit.Assert.fail;
 
-// This is not a fuzz test in traditional sense, but it's multi-threaded and we want to run it
+// This is not a fuzz test in traditional sense, but it's multithreaded, and we want to run it
 // in CI frequently along with other fuzz tests.
 @RunWith(Parameterized.class)
 public class ParallelGroupByFuzzTest extends AbstractCairoTest {
@@ -96,9 +97,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
         // Set the sharding threshold to a small value to test sharding.
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_SHARDING_THRESHOLD, 2);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED, enableParallelGroupBy);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, enableParallelGroupBy);
     }
 
     @Test
@@ -222,7 +224,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 sqlExecutionContext,
                                 "select vwap(price, quantity) from tab",
                                 "vwap\n" +
-                                        "NaN\n"
+                                        "null\n"
                         );
                     },
                     configuration,
@@ -233,7 +235,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCaseExpressionKeyGroupBy1() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT CASE WHEN (key = 'k0') THEN 'foo' ELSE 'bar' END AS key, count(*) " +
                         "FROM tab GROUP BY key ORDER BY key",
                 "key\tcount\n" +
@@ -246,12 +248,27 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelCaseExpressionKeyGroupBy2() throws Exception {
         // Parallel GROUP BY shouldn't kick in on this query due to ::symbol cast,
         // yet we want to validate the result correctness.
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT CASE WHEN (key::symbol = 'k0') THEN 'foo' ELSE 'bar' END AS key, count(*) " +
                         "FROM tab GROUP BY key ORDER BY key",
                 "key\tcount\n" +
                         "bar\t6400\n" +
                         "foo\t1600\n"
+        );
+    }
+
+    @Test
+    public void testParallelCaseExpressionKeyGroupBy3() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT CASE WHEN (value > 2023.5) THEN key ELSE '' END AS key, avg(value) " +
+                        "FROM tab GROUP BY key ORDER BY key",
+                "key\tavg\n" +
+                        "\t1024.3435935935936\n" +
+                        "k0\t3025.155860349127\n" +
+                        "k1\t3023.65625\n" +
+                        "k2\t3024.65625\n" +
+                        "k3\t3025.65625\n" +
+                        "k4\t3024.155860349127\n"
         );
     }
 
@@ -268,7 +285,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelCountOverStringKeyGroupBy() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT count(*) FROM (SELECT key FROM tab WHERE key IS NOT NULL GROUP BY key ORDER BY key)",
                 "count\n" +
                         "5\n"
@@ -624,6 +641,23 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelFunctionKeyGroupByThreadUnsafe3() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        // This query shouldn't be executed in parallel,
+        // so this test verifies that nothing breaks.
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key::symbol key, avg(value), sum(colTop) FROM tab ORDER BY key",
+                "key\tavg\tsum\n" +
+                        "k0\t2027.5\t1642000.0\n" +
+                        "k1\t2023.5\t1638800.0\n" +
+                        "k2\t2024.5\t1639600.0\n" +
+                        "k3\t2025.5\t1640400.0\n" +
+                        "k4\t2026.5\t1641200.0\n"
+        );
+    }
+
+    @Test
     public void testParallelGroupByCastToSymbol() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -663,6 +697,82 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    @Test
+    public void testParallelJsonKeyGroupBy() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelJsonKeyGroupBy(
+                "SELECT json_extract(key, '.key')::varchar key, max(price) FROM tab ORDER BY key",
+                "key\tmax\n" +
+                        "k0\t4000.0\n" +
+                        "k1\t3996.0\n" +
+                        "k2\t3997.0\n" +
+                        "k3\t3998.0\n" +
+                        "k4\t3999.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelJsonKeyGroupByWithFilter() throws Exception {
+        testParallelJsonKeyGroupBy(
+                "SELECT json_extract(key, '.key')::varchar key, max(price) FROM tab WHERE json_extract(key, '.foo')::varchar = 'bar' ORDER BY key",
+                "key\tmax\n" +
+                        "k0\t4000.0\n" +
+                        "k1\t3996.0\n" +
+                        "k2\t3997.0\n" +
+                        "k3\t3998.0\n" +
+                        "k4\t3999.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelKSumNSum() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, round(ksum(value)) ksum, round(nsum(value)) nsum " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tksum\tnsum\n" +
+                        "k0\t3244000.0\t3244000.0\n" +
+                        "k1\t3237600.0\t3237600.0\n" +
+                        "k2\t3239200.0\t3239200.0\n" +
+                        "k3\t3240800.0\t3240800.0\n" +
+                        "k4\t3242400.0\t3242400.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelKSumNSum2() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, round(ksum(adouble),2) ksum, round(nsum(adouble),2) nsum FROM tab ORDER BY key DESC",
+                "key\tksum\tnsum\n" +
+                        "k4\t324.15000000000003\t324.15000000000003\n" +
+                        "k3\t338.48\t338.48\n" +
+                        "k2\t338.86\t338.86\n" +
+                        "k1\t350.17\t350.17\n" +
+                        "k0\t327.49\t327.49\n"
+        );
+    }
+
+    @Test
+    public void testParallelMultiJsonKeyGroupBy() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelJsonKeyGroupBy(
+                "SELECT json_extract(key, '.key')::varchar key, date_trunc('month', ts) ts, max(price) FROM tab ORDER BY key, ts",
+                "key\tts\tmax\n" +
+                        "k0\t1970-01-01T00:00:00.000000Z\t3095.0\n" +
+                        "k0\t1970-02-01T00:00:00.000000Z\t4000.0\n" +
+                        "k1\t1970-01-01T00:00:00.000000Z\t3096.0\n" +
+                        "k1\t1970-02-01T00:00:00.000000Z\t3996.0\n" +
+                        "k2\t1970-01-01T00:00:00.000000Z\t3097.0\n" +
+                        "k2\t1970-02-01T00:00:00.000000Z\t3997.0\n" +
+                        "k3\t1970-01-01T00:00:00.000000Z\t3098.0\n" +
+                        "k3\t1970-02-01T00:00:00.000000Z\t3998.0\n" +
+                        "k4\t1970-01-01T00:00:00.000000Z\t3099.0\n" +
+                        "k4\t1970-02-01T00:00:00.000000Z\t3999.0\n"
+        );
     }
 
     @Test
@@ -1104,7 +1214,34 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         " and ageolong != :ageolong" +
                         " and ts != :atimestamp",
                 "max\tmin\n" +
-                        "9205610066984479988\t-9211162377139482426\n"
+                        "9222440717001210457\t-9216152523287705363\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithApproxCountDistinctIPv4Function() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(anint::ipv4), approx_count_distinct(anint::ipv4) FROM tab",
+                "count_distinct\tapprox_count_distinct\n" +
+                        "4000\t4000\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithApproxCountDistinctIntFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(anint), approx_count_distinct(anint) FROM tab",
+                "count_distinct\tapprox_count_distinct\n" +
+                        "4000\t4000\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithApproxCountDistinctLongFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(along), approx_count_distinct(along) FROM tab",
+                "count_distinct\tapprox_count_distinct\n" +
+                        "4000\t4000\n"
         );
     }
 
@@ -1117,13 +1254,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 },
                 "SELECT min(anint), max(anint) FROM tab WHERE asymbol = $1",
                 "min\tmax\n" +
-                        "-2141059164\t2147164481\n"
+                        "-2138876769\t2140835033\n"
         );
     }
 
     @Test
     public void testParallelNonKeyedGroupByWithCaseExpression1() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT avg(length(CASE WHEN (key = 'k0') THEN 'foobar' ELSE 'foo' END)), avg(value) FROM tab",
                 "avg\tavg1\n" +
                         "3.6\t2025.5\n"
@@ -1134,7 +1271,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByWithCaseExpression2() throws Exception {
         // Parallel GROUP BY shouldn't kick in on this query due to ::symbol cast,
         // yet we want to validate the result correctness.
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT sum(length(CASE WHEN (key::symbol = 'k0') THEN 'foobar' ELSE 'foo' END)) FROM tab",
                 "sum\n" +
                         "28800\n"
@@ -1159,7 +1296,29 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(adate) FROM tab",
                 "count_distinct\n" +
-                        "3304\n"
+                        "3360\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithCountDistinctSymbolFunction1() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(asymbol) FROM tab",
+                "count_distinct\n" +
+                        "4\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithCountDistinctSymbolFunction2() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(asymbol), first(asymbol) FROM tab",
+                "count_distinct\tfirst\n" +
+                        "4\tCPSW\n"
         );
     }
 
@@ -1198,7 +1357,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelNonKeyedGroupByWithMinMaxStrFunction() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT min(key), max(key) FROM tab",
                 "min\tmax\n" +
                         "k0\tk4\n"
@@ -1223,7 +1382,18 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(ashort), count_distinct(anint), count_distinct(along) FROM tab",
                 "count_distinct\tcount_distinct1\tcount_distinct2\n" +
-                        "997\t4000\t4000\n"
+                        "993\t4000\t4000\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithNestedCaseFunction() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT sum(CASE WHEN (key = 'k0') THEN 1 ELSE 0 END) FROM tab",
+                "sum\n" +
+                        "1600\n"
         );
     }
 
@@ -1251,7 +1421,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(adate) FROM tab WHERE ts in '1970-01-13' and anint > 0",
                 "count_distinct\n" +
-                        "69\n"
+                        "71\n"
         );
     }
 
@@ -1299,7 +1469,55 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab WHERE quantity < 0",
                 "vwap\tsum\n" +
-                        "NaN\tNaN\n"
+                        "null\tnull\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithTwoApproxCountDistinctIPv4Functions() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT " +
+                        "count_distinct(anint::ipv4), " +
+                        "approx_count_distinct(anint::ipv4), " +
+                        "count_distinct((abs(anint) % 10)::ipv4), " +
+                        "approx_count_distinct((abs(anint) % 10)::ipv4) " +
+                        "FROM tab",
+                "count_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
+                        "4000\t4000\t9\t9\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithTwoApproxCountDistinctIntFunctions() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT " +
+                        "count_distinct(anint), " +
+                        "approx_count_distinct(anint), " +
+                        "count_distinct(abs(anint) % 10), " +
+                        "approx_count_distinct(abs(anint) % 10) " +
+                        "FROM tab",
+                "count_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
+                        "4000\t4000\t10\t10\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithTwoApproxCountDistinctLongFunctions() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT " +
+                        "count_distinct(along), " +
+                        "approx_count_distinct(along), " +
+                        "count_distinct(abs(along) % 10), " +
+                        "approx_count_distinct(abs(along) % 10) " +
+                        "FROM tab",
+                "count_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
+                        "4000\t4000\t10\t10\n"
         );
     }
 
@@ -1317,12 +1535,12 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelNonKeyedGroupByWithUnionAll() throws Exception {
         testParallelGroupByAllTypes(
-                "SELECT min(achar), max(achar) FROM tab WHERE astring = 'BBQRHKLSSCIQ' " +
+                "SELECT min(achar), max(achar) FROM tab WHERE astring = 'ZYJDGSUYYESCKPGP' " +
                         "UNION ALL " +
-                        "SELECT min(achar), max(achar) FROM tab WHERE astring = 'ZXJBJEX';",
+                        "SELECT min(achar), max(achar) FROM tab WHERE astring = 'BBOYHGPKTIIFPB';",
                 "min\tmax\n" +
-                        "W\tW\n" +
-                        "G\tG\n"
+                        "S\tS\n" +
+                        "Y\tY\n"
         );
     }
 
@@ -1333,26 +1551,124 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelSymbolKeyGroupBy(
                 "SELECT ((key is not null) and (colTop is not null)) key, sum(colTop) FROM tab ORDER BY key",
                 "key\tsum\n" +
-                        "false\tNaN\n" +
+                        "false\tnull\n" +
                         "true\t8202000.0\n"
         );
     }
 
     @Test
+    public void testParallelRostiAvg() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, avg(s) avg_s, avg(i) avg_i, avg(l) avg_l, round(avg(d)) avg_d " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tavg_s\tavg_i\tavg_l\tavg_d\n" +
+                        "k0\t-859.98\t128.27631578947367\t469.4625\t1.0\n" +
+                        "k1\t-2783.67\t113.6375\t548.2073170731708\t0.0\n" +
+                        "k2\t1722.65\t133.21686746987953\t557.6623376623377\t0.0\n" +
+                        "k3\t-376.12\t134.25301204819277\t512.6117647058824\t0.0\n" +
+                        "k4\t844.42\t124.53333333333333\t478.9146341463415\t1.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiCount() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, count(i) count_i, count(l) count_l, count(d) count_d " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tcount_i\tcount_l\tcount_d\n" +
+                        "k0\t76\t80\t88\n" +
+                        "k1\t80\t82\t86\n" +
+                        "k2\t83\t77\t87\n" +
+                        "k3\t83\t85\t75\n" +
+                        "k4\t75\t82\t84\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiKSumNSum() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, round(ksum(d)) ksum_d, round(nsum(d)) nsum_d " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tksum_d\tnsum_d\n" +
+                        "k0\t48.0\t48.0\n" +
+                        "k1\t43.0\t43.0\n" +
+                        "k2\t39.0\t39.0\n" +
+                        "k3\t33.0\t33.0\n" +
+                        "k4\t46.0\t46.0\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiMinMax() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, min(s) min_s, max(s) max_s, min(i) min_i, max(i) max_i, min(l) min_l, max(l) max_l, " +
+                        "  min(d) min_d, max(d) max_d, min(dd) min_dd, max(dd) max_dd, min(t) min_t, max(t) max_t " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tmin_s\tmax_s\tmin_i\tmax_i\tmin_l\tmax_l\tmin_d\tmax_d\tmin_dd\tmax_dd\tmin_t\tmax_t\n" +
+                        "k0\t-32314\t32650\t5\t255\t1\t982\t0.023600615130049185\t0.9924997596095891\t1980-01-13T19:56:55.619Z\t1989-12-11T15:05:57.581Z\t1980-05-16T15:35:09.991442Z\t1989-12-01T00:45:38.931160Z\n" +
+                        "k1\t-31947\t32139\t0\t251\t12\t1022\t0.030997441190531494\t0.9869813021229126\t1980-01-27T20:04:53.149Z\t1989-11-09T23:54:33.595Z\t1980-01-20T15:13:30.780056Z\t1989-12-25T11:06:35.080985Z\n" +
+                        "k2\t-32474\t32378\t3\t256\t18\t1020\t0.0031075670450616544\t0.9887681426881507\t1980-02-06T21:12:31.508Z\t1989-10-14T12:01:28.825Z\t1980-01-09T11:42:16.059075Z\t1989-12-02T07:02:03.165501Z\n" +
+                        "k3\t-32129\t32752\t0\t254\t4\t1024\t0.017595931321539804\t0.9958686315610356\t1980-02-04T19:47:05.743Z\t1989-12-28T03:38:43.787Z\t1980-01-09T21:18:50.462647Z\t1989-12-13T15:24:44.892613Z\n" +
+                        "k4\t-32677\t32259\t5\t255\t4\t1017\t0.06790969300705241\t0.9923530546137099\t1980-01-25T07:20:26.116Z\t1989-11-11T09:29:53.477Z\t1980-01-25T11:45:16.361674Z\t1989-11-07T17:55:20.285921Z\n"
+        );
+    }
+
+    @Test
+    public void testParallelRostiSum() throws Exception {
+        testParallelRostiGroupBy(
+                "SELECT key, sum(s) sum_s, sum(i) sum_i, sum(l) sum_l, sum(l256) sum_l256, round(sum(d)) sum_d " +
+                        "FROM tab " +
+                        "ORDER BY key",
+                "key\tsum_s\tsum_i\tsum_l\tsum_l256\tsum_d\n" +
+                        "k0\t-85998\t9749\t37557\t0x248af96495cafa7d5c4dbe79c86d46054af590066639cabfb780bce1c77ea11c\t48.0\n" +
+                        "k1\t-278367\t9091\t44953\t0x50b8e23533380471b205e4a7adeb9498426e85e7cf92558e9ca39604592ccea6\t43.0\n" +
+                        "k2\t172265\t11057\t42940\t0xa914b3d66e12185a5d76310378e831be316071aaa2436b2c66e948497c8929ba\t39.0\n" +
+                        "k3\t-37612\t11143\t43572\t0x92fdbf6e1f5b9360329a1dec86290a74b5a3f6b9ed9725c4f457dbb833b212f5\t33.0\n" +
+                        "k4\t84442\t9340\t39271\t0x01708577a8ec2c4308e67d5f43e4cee420525d6d74f480ca312efa8e9fe584ce\t46.0\n"
+        );
+    }
+
+    @Test
     public void testParallelShortKeyGroupBy() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT ashort, min(along), max(along), min(anint), max(anint) FROM tab ORDER BY ashort LIMIT 10",
                 "ashort\tmin\tmax\tmin1\tmax1\n" +
-                        "10\t-9034587980761366171\t8241274134787696389\t-1493851145\t2030940694\n" +
-                        "11\t-8883842583685157250\t6964067227983995217\t-935653897\t1333246810\n" +
-                        "12\t-3197702176158331996\t4290056275098552124\t-1630398971\t1963882355\n" +
-                        "13\t-8278430792102412405\t4014190873568803122\t-2098187259\t1970675681\n" +
-                        "14\t2421752788016054233\t6338178220630434184\t-1631999006\t-722698516\n" +
-                        "15\t-8125853980339274130\t9051606766571205010\t-1858977498\t1150611667\n" +
-                        "16\t-9013114500574911839\t5870730758990824819\t-540262757\t1849540102\n" +
-                        "17\t-6999485272489290469\t7050703886046737412\t-940880966\t1965693358\n" +
-                        "18\t-3572916331642699731\t8246112648868146347\t-583762669\t1962662189\n" +
-                        "19\t-8236862851826364610\t7519544311952262364\t-1167241739\t-501299886\n"
+                        "10\t-7014037229734002476\t7183543099461850887\t-1923591798\t1614272726\n" +
+                        "11\t-8094563283586603797\t8266945525792915855\t-2019994796\t210531539\n" +
+                        "12\t5618009227733669273\t8843912384659881242\t-652636844\t1190519150\n" +
+                        "13\t-7540841016814556599\t6605106079379923850\t-1732278194\t732327460\n" +
+                        "14\t-5460379094988165507\t8508185526576303912\t-1006265366\t1983534078\n" +
+                        "15\t-8981189571240767552\t8925512637731362403\t-1578813385\t2074645817\n" +
+                        "16\t-4066776978860718462\t6817629763366381128\t-1183238579\t706490660\n" +
+                        "17\t-7818508517164276162\t8840276378973040058\t-1908962198\t1965693358\n" +
+                        "19\t-9081142346003583492\t5148856316963763479\t-1242130097\t810630533\n" +
+                        "20\t-8639548466303198922\t4998555152747068047\t-1594623294\t2041653124\n"
+        );
+    }
+
+    @Test
+    public void testParallelShortKeyGroupBy2() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT ashort, max(along) - min(along) delta FROM tab ORDER BY ashort LIMIT 10",
+                "ashort\tdelta\n" +
+                        "10\t-4249163744513698253\n" +
+                        "11\t-2085235264330031964\n" +
+                        "12\t3225903156926211969\n" +
+                        "13\t-4300796977515071167\n" +
+                        "14\t-4478179452145082197\n" +
+                        "15\t-540041864737421661\n" +
+                        "16\t-7562337331482452026\n" +
+                        "17\t-1787959177572235396\n" +
+                        "19\t-4216745410742204645\n" +
+                        "20\t-4808640454659284647\n"
         );
     }
 
@@ -1362,25 +1678,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT ashort, count_distinct(along) FROM tab " +
                         "WHERE ts in '1970-01-13' and ashort < 100 ORDER BY ashort DESC",
                 "ashort\tcount_distinct\n" +
-                        "97\t1\n" +
+                        "96\t1\n" +
                         "94\t1\n" +
-                        "87\t1\n" +
-                        "86\t1\n" +
-                        "81\t1\n" +
-                        "74\t1\n" +
+                        "89\t1\n" +
+                        "88\t1\n" +
+                        "82\t1\n" +
+                        "72\t2\n" +
                         "70\t1\n" +
-                        "64\t1\n" +
-                        "63\t1\n" +
-                        "60\t1\n" +
-                        "59\t1\n" +
-                        "56\t1\n" +
+                        "65\t1\n" +
                         "55\t1\n" +
-                        "50\t1\n" +
+                        "52\t1\n" +
+                        "49\t1\n" +
+                        "48\t1\n" +
+                        "45\t1\n" +
                         "44\t1\n" +
+                        "43\t1\n" +
                         "42\t1\n" +
-                        "34\t1\n" +
-                        "24\t1\n" +
-                        "22\t1\n" +
+                        "40\t2\n" +
+                        "33\t1\n" +
                         "19\t1\n"
         );
     }
@@ -1391,14 +1706,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT ashort, count_distinct(anint) FROM tab " +
                         "WHERE ts in '1970-01-13' and ashort < 100 and key in ('k1', 'k2') ORDER BY ashort DESC",
                 "ashort\tcount_distinct\n" +
-                        "97\t1\n" +
-                        "94\t1\n" +
-                        "86\t1\n" +
-                        "81\t1\n" +
-                        "59\t1\n" +
-                        "56\t1\n" +
-                        "42\t1\n" +
-                        "22\t1\n"
+                        "89\t1\n" +
+                        "88\t1\n" +
+                        "70\t1\n" +
+                        "49\t1\n" +
+                        "43\t1\n" +
+                        "40\t1\n" +
+                        "33\t1\n"
         );
     }
 
@@ -1427,10 +1741,119 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelStringKeyGroupBy() throws Exception {
+    public void testParallelSingleKeyGroupByWithApproxCountDistinctIPv4Function() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(anint::ipv4), approx_count_distinct(anint::ipv4) FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\n" +
+                        "k0\t800\t800\n" +
+                        "k1\t800\t800\n" +
+                        "k2\t800\t800\n" +
+                        "k3\t800\t800\n" +
+                        "k4\t800\t800\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithApproxCountDistinctIntFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(anint), approx_count_distinct(anint) FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\n" +
+                        "k0\t800\t800\n" +
+                        "k1\t800\t800\n" +
+                        "k2\t800\t800\n" +
+                        "k3\t800\t800\n" +
+                        "k4\t800\t800\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithApproxCountDistinctLongFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(along), approx_count_distinct(along) FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\n" +
+                        "k0\t800\t800\n" +
+                        "k1\t800\t800\n" +
+                        "k2\t800\t800\n" +
+                        "k3\t800\t800\n" +
+                        "k4\t800\t800\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithApproxCountDistinctSymbolFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(asymbol) FROM tab ORDER BY key",
+                "key\tcount_distinct\n" +
+                        "k0\t4\n" +
+                        "k1\t4\n" +
+                        "k2\t4\n" +
+                        "k3\t4\n" +
+                        "k4\t4\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithTwoApproxCountDistinctIPv4Functions() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT " +
+                        "key, " +
+                        "count_distinct(anint::ipv4), " +
+                        "approx_count_distinct(anint::ipv4), " +
+                        "count_distinct((abs(anint) % 10)::ipv4), " +
+                        "approx_count_distinct((abs(anint) % 10)::ipv4) " +
+                        "FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
+                        "k0\t800\t800\t9\t9\n" +
+                        "k1\t800\t800\t9\t9\n" +
+                        "k2\t800\t800\t9\t9\n" +
+                        "k3\t800\t800\t9\t9\n" +
+                        "k4\t800\t800\t9\t9\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithTwoApproxCountDistinctIntFunctions() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT " +
+                        "key, " +
+                        "count_distinct(anint), " +
+                        "approx_count_distinct(anint), " +
+                        "count_distinct(abs(anint) % 10), " +
+                        "approx_count_distinct(abs(anint) % 10) " +
+                        "FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
+                        "k0\t800\t800\t10\t10\n" +
+                        "k1\t800\t800\t10\t10\n" +
+                        "k2\t800\t800\t10\t10\n" +
+                        "k3\t800\t800\t10\t10\n" +
+                        "k4\t800\t800\t10\t10\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithTwoApproxCountDistinctLongFunctions() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT " +
+                        "key, " +
+                        "count_distinct(along), " +
+                        "approx_count_distinct(along), " +
+                        "count_distinct(abs(along) % 10), " +
+                        "approx_count_distinct(abs(along) % 10) " +
+                        "FROM tab ORDER BY key",
+                "key\tcount_distinct\tapprox_count_distinct\tcount_distinct1\tapprox_count_distinct1\n" +
+                        "k0\t800\t800\t10\t10\n" +
+                        "k1\t800\t800\t10\t10\n" +
+                        "k2\t800\t800\t10\t10\n" +
+                        "k3\t800\t800\t10\t10\n" +
+                        "k4\t800\t800\t10\t10\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringAndVarcharKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop), count() FROM tab ORDER BY key",
                 "key\tavg\tsum\tcount\n" +
                         "k0\t2027.5\t1642000.0\t1600\n" +
@@ -1521,7 +1944,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelStringKeyGroupBySubQuery() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg + sum from (" +
                         "SELECT key, avg(value), sum(colTop) FROM tab" +
                         ") ORDER BY key",
@@ -1541,19 +1964,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
                     bindVariableService.clear();
                     bindVariableService.setBoolean("aboolean", true);
-                    bindVariableService.setByte("abyte", (byte) 27);
-                    bindVariableService.setGeoHash("ageobyte", 0b1110, ColumnType.getGeoHashTypeWithBits(4));
-                    bindVariableService.setShort("ashort", (short) 967);
-                    bindVariableService.setGeoHash("ageoshort", 0b110101110001, ColumnType.getGeoHashTypeWithBits(12));
-                    bindVariableService.setChar("achar", 'T');
-                    bindVariableService.setInt("anint", -382110917);
-                    bindVariableService.setGeoHash("ageoint", 0b0011000110101001L, ColumnType.getGeoHashTypeWithBits(16));
-                    bindVariableService.setStr("asymbol", null);
-                    bindVariableService.setLong("along", 4625553163167802495L);
-                    bindVariableService.setDate("adate", 1432692897394L);
-                    bindVariableService.setGeoHash("ageolong", 0b01001001000101100011111011100111L, ColumnType.getGeoHashTypeWithBits(32));
-                    bindVariableService.setStr("astring", "FMIFFNCGOR");
-                    bindVariableService.setTimestamp("atimestamp", 2399500000000L);
+                    bindVariableService.setByte("abyte", (byte) 25);
+                    bindVariableService.setGeoHash("ageobyte", 0b1100, ColumnType.getGeoHashTypeWithBits(4));
+                    bindVariableService.setShort("ashort", (short) 1013);
+                    bindVariableService.setGeoHash("ageoshort", 0b001111001001, ColumnType.getGeoHashTypeWithBits(12));
+                    bindVariableService.setChar("achar", 'C');
+                    bindVariableService.setInt("anint", -1269042121);
+                    bindVariableService.setGeoHash("ageoint", 0b0101011010000100, ColumnType.getGeoHashTypeWithBits(16));
+                    bindVariableService.setStr("asymbol", "PEHN");
+                    bindVariableService.setLong("along", -3214230645884399728L);
+                    bindVariableService.setDate("adate", 1447246617854L);
+                    bindVariableService.setGeoHash("ageolong", 0b11111100110100011011101011101011L, ColumnType.getGeoHashTypeWithBits(32));
+                    bindVariableService.setStr("astring", "LYXWCKYLSU");
+                    bindVariableService.setTimestamp("atimestamp", 401000000000L);
+                    bindVariableService.setStr("auuid", "78c594c4-9699-4885-aa18-96d0ad3419d2");
                 },
                 "SELECT key, count(anint), count(along) FROM tab " +
                         "WHERE aboolean = :aboolean" +
@@ -1569,10 +1993,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         " and adate = :adate" +
                         " and ageolong = :ageolong" +
                         " and astring = :astring" +
+                        " and auuid = :auuid" +
                         " and ts = :atimestamp " +
                         "ORDER BY key",
                 "key\tcount\tcount1\n" +
-                        "k0\t1\t1\n"
+                        "k3\t1\t1\n"
         );
     }
 
@@ -1586,11 +2011,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 },
                 "SELECT key, min(along), max(along) FROM tab WHERE anint > $1 and along < $2 ORDER BY key",
                 "key\tmin\tmax\n" +
-                        "k0\t-9163665195049517449\t-821679930140433295\n" +
-                        "k1\t-9211162377139482426\t-315372252554695059\n" +
-                        "k2\t-9210040949198821598\t-392919441181422827\n" +
-                        "k3\t-9206124989211917513\t-169245080956466231\n" +
-                        "k4\t-9201446338235814877\t-523002682211837829\n"
+                        "k0\t-9219668933902983867\t-608075365086093881\n" +
+                        "k1\t-9183391647798320265\t-537033525381181954\n" +
+                        "k2\t-9185973508459496019\t-742318963566750163\n" +
+                        "k3\t-9188002349803268631\t-218100546579477944\n" +
+                        "k4\t-9211367153776244683\t-618781741402001353\n"
         );
     }
 
@@ -1626,7 +2051,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithFilter() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 80 ORDER BY key",
                 "key\tavg\tsum\tcount\n" +
                         "k0\t46.25\t325.0\t20\n" +
@@ -1638,10 +2063,28 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringKeyGroupByWithFilter2() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE upper(key) = 'K3' ORDER BY key",
+                "key\tavg\tsum\tcount\n" +
+                        "k3\t2025.5\t1640400.0\t1600\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithFilter3() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE substring(key,2,1) = '3' ORDER BY key",
+                "key\tavg\tsum\tcount\n" +
+                        "k3\t2025.5\t1640400.0\t1600\n"
+        );
+    }
+
+    @Test
     public void testParallelStringKeyGroupByWithLimit() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop) FROM tab ORDER BY key LIMIT 3",
                 "key\tavg\tsum\n" +
                         "k0\t2027.5\t1642000.0\n" +
@@ -1662,11 +2105,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         testParallelGroupByAllTypes(
                 "SELECT key, min(astring), max(astring) FROM tab ORDER BY key",
                 "key\tmin\tmax\n" +
-                        "k0\tBBQRHKLSSCIQ\tZZRMFMBEZGHWVD\n" +
-                        "k1\tBBHLHQWQCSE\tZZQVVCJZSDLNDV\n" +
-                        "k2\tBBHLPGXIIDYSTGX\tZXJBJEX\n" +
-                        "k3\tBDBJTHFBKJJLT\tZZSRLZQQNGCQTSFD\n" +
-                        "k4\tBBKYQSWZHTVJQD\tZZYFVYUXFENY\n"
+                        "k0\tBBCNG\tZVBNJWFNBZC\n" +
+                        "k1\tBBSHZZIC\tZZUMQFJLG\n" +
+                        "k2\tBDHTRTU\tZYJDGSUYYESCKPGP\n" +
+                        "k3\tBBIMTJZLB\tZZCLVWGJMOXN\n" +
+                        "k4\tBBOYHGPKTIIFPB\tZYQPYIWSMSTJ\n"
         );
     }
 
@@ -1687,7 +2130,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithNestedFilter() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT avg(v), k, sum(ct) " +
                         "FROM (SELECT colTop ct, value v, key k FROM tab WHERE value < 80) ORDER BY k",
                 "avg\tk\tsum\n" +
@@ -1700,13 +2143,34 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringKeyGroupByWithNotNullCheckInFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, min(ts), max(ts) FROM tab WHERE key IS NOT NULL ORDER BY key",
+                "key\tmin\tmax\n" +
+                        "k0\t1970-01-01T01:12:00.000000Z\t1970-02-10T12:00:00.000000Z\n" +
+                        "k1\t1970-01-01T00:14:24.000000Z\t1970-02-10T11:02:24.000000Z\n" +
+                        "k2\t1970-01-01T00:28:48.000000Z\t1970-02-10T11:16:48.000000Z\n" +
+                        "k3\t1970-01-01T00:43:12.000000Z\t1970-02-10T11:31:12.000000Z\n" +
+                        "k4\t1970-01-01T00:57:36.000000Z\t1970-02-10T11:45:36.000000Z\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByWithNullCheckInFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, min(ts), max(ts) FROM tab WHERE key IS NULL ORDER BY key",
+                "key\tmin\tmax\n"
+        );
+    }
+
+    @Test
     public void testParallelStringKeyGroupByWithReadThreadSafeTimestampFilter() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT key, count_distinct(anint) FROM tab " +
                         "WHERE ts in '1970-01-13' and adouble < 1000 ORDER BY key DESC",
                 "key\tcount_distinct\n" +
-                        "k4\t30\n" +
-                        "k3\t26\n" +
+                        "k4\t29\n" +
+                        "k3\t27\n" +
                         "k2\t31\n" +
                         "k1\t29\n" +
                         "k0\t28\n"
@@ -1726,7 +2190,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelStringKeyGroupByWithTooStrictFilter() throws Exception {
-        testParallelStringKeyGroupBy(
+        testParallelStringAndVarcharKeyGroupBy(
                 "SELECT key, avg(value), sum(colTop), count() FROM tab WHERE value < 0 ORDER BY key",
                 "key\tavg\tsum\tcount\n"
         );
@@ -1748,18 +2212,205 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelStringKeyLikeFilter() throws Exception {
+        final String fullResult = "key\tcount\n" +
+                "k0\t1600\n" +
+                "k1\t1600\n" +
+                "k2\t1600\n" +
+                "k3\t1600\n" +
+                "k4\t1600\n";
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, count(*) FROM tab WHERE key like '%0' ORDER BY key",
+                "key\tcount\n" +
+                        "k0\t1600\n",
+                "SELECT key, count(*) FROM tab WHERE key like 'k%' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like 'k_' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like '%k%' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like '%foobarbaz%' ORDER BY key",
+                "key\tcount\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyNotLikeFilter() throws Exception {
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, count(*) FROM tab WHERE key not like 'k0%' ORDER BY key",
+                "key\tcount\n" +
+                        "k1\t1600\n" +
+                        "k2\t1600\n" +
+                        "k3\t1600\n" +
+                        "k4\t1600\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyedFirstFunction() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT key, " +
+                        " first(aboolean) aboolean, first(abyte) abyte, first(ageobyte) ageobyte, " +
+                        " first(ashort) ashort, first(ageoshort) ageoshort, first(achar) achar, " +
+                        " first(anint) anint, first(anipv4) anipv4, first(ageoint) ageoint, first(afloat) afloat, " +
+                        " first(along) along, first(adouble) adouble, first(adate) adate, first(ts) ts, first(ageolong) ageolong, " +
+                        " first(asymbol) asymbol, first(astring) astring, " +
+                        " first(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC",
+                "key\taboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tanipv4\tageoint\tafloat\talong\tadouble\tadate\tts\tageolong\tasymbol\tastring\tauuid\n" +
+                        "k4\tfalse\t29\t1100\t664\t000101011000\tI\t1506802640\t66.9.11.179\t1011000011101011\t0.6260\t-5024542231726589509\tnull\t2015-08-03T15:58:03.335Z\t1970-01-05T15:31:40.000000Z\t01011101101001101000100100101110\t\tTKVVSJ\t8e4a7f66-1df6-432b-af17-1b3f06f6387d\n" +
+                        "k3\ttrue\t25\t1100\t1013\t001111001001\tC\t-1269042121\t184.92.27.200\t0101011010000100\t0.9566\t-3214230645884399728\t0.5406709846540508\t2015-11-11T12:56:57.854Z\t1970-01-05T15:23:20.000000Z\t11111100110100011011101011101011\tPEHN\tLYXWCKYLSU\t78c594c4-9699-4885-aa18-96d0ad3419d2\n" +
+                        "k2\tfalse\t9\t0101\t279\t011101100011\tL\t1978144263\t171.117.213.66\t0111100011010111\tnull\t-7439145921574737517\t0.7763904674818695\t2015-09-18T13:48:49.642Z\t1970-01-05T15:15:00.000000Z\t01010100000001000011010111010101\tCPSW\tOOZZV\t9b27eba5-e9cf-41e2-9660-300cea7db540\n" +
+                        "k1\ttrue\t5\t1100\t788\t001111011001\tT\t-85170055\t149.34.19.60\t0010110111110001\t0.8757\t8416773233910814357\t0.8799634725391621\t2015-08-17T21:12:06.116Z\t1970-01-05T15:06:40.000000Z\t10110001001100000010111011111011\tCPSW\tDXYSBEO\t4c009450-0fbf-4dfe-b6fb-2001fe5dfb09\n" +
+                        "k0\tfalse\t13\t0000\t165\t000000110100\tO\t-640305320\t22.51.83.99\t1011000000001111\t0.9918\t-5315599072928175674\t0.32424562653969957\t2015-02-10T08:56:03.707Z\t1970-01-05T15:40:00.000000Z\t11011011111111001010110010100110\tCPSW\t\ta1d06d6e-b3a5-4079-8972-5663d8da9768\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyedFirstFunctionFuzz() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testFirstLastFunctionFuzz(
+                "SELECT key, " +
+                        " first(aboolean) aboolean, first(abyte) abyte, first(ageobyte) ageobyte, " +
+                        " first(ashort) ashort, first(ageoshort) ageoshort, first(achar) achar, " +
+                        " first(anint) anint, first(anipv4) anipv4, first(ageoint) ageoint, first(afloat) afloat, " +
+                        " first(along) along, first(adouble) adouble, first(adate) adate, first(ts) ts, first(ageolong) ageolong, " +
+                        " first(asymbol) asymbol, first(astring) astring, " +
+                        " first(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyedFirstNotNullFunction() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT key, " +
+                        " first_not_null(ageobyte) ageobyte, " +
+                        " first_not_null(ageoshort) ageoshort, first_not_null(achar) achar, " +
+                        " first_not_null(anint) anint, first_not_null(anipv4) anipv4, first_not_null(ageoint) ageoint, first_not_null(afloat) afloat, " +
+                        " first_not_null(along) along, first_not_null(adouble) adouble, first_not_null(adate) adate, first_not_null(ts) ts, first_not_null(ageolong) ageolong, " +
+                        " first_not_null(asymbol) asymbol, first_not_null(astring) astring, " +
+                        " first_not_null(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC",
+                "key\tageobyte\tageoshort\tachar\tanint\tanipv4\tageoint\tafloat\talong\tadouble\tadate\tts\tageolong\tasymbol\tastring\tauuid\n" +
+                        "k4\t1100\t000101011000\tI\t1506802640\t66.9.11.179\t1011000011101011\t0.6260\t-5024542231726589509\t0.6213434403332111\t2015-08-03T15:58:03.335Z\t1970-01-05T15:31:40.000000Z\t01011101101001101000100100101110\tPEHN\tTKVVSJ\t8e4a7f66-1df6-432b-af17-1b3f06f6387d\n" +
+                        "k3\t1100\t001111001001\tC\t-1269042121\t184.92.27.200\t0101011010000100\t0.9566\t-3214230645884399728\t0.5406709846540508\t2015-11-11T12:56:57.854Z\t1970-01-05T15:23:20.000000Z\t11111100110100011011101011101011\tPEHN\tLYXWCKYLSU\t78c594c4-9699-4885-aa18-96d0ad3419d2\n" +
+                        "k2\t0101\t011101100011\tL\t1978144263\t171.117.213.66\t0111100011010111\t0.5709\t-7439145921574737517\t0.7763904674818695\t2015-09-18T13:48:49.642Z\t1970-01-05T15:15:00.000000Z\t01010100000001000011010111010101\tCPSW\tOOZZV\t9b27eba5-e9cf-41e2-9660-300cea7db540\n" +
+                        "k1\t1100\t001111011001\tT\t-85170055\t149.34.19.60\t0010110111110001\t0.8757\t8416773233910814357\t0.8799634725391621\t2015-08-17T21:12:06.116Z\t1970-01-05T15:06:40.000000Z\t10110001001100000010111011111011\tCPSW\tDXYSBEO\t4c009450-0fbf-4dfe-b6fb-2001fe5dfb09\n" +
+                        "k0\t0000\t000000110100\tO\t-640305320\t22.51.83.99\t1011000000001111\t0.9918\t-5315599072928175674\t0.32424562653969957\t2015-02-10T08:56:03.707Z\t1970-01-05T15:40:00.000000Z\t11011011111111001010110010100110\tCPSW\tQZSLQVFGPPRGSXB\ta1d06d6e-b3a5-4079-8972-5663d8da9768\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyedFirstNotNullFunctionFuzz() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testFirstLastFunctionFuzz(
+                "SELECT key, " +
+                        " first_not_null(ageobyte) ageobyte, " +
+                        " first_not_null(ageoshort) ageoshort, first_not_null(achar) achar, " +
+                        " first_not_null(anint) anint, first_not_null(anipv4) anipv4, first_not_null(ageoint) ageoint, first_not_null(afloat) afloat, " +
+                        " first_not_null(along) along, first_not_null(adouble) adouble, first_not_null(adate) adate, first_not_null(ts) ts, first_not_null(ageolong) ageolong, " +
+                        " first_not_null(asymbol) asymbol, first_not_null(astring) astring, " +
+                        " first_not_null(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC"
+        );
+    }
+
+    @Test
     public void testParallelStringKeyedGroupByWithUnionAll() throws Exception {
         testParallelGroupByAllTypes(
                 "SELECT * " +
                         "FROM ( " +
-                        "  SELECT key, min(achar), max(achar) FROM tab WHERE astring = 'BBQRHKLSSCIQ' " +
+                        "  SELECT key, min(achar), max(achar) FROM tab WHERE astring = 'ZZCLVWGJMOXN' " +
                         "  UNION ALL " +
-                        "  SELECT key, min(achar), max(achar) FROM tab WHERE astring = 'ZXJBJEX'" +
+                        "  SELECT key, min(achar), max(achar) FROM tab WHERE astring = 'BBCNG'" +
                         ") " +
                         "ORDER BY key DESC;",
                 "key\tmin\tmax\n" +
-                        "k2\tG\tG\n" +
-                        "k0\tW\tW\n"
+                        "k3\tB\tB\n" +
+                        "k0\tD\tD\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyedLastFunction() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT key, " +
+                        " last(aboolean) aboolean, last(abyte) abyte, last(ageobyte) ageobyte, " +
+                        " last(ashort) ashort, last(ageoshort) ageoshort, last(achar) achar, " +
+                        " last(anint) anint, last(anipv4) anipv4, last(ageoint) ageoint, last(afloat) afloat, " +
+                        " last(along) along, last(adouble) adouble, last(adate) adate, last(ts) ts, last(ageolong) ageolong, " +
+                        " last(asymbol) asymbol, last(astring) astring, " +
+                        " last(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC",
+                "key\taboolean\tabyte\tageobyte\tashort\tageoshort\tachar\tanint\tanipv4\tageoint\tafloat\talong\tadouble\tadate\tts\tageolong\tasymbol\tastring\tauuid\n" +
+                        "k4\tfalse\t31\t0101\t330\t110110100011\tF\t-848336394\t235.231.19.15\t0110111101100110\t0.2565\t-9157587264521797613\t0.21377964990604514\t2015-02-01T20:25:30.629Z\t1970-01-28T18:23:20.000000Z\t01011011001110110000010000101101\tCPSW\tMPVGXH\t18362dcf-ef83-4aab-ac47-04e5093bf747\n" +
+                        "k3\tfalse\t38\t1010\t87\t110111011001\tJ\t1901541154\t37.251.146.2\t1001000010010001\tnull\t-5509931004723445033\t0.023379956696789717\t2015-02-12T10:52:41.010Z\t1970-01-28T18:15:00.000000Z\t11010110001110011010110000001111\tPEHN\tCSXKOBEGGNBZMI\t6e80006a-871f-417a-b33a-82ae2a7b83e8\n" +
+                        "k2\ttrue\t8\t0110\t556\t101001101101\tS\t1284672871\t123.157.83.21\t0000001101111100\t0.0007\t9154573717374787696\t0.151734552716993\t2015-02-06T11:08:08.607Z\t1970-01-28T18:06:40.000000Z\t00011101011001001010001110011010\t\tPWKZMYWJ\tcd1c6b4b-1b2d-4324-9477-dc8aeb3e13f3\n" +
+                        "k1\ttrue\t17\t1100\t147\t011101001110\tI\t1516951853\t88.98.63.55\t1010001110110001\t0.5834\t-6618178923628468143\t0.1996073004071821\t2015-05-23T20:25:36.412Z\t1970-01-28T17:58:20.000000Z\t11001011111011110001101111100000\tPEHN\tFBGWS\t232fceaa-4da1-4f63-8f6d-0b7977b184bf\n" +
+                        "k0\tfalse\t28\t0100\t859\t111101110010\tY\t1033747429\t210.8.117.61\t0100111000110011\t0.0301\t6812734169481155056\t0.15322992873721464\t2015-06-04T13:11:05.363Z\t1970-01-28T18:31:40.000000Z\t01001000100000110011110011111100\tHYRX\t\t8055fd98-3b39-4806-9dbf-5a050468a62a\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyedLastFunctionFuzz() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testFirstLastFunctionFuzz(
+                "SELECT key, " +
+                        " last(aboolean) aboolean, last(abyte) abyte, last(ageobyte) ageobyte, " +
+                        " last(ashort) ashort, last(ageoshort) ageoshort, last(achar) achar, " +
+                        " last(anint) anint, last(anipv4) anipv4, last(ageoint) ageoint, last(afloat) afloat, " +
+                        " last(along) along, last(adouble) adouble, last(adate) adate, last(ts) ts, last(ageolong) ageolong, " +
+                        " last(asymbol) asymbol, last(astring) astring, " +
+                        " last(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyedLastNotNullFunction() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT key, " +
+                        " last_not_null(ageobyte) ageobyte, " +
+                        " last_not_null(ageoshort) ageoshort, last_not_null(achar) achar, " +
+                        " last_not_null(anint) anint, last_not_null(anipv4) anipv4, last_not_null(ageoint) ageoint, last_not_null(afloat) afloat, " +
+                        " last_not_null(along) along, last_not_null(adouble) adouble, last_not_null(adate) adate, last_not_null(ts) ts, last_not_null(ageolong) ageolong, " +
+                        " last_not_null(asymbol) asymbol, last_not_null(astring) astring, " +
+                        " last_not_null(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC",
+                "key\tageobyte\tageoshort\tachar\tanint\tanipv4\tageoint\tafloat\talong\tadouble\tadate\tts\tageolong\tasymbol\tastring\tauuid\n" +
+                        "k4\t0101\t110110100011\tF\t-848336394\t235.231.19.15\t0110111101100110\t0.2565\t-9157587264521797613\t0.21377964990604514\t2015-02-01T20:25:30.629Z\t1970-01-28T18:23:20.000000Z\t01011011001110110000010000101101\tCPSW\tMPVGXH\t18362dcf-ef83-4aab-ac47-04e5093bf747\n" +
+                        "k3\t1010\t110111011001\tJ\t1901541154\t37.251.146.2\t1001000010010001\t0.1488\t-5509931004723445033\t0.023379956696789717\t2015-02-12T10:52:41.010Z\t1970-01-28T18:15:00.000000Z\t11010110001110011010110000001111\tPEHN\tCSXKOBEGGNBZMI\t6e80006a-871f-417a-b33a-82ae2a7b83e8\n" +
+                        "k2\t0110\t101001101101\tS\t1284672871\t123.157.83.21\t0000001101111100\t0.0007\t9154573717374787696\t0.151734552716993\t2015-02-06T11:08:08.607Z\t1970-01-28T18:06:40.000000Z\t00011101011001001010001110011010\tCPSW\tPWKZMYWJ\tcd1c6b4b-1b2d-4324-9477-dc8aeb3e13f3\n" +
+                        "k1\t1100\t011101001110\tI\t1516951853\t88.98.63.55\t1010001110110001\t0.5834\t-6618178923628468143\t0.1996073004071821\t2015-05-23T20:25:36.412Z\t1970-01-28T17:58:20.000000Z\t11001011111011110001101111100000\tPEHN\tFBGWS\t232fceaa-4da1-4f63-8f6d-0b7977b184bf\n" +
+                        "k0\t0100\t111101110010\tY\t1033747429\t210.8.117.61\t0100111000110011\t0.0301\t6812734169481155056\t0.15322992873721464\t2015-06-04T13:11:05.363Z\t1970-01-28T18:31:40.000000Z\t01001000100000110011110011111100\tHYRX\tFYJXOSBUGGYTSKTY\t8055fd98-3b39-4806-9dbf-5a050468a62a\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringKeyedLastNotNullFunctionFuzz() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testFirstLastFunctionFuzz(
+                "SELECT key, " +
+                        " last_not_null(ageobyte) ageobyte, " +
+                        " last_not_null(ageoshort) ageoshort, last_not_null(achar) achar, " +
+                        " last_not_null(anint) anint, last_not_null(anipv4) anipv4, last_not_null(ageoint) ageoint, last_not_null(afloat) afloat, " +
+                        " last_not_null(along) along, last_not_null(adouble) adouble, last_not_null(adate) adate, last_not_null(ts) ts, last_not_null(ageolong) ageolong, " +
+                        " last_not_null(asymbol) asymbol, last_not_null(astring) astring, " +
+                        " last_not_null(auuid) auuid " +
+                        "FROM tab ORDER BY key DESC"
         );
     }
 
@@ -1912,6 +2563,56 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelSymbolKeyLikeFilter() throws Exception {
+        final String fullResult = "key\tcount\n" +
+                "k0\t1600\n" +
+                "k1\t1600\n" +
+                "k2\t1600\n" +
+                "k3\t1600\n" +
+                "k4\t1600\n";
+        testParallelSymbolKeyGroupBy(
+                "SELECT key, count(*) FROM tab WHERE key like '%0' ORDER BY key",
+                "key\tcount\n" +
+                        "k0\t1600\n",
+                "SELECT key, count(*) FROM tab WHERE key like 'k%' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like 'k_' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like '%k%' ORDER BY key",
+                fullResult,
+                "SELECT key, count(*) FROM tab WHERE key like '%foobarbaz%' ORDER BY key",
+                "key\tcount\n"
+        );
+    }
+
+    @Test
+    public void testParallelSymbolKeyNotLikeFilter() throws Exception {
+        testParallelSymbolKeyGroupBy(
+                "SELECT key, count(*) FROM tab WHERE key not like 'k0%' ORDER BY key",
+                "key\tcount\n" +
+                        "k1\t1600\n" +
+                        "k2\t1600\n" +
+                        "k3\t1600\n" +
+                        "k4\t1600\n"
+        );
+    }
+
+    @Test
+    public void testParallelToStrFunctionKeyGroupBy() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelSymbolKeyGroupBy(
+                "SELECT to_str(ts, 'yyyy-MM-dd') ts, max(price) FROM tab ORDER BY ts LIMIT 5",
+                "ts\tmax\n" +
+                        "1970-01-01\t99.0\n" +
+                        "1970-01-02\t199.0\n" +
+                        "1970-01-03\t299.0\n" +
+                        "1970-01-04\t399.0\n" +
+                        "1970-01-05\t499.0\n"
+        );
+    }
+
+    @Test
     public void testStringKeyGroupByEmptyTable() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -1959,8 +2660,73 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private void testParallelGroupByAllTypes(String... queriesAndExpectedResults) throws Exception {
-        testParallelGroupByAllTypes(null, queriesAndExpectedResults);
+    private void testFirstLastFunctionFuzz(String query) throws Exception {
+        // With this test, we aim to verify correctness of merge() method
+        // implementation in first/last functions.
+
+        // This test controls sets enable parallel GROUP BY flag on its own.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        sqlExecutionContext.setRandom(rnd);
+
+                        ddl(
+                                compiler,
+                                "create table tab as (select" +
+                                        " 'k' || ((50 + x) % 5) key," +
+                                        " rnd_boolean() aboolean," +
+                                        " rnd_byte(2,50) abyte," +
+                                        " rnd_geohash(4) ageobyte," +
+                                        " rnd_short(10,1024) ashort," +
+                                        " rnd_geohash(12) ageoshort," +
+                                        " rnd_char() achar," +
+                                        " rnd_int(0,1000,3) anint," +
+                                        " rnd_ipv4() anipv4," +
+                                        " rnd_geohash(16) ageoint," +
+                                        " rnd_symbol(4,4,4,2) asymbol," +
+                                        " rnd_float(3) afloat," +
+                                        " rnd_long(0,1000,3) along," +
+                                        " rnd_double(3) adouble," +
+                                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 3) adate," +
+                                        " rnd_geohash(32) ageolong," +
+                                        " rnd_str(5,16,3) astring," +
+                                        " rnd_uuid4() auuid," +
+                                        " timestamp_sequence(400000000000, 500000000) ts" +
+                                        " from long_sequence(10000)) timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+
+                        // Run with single-threaded GROUP BY.
+                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "false");
+                        TestUtils.printSql(
+                                engine,
+                                sqlExecutionContext,
+                                query,
+                                sink
+                        );
+
+                        // Run with parallel GROUP BY.
+                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+                        final StringSink sinkB = new StringSink();
+                        TestUtils.printSql(
+                                engine,
+                                sqlExecutionContext,
+                                query,
+                                sinkB
+                        );
+
+                        // Compare the results.
+                        TestUtils.assertEquals(sink, sinkB);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     private void testParallelGroupByAllTypes(BindVariablesInitializer initializer, String... queriesAndExpectedResults) throws Exception {
@@ -1985,6 +2751,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " rnd_geohash(12) ageoshort," +
                                         " rnd_char() achar," +
                                         " rnd_int() anint," +
+                                        " rnd_ipv4() anipv4," +
                                         " rnd_geohash(16) ageoint," +
                                         " rnd_symbol(4,4,4,2) asymbol," +
                                         " rnd_float(2) afloat," +
@@ -1993,6 +2760,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) adate," +
                                         " rnd_geohash(32) ageolong," +
                                         " rnd_str(5,16,2) astring," +
+                                        " rnd_uuid4() auuid," +
                                         " timestamp_sequence(400000000000, 500000000) ts" +
                                         " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
                                 sqlExecutionContext
@@ -2005,8 +2773,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
+    private void testParallelGroupByAllTypes(String... queriesAndExpectedResults) throws Exception {
+        testParallelGroupByAllTypes(null, queriesAndExpectedResults);
+    }
+
     private void testParallelGroupByFaultTolerance(String query) throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(
@@ -2051,7 +2824,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-            currentMicros = 0;
+            setCurrentMicros(0);
             NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                     new DefaultSqlExecutionCircuitBreakerConfiguration() {
                         @Override
@@ -2068,24 +2841,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     MemoryTag.NATIVE_DEFAULT
             );
 
-            ddl(
-                    "CREATE TABLE tab (" +
-                            "  ts TIMESTAMP," +
-                            "  price DOUBLE," +
-                            "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY"
-            );
-            insert("insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")");
-
-            context.with(
-                    context.getSecurityContext(),
-                    context.getBindVariableService(),
-                    context.getRandom(),
-                    context.getRequestFd(),
-                    circuitBreaker
-            );
-            context.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
-
             try {
+                ddl(
+                        "CREATE TABLE tab (" +
+                                "  ts TIMESTAMP," +
+                                "  price DOUBLE," +
+                                "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY"
+                );
+                insert("insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")");
+
+                context.with(
+                        context.getSecurityContext(),
+                        context.getBindVariableService(),
+                        context.getRandom(),
+                        context.getRequestFd(),
+                        circuitBreaker
+                );
+                context.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
                 assertSql("", query);
                 Assert.fail();
             } catch (CairoException ex) {
@@ -2100,6 +2873,36 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 );
                 Misc.free(circuitBreaker);
             }
+        });
+    }
+
+    private void testParallelJsonKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  key VARCHAR," +
+                                        "  price DOUBLE," +
+                                        "  quantity LONG) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        insert(
+                                compiler,
+                                "insert into tab select (x * 864000000)::timestamp, '{\"key\": \"k' || (x % 5) || '\", \"foo\": \"bar\"}', x, x from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
         });
     }
 
@@ -2179,20 +2982,98 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private void testParallelStringKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+    private void testParallelRostiGroupBy(String query, String expected) throws Exception {
+        // Rosti doesn't support filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(
                     pool,
-                    (engine) -> pool.assign(new GroupByMergeShardJob(engine.getMessageBus())),
+                    (engine, compiler, sqlExecutionContext) -> {
+                        // We want each row to be in its own partition
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab AS (SELECT " +
+                                        "cast('k' || (x%5) as symbol) key, " +
+                                        "rnd_short() s, " +
+                                        "rnd_int(0, 256, 2) i, " +
+                                        "rnd_long(0, 1024, 2) l, " +
+                                        "rnd_long256(2) l256, " +
+                                        "rnd_double(2) d, " +
+                                        "rnd_timestamp(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) t, " +
+                                        "rnd_date(to_date('1980', 'yyyy'), to_date('1990', 'yyyy'), 2) dd, " +
+                                        "(x * 864000000)::timestamp ts " +
+                                        "from long_sequence(500)) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                query,
+                                sink,
+                                expected
+                        );
+
+                        if (enableParallelGroupBy) {
+                            // Make sure that we're testing Rosti here.
+                            try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                                RecordCursorFactory nestedFactory = factory.getBaseFactory();
+                                while (nestedFactory != null) {
+                                    if (nestedFactory.getClass() == GroupByRecordCursorFactory.class) {
+                                        break;
+                                    }
+                                    nestedFactory = nestedFactory.getBaseFactory();
+                                }
+                                Assert.assertNotNull("parallel GROUP BY doesn't use vect.GroupByRecordCursorFactory", nestedFactory);
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelStringAndVarcharKeyGroupBy(String... queriesAndExpectedResults) throws Exception {
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(
+                    pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
+                        // try with a String table first
                         ddl(
                                 compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  key STRING," +
+                                        "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        insert(
+                                compiler,
+                                "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        insert(
+                                compiler,
+                                "insert into tab " +
+                                        "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+
+                        // now drop the String table and recreate it with a Varchar key
+                        engine.drop("DROP TABLE tab", sqlExecutionContext);
+                        ddl(
+                                compiler,
+                                "CREATE TABLE tab (" +
+                                        "  ts TIMESTAMP," +
+                                        "  key VARCHAR," +
                                         "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );

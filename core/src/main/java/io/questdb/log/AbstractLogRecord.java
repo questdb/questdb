@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -256,6 +256,30 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
+    public LogRecord $size(long memoryBytes) {
+        sink().putSize(memoryBytes);
+        return this;
+    }
+
+    @Override
+    public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
+        if (sequence == null) {
+            sink().putAscii("null");
+        } else {
+            if (from > -1 && sequence.size() > from) {
+                sink().putNonAscii(sequence.lo() + from, sequence.hi());
+            } else {
+                sink()
+                        .put("WTF? substr? [from:").put(from)
+                        .put(", sequence=").put(sequence)
+                        .put(", size=").put(sequence.size())
+                        .put(']');
+            }
+        }
+        return this;
+    }
+
+    @Override
     public LogRecord $ts(long x) {
         sink().putISODate(x);
         return this;
@@ -263,7 +287,13 @@ abstract class AbstractLogRecord implements LogRecord, Log {
 
     @Override
     public LogRecord $utf8(long lo, long hi) {
-        sink().putUtf8(lo, hi);
+        sink().putNonAscii(lo, hi);
+        return this;
+    }
+
+    @Override
+    public LogRecord $uuid(long lo, long hi) {
+        Numbers.appendUuid(lo, hi, this);
         return this;
     }
 
@@ -339,8 +369,8 @@ abstract class AbstractLogRecord implements LogRecord, Log {
     }
 
     @Override
-    public Utf8Sink putUtf8(long lo, long hi) {
-        sink().putUtf8(lo, hi);
+    public Utf8Sink putNonAscii(long lo, long hi) {
+        sink().putNonAscii(lo, hi);
         return this;
     }
 

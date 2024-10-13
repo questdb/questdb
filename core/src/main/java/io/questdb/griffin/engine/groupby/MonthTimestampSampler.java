@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import static io.questdb.std.datetime.microtime.Timestamps.toMicros;
 
 public class MonthTimestampSampler implements TimestampSampler {
     private final int monthCount;
+    private long start;
     private int startDay;
     private int startHour;
     private int startMicros;
@@ -41,6 +42,11 @@ public class MonthTimestampSampler implements TimestampSampler {
 
     public MonthTimestampSampler(int monthCount) {
         this.monthCount = monthCount;
+    }
+
+    @Override
+    public int bucketIndex(long timestamp) {
+        return (int) (Timestamps.getMonthsBetween(start, timestamp) / monthCount);
     }
 
     @Override
@@ -74,6 +80,7 @@ public class MonthTimestampSampler implements TimestampSampler {
         this.startSec = Timestamps.getSecondOfMinute(timestamp);
         this.startMillis = Timestamps.getMillisOfSecond(timestamp);
         this.startMicros = Timestamps.getMicrosOfMilli(timestamp);
+        this.start = timestamp;
     }
 
     @Override

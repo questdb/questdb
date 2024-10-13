@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,26 +24,31 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecordCursor {
-
+abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecordCursor {
     protected final DirectLongList rows;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean isOpen;
-    private long index;
     private boolean isTreeMapBuilt;
+    private long rowIndex;
 
-    public AbstractDescendingRecordListCursor(DirectLongList rows, @NotNull IntList columnIndexes) {
-        super(columnIndexes);
+    public AbstractDescendingRecordListCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @Nullable DirectLongList rows
+    ) {
+        super(configuration, metadata);
         this.rows = rows;
         this.isOpen = true;
     }
@@ -52,13 +57,13 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
         if (!isTreeMapBuilt) {
             buildTreeMap();
-            index = rows.size() - 1;
+            rowIndex = rows.size() - 1;
             isTreeMapBuilt = true;
         }
 
-        if (index > -1) {
-            counter.add(index + 1);
-            index = -1;
+        if (rowIndex > -1) {
+            counter.add(rowIndex + 1);
+            rowIndex = -1;
         }
     }
 
@@ -72,12 +77,13 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     public boolean hasNext() {
         if (!isTreeMapBuilt) {
             buildTreeMap();
-            index = rows.size() - 1;
+            rowIndex = rows.size() - 1;
             isTreeMapBuilt = true;
         }
-        if (index > -1) {
-            long row = rows.get(index--);
-            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+        if (rowIndex > -1) {
+            long rowId = rows.get(rowIndex--);
+            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
+            recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
         return false;
@@ -88,14 +94,16 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.frameCursor = pageFrameCursor;
+        recordA.of(pageFrameCursor);
+        recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         rows.clear();
         isTreeMapBuilt = false;
         isOpen = true;
+        // prepare for page frame iteration
+        super.init();
     }
 
     @Override
@@ -107,22 +115,22 @@ abstract class AbstractDescendingRecordListCursor extends AbstractDataFrameRecor
     public void skipRows(Counter rowCount) throws DataUnavailableException {
         if (!isTreeMapBuilt) {
             buildTreeMap();
-            index = rows.size() - 1;
+            rowIndex = rows.size() - 1;
             isTreeMapBuilt = true;
         }
 
-        if (index > -1) {
-            long rowsLeft = index + 1;
+        if (rowIndex > -1) {
+            long rowsLeft = rowIndex + 1;
             long rowsToSkip = Math.min(rowsLeft, rowCount.get());
 
             rowCount.dec(rowsToSkip);
-            index -= rowsToSkip;
+            rowIndex -= rowsToSkip;
         }
     }
 
     @Override
     public void toTop() {
-        index = rows.size() - 1;
+        rowIndex = rows.size() - 1;
     }
 
     abstract protected void buildTreeMap();

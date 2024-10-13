@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,11 +38,11 @@ import java.util.Iterator;
 import java.util.Map;
 
 public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final int LAST_ACCESS_TIMESTAMP_COLUMN_INDEX = 2;
     private static final RecordMetadata METADATA;
+    private static final int OWNERSHIP_REASON_COLUMN_INDEX = 3;
     private static final int OWNER_THREAD_COLUMN_INDEX = 1;
     private static final int TABLE_NAME_COLUMN_INDEX = 0;
-    private static final int LAST_ACCESS_TIMESTAMP_COLUMN_INDEX = 2;
-    private static final int OWNERSHIP_REASON_COLUMN_INDEX = 3;
     private final CairoEngine cairoEngine;
 
     public WriterPoolRecordCursorFactory(CairoEngine cairoEngine) {
@@ -70,11 +70,12 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
     private static class WriterPoolCursor implements NoRandomAccessRecordCursor {
         private final ReaderPoolEntryRecord record = new ReaderPoolEntryRecord();
         private Iterator<Map.Entry<CharSequence, WriterPool.Entry>> iterator;
-        private long owner_thread;
-        private Map<CharSequence, WriterPool.Entry> writerPoolEntries;
-        private TableToken tableToken;
-        private String ownershipReason;
         private long lastAccessTimestamp;
+        private long owner_thread;
+        private String ownershipReason;
+        private TableToken tableToken;
+        private Map<CharSequence, WriterPool.Entry> writerPoolEntries;
+
         @Override
         public void close() {
         }
@@ -117,13 +118,13 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
             @Override
             public long getLong(int col) {
                 if (col == OWNER_THREAD_COLUMN_INDEX) {
-                    return owner_thread == -1 ? Numbers.LONG_NaN : owner_thread;
+                    return owner_thread == -1 ? Numbers.LONG_NULL : owner_thread;
                 }
                 throw CairoException.nonCritical().put("unsupported column number. [column=").put(col).put("]");
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 switch (col) {
                     case TABLE_NAME_COLUMN_INDEX:
                         return tableToken.getTableName();
@@ -136,7 +137,7 @@ public final class WriterPoolRecordCursorFactory extends AbstractRecordCursorFac
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override

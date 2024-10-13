@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,16 +27,14 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.Os;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 
 public class TestServerMain extends ServerMain {
     private final StringSink sink = new StringSink();
@@ -79,66 +77,32 @@ public class TestServerMain extends ServerMain {
         }
     }
 
+    public void reset() {
+        // Drop all tables
+        CairoEngine engine = this.getEngine();
+        engine.releaseInactive();
+        engine.clear();
+        engine.closeNameRegistry();
+        FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getRoot());
+            ff.mkdir(p.$(), engine.getConfiguration().getMkDirMode());
+        }
+        engine.getTableIdGenerator().open();
+        engine.resetNameRegistryMemory();
+        resetQueryCache();
+        engine.setUp();
+    }
+
     public void compile(String sql) {
         try {
             if (sqlExecutionContext == null) {
-                sqlExecutionContext = new SqlExecutionContextImpl(getEngine(), 1).with(
-                        getEngine().getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                        null,
-                        null,
-                        -1,
-                        null
-                );
+                getEngine().compile(sql);
+            } else {
+                getEngine().compile(sql, sqlExecutionContext);
             }
-            getEngine().compile(sql, sqlExecutionContext);
         } catch (SqlException e) {
             throw new AssertionError(e);
         }
-    }
-
-    public void waitWalTxnApplied(String tableName) {
-        waitWalTxnApplied(tableName, -1);
-    }
-
-    public void waitWalTxnApplied(String tableName, long expectedTxn) {
-        int waitLim = 15;
-        int sleep = 10;
-        CairoEngine engine = getEngine();
-
-        TableToken tableToken = null;
-        for (int i = 0; i < waitLim; i++) {
-            if (tableToken == null) {
-                try {
-                    tableToken = engine.verifyTableName(tableName);
-                } catch (CairoException ex) {
-                    // wait or error after timeout
-                    if (i < waitLim - 1) {
-                        Os.sleep(sleep *= 2);
-                    } else {
-                        throw ex;
-                    }
-                }
-            }
-
-            if (tableToken != null) {
-                long seqTxn = expectedTxn > -1 ? expectedTxn : engine.getTableSequencerAPI().getTxnTracker(tableToken).getSeqTxn();
-                long writerTxn = engine.getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn();
-                if (seqTxn <= writerTxn) {
-                    return;
-                }
-
-                boolean isSuspended = engine.getTableSequencerAPI().isSuspended(tableToken);
-                if (isSuspended) {
-                    Assert.fail("Table " + tableName + " is suspended");
-                }
-
-                if (i < waitLim - 1) {
-                    Os.sleep(sleep *= 2);
-                } else {
-                    Assert.assertEquals("Writer Txn is not up to date with Seq Txn", seqTxn, writerTxn);
-                }
-            }
-        }
-        assert false;
     }
 }

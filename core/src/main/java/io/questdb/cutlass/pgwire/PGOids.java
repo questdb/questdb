@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,6 +38,7 @@ public class PGOids {
     public static final int BINARY_TYPE_DOUBLE = (1 << 31) | ColumnType.DOUBLE;
     public static final int BINARY_TYPE_FLOAT = (1 << 31) | ColumnType.FLOAT;
     public static final int BINARY_TYPE_INT = (1 << 31) | ColumnType.INT;
+    public static final int BINARY_TYPE_INTERVAL = (1 << 31) | ColumnType.INTERVAL;
     public static final int BINARY_TYPE_LONG = (1 << 31) | ColumnType.LONG;
     public static final int BINARY_TYPE_LONG256 = (1 << 31) | ColumnType.LONG256;
     public static final int BINARY_TYPE_SHORT = (1 << 31) | ColumnType.SHORT;
@@ -45,6 +46,7 @@ public class PGOids {
     public static final int BINARY_TYPE_SYMBOL = (1 << 31) | ColumnType.SYMBOL;
     public static final int BINARY_TYPE_TIMESTAMP = (1 << 31) | ColumnType.TIMESTAMP;
     public static final int BINARY_TYPE_UUID = (1 << 31) | ColumnType.UUID;
+    public static final int BINARY_TYPE_VARCHAR = (1 << 31) | ColumnType.VARCHAR;
     public static final int PG_BOOL = 16;
     public static final int PG_BYTEA = 17;
     public static final int PG_CATALOG_OID = 11;
@@ -142,8 +144,10 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.GEOSHORT, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOINT, PG_VARCHAR); // VARCHAR
         TYPE_OIDS.extendAndSet(ColumnType.GEOLONG, PG_VARCHAR); // VARCHAR
-        TYPE_OIDS.extendAndSet(ColumnType.UUID, PG_UUID); // VARCHAR
+        TYPE_OIDS.extendAndSet(ColumnType.UUID, PG_UUID); // UUID
         TYPE_OIDS.extendAndSet(ColumnType.IPv4, PG_VARCHAR); //IPv4
+        TYPE_OIDS.extendAndSet(ColumnType.VARCHAR, PG_VARCHAR); // VARCHAR
+        TYPE_OIDS.extendAndSet(ColumnType.INTERVAL, PG_VARCHAR); // VARCHAR
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,14 +25,12 @@
 package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.griffin.SqlException;
 import org.junit.Test;
 
 public class CeilFunctionFactoryTest extends AbstractCairoTest {
 
-
     @Test
-    public void testDoubleNegative() throws SqlException {
+    public void testDoubleNegative() throws Exception {
         assertQuery(
                 "ceil\n" +
                         "-13.0\n",
@@ -44,7 +42,7 @@ public class CeilFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDoublePositive() throws SqlException {
+    public void testDoublePositive() throws Exception {
         assertQuery(
                 "ceil\n" +
                         "14.0\n",
@@ -56,7 +54,7 @@ public class CeilFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFloatNegative() throws SqlException {
+    public void testFloatNegative() throws Exception {
         assertQuery(
                 "ceil\n" +
                         "-13.0000\n",
@@ -68,7 +66,7 @@ public class CeilFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFloatPositive() throws SqlException {
+    public void testFloatPositive() throws Exception {
         assertQuery(
                 "ceil\n" +
                         "14.0000\n",
@@ -80,10 +78,10 @@ public class CeilFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNaN() throws SqlException {
+    public void testNaN() throws Exception {
         assertQuery(
                 "ceil\n" +
-                        "NaN\n",
+                        "null\n",
                 "select ceil(NaN)",
                 null,
                 true,

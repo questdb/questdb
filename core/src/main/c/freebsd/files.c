@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -74,7 +74,7 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mremap0
     return _io_questdb_std_Files_mremap0(fd, address, previousLen, newLen, offset, flags);
 }
 
-size_t copyData0(int srcFd, int dstFd, off_t srcOffset, off_t dstOffset, int64_t length) {
+size_t copyData0(int srcFd, long dstFd, off_t srcOffset, off_t dstOffset, int64_t length) {
     char buf[4096 * 4]; // 16K
     off_t read_sz;
     off_t rd_off = srcOffset;
@@ -228,10 +228,17 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
         // the FS name is 16
         strcpy((char *) lpszName, sb.f_fstypename);
         switch (sb.f_type) {
+            // known apfs types
             case 0x1C: // apfs
-            case 0x1a:
+            case 0x1a: // apfs too
+            case 0x19: // apfs, since MacOS 15.0.z Sequoia
                 return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
             default:
+                // new MacOS releases change apfs f_type, so we need to check the name
+                // to prevent false negatives and scary messages in the logs and web console
+                if (strncmp((const char *) lpszName, "apfs", 4) == 0) {
+                    return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
+                }
                 return sb.f_type;
         }
     }

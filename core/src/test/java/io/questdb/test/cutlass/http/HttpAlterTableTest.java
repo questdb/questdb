@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,33 +46,6 @@ public class HttpAlterTableTest extends AbstractTest {
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
-
-    @Test
-    public void testAlterTableResume() throws Exception {
-        Metrics metrics = Metrics.enabled();
-        testJsonQuery(metrics, engine -> {
-            // create table
-            sendAndReceiveDdl("CREATE TABLE test\n" +
-                    "AS(\n" +
-                    "    SELECT\n" +
-                    "        x id,\n" +
-                    "        timestamp_sequence(0L, 100000L) ts\n" +
-                    "    FROM long_sequence(1000) x)\n" +
-                    "TIMESTAMP(ts)\n" +
-                    "PARTITION BY DAY WAL");
-            drainWalQueue(engine);
-
-            // execute a SELECT query
-            String sql = "SELECT *\n" +
-                    "FROM test t1 JOIN test t2 \n" +
-                    "ON t1.id = t2.id\n" +
-                    "LIMIT 1";
-            sendAndReceiveBasicSelect(sql);
-
-            // RESUME
-            sendAndReceiveDdl("ALTER TABLE test RESUME WAL");
-        });
-    }
 
     @Test
     public void testAlterTableSetType() throws Exception {
@@ -115,6 +88,36 @@ public class HttpAlterTableTest extends AbstractTest {
                     "PARTITION BY DAY");
 
             sendAndReceiveDdl("ALTER TABLE test SQUASH PARTITIONS");
+        });
+    }
+
+    @Test
+    public void testAlterTableSuspendResume() throws Exception {
+        Metrics metrics = Metrics.enabled();
+        testJsonQuery(metrics, engine -> {
+            // create table
+            sendAndReceiveDdl("CREATE TABLE test\n" +
+                    "AS(\n" +
+                    "    SELECT\n" +
+                    "        x id,\n" +
+                    "        timestamp_sequence(0L, 100000L) ts\n" +
+                    "    FROM long_sequence(1000) x)\n" +
+                    "TIMESTAMP(ts)\n" +
+                    "PARTITION BY DAY WAL");
+            drainWalQueue(engine);
+
+            // execute a SELECT query
+            String sql = "SELECT *\n" +
+                    "FROM test t1 JOIN test t2 \n" +
+                    "ON t1.id = t2.id\n" +
+                    "LIMIT 1";
+            sendAndReceiveBasicSelect(sql);
+
+            // SUSPEND
+            sendAndReceiveDdl("ALTER TABLE test SUSPEND WAL");
+
+            // RESUME
+            sendAndReceiveDdl("ALTER TABLE test RESUME WAL");
         });
     }
 

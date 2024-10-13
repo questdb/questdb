@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,6 +56,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private static final int TABLE_NAME_COLUMN = 1;
     private static final int TABLE_TRUNCATE_VERSION = 4;
     private static final int UPDATE_TXN_COLUMN = 7;
+    private final DatabaseCheckpointStatus checkpointStatus;
     private final MicrosecondClock clock;
     private final RingQueue<ColumnPurgeTask> inQueue;
     private final Sequence inSubSequence;
@@ -63,7 +64,6 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private final long retryDelayLimit;
     private final double retryDelayMultiplier;
     private final PriorityQueue<ColumnPurgeRetryTask> retryQueue;
-    private final DatabaseSnapshotAgent snapshotAgent;
     private final TableToken tableToken;
     private ColumnPurgeOperator columnPurgeOperator;
     private int inErrorCount;
@@ -72,49 +72,54 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
     private TableWriter writer;
 
     public ColumnPurgeJob(CairoEngine engine) throws SqlException {
-        CairoConfiguration configuration = engine.getConfiguration();
-        this.clock = configuration.getMicrosecondClock();
-        this.inQueue = engine.getMessageBus().getColumnPurgeQueue();
-        this.inSubSequence = engine.getMessageBus().getColumnPurgeSubSeq();
-        String tableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
-        this.taskPool = new WeakMutableObjectPool<>(ColumnPurgeRetryTask::new, configuration.getColumnPurgeTaskPoolCapacity());
-        this.retryQueue = new PriorityQueue<>(configuration.getColumnPurgeQueueCapacity(), ColumnPurgeJob::compareRetryTasks);
-        this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();
-        this.retryDelay = configuration.getColumnPurgeRetryDelay();
-        this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        this.sqlExecutionContext.with(
-                configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
-                null,
-                null
-        );
-        try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
-            this.tableToken = sqlCompiler.query()
-                    .$("CREATE TABLE IF NOT EXISTS \"")
-                    .$(tableName)
-                    .$("\" (" +
-                            "ts timestamp, " + // 0
-                            "table_name symbol, " + // 1
-                            "column_name symbol, " + // 2
-                            "table_id int, " + // 3
-                            "truncate_version long, " + // 4
-                            "columnType int, " + // 5
-                            "table_partition_by int, " + // 6
-                            "updated_txn long, " + // 7
-                            "column_version long, " + // 8
-                            "partition_timestamp timestamp, " + // 9
-                            "partition_name_txn long," + // 10
-                            "completed timestamp" + // 11
-                            ") timestamp(ts) partition by MONTH BYPASS WAL"
-                    )
-                    .compile(sqlExecutionContext)
-                    .getTableToken();
-        }
+        try {
+            final CairoConfiguration configuration = engine.getConfiguration();
+            this.clock = configuration.getMicrosecondClock();
+            this.inQueue = engine.getMessageBus().getColumnPurgeQueue();
+            this.inSubSequence = engine.getMessageBus().getColumnPurgeSubSeq();
+            String tableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
+            this.taskPool = new WeakMutableObjectPool<>(ColumnPurgeRetryTask::new, configuration.getColumnPurgeTaskPoolCapacity());
+            this.retryQueue = new PriorityQueue<>(configuration.getColumnPurgeQueueCapacity(), ColumnPurgeJob::compareRetryTasks);
+            this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();
+            this.retryDelay = configuration.getColumnPurgeRetryDelay();
+            this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
+            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            this.sqlExecutionContext.with(
+                    configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                    null,
+                    null
+            );
+            try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
+                this.tableToken = sqlCompiler.query()
+                        .$("CREATE TABLE IF NOT EXISTS \"")
+                        .$(tableName)
+                        .$("\" (" +
+                                "ts timestamp, " + // 0
+                                "table_name symbol, " + // 1
+                                "column_name symbol, " + // 2
+                                "table_id int, " + // 3
+                                "truncate_version long, " + // 4
+                                "columnType int, " + // 5
+                                "table_partition_by int, " + // 6
+                                "updated_txn long, " + // 7
+                                "column_version long, " + // 8
+                                "partition_timestamp timestamp, " + // 9
+                                "partition_name_txn long," + // 10
+                                "completed timestamp" + // 11
+                                ") timestamp(ts) partition by MONTH BYPASS WAL"
+                        )
+                        .compile(sqlExecutionContext)
+                        .getTableToken();
+            }
 
-        this.writer = engine.getWriter(tableToken, "QuestDB system");
-        this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
-        this.snapshotAgent = engine.getSnapshotAgent();
-        processTableRecords(engine);
+            this.writer = engine.getWriter(tableToken, "QuestDB system");
+            this.columnPurgeOperator = new ColumnPurgeOperator(configuration, this.writer, "completed");
+            this.checkpointStatus = engine.getCheckpointStatus();
+            processTableRecords(engine);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -242,8 +247,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                         }
 
                         lastTs = ts;
-                        String tableName = internStrObj(stringIntern, rec.getSym(TABLE_NAME_COLUMN));
-                        String columnName = internStrObj(stringIntern, rec.getSym(COLUMN_NAME_COLUMN));
+                        String tableName = internStrObj(stringIntern, rec.getSymA(TABLE_NAME_COLUMN));
+                        String columnName = internStrObj(stringIntern, rec.getSymA(COLUMN_NAME_COLUMN));
                         int tableId = rec.getInt(TABLE_ID_COLUMN);
                         long truncateVersion = rec.getLong(TABLE_TRUNCATE_VERSION);
                         int columnType = rec.getInt(COLUMN_TYPE_COLUMN);
@@ -360,8 +365,8 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         if (inErrorCount >= MAX_ERRORS) {
             return false;
         }
-        if (snapshotAgent.isInProgress()) {
-            // No deletion must happen while a snapshot is in-flight.
+        if (checkpointStatus.isInProgress()) {
+            // do not purge anything before checkpoint is released
             return false;
         }
 

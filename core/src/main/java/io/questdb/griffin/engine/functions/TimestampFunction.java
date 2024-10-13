@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,13 +30,14 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public abstract class TimestampFunction implements ScalarFunction {
-
     @Override
     public final BinarySequence getBin(Record rec) {
         throw new UnsupportedOperationException();
@@ -65,19 +66,19 @@ public abstract class TimestampFunction implements ScalarFunction {
     @Override
     public final long getDate(Record rec) {
         final long value = getTimestamp(rec);
-        return value == Numbers.LONG_NaN ? value : value / 1000L;
+        return value == Numbers.LONG_NULL ? value : value / 1000L;
     }
 
     @Override
     public final double getDouble(Record rec) {
         final long val = getTimestamp(rec);
-        return val != Numbers.LONG_NaN ? val : Double.NaN;
+        return val != Numbers.LONG_NULL ? val : Double.NaN;
     }
 
     @Override
     public final float getFloat(Record rec) {
         final long val = getTimestamp(rec);
-        return val != Numbers.LONG_NaN ? val : Float.NaN;
+        return val != Numbers.LONG_NULL ? val : Float.NaN;
     }
 
     @Override
@@ -107,6 +108,11 @@ public abstract class TimestampFunction implements ScalarFunction {
 
     @Override
     public final int getInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final @NotNull Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -151,12 +157,7 @@ public abstract class TimestampFunction implements ScalarFunction {
     }
 
     @Override
-    public final CharSequence getStr(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public final void getStr(Record rec, Utf16Sink sink) {
+    public final CharSequence getStrA(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -183,5 +184,20 @@ public abstract class TimestampFunction implements ScalarFunction {
     @Override
     public final int getType() {
         return ColumnType.TIMESTAMP;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final int getVarcharSize(Record rec) {
+        throw new UnsupportedOperationException();
     }
 }

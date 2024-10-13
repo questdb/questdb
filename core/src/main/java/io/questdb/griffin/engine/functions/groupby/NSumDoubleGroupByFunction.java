@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,6 +36,9 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
+/**
+ * See <a href="https://en.wikipedia.org/wiki/Kahan_summation_algorithm#Further_enhancements">Neumaier summation algorithm</a>.
+ */
 public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private int valueIndex;
@@ -45,7 +48,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
             sum(mapValue, value, 0, 0);
@@ -58,7 +61,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
         if (Numbers.isFinite(value)) {
             sum(mapValue, value, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
@@ -82,21 +85,37 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.DOUBLE); // sum
+        columnTypes.add(ColumnType.DOUBLE); // c
+        columnTypes.add(ColumnType.LONG);   // finite value count
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.DOUBLE); // sum
-        columnTypes.add(ColumnType.DOUBLE); // c
-        columnTypes.add(ColumnType.LONG); // finite value count
+    public void merge(MapValue destValue, MapValue srcValue) {
+        double srcSum = srcValue.getDouble(valueIndex);
+        long srcCount = srcValue.getLong(valueIndex + 2);
+
+        double destSum = destValue.getDouble(valueIndex);
+        double destC = destValue.getDouble(valueIndex + 1);
+        sum(destValue, srcSum, destSum, destC);
+        destValue.addLong(valueIndex + 2, srcCount);
     }
 
     @Override
@@ -112,8 +131,8 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 
     @Override

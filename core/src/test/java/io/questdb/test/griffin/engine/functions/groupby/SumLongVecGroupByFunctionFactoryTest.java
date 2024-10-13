@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,8 +35,8 @@ public class SumLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
         assertQuery("avg\n" +
-                        "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b long", "avg\n" +
-                        "5261.376146789\n", false, true, false);
+                "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b long", "avg\n" +
+                "5261.376146789\n", false, true, false);
 
         assertQuery(
                 "avg\tsum\n" +
@@ -52,8 +52,8 @@ public class SumLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery("sum\n" +
-                        "NaN\n", "select sum(f) from tab", "create table tab as (select cast(null as long) f from long_sequence(33))", null, "insert into tab select 123L from long_sequence(1)", "sum\n" +
-                        "123\n", false, true, false);
+                "null\n", "select sum(f) from tab", "create table tab as (select cast(null as long) f from long_sequence(33))", null, "insert into tab select 123L from long_sequence(1)", "sum\n" +
+                "123\n", false, true, false);
     }
 
     @Test

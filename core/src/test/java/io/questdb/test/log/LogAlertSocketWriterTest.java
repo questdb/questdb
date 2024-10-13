@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -341,10 +341,10 @@ public class LogAlertSocketWriterTest {
 
     @Test
     public void testOnLogRecordWithExternalTemplate() throws Exception {
-        final Path dstPath = Path.getThreadLocal(root).concat("test-alert-manager.json").$();
+        final Path dstPath = Path.getThreadLocal(root).concat("test-alert-manager.json");
         String resourcePath = TestUtils.getResourcePath(DEFAULT_ALERT_TPT_FILE);
-        Path template = Path.getThreadLocal2(resourcePath).$();
-        int result = Files.copy(template, dstPath);
+        Path template = Path.getThreadLocal2(resourcePath);
+        int result = Files.copy(template.$(), dstPath.$());
         Assert.assertTrue("Copying " + resourcePath + " to " + dstPath + " result: " + result, result >= 0);
         String location = dstPath.toString();
 
@@ -368,7 +368,7 @@ public class LogAlertSocketWriterTest {
             }
             try (Path path = new Path()) {
                 path.put(fileName).$();
-                int fd = ff.openAppend(path);
+                long fd = ff.openAppend(path.$());
                 ff.truncate(fd, 0);
                 ff.append(fd, buffPtr, bytes.length);
                 ff.close(fd);
@@ -380,7 +380,7 @@ public class LogAlertSocketWriterTest {
                 }
                 LogAlertSocketWriter.readFile(fileName, buffPtr, buffSize, ff, sink);
                 TestUtils.assertEquals(fileContent, sink);
-                ff.remove(path);
+                ff.remove(path.$());
             } finally {
                 Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
             }
@@ -414,7 +414,7 @@ public class LogAlertSocketWriterTest {
             final int buffSize = fileContent.length() * 4;
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             Path path = new Path();
-            int fd = -1;
+            long fd = -1;
             try {
                 final byte[] bytes = fileContent.getBytes(Files.UTF_8);
                 final int len = bytes.length;
@@ -424,7 +424,7 @@ public class LogAlertSocketWriterTest {
                 }
 
                 path.put(fileName).$();
-                fd = ff.openCleanRW(path, buffSize);
+                fd = ff.openCleanRW(path.$(), buffSize);
                 ff.append(fd, buffPtr, len);
                 try {
                     LogAlertSocketWriter.readFile(fileName, buffPtr, 17, ff, sink);
@@ -437,7 +437,7 @@ public class LogAlertSocketWriterTest {
                 }
             } finally {
                 ff.close(fd);
-                ff.remove(path);
+                ff.remove(path.$());
                 path.close();
                 Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
             }
@@ -447,7 +447,7 @@ public class LogAlertSocketWriterTest {
     private static void withLogAlertSocketWriter(Consumer<LogAlertSocketWriter> consumer) throws Exception {
         final NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
-            public int connect(int fd, long pSockaddr) {
+            public int connect(long fd, long pSockaddr) {
                 return -1;
             }
         };

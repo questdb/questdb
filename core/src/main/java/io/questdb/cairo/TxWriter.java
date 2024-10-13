@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -294,13 +294,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         commit(symbolCountProviders);
     }
 
+    public void resetLagAppliedRows() {
+        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
+        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
+        txMemBase.putLong(readBaseOffset + TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0));
+    }
+
     public void resetLagValuesUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_SEQ_TXN_64, 0);
         txMemBase.putInt(readBaseOffset + TX_OFFSET_CHECKSUM_32, 0);
-        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
-        txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
-        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, 0);
-        txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, 0);
+        resetLagAppliedRows();
     }
 
     public void resetStructureVersionUnsafe() {
@@ -358,6 +363,22 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    public void setPartitionParquetFormat(long timestamp, long fileLength) {
+        int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = attachedPartitions.getQuick(offset);
+
+        maskedSize = updatePartitionHasParquetFormat(maskedSize, true);
+
+        attachedPartitions.setQuick(offset, maskedSize);
+
+        int fileLenOffset = indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET;
+        attachedPartitions.setQuick(fileLenOffset, fileLength);
+    }
+
     public void setPartitionReadOnly(int partitionIndex, boolean isReadOnly) {
         setPartitionReadOnlyByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, isReadOnly);
     }
@@ -391,7 +412,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         attachedPartitions.setPos(indexRaw + LONGS_PER_TX_ATTACHED_PARTITION);
         long newTimestampLo = getPartitionTimestampByTimestamp(timestamp);
-        initPartitionAt(indexRaw, newTimestampLo, 0L, txn - 1, -1L);
+        initPartitionAt(indexRaw, newTimestampLo, 0L, txn - 1);
         transientRowCount = 0L;
         txPartitionCount++;
         if (extensionListener != null) {
@@ -403,7 +424,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         removeAllPartitions();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             attachedPartitions.setPos(LONGS_PER_TX_ATTACHED_PARTITION);
-            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L, columnVersion);
+            initPartitionAt(0, DEFAULT_PARTITION_TIMESTAMP, 0L, -1L);
         }
 
         writeAreaSize = calculateWriteSize();
@@ -467,10 +488,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private static long updatePartitionIsReadOnly(long maskedSize, boolean isReadOnly) {
-        if (isReadOnly) {
-            maskedSize |= 1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET;
+        return updatePartitionFlagAt(maskedSize, isReadOnly, PARTITION_MASK_READ_ONLY_BIT_OFFSET);
+    }
+
+    private static long updatePartitionHasParquetFormat(long maskedSize, boolean isParquetFormat) {
+        return updatePartitionFlagAt(maskedSize, isParquetFormat, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
+    }
+
+    private static long updatePartitionFlagAt(long maskedSize, boolean flag, int bitOffset) {
+        if (flag) {
+            maskedSize |= 1L << bitOffset;
         } else {
-            maskedSize &= ~(1L << PARTITION_MASK_READ_ONLY_BIT_OFFSET);
+            maskedSize &= ~(1L << bitOffset);
         }
         return maskedSize;
     }
@@ -573,7 +602,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             extensionListener.onTableExtended(partitionTimestamp);
         }
         recordStructureVersion++;
-        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn, -1L);
+        initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn);
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {
@@ -694,11 +723,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     long unsafeCommittedTransientRowCount() {
         return getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
-    }
-
-    void updatePartitionColumnVersion(long partitionTimestamp) {
-        final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
-        attachedPartitions.set(indexRaw + PARTITION_COLUMN_VERSION_OFFSET, columnVersion);
     }
 
     void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {

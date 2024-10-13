@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -90,25 +90,12 @@ public class IntLongPriorityQueue {
         return v;
     }
 
-    private int binSearch(long v) {
-        if (size < 65) {
-            return scanSearch(v);
-        } else {
-            return binSearch0(v);
-        }
-    }
-
     @SuppressWarnings("StatementWithEmptyBody")
-    private int binSearch0(long v) {
+    private int binSearch(long v) {
         int low = 0;
         int high = size;
 
-        while (low < high) {
-
-            if (high - low < 65) {
-                return scanSearch(v);
-            }
-
+        while (high - low > 65) {
             int mid = (low + high - 1) >>> 1;
             long midVal = buf.getQuick(mid);
 
@@ -122,11 +109,11 @@ public class IntLongPriorityQueue {
                 return mid;
             }
         }
-        return low;
+        return scanSearch(v, low);
     }
 
-    private int scanSearch(long v) {
-        for (int i = 0; i < size; i++) {
+    private int scanSearch(long v, int low) {
+        for (int i = low; i < size; i++) {
             if (buf.getQuick(i) > v) {
                 return i;
             }

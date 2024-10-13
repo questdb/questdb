@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,7 +55,7 @@ final class TimestampFloorFunctions {
         @Override
         public final long getTimestamp(Record rec) {
             long micros = arg.getTimestamp(rec);
-            return micros == Numbers.LONG_NaN ? Numbers.LONG_NaN : floor(micros);
+            return micros == Numbers.LONG_NULL ? Numbers.LONG_NULL : floor(micros);
         }
 
         @Override
@@ -159,6 +159,25 @@ final class TimestampFloorFunctions {
         @Override
         CharSequence getUnit() {
             return "hour";
+        }
+    }
+
+    static class TimestampFloorMCFunction extends AbstractTimestampFloorFunction {
+        private final int stride;
+
+        public TimestampFloorMCFunction(Function arg, int stride) {
+            super(arg);
+            this.stride = stride;
+        }
+
+        @Override
+        public long floor(long timestamp) {
+            return Timestamps.floorMC(timestamp, stride);
+        }
+
+        @Override
+        CharSequence getUnit() {
+            return "microsecond";
         }
     }
 
@@ -288,10 +307,6 @@ final class TimestampFloorFunctions {
 
     static class TimestampFloorWWFunction extends AbstractTimestampFloorFunction {
         private final int stride;
-
-        public TimestampFloorWWFunction(Function arg) {
-            this(arg, 1);
-        }
 
         public TimestampFloorWWFunction(Function arg, int stride) {
             super(arg);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStddevAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "stddev\nNaN\n", "select stddev(x) from (select cast(null as double) x from long_sequence(100))"
+                "stddev\nnull\n", "select stddev(x) from (select cast(null as double) x from long_sequence(100))"
         ));
     }
 
@@ -103,7 +103,7 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x int)");
             assertSql(
-                    "stddev\nNaN\n", "select stddev(x) from tbl1"
+                    "stddev\nnull\n", "select stddev(x) from tbl1"
             );
         });
     }
@@ -115,7 +115,7 @@ public class StdDevGroupByFunctionFactoryTest extends AbstractCairoTest {
             insert("insert into 'tbl1' VALUES " +
                     "(17.2151920)");
             assertSql(
-                    "stddev\nNaN\n", "select stddev(x) from tbl1"
+                    "stddev\nnull\n", "select stddev(x) from tbl1"
             );
         });
     }

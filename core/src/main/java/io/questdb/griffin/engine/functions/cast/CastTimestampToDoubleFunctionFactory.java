@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,19 +46,12 @@ public class CastTimestampToDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CastTimestampToDoubleFunction(args.getQuick(0));
+        return new Func(args.getQuick(0));
     }
 
-    public static class CastTimestampToDoubleFunction extends AbstractCastToDoubleFunction {
-        private final Function arg;
-
-        public CastTimestampToDoubleFunction(Function arg) {
-            this.arg = arg;
-        }
-
-        @Override
-        public Function getArg() {
-            return arg;
+    public static class Func extends AbstractCastToDoubleFunction {
+        public Func(Function arg) {
+            super(arg);
         }
 
         @Override

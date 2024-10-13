@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -141,7 +141,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         " rnd_double() volume_mw" +
                         " from long_sequence(100)" +
                         "), index(seller), index(buyer) timestamp(delivery_start_utc)",
-                null,
+                "y_utc_15m",
                 true,
                 true
         );
@@ -150,14 +150,14 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedAvgDoubleAllNaN() throws Exception {
         assertQuery("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, avg(d) sum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -247,14 +247,14 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedKSumDoubleAllNaN() throws Exception {
         assertQuery("s\tksum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, ksum(d) ksum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -367,14 +367,14 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMaxDoubleAllNaN() throws Exception {
         assertQuery("s\tmax\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -387,8 +387,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMaxIntAllNaN() throws Exception {
         assertQueryExpectSize("s\tmax\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
@@ -421,8 +421,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMaxLongAllNaN() throws Exception {
         assertQueryExpectSize("s\tmax\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, max(d) max from x order by s",
                 "create table x as " +
                         "(" +
@@ -535,14 +535,14 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMinDoubleAllNaN() throws Exception {
         assertQuery("s\tmin\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -555,8 +555,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMinIntAllNaN() throws Exception {
         assertQueryExpectSize("s\tmin\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
@@ -592,8 +592,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedMinLongAllNaN() throws Exception {
         assertQuery("s\tmin\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, min(d) min from x order by s",
                 "create table x as " +
                         "(" +
@@ -652,14 +652,14 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedNSumDoubleAllNaN() throws Exception {
         assertQuery("s\tnsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, nsum(d) nsum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -692,14 +692,14 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedSumDoubleAllNaN() throws Exception {
         assertQueryExpectSize("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
                         "select" +
                         " rnd_symbol('aa','bb') s," +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")"
@@ -729,8 +729,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedSumIntAllNaN() throws Exception {
         assertQuery("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
@@ -769,8 +769,8 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testKeyedSumLongAllNaN() throws Exception {
         assertQuery("s\tsum\n" +
-                        "aa\tNaN\n" +
-                        "bb\tNaN\n",
+                        "aa\tnull\n" +
+                        "bb\tnull\n",
                 "select s, sum(d) sum from x order by s",
                 "create table x as " +
                         "(" +
@@ -811,7 +811,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table test as(select x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1));");
             try {
-                assertException("select sym, max(sum(x + min(x)) - avg(x)) from test");
+                assertExceptionNoLeakCheck("select sym, max(sum(x + min(x)) - avg(x)) from test");
             } catch (SqlException e) {
                 Assert.assertTrue(Chars.contains(e.getMessage(), "Aggregate function cannot be passed as an argument"));
             }
@@ -874,12 +874,12 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testVectorKSumDoubleAllNaN() throws Exception {
         assertQuery("sum\n" +
-                        "NaN\n",
+                        "null\n",
                 "select ksum(d) sum from x",
                 "create table x as " +
                         "(" +
                         "select" +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",
@@ -2976,12 +2976,12 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     @Test
     public void testVectorNSumDoubleAllNaN() throws Exception {
         assertQuery("sum\n" +
-                        "NaN\n",
+                        "null\n",
                 "select nsum(d) sum from x",
                 "create table x as " +
                         "(" +
                         "select" +
-                        " NaN d" +
+                        " null::double d" +
                         " from" +
                         " long_sequence(200)" +
                         ")",

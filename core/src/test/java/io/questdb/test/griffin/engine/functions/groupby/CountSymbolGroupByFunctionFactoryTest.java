@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -163,7 +163,7 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select ts, count_distinct(s) from x sample by 1s fill(99)",
                 "create table x as (select * from (select rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
-                false
+                true
         );
     }
 
@@ -223,7 +223,7 @@ public class CountSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "e\t1\t1970-01-01T00:00:09.000000Z\n" +
                         "a\t1\t1970-01-01T00:00:09.000000Z\n" +
                         "f\t1\t1970-01-01T00:00:09.000000Z\n",
-                "select a, count_distinct(s), ts from x sample by 1s",
+                "select a, count_distinct(s), ts from x sample by 1s align to first observation",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_symbol('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false

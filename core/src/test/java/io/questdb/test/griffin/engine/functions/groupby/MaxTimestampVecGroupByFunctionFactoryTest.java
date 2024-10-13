@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,8 +35,8 @@ public class MaxTimestampVecGroupByFunctionFactoryTest extends AbstractCairoTest
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
         assertQuery("avg\n" +
-                        "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b timestamp", "avg\n" +
-                        "5261.376146789\n", false, true, false);
+                "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b timestamp", "avg\n" +
+                "5261.376146789\n", false, true, false);
 
         assertQuery(
                 "avg\tmax\n" +
@@ -52,8 +52,8 @@ public class MaxTimestampVecGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery("max\n" +
-                        "\n", "select max(f) from tab", "create table tab as (select cast(null as timestamp) f from long_sequence(33))", null, "insert into tab select 99999999999995L from long_sequence(1)", "max\n" +
-                        "1973-03-03T09:46:39.999995Z\n", false, true, false);
+                "\n", "select max(f) from tab", "create table tab as (select cast(null as timestamp) f from long_sequence(33))", null, "insert into tab select 99999999999995L from long_sequence(1)", "max\n" +
+                "1973-03-03T09:46:39.999995Z\n", false, true, false);
     }
 
     @Test

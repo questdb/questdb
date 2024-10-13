@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ public class CountLongBenchmark {
             long l = rnd.nextLong();
             byte b = rnd.nextByte();
             if (Math.abs(b) % 10 == 0) {
-                l = Numbers.LONG_NaN;
+                l = Numbers.LONG_NULL;
             }
 
             Unsafe.getUnsafe().putLong(p, l);
@@ -82,7 +82,7 @@ public class CountLongBenchmark {
     public long testJavaHeapCount() {
         long result = 0;
         for (int i = 0; i < longCount; i++) {
-            result += longArr[i] == Numbers.LONG_NaN ? 0 : 1;
+            result += longArr[i] == Numbers.LONG_NULL ? 0 : 1;
         }
         return result;
     }
@@ -91,7 +91,7 @@ public class CountLongBenchmark {
     public long testJavaNativeCount() {
         long result = 0;
         for (int i = 0; i < longCount; i++) {
-            result += Unsafe.getUnsafe().getLong(mem + i * Long.BYTES) != Numbers.LONG_NaN ? 1 : 0;
+            result += Unsafe.getUnsafe().getLong(mem + i * Long.BYTES) != Numbers.LONG_NULL ? 1 : 0;
         }
         return result;
     }

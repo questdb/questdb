@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,13 +28,12 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.str.Path;
 
 public class BitmapIndexBwdNullReader implements BitmapIndexReader {
-
     private final NullCursor cursor = new NullCursor();
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
         final NullCursor cursor = getCursor(cachedInstance);
-        cursor.value = maxValue;
+        cursor.value = maxValue - minValue;
         return cursor;
     }
 

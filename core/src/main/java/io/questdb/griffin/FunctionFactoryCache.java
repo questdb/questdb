@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@ public class FunctionFactoryCache {
         boolean enableTestFactories = configuration.enableTestFactories();
         LOG.info().$("loading functions [test=").$(enableTestFactories).$(']').$();
         for (FunctionFactory factory : functionFactories) {
-            if (!factory.getClass().getName().contains("test") || enableTestFactories) {
+            if (!factory.getClass().getName().contains("io.questdb.griffin.engine.functions.test.") || enableTestFactories) {
                 try {
                     final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(factory);
                     final String name = descriptor.getName();

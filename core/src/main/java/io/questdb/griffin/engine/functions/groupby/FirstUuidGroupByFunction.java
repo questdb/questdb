@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,12 +43,13 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong128(valueIndex, arg.getLong128Lo(record), arg.getLong128Hi(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putLong128(valueIndex + 1, arg.getLong128Lo(record), arg.getLong128Hi(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         // empty
     }
 
@@ -59,12 +60,12 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
 
     @Override
     public long getLong128Hi(Record rec) {
-        return rec.getLong128Hi(valueIndex);
+        return rec.getLong128Hi(valueIndex + 1);
     }
 
     @Override
     public long getLong128Lo(Record rec) {
-        return rec.getLong128Lo(valueIndex);
+        return rec.getLong128Lo(valueIndex + 1);
     }
 
     @Override
@@ -78,23 +79,40 @@ public class FirstUuidGroupByFunction extends UuidFunction implements GroupByFun
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.UUID);
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.UUID); // value
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putLong128(valueIndex + 1, srcValue.getLong128Lo(valueIndex + 1), srcValue.getLong128Hi(valueIndex + 1));
+        }
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong128(valueIndex, Numbers.LONG_NaN, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putLong128(valueIndex + 1, Numbers.LONG_NULL, Numbers.LONG_NULL);
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

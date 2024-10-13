@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -68,7 +68,13 @@ public class NegIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final int value = arg.getInt(rec);
-            return value != Numbers.INT_NaN ? -value : Numbers.INT_NaN;
+            return value != Numbers.INT_NULL ? -value : Numbers.INT_NULL;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            final int value = arg.getInt(rec);
+            return value != Numbers.INT_NULL ? -((long) value) : Numbers.LONG_NULL;
         }
 
         @Override

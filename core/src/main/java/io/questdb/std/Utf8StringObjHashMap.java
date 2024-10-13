@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,20 +28,10 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
-/**
- * A copy implementation of CharSequenceObjHashMap. It is there to work with concrete classes
- * and avoid incurring performance penalty of megamorphic virtual calls. These calls originate
- * from calling charAt() on CharSequence interface. C2 compiler cannot inline these calls due to
- * multiple implementations of charAt(). It resorts to a virtual method call via itable. ILP is the
- * main victim of itable, suffering from non-deterministic performance loss. With this specific
- * implementation of the map C2 compiler seems to be able to inline chatAt() calls and itables are
- * no longer present in the async profiler.
- * <p>
- * This map is optimized for ASCII and UTF-8 DirectUtf8String lookups.
- */
 public class Utf8StringObjHashMap<V> implements Mutable {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
@@ -56,11 +46,11 @@ public class Utf8StringObjHashMap<V> implements Mutable {
     private V[] values;
 
     public Utf8StringObjHashMap() {
-        this(8);
+        this(MIN_INITIAL_CAPACITY);
     }
 
     public Utf8StringObjHashMap(int initialCapacity) {
-        this(initialCapacity, 0.5);
+        this(initialCapacity, 0.4);
     }
 
     @SuppressWarnings("unchecked")
@@ -88,24 +78,24 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         list.clear();
     }
 
-    public boolean contains(DirectUtf8Sequence key) {
+    public boolean contains(@NotNull DirectUtf8Sequence key) {
         return keyIndex(key) < 0;
     }
 
-    public boolean excludes(DirectUtf8Sequence key) {
+    public boolean excludes(@NotNull DirectUtf8Sequence key) {
         return keyIndex(key) > -1;
     }
 
-    public V get(DirectUtf8Sequence key) {
+    public V get(@NotNull DirectUtf8Sequence key) {
         return valueAt(keyIndex(key));
     }
 
-    public V get(Utf8String key) {
+    public V get(@NotNull Utf8String key) {
         return valueAt(keyIndex(key));
     }
 
-    public int keyIndex(DirectUtf8Sequence key) {
-        int hashCode = Hash.hashMem32(key);
+    public int keyIndex(@NotNull DirectUtf8Sequence key) {
+        int hashCode = Hash.hashUtf8(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
             return index;
@@ -116,8 +106,8 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         return probe(key, hashCode, index);
     }
 
-    public int keyIndex(Utf8String key) {
-        int hashCode = Hash.hashMem32(key);
+    public int keyIndex(@NotNull Utf8String key) {
+        int hashCode = Hash.hashUtf8(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == null) {
             return index;
@@ -132,22 +122,22 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         return list;
     }
 
-    public boolean put(Utf8String key, V value) {
+    public boolean put(@NotNull Utf8String key, V value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean put(DirectUtf8String key, V value) {
+    public boolean put(@NotNull DirectUtf8String key, V value) {
         return putAt(keyIndex(key), key, value);
     }
 
-    public boolean putAt(int index, Utf8String key, V value) {
+    public boolean putAt(int index, @NotNull Utf8String key, V value) {
         assert value != null;
         if (index < 0) {
             values[-index - 1] = value;
             return false;
         }
         keys[index] = key;
-        hashCodes[index] = Hash.hashMem32(key);
+        hashCodes[index] = Hash.hashUtf8(key);
         values[index] = value;
         if (--free == 0) {
             rehash();
@@ -156,7 +146,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         return true;
     }
 
-    public boolean putAt(int index, DirectUtf8String key, V value) {
+    public boolean putAt(int index, @NotNull DirectUtf8String key, V value) {
         assert value != null;
         if (index < 0) {
             values[-index - 1] = value;
@@ -164,7 +154,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         }
         Utf8String onHeapKey = Utf8String.newInstance(key);
         keys[index] = onHeapKey;
-        hashCodes[index] = Hash.hashMem32(key);
+        hashCodes[index] = Hash.hashUtf8(key);
         values[index] = value;
         if (--free == 0) {
             rehash();
@@ -173,7 +163,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
         return true;
     }
 
-    public int remove(Utf8String key) {
+    public int remove(@NotNull Utf8String key) {
         int index = keyIndex(key);
         if (index < 0) {
             removeAt(index);
@@ -209,7 +199,7 @@ public class Utf8StringObjHashMap<V> implements Mutable {
                     key != null;
                     from = (from + 1) & mask, key = keys[from]
             ) {
-                int hashCode = Hash.hashMem32(key);
+                int hashCode = Hash.hashUtf8(key);
                 int idealHit = Hash.spread(hashCode) & mask;
                 if (idealHit != from) {
                     int to;

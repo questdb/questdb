@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -92,7 +92,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testCenturyNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(century from null)",
                 null,
                 null,
@@ -123,7 +123,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testDayNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(day from null)",
                 null,
                 null,
@@ -136,7 +136,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testDecadeNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(decade from null)",
                 null,
                 null,
@@ -149,7 +149,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testDowNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(dow from null)",
                 null,
                 null,
@@ -162,7 +162,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testDoyNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(doy from null)",
                 null,
                 null,
@@ -201,7 +201,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testEpochNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(epoch from null)",
                 null,
                 null,
@@ -227,7 +227,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testHourNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(hour from null)",
                 null,
                 null,
@@ -240,7 +240,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testIsoDowNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(isodow from null)",
                 null,
                 null,
@@ -253,7 +253,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testIsoYearNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(isoyear from null)",
                 null,
                 null,
@@ -305,7 +305,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testMicrosecondsNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(microseconds from null)",
                 null,
                 null,
@@ -318,7 +318,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testMillenniumNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(millennium from null)",
                 null,
                 null,
@@ -344,7 +344,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testMillisecondsNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(milliseconds from null)",
                 null,
                 null,
@@ -370,7 +370,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testMinuteNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(minute from null)",
                 null,
                 null,
@@ -392,7 +392,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testMonthNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(month from null)",
                 null,
                 null,
@@ -493,7 +493,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testQuarterNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(quarter from null)",
                 null,
                 null,
@@ -506,7 +506,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testSecondNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(second from null)",
                 null,
                 null,
@@ -866,7 +866,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testWeekNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(week from null)",
                 null,
                 null,
@@ -879,7 +879,7 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     public void testYearNull() throws Exception {
         assertQuery(
                 "extract\n" +
-                        "NaN\n",
+                        "null\n",
                 "select extract(year from null)",
                 null,
                 null,

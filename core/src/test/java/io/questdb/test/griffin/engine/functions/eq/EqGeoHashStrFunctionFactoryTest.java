@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,11 +33,11 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
     public void testEq1() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table geohash as (" +
-                            "select " +
-                            "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
-                            "    cast(null as GeOhAsH(50b)) geohash2 " +
-                            "from long_sequence(1)" +
-                            ")");
+                    "select " +
+                    "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
+                    "    cast(null as GeOhAsH(50b)) geohash2 " +
+                    "from long_sequence(1)" +
+                    ")");
             assertSql(
                     "geohash1\tgeohash2\n" +
                             "sp052w92p1\t\n", "geohash where 'sp052w92p1' = geohash1"
@@ -49,11 +49,11 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
     public void testEq2() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table geohash as (" +
-                            "select " +
-                            "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
-                            "    cast(null as GeOhAsH(50b)) geohash2 " +
-                            "from long_sequence(1)" +
-                            ")");
+                    "select " +
+                    "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
+                    "    cast(null as GeOhAsH(50b)) geohash2 " +
+                    "from long_sequence(1)" +
+                    ")");
             assertSql(
                     "geohash1\tgeohash2\n" +
                             "sp052w92p1\t\n", "geohash where geohash1 = 'sp052w92p1'"
@@ -65,11 +65,11 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
     public void testEq3() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table geohash as (" +
-                            "select " +
-                            "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
-                            "    cast(null as GeOhAsH(50b)) geohash2 " +
-                            "from long_sequence(1)" +
-                            ")");
+                    "select " +
+                    "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
+                    "    cast(null as GeOhAsH(50b)) geohash2 " +
+                    "from long_sequence(1)" +
+                    ")");
             assertSql(
                     "geohash1\tgeohash2\n" +
                             "sp052w92p1\t\n", "geohash where geohash2 = null"
@@ -81,11 +81,11 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
     public void testNoEq1() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table geohash as (" +
-                            "select " +
-                            "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
-                            "    cast(null as GeOhAsH(50b)) geohash2 " +
-                            "from long_sequence(1)" +
-                            ")");
+                    "select " +
+                    "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
+                    "    cast(null as GeOhAsH(50b)) geohash2 " +
+                    "from long_sequence(1)" +
+                    ")");
             assertSql(
                     "geohash1\tgeohash2\n" +
                             "sp052w92p1\t\n", "geohash where 'sp052w92p0' != geohash1"
@@ -97,11 +97,11 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
     public void testNoEq2() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table geohash as (" +
-                            "select " +
-                            "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
-                            "    cast(null as GeOhAsH(50b)) geohash2 " +
-                            "from long_sequence(1)" +
-                            ")");
+                    "select " +
+                    "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
+                    "    cast(null as GeOhAsH(50b)) geohash2 " +
+                    "from long_sequence(1)" +
+                    ")");
             assertSql(
                     "geohash1\tgeohash2\n" +
                             "sp052w92p1\t\n", "geohash where geohash1 != 'sp052w92p0'"
@@ -113,11 +113,11 @@ public class EqGeoHashStrFunctionFactoryTest extends AbstractCairoTest {
     public void testNoEq3() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table geohash as (" +
-                            "select " +
-                            "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
-                            "    cast(null as GeOhAsH(50b)) geohash2 " +
-                            "from long_sequence(1)" +
-                            ")");
+                    "select " +
+                    "    cast('sp052w92p1' as GeOhAsH(50b)) geohash1, " +
+                    "    cast(null as GeOhAsH(50b)) geohash2 " +
+                    "from long_sequence(1)" +
+                    ")");
             assertSql(
                     "geohash1\tgeohash2\n", "geohash where geohash2 != null"
             );

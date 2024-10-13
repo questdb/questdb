@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,13 +55,13 @@ public class BootstrapTest extends AbstractBootstrapTest {
     public void testExtractSite() throws Exception {
         createDummyConfiguration();
         auxPath.of(root).$();
-        int plen = auxPath.size();
+        int pathLen = auxPath.size();
         Bootstrap bootstrap = new Bootstrap(getServerMainArgs());
         Assert.assertNotNull(bootstrap.getLog());
         Assert.assertNotNull(bootstrap.getConfiguration());
         Assert.assertNotNull(bootstrap.getMetrics());
         bootstrap.extractSite();
-        Assert.assertTrue(Files.exists(auxPath.trimTo(plen).concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
+        Assert.assertTrue(Files.exists(auxPath.trimTo(pathLen).concat("conf").concat(LogFactory.DEFAULT_CONFIG_NAME).$()));
     }
 
     @Test
@@ -119,7 +119,7 @@ public class BootstrapTest extends AbstractBootstrapTest {
             int plen = auxPath.size();
             Files.touch(auxPath.concat(configuration.getOGCrashFilePrefix()).put(1).put(".log").$());
             Files.touch(auxPath.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(2).put(".log").$());
-            Files.mkdirs(auxPath.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(3).slash$(), configuration.getMkDirMode());
+            Files.mkdirs(auxPath.trimTo(plen).concat(configuration.getOGCrashFilePrefix()).put(3).slash(), configuration.getMkDirMode());
 
             Bootstrap.reportCrashFiles(configuration, logger);
 
@@ -130,11 +130,11 @@ public class BootstrapTest extends AbstractBootstrapTest {
         }
 
         // make sure we check disk contents after factory is closed
-        try (Path path = new Path().of(logFileName).$()) {
+        try (Path path = new Path().of(logFileName)) {
             int bufSize = 4096;
             long buf = Unsafe.calloc(bufSize, MemoryTag.NATIVE_DEFAULT);
             // we should read sub-4k bytes from the file
-            int fd = TestFilesFacadeImpl.INSTANCE.openRO(path);
+            long fd = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
             Assert.assertTrue(fd > -1);
             try {
                 while (true) {

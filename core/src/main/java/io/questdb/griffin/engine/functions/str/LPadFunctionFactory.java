@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -62,10 +62,9 @@ public class LPadFunctionFactory implements FunctionFactory {
     }
 
     public static class LPadFunc extends StrFunction implements BinaryFunction {
-
         private final Function lenFunc;
         private final int maxLength;
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function strFunc;
 
@@ -91,24 +90,29 @@ public class LPadFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(final Record rec) {
-            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), sink);
+        public CharSequence getStrA(final Record rec) {
+            return lPad(strFunc.getStrA(rec), lenFunc.getInt(rec), sinkA);
         }
 
         @Override
         public CharSequence getStrB(final Record rec) {
-            return lPad(strFunc.getStr(rec), lenFunc.getInt(rec), sinkB);
+            return lPad(strFunc.getStrB(rec), lenFunc.getInt(rec), sinkB);
         }
 
         @Override
         public int getStrLen(Record rec) {
-            final CharSequence str = strFunc.getStr(rec);
+            final CharSequence str = strFunc.getStrA(rec);
             final int len = lenFunc.getInt(rec);
             if (str != null && len >= 0) {
                 return len;
             } else {
                 return TableUtils.NULL_LEN;
             }
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
         }
 
         @Nullable
@@ -134,5 +138,4 @@ public class LPadFunctionFactory implements FunctionFactory {
             return null;
         }
     }
-
 }

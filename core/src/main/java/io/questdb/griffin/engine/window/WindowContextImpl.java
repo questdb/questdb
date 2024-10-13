@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private boolean baseSupportsRandomAccess;
     private boolean empty = true;
     private int exclusionKind;
-
     private int exclusionKindPos;
     private int framingMode;
     private int orderByDirection;
@@ -50,7 +49,6 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private int rowsHiKindPos;
     private long rowsLo;
     private int rowsLoKindPos;
-
     private int timestampIndex;
 
     @Override

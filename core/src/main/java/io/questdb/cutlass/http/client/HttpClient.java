@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -252,6 +252,12 @@ public abstract class HttpClient implements QuietCloseable {
         private int state;
         private boolean urlEncode = false;
 
+        public Request DELETE() {
+            assert state == STATE_REQUEST;
+            state = STATE_URL;
+            return put("DELETE ");
+        }
+
         public Request GET() {
             assert state == STATE_REQUEST;
             state = STATE_URL;
@@ -295,6 +301,14 @@ public abstract class HttpClient implements QuietCloseable {
                 cookieHandler.setCookies(this, username);
             }
             return this;
+        }
+
+        public int getContentLength() {
+            if (contentStart > -1) {
+                return (int) (ptr - contentStart);
+            } else {
+                return 0;
+            }
         }
 
         public Request header(CharSequence name, CharSequence value) {
@@ -357,17 +371,17 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         @Override
-        public Request putQuoted(@NotNull CharSequence cs) {
-            putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
-            return this;
-        }
-
-        @Override
-        public Request putUtf8(long lo, long hi) {
+        public Request putNonAscii(long lo, long hi) {
             final long size = hi - lo;
             checkCapacity(size);
             Vect.memcpy(ptr, lo, size);
             ptr += size;
+            return this;
+        }
+
+        @Override
+        public Request putQuoted(@NotNull CharSequence cs) {
+            putAsciiInternal('\"').put(cs).putAsciiInternal('\"');
             return this;
         }
 
@@ -438,6 +452,10 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public void trimContentToLen(int contentLen) {
+            ptr = contentStart + contentLen;
+        }
+
         public Request url(CharSequence url) {
             assert state == STATE_URL;
             state = STATE_URL_DONE;
@@ -486,7 +504,7 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         private void connect(CharSequence host, int port) {
-            int fd = nf.socketTcp(true);
+            long fd = nf.socketTcp(true);
             if (fd < 0) {
                 throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
             }
@@ -750,11 +768,10 @@ public abstract class HttpClient implements QuietCloseable {
             clear();
         }
 
-        public ChunkedResponse getChunkedResponse() {
-            return chunkedResponse;
-        }
-
         public Response getResponse() {
+            if (isChunked()) {
+                return chunkedResponse;
+            }
             return response;
         }
 

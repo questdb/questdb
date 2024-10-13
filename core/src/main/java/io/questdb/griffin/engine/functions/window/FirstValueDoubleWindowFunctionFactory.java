@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -391,7 +391,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
 
     // Handles first_value() over (partition by x order by ts range between y preceding and [z preceding | current row])
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
-    static class FirstValueOverPartitionRangeFrameFunction extends BasePartitionedDoubleWindowFunction {
+    public static class FirstValueOverPartitionRangeFrameFunction extends BasePartitionedDoubleWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         private final boolean frameIncludesCurrentValue;
@@ -654,7 +654,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
 
     // handles first_value() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    static class FirstValueOverPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+    public static class FirstValueOverPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
@@ -803,7 +803,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     // Handles first_value() over ([order by ts] range between x preceding and [ y preceding | current row ] ); no partition by key
-    static class FirstValueOverRangeFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
+    public static class FirstValueOverRangeFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
         private final int RECORD_SIZE = Long.BYTES + Double.BYTES;
         private final boolean frameLoBounded;
         private final long initialCapacity;
@@ -1003,7 +1003,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
 
     // Handles first_value() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    static class FirstValueOverRowsFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
+    public static class FirstValueOverRowsFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
         private final MemoryARW buffer;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
@@ -1015,6 +1015,8 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
 
         public FirstValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
             super(arg);
+
+            assert rowsLo != Long.MIN_VALUE || rowsHi != 0; // use FirstValueOverWholeResultSetFunction in case of (Long.MIN_VALUE, 0) range
 
             if (rowsLo > Long.MIN_VALUE) {
                 frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
@@ -1040,7 +1042,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(Record record) {
             if (!frameLoBounded && count > (bufferSize - frameSize)) {
-                firstValue = buffer.getDouble((loIdx + bufferSize - count) * Double.BYTES);
+                firstValue = buffer.getDouble((loIdx + bufferSize - count) % bufferSize * Double.BYTES);
                 return;
             }
 
@@ -1193,7 +1195,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
     // handles:
     // first_value() over () - empty clause, no partition by no order by, no frame == default frame
     // first_value() over (rows between unbounded preceding and current row); there's no partition by.
-    static class FirstValueOverWholeResultSetFunction extends BaseDoubleWindowFunction {
+    public static class FirstValueOverWholeResultSetFunction extends BaseDoubleWindowFunction {
         private boolean found;
         private double value = Double.NaN;
 

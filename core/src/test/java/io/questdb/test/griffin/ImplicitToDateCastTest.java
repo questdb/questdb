@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -35,20 +33,19 @@ import org.junit.Test;
 public class ImplicitToDateCastTest extends AbstractCairoTest {
 
     @Test
-    public void testImplicitNonConstSymbolExpressionToDateConversionFails() throws Exception {
-        // we do not want to support general implicit conversion of symbol to date, implicit conversions symbol -> date are reserved for literals
-        try {
-            assertQuery("cust_id\tts\n" +
-                            "abc\t2022-03-23T00:00:00.000000Z\n",
-                    "select * from balances where date = rnd_symbol('2022-03-23')",
+    public void testImplicitNonConstSymbolExpressionToDateConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            // we do not want to support general implicit conversion of symbol to date, implicit conversions symbol -> date are reserved for literals
+            ddl(
                     "CREATE TABLE balances as (" +
                             "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as date) as date from long_sequence(1) " +
-                            ");",
-                    null, true, false);
-            Assert.fail("Exception should be thrown");
-        } catch (SqlException e) {
-            Assert.assertEquals(e.getMessage(), "[34] unexpected argument for function: =. expected args: (STRING,STRING). actual args: (DATE,SYMBOL)");
-        }
+                            ");"
+            );
+            assertSql("cust_id\tdate\n" +
+                            "abc\t2022-03-23T00:00:00.000Z\n",
+                    "select * from balances where date = '2022-03-23'::symbol"
+            );
+        });
     }
 
     @Test

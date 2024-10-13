@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ public class TableRepairTest extends AbstractCairoTest {
     public void testDeleteActivePartition() throws Exception {
         // this delete partition actually deletes files, simulating manual intervention
         assertMemoryLeak(() -> {
-            ddl("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
+            ddl("create atomic table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
 
             engine.releaseAllWriters();
 
@@ -57,15 +57,15 @@ public class TableRepairTest extends AbstractCairoTest {
 
                 // repair by opening and closing writer
 
-                try (TableWriter w = newOffPoolWriter(configuration, "tst", metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, "tst", metrics)) {
                     Assert.assertTrue(reader.reload());
                     Assert.assertEquals(95040, reader.size());
-                    Assert.assertEquals(950390000000L, w.getMaxTimestamp());
-                    TableWriter.Row row = w.newRow(w.getMaxTimestamp());
+                    Assert.assertEquals(950390000000L, writer.getMaxTimestamp());
+                    TableWriter.Row row = writer.newRow(writer.getMaxTimestamp());
                     row.putInt(0, 150);
                     row.putDouble(1, 0.67);
                     row.append();
-                    w.commit();
+                    writer.commit();
                 }
 
                 Assert.assertTrue(reader.reload());
@@ -78,7 +78,7 @@ public class TableRepairTest extends AbstractCairoTest {
     public void testDeletePartitionInTheMiddle() throws Exception {
         // this delete partition actually deletes files, simulating manual intervention
         assertMemoryLeak(() -> {
-            ddl("create table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
+            ddl("create atomic table tst as (select * from (select rnd_int() a, rnd_double() b, timestamp_sequence(0, 10000000l) t from long_sequence(100000)) timestamp (t)) timestamp(t) partition by DAY");
 
             engine.releaseAllWriters();
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -77,9 +77,9 @@ public class EngineMigration {
             path.of(configuration.getRoot());
 
             // check if all tables have been upgraded already
-            path.concat(TableUtils.UPGRADE_FILE_NAME).$();
-            final boolean existed = !force && ff.exists(path);
-            int upgradeFd = openFileRWOrFail(ff, path, configuration.getWriterFileOpenOpts());
+            path.concat(TableUtils.UPGRADE_FILE_NAME);
+            final boolean existed = !force && ff.exists(path.$());
+            long upgradeFd = openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
             LOG.debug()
                     .$("open [fd=").$(upgradeFd)
                     .$(", path=").$(path)
@@ -171,7 +171,7 @@ public class EngineMigration {
                     final int tablePlen = path.size();
 
                     if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
-                        final int fdMeta = openFileRWOrFail(ff, path, context.getConfiguration().getWriterFileOpenOpts());
+                        final long fdMeta = openFileRWOrFail(ff, path.$(), context.getConfiguration().getWriterFileOpenOpts());
                         try {
                             int currentTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
                             if (currentTableVersion < latestMigrationVersion) {
@@ -248,7 +248,7 @@ public class EngineMigration {
             }
 
             LOG.info().$("backing up [file=").$(src).$(", to=").$(toTemp).I$();
-            if (ff.copy(src.$(), toTemp) < 0) {
+            if (ff.copy(src.$(), toTemp.$()) < 0) {
                 throw CairoException.critical(ff.errno()).put("Cannot backup transaction file [to=").put(toTemp).put(']');
             }
         } finally {

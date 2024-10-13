@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,7 +55,14 @@ PACK(struct questdb_byte_sink_t {
     std::byte* hi;
 
     // Set to `true` if a `realloc` fails due to exceeding 2GiB.
-    bool overflow;  // TODO: Remove once artificial limitation is lifted.
+    bool overflow;
+
+    char _padding1[3];  // pad out boolean so it can be accessed via `Unsafe#getInt`.
+
+    // This field is only used when processing a UTF-8 buffer.
+    // The field can be safely ignored when processing binary data.
+    // It is set from `true` (default) to `false` once the sink contains non-7-bit-ASCII bytes.
+    bool ascii;
 });
 
 typedef struct questdb_byte_sink_t questdb_byte_sink_t;

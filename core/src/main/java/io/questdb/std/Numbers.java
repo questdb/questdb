@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.std;
 
 // @formatter:off
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
@@ -44,17 +45,20 @@ import java.util.Arrays;
 
 public final class Numbers {
     public static final int BAD_NETMASK = 1;
-    public static final int INT_NaN = Integer.MIN_VALUE;
+    public static final char CHAR_NULL = CharConstant.ZERO.getChar(null);
+    public static final double DOUBLE_TOLERANCE = 0.0000000001;
+    public static final int INT_NULL = Integer.MIN_VALUE;
     public static final int IPv4_NULL = 0;
     public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
-    public static final long LONG_NaN = Long.MIN_VALUE;
-    public static final int MAX_SCALE = 19;
+    public static final long LONG_NULL = Long.MIN_VALUE;
+    public static final int MAX_DOUBLE_SCALE = 19;
+    public static final int MAX_FLOAT_SCALE = 10;
+    public static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     public static final int SIGNIFICAND_WIDTH = 53;
     public static final long SIGN_BIT_MASK = 0x8000000000000000L;
     public static final int SIZE_1MB = 1024 * 1024;
     public static final long SIZE_1GB = 1024 * SIZE_1MB;
     public static final long SIZE_1TB = 1024L * SIZE_1GB;
-    public static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     public static final double TOLERANCE = 1E-15d;
     public static final char[] hexDigits = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
     public final static int[] hexNumbers;
@@ -130,8 +134,8 @@ public final class Numbers {
     public static void append(CharSink<?> sink, final int value) {
         int i = value;
         if (i < 0) {
-            if (i == Integer.MIN_VALUE) {
-                sink.putAscii("NaN");
+            if (i == Numbers.INT_NULL) {
+                sink.putAscii("null");
                 return;
             }
             sink.putAscii('-');
@@ -170,7 +174,7 @@ public final class Numbers {
         if (i < 0) {
             if (i == Long.MIN_VALUE) {
                 if (checkNaN) {
-                    sink.putAscii("NaN");
+                    sink.putAscii("null");
                 } else {
                     // we cannot negate Long.MIN_VALUE, so we have to special case it
                     sink.putAscii("-9223372036854775808");
@@ -222,8 +226,12 @@ public final class Numbers {
         }
     }
 
+    public static void append(CharSink<?> sink, float value) {
+        append(sink, value, MAX_FLOAT_SCALE);
+    }
+
     public static void append(CharSink<?> sink, double value) {
-        append(sink, value, MAX_SCALE);
+        append(sink, value, MAX_DOUBLE_SCALE);
     }
 
     public static void append(CharSink<?> sink, double value, int scale) {
@@ -467,7 +475,7 @@ public final class Numbers {
     }
 
     public static void appendLong256(long a, long b, long c, long d, CharSink<?> sink) {
-        if (a == Numbers.LONG_NaN && b == Numbers.LONG_NaN && c == Numbers.LONG_NaN && d == Numbers.LONG_NaN) {
+        if (a == Numbers.LONG_NULL && b == Numbers.LONG_NULL && c == Numbers.LONG_NULL && d == Numbers.LONG_NULL) {
             return;
         }
         sink.putAscii("0x");
@@ -552,6 +560,10 @@ public final class Numbers {
     }
 
     public static int compare(double a, double b) {
+        if (equals(a, b)) {
+            return 0;
+        }
+
         if (a < b) {
             return -1;
         }
@@ -560,16 +572,14 @@ public final class Numbers {
             return 1;
         }
 
-        // Cannot use doubleToRawLongBits because of possibility of NaNs.
-        long thisBits = Double.doubleToLongBits(a);
-        long anotherBits = Double.doubleToLongBits(b);
-
-        // Values are equal
-        // (-0.0, 0.0) or (!NaN, NaN)
-        return Long.compare(thisBits, anotherBits);
+        return Boolean.compare(Numbers.isNull(a), Numbers.isNull(b));
     }
 
     public static int compare(float a, float b) {
+        if (equals(a,b)) {
+            return 0;
+        }
+
         if (a < b) {
             return -1;
         }
@@ -577,13 +587,11 @@ public final class Numbers {
             return 1;
         }
 
-        // Cannot use floatToRawIntBits because of possibility of NaNs.
-        int thisBits = Float.floatToIntBits(a);
-        int anotherBits = Float.floatToIntBits(b);
+        return Boolean.compare(isNull(a), isNull(b));
+    }
 
-        // Values are equal
-        // (-0.0, 0.0) or (!NaN, NaN)
-        return Integer.compare(thisBits, anotherBits); // (0.0, -0.0) or (NaN, !NaN)
+    public static int compareUnsigned(byte a, byte b) {
+        return Byte.toUnsignedInt(a) - Byte.toUnsignedInt(b);
     }
 
     public static int decodeHighInt(long val) {
@@ -610,11 +618,16 @@ public final class Numbers {
         return ((Short.toUnsignedInt(high)) << 16) | Short.toUnsignedInt(low);
     }
 
-    public static boolean equals(double l, double r) {
-        return (Double.isNaN(l) && Double.isNaN(r) || Math.abs(l - r) < 0.0000000001 || l == r);
+    public static boolean equals(float l, float r) {
+        return (isNull(l) && isNull(r)) || Math.abs(l - r) <= DOUBLE_TOLERANCE;
     }
 
-    public static boolean extractLong256(CharSequence value, int len, Long256Acceptor acceptor) {
+    public static boolean equals(double l, double r) {
+        return (isNull(l) && isNull(r)) || Math.abs(l - r) <= DOUBLE_TOLERANCE;
+    }
+
+    public static boolean extractLong256(@NotNull CharSequence value, @NotNull Long256Acceptor acceptor) {
+        int len = value.length();
         if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
             try {
                 Long256FromCharSequenceDecoder.decode(value, 2, len, acceptor);
@@ -626,10 +639,11 @@ public final class Numbers {
         return false;
     }
 
-    public static boolean extractLong256(Utf8Sequence value, int len, Long256Acceptor acceptor) {
-        if (len > 2 && ((len & 1) == 0) && len < 67 && value.byteAt(0) == '0' && value.byteAt(1) == 'x') {
+    public static boolean extractLong256(@NotNull Utf8Sequence value, @NotNull Long256Acceptor acceptor) {
+        int size = value.size();
+        if (size > 2 && ((size & 1) == 0) && size < 67 && value.byteAt(0) == '0' && value.byteAt(1) == 'x') {
             try {
-                Long256FromCharSequenceDecoder.decode(value.asAsciiCharSequence(), 2, len, acceptor);
+                Long256FromCharSequenceDecoder.decode(value.asAsciiCharSequence(), 2, size, acceptor);
                 return true;
             } catch (ImplicitCastException e) {
                 return false;
@@ -666,8 +680,8 @@ public final class Numbers {
         }
     }
 
-    // returns net addr + netmask in a single long value 
-    // throws NumericException on error 
+    // returns net addr + netmask in a single long value
+    // throws NumericException on error
     public static long getIPv4Subnet(CharSequence sequence) throws NumericException {
         int netmask = getIPv4Netmask(sequence);
         if (netmask == BAD_NETMASK) {
@@ -707,14 +721,14 @@ public final class Numbers {
     }
 
     public static double intToDouble(int value) {
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             return value;
         }
         return Double.NaN;
     }
 
     public static float intToFloat(int value) {
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             return value;
         }
         return Float.NaN;
@@ -732,10 +746,10 @@ public final class Numbers {
     }
 
     public static long intToLong(int value) {
-        if (value != Numbers.INT_NaN) {
+        if (value != Numbers.INT_NULL) {
             return value;
         }
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     public static long interleaveBits(long x, long y) {
@@ -751,12 +765,45 @@ public final class Numbers {
         return ((Double.doubleToRawLongBits(d) & EXP_BIT_MASK) != EXP_BIT_MASK);
     }
 
+    /**
+     * Checks double value for NULL in database sense. NULL is anything that is
+     * not "finite". In this sense the return value is directly opposite of
+     * the return value of {@link #isFinite(double)}
+     *
+     * @param value to check
+     * @return true is value is "infinite", which includes {@link Double#isNaN(double)}, positive and negative
+     * infinities that arise from division by 0.
+     */
+    public static boolean isNull(double value) {
+        return (Double.doubleToRawLongBits(value) & EXP_BIT_MASK)==EXP_BIT_MASK;
+    }
+
+    public static boolean isNull(float value) {
+        return Float.isNaN(value) || Float.isInfinite(value);
+    }
     public static boolean isPow2(int value) {
         return (value & (value - 1)) == 0;
     }
 
+    public static boolean lessThan(long a, long b, boolean negated) {
+        final boolean eq = a == b;
+        return (eq || (a != LONG_NULL && b != LONG_NULL)) && (negated ? (eq || a > b) : (!eq && a < b));
+    }
+
+    public static boolean lessThan(int a, int b, boolean negated) {
+        final boolean eq = a == b;
+        return (eq || (a != INT_NULL && b != INT_NULL)) && (negated ? (eq || a > b) : (!eq && a < b));
+    }
+
+    public static boolean lessThanIPv4(int a, int b, boolean negated) {
+        long a1 = ipv4ToLong(a);
+        long b1 = ipv4ToLong(b);
+        final boolean eq = a1 == b1;
+        return (eq || (a != IPv4_NULL && b != IPv4_NULL)) && (negated ? (eq || a1 > b1) : (!eq && a1 < b1));
+    }
+
     public static float longToFloat(long value) {
-        if (value != Numbers.LONG_NaN) {
+        if (value != Numbers.LONG_NULL) {
             return value;
         }
         return Float.NaN;
@@ -845,6 +892,22 @@ public final class Numbers {
         return val;
     }
 
+    public static long parseHexLong(Utf8Sequence sequence, int lo, int hi) throws NumericException {
+        if (hi == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        long r;
+        for (int i = lo; i < hi; i++) {
+            int c = sequence.byteAt(i);
+            long n = val << 4;
+            r = n + hexToDecimal(c);
+            val = r;
+        }
+        return val;
+    }
+
     public static int parseIPv4(CharSequence sequence) throws NumericException {
         if (sequence == null || Chars.equalsIgnoreCase("null", sequence)) {
             return IPv4_NULL;
@@ -906,10 +969,9 @@ public final class Numbers {
         // removes any leading dots
         if (notDigit(sign)) {
             if (sign == '.') {
-                lo++;
-                while (sequence.charAt(lo) == '.') {
+                do {
                     lo++;
-                }
+                }while(sequence.charAt(lo) == '.');
             } else {
                 throw NumericException.INSTANCE;
             }
@@ -1029,11 +1091,11 @@ public final class Numbers {
     public static int parseIntQuiet(CharSequence sequence) {
         try {
             if (sequence == null || Chars.equals("NaN", sequence)) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return parseInt0(sequence, 0, sequence.length());
         } catch (NumericException e) {
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
 
     }
@@ -1212,8 +1274,13 @@ public final class Numbers {
     }
 
     @NotNull
-    public static Long256Impl parseLong256(CharSequence text, int len, Long256Impl long256) {
-        return extractLong256(text, len, long256) ? long256 : Long256Impl.NULL_LONG256;
+    public static Long256Impl parseLong256(@NotNull CharSequence text, @NotNull Long256Impl long256) {
+        return extractLong256(text, long256) ? long256 : Long256Impl.NULL_LONG256;
+    }
+
+    @NotNull
+    public static Long256Impl parseLong256(@NotNull Utf8Sequence text, @NotNull Long256Impl long256) {
+        return extractLong256(text, long256) ? long256 : Long256Impl.NULL_LONG256;
     }
 
     public static long parseLongDuration(CharSequence sequence) throws NumericException {
@@ -1384,6 +1451,13 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
+    public static short parseShort(Utf8Sequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        return parseShort0(sequence.asAsciiCharSequence(), 0, sequence.size());
+    }
+
     public static short parseShort(CharSequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;
@@ -1409,7 +1483,7 @@ public final class Numbers {
     }
 
     // test whether the subnet matches the netmaskLength (according to postgres rules)
-    // throws NumericException if sequence is not a valid subnet OR the subnet doesn't match the netmaskLength 
+    // throws NumericException if sequence is not a valid subnet OR the subnet doesn't match the netmaskLength
     public static int parseSubnet0(CharSequence sequence, final int p, int lim, int netmaskLength) throws NumericException {
         int hi;
         int lo = p;
@@ -1908,7 +1982,7 @@ public final class Numbers {
             CharSink<?> sink,
             int outScale
     ) {
-        assert nDigits <= MAX_SCALE : nDigits;
+        assert nDigits <= MAX_DOUBLE_SCALE : nDigits;
         if (isNegative) {
             sink.putAscii('-');
         }

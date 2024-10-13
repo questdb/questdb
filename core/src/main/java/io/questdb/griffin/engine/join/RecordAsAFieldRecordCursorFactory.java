@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -52,12 +52,12 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor cursor1 = base.getCursor(executionContext);
+        final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(cursor1, executionContext);
+            cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            cursor1.close();
+            cursor.close();
             throw th;
         }
     }
@@ -101,7 +101,7 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
     private static final class RecordAsAFieldRecordCursor implements DelegatingRecordCursor {
         private final RecordAsAFieldRecord record = new RecordAsAFieldRecord();
         private final RecordAsAFieldRecord recordB;
-        private RecordCursor base;
+        private RecordCursor baseCursor;
 
         public RecordAsAFieldRecordCursor(boolean baseSupportsRandomAccess) {
             recordB = baseSupportsRandomAccess ? new RecordAsAFieldRecord() : null;
@@ -109,7 +109,7 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public void close() {
-            Misc.free(base);
+            baseCursor = Misc.free(baseCursor);
         }
 
         @Override
@@ -127,31 +127,31 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public boolean hasNext() {
-            return base.hasNext();
+            return baseCursor.hasNext();
         }
 
         @Override
-        public void of(RecordCursor base, SqlExecutionContext executionContext) {
-            this.base = base;
-            record.base = base.getRecord();
+        public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
+            this.baseCursor = baseCursor;
+            record.base = baseCursor.getRecord();
             if (recordB != null) {
-                recordB.base = base.getRecordB();
+                recordB.base = baseCursor.getRecordB();
             }
         }
 
         @Override
         public void recordAt(Record record, long atRowId) {
-            base.recordAt(((RecordAsAFieldRecord) record).base, atRowId);
+            baseCursor.recordAt(((RecordAsAFieldRecord) record).base, atRowId);
         }
 
         @Override
         public long size() {
-            return base.size();
+            return baseCursor.size();
         }
 
         @Override
         public void toTop() {
-            base.toTop();
+            baseCursor.toTop();
         }
     }
 }

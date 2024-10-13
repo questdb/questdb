@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,7 +58,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just 2 INTs, we store chain references in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
@@ -66,16 +66,26 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             JoinContext joinContext
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        this.masterKeySink = masterKeySink;
-        this.slaveKeySink = slaveKeySink;
-        cursor = new HashOuterJoinLightRecordCursor(
-                columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                joinColumnTypes,
-                valueTypes,
-                configuration
-        );
-        this.filter = filter;
+        try {
+            this.masterKeySink = masterKeySink;
+            this.slaveKeySink = slaveKeySink;
+            cursor = new HashOuterJoinLightRecordCursor(
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveFactory.getMetadata()),
+                    joinColumnTypes,
+                    valueTypes,
+                    configuration
+            );
+            this.filter = filter;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -114,11 +124,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
-        filter.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(cursor);
+        Misc.free(filter);
     }
 
     private class HashOuterJoinLightRecordCursor extends AbstractJoinCursor {
@@ -129,7 +139,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         private boolean isMapBuilt;
         private boolean isOpen;
         private Record masterRecord;
-        private LongChain.TreeCursor slaveChainCursor;
+        private LongChain.Cursor slaveChainCursor;
         private Record slaveRecord;
 
         public HashOuterJoinLightRecordCursor(
@@ -183,7 +193,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChainCursor = slaveChain.getCursor(value.getLong(0));
+                    slaveChainCursor = slaveChain.getCursor(value.getInt(0));
                     record.hasSlave(true);
                     while (slaveChainCursor.hasNext()) {
                         slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
@@ -226,11 +236,10 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 key.put(record, slaveKeySink);
                 MapValue value = key.createValue();
                 if (value.isNew()) {
-                    final long offset = slaveChain.put(record.getRowId(), -1);
-                    value.putLong(0, offset);
-                    value.putLong(1, offset);
+                    final int offset = slaveChain.put(record.getRowId(), -1);
+                    value.putInt(0, offset);
                 } else {
-                    value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
+                    value.putInt(0, slaveChain.put(record.getRowId(), value.getInt(0)));
                 }
             }
         }

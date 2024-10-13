@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -80,6 +80,11 @@ public class Long256Constant extends Long256Function implements Long256, Constan
     @Override
     public long getLong3() {
         return value.getLong3();
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return Long256Impl.NULL_LONG256.equals(value);
     }
 
     @Override

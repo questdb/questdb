@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -93,6 +93,11 @@ public interface CairoConfiguration {
     @NotNull
     BuildInformation getBuildInformation();
 
+    boolean getCairoSqlLegacyOperatorPrecedence();
+
+    @NotNull
+    CharSequence getCheckpointRoot(); // same as root/../.checkpoint
+
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
@@ -126,6 +131,8 @@ public interface CairoConfiguration {
 
     int getCreateAsSelectRetryCount();
 
+    long getCreateTableModelBatchSize();
+
     int getCreateTableModelPoolCapacity();
 
     long getDataAppendPageSize();
@@ -143,6 +150,8 @@ public interface CairoConfiguration {
 
     @NotNull
     DateLocale getDefaultDateLocale();
+
+    int getDefaultSeqPartTxnCount();
 
     boolean getDefaultSymbolCacheFlag();
 
@@ -178,6 +187,10 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
+    long getGroupByPresizeMaxHeapSize();
+
+    long getGroupByPresizeMaxSize();
+
     int getGroupByShardingThreshold();
 
     @NotNull
@@ -197,9 +210,18 @@ public interface CairoConfiguration {
 
     int getIndexValueBlockSize();
 
-    int getInsertPoolCapacity();
+    long getInsertModelBatchSize();
+
+    int getInsertModelPoolCapacity();
 
     int getLatestByQueueCapacity();
+
+    @NotNull
+    CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
+
+    boolean getLogLevelVerbose();
+
+    boolean getLogSqlQueryProgressExe();
 
     int getMaxCrashFiles();
 
@@ -290,9 +312,7 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
-    default QueryLogger getQueryLogger() {
-        return DefaultQueryLogger.INSTANCE;
-    }
+    int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();
 
@@ -327,13 +347,15 @@ public interface CairoConfiguration {
         return RostiAllocFacadeImpl.INSTANCE;
     }
 
+    boolean getSampleByDefaultAlignmentCalendar();
+
     int getSampleByIndexSearchPageSize();
 
-    boolean getSimulateCrashEnabled();
+    long getSequencerCheckInterval();
 
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
-     * on database start the id is compared with the id stored in a snapshot, if any. If the ids
+     * on database start the id is compared with the id stored in the checkpoint, if any. If the ids
      * are different, snapshot recovery is being triggered.
      *
      * @return instance id.
@@ -341,10 +363,9 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getSnapshotInstanceId();
 
-    @NotNull
-    CharSequence getSnapshotRoot(); // same as root/../snapshot
-
     long getSpinLockTimeout();
+
+    int getSqlAsOfJoinLookAhead();
 
     int getSqlCharacterStoreCapacity();
 
@@ -356,7 +377,7 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null input root disables "copy" sql
+    // null or empty input root disables "copy" sql
     CharSequence getSqlCopyInputRoot();
 
     CharSequence getSqlCopyInputWorkRoot();
@@ -418,13 +439,17 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
+    int getSqlOrderByRadixSortThreshold();
+
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
 
+    int getSqlParallelWorkStealingThreshold();
+
     int getSqlSmallMapKeyCapacity();
 
-    int getSqlSmallMapPageSize();
+    long getSqlSmallMapPageSize();
 
     int getSqlSortKeyMaxPages();
 
@@ -467,6 +492,8 @@ public interface CairoConfiguration {
 
     long getSystemWalDataAppendPageSize();
 
+    long getSystemWalEventAppendPageSize();
+
     long getTableRegistryAutoReloadFrequency();
 
     int getTableRegistryCompactionThreshold();
@@ -493,6 +520,10 @@ public interface CairoConfiguration {
     long getWalDataAppendPageSize();
 
     boolean getWalEnabledDefault();
+
+    long getWalEventAppendPageSize();
+
+    double getWalLagRowsMultiplier();
 
     long getWalMaxLagSize();
 
@@ -524,8 +555,6 @@ public interface CairoConfiguration {
      */
     long getWalSegmentRolloverSize();
 
-    double getWalSquashUncommittedRowsMultiplier();
-
     int getWalTxnNotificationQueueCapacity();
 
     int getWalWriterPoolMaxSegments();
@@ -546,9 +575,18 @@ public interface CairoConfiguration {
 
     long getWriterFileOpenOpts();
 
-    long getWriterMemoryLimit();
-
     int getWriterTickRowsCountMod();
+
+    /**
+     * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
+     *
+     * @return enable/disable flag for recovering from the checkpoint
+     */
+    boolean isCheckpointRecoveryEnabled();
+
+    boolean isDevModeEnabled();
+
+    boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
 
@@ -560,14 +598,9 @@ public interface CairoConfiguration {
 
     boolean isReadOnlyInstance();
 
-    /**
-     * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.
-     *
-     * @return enable/disable snapshot recovery flag
-     */
-    boolean isSnapshotRecoveryEnabled();
-
     boolean isSqlJitDebugEnabled();
+
+    boolean isSqlOrderBySortEnabled();
 
     boolean isSqlParallelFilterEnabled();
 
@@ -595,4 +628,18 @@ public interface CairoConfiguration {
 
     default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
     }
+
+    boolean useFastAsOfJoin();
+
+    int getPartitionEncoderParquetVersion();
+
+    boolean isPartitionEncoderParquetStatisticsEnabled();
+
+    int getPartitionEncoderParquetCompressionCodec();
+
+    int getPartitionEncoderParquetCompressionLevel();
+
+    int getPartitionEncoderParquetRowGroupSize();
+
+    int getPartitionEncoderParquetDataPageSize();
 }

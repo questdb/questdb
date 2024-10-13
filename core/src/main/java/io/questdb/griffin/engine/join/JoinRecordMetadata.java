@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,13 +39,21 @@ import java.io.Closeable;
 
 public class JoinRecordMetadata extends AbstractRecordMetadata implements Closeable {
 
-    private final static ColumnTypes keyTypes;
-    private final static ColumnTypes valueTypes;
+    private static final ColumnTypes keyTypes;
+    private static final ColumnTypes valueTypes;
     private final Map map;
     private int refCount;
 
     public JoinRecordMetadata(CairoConfiguration configuration, int columnCount) {
-        this.map = new OrderedMap(configuration.getSqlJoinMetadataPageSize(), keyTypes, valueTypes, columnCount * 2, 0.6, configuration.getSqlJoinMetadataMaxResizes(), MemoryTag.NATIVE_JOIN_MAP);
+        this.map = new OrderedMap(
+                configuration.getSqlJoinMetadataPageSize(),
+                keyTypes,
+                valueTypes,
+                columnCount * 2,
+                0.6,
+                configuration.getSqlJoinMetadataMaxResizes(),
+                MemoryTag.NATIVE_JOIN_MAP
+        );
         this.timestampIndex = -1;
         this.columnCount = 0;
         this.refCount = 1;

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@ public class WalEventReader implements Closeable {
 
     public WalEventReader(FilesFacade ff) {
         this.ff = ff;
-        eventMem = Vm.getMRInstance();
+        eventMem = Vm.getCMRInstance();
         eventCursor = new WalEventCursor(eventMem);
     }
 
@@ -64,10 +64,10 @@ public class WalEventReader implements Closeable {
         try {
             final int pathLen = path.size();
 
-            path.concat(EVENT_FILE_NAME).$();
+            path.concat(EVENT_FILE_NAME);
             eventMem.of(
                     ff,
-                    path,
+                    path.$(),
                     ff.getPageSize(),
                     WALE_HEADER_SIZE + Integer.BYTES,
                     MemoryTag.MMAP_TABLE_WAL_READER,
@@ -77,7 +77,7 @@ public class WalEventReader implements Closeable {
 
             if (segmentTxn > -1) {
                 // Read record offset and size
-                int fdi = openRO(ff, path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), LOG);
+                long fdi = openRO(ff, path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), LOG);
                 try {
                     int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);
                     long offset = ff.readNonNegativeLong(fdi, segmentTxn << 3);

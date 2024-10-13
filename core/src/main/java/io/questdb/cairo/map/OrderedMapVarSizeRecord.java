@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,15 +24,13 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -47,10 +45,13 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     private final DirectBinarySequence[] bs;
     private final DirectString[] csA;
     private final DirectString[] csB;
+    private final Interval[] intervals;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
     private final ColumnTypes keyTypes;
     private final int splitIndex;
+    private final DirectUtf8String[] usA;
+    private final DirectUtf8String[] usB;
     private final OrderedMapValue value;
     private final long[] valueOffsets;
     private final long valueSize;
@@ -88,9 +89,12 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
         DirectString[] csA = null;
         DirectString[] csB = null;
+        DirectUtf8String[] usA = null;
+        DirectUtf8String[] usB = null;
         DirectBinarySequence[] bs = null;
         Long256Impl[] long256A = null;
         Long256Impl[] long256B = null;
+        Interval[] intervals = null;
 
         final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
@@ -105,6 +109,14 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
                     csA[i + keyIndexOffset] = new DirectString();
                     csB[i + keyIndexOffset] = new DirectString();
                     break;
+                case ColumnType.VARCHAR:
+                    if (usA == null) {
+                        usA = new DirectUtf8String[nColumns];
+                        usB = new DirectUtf8String[nColumns];
+                    }
+                    usA[i + keyIndexOffset] = new DirectUtf8String();
+                    usB[i + keyIndexOffset] = new DirectUtf8String();
+                    break;
                 case ColumnType.BINARY:
                     if (bs == null) {
                         bs = new DirectBinarySequence[nColumns];
@@ -118,6 +130,12 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
                     }
                     long256A[i + keyIndexOffset] = new Long256Impl();
                     long256B[i + keyIndexOffset] = new Long256Impl();
+                    break;
+                case ColumnType.INTERVAL:
+                    if (intervals == null) {
+                        intervals = new Interval[nColumns];
+                    }
+                    intervals[i + keyIndexOffset] = new Interval();
                     break;
                 default:
                     break;
@@ -140,9 +158,12 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
         this.csA = csA;
         this.csB = csB;
+        this.usA = usA;
+        this.usB = usB;
         this.bs = bs;
         this.keyLong256A = long256A;
         this.keyLong256B = long256B;
+        this.intervals = intervals;
     }
 
     private OrderedMapVarSizeRecord(
@@ -152,9 +173,12 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             int splitIndex,
             DirectString[] csA,
             DirectString[] csB,
+            DirectUtf8String[] usA,
+            DirectUtf8String[] usB,
             DirectBinarySequence[] bs,
             Long256Impl[] keyLong256A,
-            Long256Impl[] keyLong256B
+            Long256Impl[] keyLong256B,
+            Interval[] intervals
     ) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
@@ -163,9 +187,12 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.value = new OrderedMapValue(valueSize, valueOffsets);
         this.csA = csA;
         this.csB = csB;
+        this.usA = usA;
+        this.usB = usB;
         this.bs = bs;
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
+        this.intervals = intervals;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
@@ -173,9 +200,12 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     public OrderedMapRecord clone() {
         final DirectString[] csA;
         final DirectString[] csB;
+        final DirectUtf8String[] usA;
+        final DirectUtf8String[] usB;
         final DirectBinarySequence[] bs;
         final Long256Impl[] long256A;
         final Long256Impl[] long256B;
+        final Interval[] intervals;
 
         // csA and csB are pegged, checking one for null should be enough
         if (this.csA != null) {
@@ -192,6 +222,22 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         } else {
             csA = null;
             csB = null;
+        }
+
+        if (this.usA != null) {
+            int n = this.usA.length;
+            usA = new DirectUtf8String[n];
+            usB = new DirectUtf8String[n];
+
+            for (int i = 0; i < n; i++) {
+                if (this.usA[i] != null) {
+                    usA[i] = new DirectUtf8String();
+                    usB[i] = new DirectUtf8String();
+                }
+            }
+        } else {
+            usA = null;
+            usB = null;
         }
 
         if (this.bs != null) {
@@ -221,7 +267,20 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             long256A = null;
             long256B = null;
         }
-        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, bs, long256A, long256B);
+
+        if (this.intervals != null) {
+            int n = this.intervals.length;
+            intervals = new Interval[n];
+            for (int i = 0; i < n; i++) {
+                if (this.intervals[i] != null) {
+                    intervals[i] = new Interval();
+                }
+            }
+        } else {
+            intervals = null;
+        }
+
+        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, usA, usB, bs, long256A, long256B, intervals);
     }
 
     @Override
@@ -310,6 +369,15 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
+    public Interval getInterval(int columnIndex) {
+        long address = addressOfColumn(columnIndex);
+        long lo = Unsafe.getUnsafe().getLong(address);
+        long hi = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+        Interval interval = this.intervals[columnIndex];
+        return interval.of(lo, hi);
+    }
+
+    @Override
     public long getLong(int columnIndex) {
         return Unsafe.getUnsafe().getLong(addressOfColumn(columnIndex));
     }
@@ -357,19 +425,8 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public CharSequence getStr(int columnIndex) {
+    public CharSequence getStrA(int columnIndex) {
         return getStr0(columnIndex, csA[columnIndex]);
-    }
-
-    @Override
-    public void getStr(int columnIndex, Utf16Sink sink) {
-        long address = addressOfColumn(columnIndex);
-        int len = Unsafe.getUnsafe().getInt(address);
-        address += Integer.BYTES;
-        for (int i = 0; i < len; i++) {
-            sink.put(Unsafe.getUnsafe().getChar(address));
-            address += Character.BYTES;
-        }
     }
 
     @Override
@@ -383,7 +440,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public CharSequence getSym(int columnIndex) {
+    public CharSequence getSymA(int columnIndex) {
         return symbolTableResolver.getSymbolTable(symbolTableIndex.getQuick(columnIndex)).valueOf(getInt(columnIndex));
     }
 
@@ -398,9 +455,25 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     }
 
     @Override
-    public int keyHashCode() {
+    public Utf8Sequence getVarcharA(int columnIndex) {
+        return getVarchar0(columnIndex, usA[columnIndex]);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int columnIndex) {
+        return getVarchar0(columnIndex, usB[columnIndex]);
+    }
+
+    @Override
+    public int getVarcharSize(int columnIndex) {
+        long address = addressOfColumn(columnIndex);
+        return VarcharTypeDriver.getPlainValueSize(address);
+    }
+
+    @Override
+    public long keyHashCode() {
         int keySize = Unsafe.getUnsafe().getInt(startAddress);
-        return Hash.hashMem32(startAddress + Integer.BYTES, keySize);
+        return Hash.hashMem64(startAddress + Integer.BYTES, keySize);
     }
 
     @Override
@@ -450,14 +523,17 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
                 // Fixed-size type.
                 addr += size;
             } else {
-                // Var-size type: string or binary.
+                // Var-size type: string or varchar or binary.
                 final int len = Unsafe.getUnsafe().getInt(addr);
                 addr += Integer.BYTES;
                 if (len != TableUtils.NULL_LEN) {
                     if (ColumnType.isString(columnType)) {
                         addr += (long) len << 1;
                     } else {
-                        addr += len;
+                        // This is varchar or binary.
+                        // Varchar's ASCII flag is signaled with the highest bit,
+                        // so make sure to remove it.
+                        addr += len & Integer.MAX_VALUE;
                     }
                 }
             }
@@ -470,14 +546,8 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @NotNull
     private Long256 getLong256Generic(Long256Impl[] keyLong256, int columnIndex) {
-        long address = addressOfColumn(columnIndex);
         Long256Impl long256 = keyLong256[columnIndex];
-        long256.setAll(
-                Unsafe.getUnsafe().getLong(address),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES * 2),
-                Unsafe.getUnsafe().getLong(address + Long.BYTES * 3)
-        );
+        long256.fromAddress(addressOfColumn(columnIndex));
         return long256;
     }
 
@@ -485,5 +555,10 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         long address = addressOfColumn(index);
         int len = Unsafe.getUnsafe().getInt(address);
         return len == TableUtils.NULL_LEN ? null : cs.of(address + Integer.BYTES, address + Integer.BYTES + len * 2L);
+    }
+
+    private Utf8Sequence getVarchar0(int index, DirectUtf8String us) {
+        long address = addressOfColumn(index);
+        return VarcharTypeDriver.getPlainValue(address, us);
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
 
 public class JsonPlanSink extends BasePlanSink {
     final int NODE_ATTR = 2;
@@ -216,6 +217,14 @@ public class JsonPlanSink extends BasePlanSink {
     }
 
     @Override
+    public PlanSink val(Utf8Sequence utf8) {
+        quoteValue = true;
+        checkType(NODE_VALUE);
+        sink.put(utf8);
+        return this;
+    }
+
+    @Override
     public PlanSink val(Sinkable s) {
         quoteValue = true;
         checkType(NODE_VALUE);
@@ -236,18 +245,30 @@ public class JsonPlanSink extends BasePlanSink {
     }
 
     @Override
-    public PlanSink val(long long0, long long1, long long2, long long3) {
-        quoteValue = true;
-        checkType(NODE_VALUE);
-        Numbers.appendLong256(long0, long1, long2, long3, sink);
-        return this;
-    }
-
-    @Override
     public PlanSink val(long hash, int geoHashBits) {
         quoteValue = true;
         checkType(NODE_VALUE);
         GeoHashes.append(hash, geoHashBits, sink);
+        return this;
+    }
+
+    @Override
+    public PlanSink valIPv4(int ip) {
+        quoteValue = true;
+        checkType(NODE_VALUE);
+        if (ip == Numbers.IPv4_NULL) {
+            sink.put("null");
+        } else {
+            Numbers.intToIPv4Sink(sink, ip);
+        }
+        return this;
+    }
+
+    @Override
+    public PlanSink valLong256(long long0, long long1, long long2, long long3) {
+        quoteValue = true;
+        checkType(NODE_VALUE);
+        Numbers.appendLong256(long0, long1, long2, long3, sink);
         return this;
     }
 

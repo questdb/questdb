@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ import java.io.Closeable;
 public class TextQueryProcessorState implements Mutable, Closeable {
     final StringSink query = new StringSink();
     private final HttpConnectionContext httpConnectionContext;
+    boolean hasNext;
     int columnIndex;
     long count;
     boolean countRows = false;
@@ -48,7 +49,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
     RecordMetadata metadata;
     boolean noMeta = false;
     boolean pausedQuery = false;
-    int queryState = JsonQueryProcessorState.QUERY_PREFIX;
+    int queryState;
     Record record;
     RecordCursorFactory recordCursorFactory;
     Rnd rnd;
@@ -58,6 +59,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
 
     public TextQueryProcessorState(HttpConnectionContext httpConnectionContext) {
         this.httpConnectionContext = httpConnectionContext;
+        clear();
     }
 
     @Override
@@ -78,7 +80,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         }
         queryCacheable = false;
         query.clear();
-        queryState = JsonQueryProcessorState.QUERY_PREFIX;
+        queryState = JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
         skip = 0;
         stop = 0;
@@ -94,7 +96,7 @@ public class TextQueryProcessorState implements Mutable, Closeable {
         recordCursorFactory = Misc.free(recordCursorFactory);
     }
 
-    public int getFd() {
+    public long getFd() {
         return httpConnectionContext.getFd();
     }
 

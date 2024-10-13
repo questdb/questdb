@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -52,7 +52,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.cairo.CairoEngine.EMPTY_RESOLVER;
 import static io.questdb.cairo.GrowOnlyTableNameRegistryStore.OPERATION_ADD;
 import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 import static io.questdb.std.Files.FILES_RENAME_OK;
@@ -230,7 +229,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             for (int i = 0; i < threadCount; i++) {
                 threads.add(new Thread(() -> {
                     try {
-                        try (TableNameRegistryRO ro = new TableNameRegistryRO(configuration, EMPTY_RESOLVER)) {
+                        try (TableNameRegistryRO ro = new TableNameRegistryRO(
+                                configuration,
+                                new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString())
+                        )) {
                             startBarrier.await();
                             while (!done.get()) {
                                 ro.reload();
@@ -250,15 +252,16 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.getLast().start();
             }
 
-            try (
-                    TableModel tm = new TableModel(configuration, "abc", PartitionBy.DAY)
-                            .timestamp().col("c", ColumnType.TIMESTAMP);
-                    Path rmPath = new Path().of(configuration.getRoot())
-            ) {
+            try (Path rmPath = new Path().of(configuration.getRoot())) {
+                TableModel tm = new TableModel(configuration, "abc", PartitionBy.DAY)
+                        .timestamp().col("c", ColumnType.TIMESTAMP);
                 // Add / remove tables
                 engine.closeNameRegistry();
                 Rnd rnd = TestUtils.generateRandom(LOG);
-                try (TableNameRegistryRW rw = new TableNameRegistryRW(configuration, EMPTY_RESOLVER)) {
+                try (TableNameRegistryRW rw = new TableNameRegistryRW(
+                        configuration,
+                        new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString())
+                )) {
                     rw.reload();
                     startBarrier.await();
                     int iteration = 0;
@@ -273,7 +276,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, true);
                             rw.registerName(tableToken);
                             addedTables.add(iteration);
-                            TableUtils.createTable(configuration, tm.getMem(), tm.getPath(), tm, iteration, tableName);
+                            TestUtils.createTable(tm, configuration, ColumnType.VERSION, iteration, tableToken);
                         } else if (addedTables.size() > 0) {
                             // Remove table
                             int tableId = addedTables.getLast();
@@ -286,8 +289,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             // Remove _txn file first
                             rmPath.trimTo(rootLen).concat(tableName);
                             int len = rmPath.size();
-                            rmPath.concat(TableUtils.TXN_FILE_NAME).$();
-                            ff.remove(rmPath);
+                            rmPath.concat(TableUtils.TXN_FILE_NAME);
+                            ff.remove(rmPath.$());
 
                             // Remove table directory
                             rmPath.trimTo(len).$();
@@ -543,13 +546,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             }
 
-            try (TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
+            TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.INT)
                     .wal()
-                    .timestamp()) {
-                tt1 = createTable(model);
-            }
+                    .timestamp();
+            tt1 = createTable(model);
 
             Assert.assertTrue(engine.isWalTable(tt1));
 
@@ -644,7 +646,10 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             createTableWal("tab1");
 
             engine.closeNameRegistry();
-            try (TableNameRegistryStore store = new TableNameRegistryStore(engine.getConfiguration(), EMPTY_RESOLVER)) {
+            try (TableNameRegistryStore store = new TableNameRegistryStore(
+                    configuration,
+                    new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString())
+            )) {
                 store.lock();
                 store.reload(new ConcurrentHashMap<>(1), new ConcurrentHashMap<>(1), null);
                 store.writeEntry(new TableToken("tab1", "tab1~1", 1, true, false, false), OPERATION_ADD);
@@ -672,7 +677,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
             engine.releaseInactive();
             FilesFacade ff = configuration.getFilesFacade();
-            Assert.assertTrue(ff.rmdir(Path.getThreadLocal2(root).concat(tt1).$()));
+            Assert.assertTrue(ff.rmdir(Path.getThreadLocal2(root).concat(tt1)));
 
             engine.reloadTableNames();
 
@@ -701,13 +706,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
 
                 drainWalQueue();
 
-                try (TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
+                TableModel model = new TableModel(configuration, "tab1", PartitionBy.DAY)
                         .col("a", ColumnType.INT)
                         .col("b", ColumnType.INT)
                         .wal()
-                        .timestamp()) {
-                    tt1 = createTable(model);
-                }
+                        .timestamp();
+                tt1 = createTable(model);
             }
 
             simulateEngineRestart();
@@ -728,13 +732,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             Assert.assertTrue(engine.isWalTable(tt2));
 
             TableToken tt3;
-            try (TableModel model = new TableModel(configuration, "tab3", PartitionBy.NONE)
+            TableModel model = new TableModel(configuration, "tab3", PartitionBy.NONE)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.INT)
                     .noWal()
-                    .timestamp()) {
-                tt3 = createTable(model);
-            }
+                    .timestamp();
+            tt3 = createTable(model);
             Assert.assertFalse(engine.isWalTable(tt3));
 
             try (MemoryMARW mem = Vm.getMARWInstance()) {
@@ -778,13 +781,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     @NotNull
     private static TableToken createTableWal(String tab1) {
         TableToken tt1;
-        try (TableModel model = new TableModel(configuration, tab1, PartitionBy.DAY)
+        TableModel model = new TableModel(configuration, tab1, PartitionBy.DAY)
                 .col("a", ColumnType.INT)
                 .col("b", ColumnType.INT)
                 .wal()
-                .timestamp()) {
-            tt1 = createTable(model);
-        }
+                .timestamp();
+        tt1 = createTable(model);
         return tt1;
     }
 
@@ -798,9 +800,9 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         engine.reloadTableNames(null);
 
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(
-                configuration,
+                engine,
                 engine.getTableSequencerAPI(),
-                engine.getProtectedTableResolver()
+                engine.getTableFlagResolver()
         );
         engine.closeNameRegistry();
         engine.reloadTableNames(convertedTables);
@@ -815,13 +817,12 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             Assert.assertTrue(engine.isWalTable(tt2));
 
             TableToken tt3;
-            try (TableModel model = new TableModel(configuration, "tab3", PartitionBy.DAY)
+            TableModel model = new TableModel(configuration, "tab3", PartitionBy.DAY)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.INT)
                     .noWal()
-                    .timestamp()) {
-                tt3 = createTable(model);
-            }
+                    .timestamp();
+            tt3 = createTable(model);
             Assert.assertFalse(engine.isWalTable(tt3));
 
             ddl("alter table " + tt2.getTableName() + " set type bypass wal");
@@ -830,7 +831,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 engine.releaseInactive();
             }
 
-            final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getProtectedTableResolver());
+            final ObjList<TableToken> convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
 
             if (!releaseInactiveBeforeConversion) {
                 engine.releaseInactive();

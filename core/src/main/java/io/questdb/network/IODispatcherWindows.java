@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -71,7 +71,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
             final long srcOpId = context.getAndResetHeartbeatId();
 
             final long opId = nextOpId();
-            final int fd = context.getFd();
+            final long fd = context.getFd();
 
             interestSubSeq.done(cursor);
             if (operation == IOOperation.HEARTBEAT) {
@@ -99,6 +99,11 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                     pendingHeartbeats.deleteRow(heartbeatRow);
                 }
             } else {
+                if (operation == IOOperation.READ && context.getSocket().isMorePlaintextBuffered()) {
+                    publishOperation(IOOperation.READ, context);
+                    continue;
+                }
+
                 LOG.debug().$("processing registration [fd=").$(fd)
                         .$(", op=").$(operation)
                         .$(", id=").$(opId).I$();
@@ -196,7 +201,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 }
             }
 
-            final int fd = (int) pending.get(i, OPM_FD);
+            final long fd = pending.get(i, OPM_FD);
             final int newOp = fds.get(fd);
             assert fd != serverFd;
 

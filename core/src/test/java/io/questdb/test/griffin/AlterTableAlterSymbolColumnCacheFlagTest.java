@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,14 +24,9 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.RecordCursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -67,61 +62,41 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
                 "msft\n" +
                 "msft\n";
 
-        String expectedChronological = "sym\n" +
-                "msft\n" +
-                "googl\n" +
-                "googl\n" +
-                "ibm\n" +
-                "googl\n" +
-                "ibm\n" +
-                "googl\n" +
-                "googl\n" +
-                "googl\n" +
-                "msft\n";
-
-        final RecordCursorPrinter printer = new SingleColumnRecordCursorPrinter(1);
+        String expectedChronological = "sym\tk\n" +
+                "msft\t1970-01-01T00:00:00.000000Z\n" +
+                "googl\t1970-01-01T00:16:40.000000Z\n" +
+                "googl\t1970-01-01T00:33:20.000000Z\n" +
+                "ibm\t1970-01-01T00:50:00.000000Z\n" +
+                "googl\t1970-01-01T01:06:40.000000Z\n" +
+                "ibm\t1970-01-01T01:23:20.000000Z\n" +
+                "googl\t1970-01-01T01:40:00.000000Z\n" +
+                "googl\t1970-01-01T01:56:40.000000Z\n" +
+                "googl\t1970-01-01T02:13:20.000000Z\n" +
+                "msft\t1970-01-01T02:30:00.000000Z\n";
 
         assertMemoryLeak(() -> {
+            createX();
 
-            assertMemoryLeak(this::createX);
-
-            assertQueryPlain(expectedOrdered,
+            assertQueryNoLeakCheck(expectedOrdered,
                     "select sym from x order by sym"
             );
 
-            try (TableReader reader = getReader("x")) {
-                //check cursor before altering symbol column
-                sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                Assert.assertEquals(expectedChronological, sink.toString());
+            assertSql(expectedChronological, "select sym, k from x");
 
-                try (TableWriter writer = getWriter("x")) {
-                    writer.changeCacheFlag(1, false);
-                }
-                //reload reader
-                Assert.assertTrue(reader.reload());
-                //check cursor after reload
-                sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                Assert.assertEquals(expectedChronological, sink.toString());
-
-                try (TableReader reader2 = getReader("x")) {
-                    sink.clear();
-                    printer.print(reader2.getCursor(), reader2.getMetadata(), true, sink);
-                    Assert.assertEquals(expectedChronological, sink.toString());
-                }
+            try (TableWriter writer = getWriter("x")) {
+                writer.changeCacheFlag(1, false);
             }
-        });
 
-        assertQueryPlain(expectedOrdered,
-                "select sym from x order by 1 asc"
-        );
+            assertSql(expectedChronological, "select sym, k from x");
+
+            assertQueryNoLeakCheck(expectedOrdered,
+                    "select sym from x order by 1 asc"
+            );
+        });
     }
 
     @Test
     public void testAlterSymbolCacheFlagToTrueCheckOpenReaderWithCursor() throws Exception {
-        final RecordCursorPrinter printer = new SingleColumnRecordCursorPrinter(1);
-
         assertMemoryLeak(() -> {
             ddl("create table x (i int, sym symbol nocache) ;");
             insert("insert into x values (1, 'GBP')");
@@ -133,79 +108,68 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
             insert("insert into x values (7, 'GBP')");
             insert("insert into x values (8, 'GBP')");
             insert("insert into x values (9, 'GBP')");
-        });
 
-        String expectedOrdered = "sym\n" +
-                "CHF\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "JPY\n" +
-                "USD\n";
+            String expectedOrdered = "sym\n" +
+                    "CHF\n" +
+                    "GBP\n" +
+                    "GBP\n" +
+                    "GBP\n" +
+                    "GBP\n" +
+                    "GBP\n" +
+                    "GBP\n" +
+                    "JPY\n" +
+                    "USD\n";
 
-        String expectedChronological = "sym\n" +
-                "GBP\n" +
-                "CHF\n" +
-                "GBP\n" +
-                "JPY\n" +
-                "USD\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n" +
-                "GBP\n";
+            String expectedChronological = "i\tsym\n" +
+                    "1\tGBP\n" +
+                    "2\tCHF\n" +
+                    "3\tGBP\n" +
+                    "4\tJPY\n" +
+                    "5\tUSD\n" +
+                    "6\tGBP\n" +
+                    "7\tGBP\n" +
+                    "8\tGBP\n" +
+                    "9\tGBP\n";
 
-        assertMemoryLeak(() -> {
-
-            assertQueryPlain(expectedOrdered,
+            assertSql(
+                    expectedOrdered,
                     "select sym from x order by sym"
             );
 
-            try (TableReader reader = getReader("x")) {
-                //check cursor before altering symbol column
-                sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                Assert.assertEquals(expectedChronological, sink.toString());
+            assertSql(
+                    expectedChronological,
+                    "select i, sym from x"
+            );
 
-                try (TableWriter writer = getWriter("x")) {
-                    writer.changeCacheFlag(1, true);
-                }
-                //reload reader
-                Assert.assertTrue(reader.reload());
-                //check cursor after reload
-                sink.clear();
-                printer.print(reader.getCursor(), reader.getMetadata(), true, sink);
-                Assert.assertEquals(expectedChronological, sink.toString());
-
-                try (TableReader reader2 = getReader("x")) {
-                    sink.clear();
-                    printer.print(reader2.getCursor(), reader2.getMetadata(), true, sink);
-                    Assert.assertEquals(expectedChronological, sink.toString());
-                }
-
+            try (TableWriter writer = getWriter("x")) {
+                writer.changeCacheFlag(1, true);
             }
-        });
 
-        assertQueryPlain(expectedOrdered,
-                "select sym from x order by 1 asc"
-        );
+            assertSql(
+                    expectedChronological,
+                    "select i, sym from x"
+            );
+
+            assertQueryNoLeakCheck(
+                    expectedOrdered,
+                    "select sym from x order by 1 asc"
+            );
+        });
     }
 
     @Test
     public void testBadSyntax() throws Exception {
-        assertFailure("alter table x alter column z", 28, "'add index' or 'drop index' or 'cache' or 'nocache' expected");
+        assertFailure("alter table x alter column c", 28, "'add index' or 'drop index' or 'type' or 'cache' or 'nocache' expected");
     }
 
     @Test
     public void testInvalidColumn() throws Exception {
-        assertFailure("alter table x alter column y cache", 27, "Invalid column: y");
+        assertFailure("alter table x alter column y cache", 27, "column 'y' does not exists in table 'x'");
     }
 
     @Test
     public void testWhenCacheOrNocacheAreNotInAlterStatement() throws Exception {
-        assertFailure("alter table x alter column z ca", 29, "'cache' or 'nocache' expected");
+        assertFailure("alter table x alter column c ca", 29, "'cache' or 'nocache' expected");
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {
@@ -244,27 +208,5 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
                         " from long_sequence(10)" +
                         ") timestamp (timestamp);"
         );
-    }
-
-    static class SingleColumnRecordCursorPrinter extends RecordCursorPrinter {
-
-        private final int columnIndex;
-
-        public SingleColumnRecordCursorPrinter(int columnIndex) {
-            super();
-            this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void print(Record r, RecordMetadata m, Utf16Sink sink) {
-            TestUtils.printColumn(r, m, columnIndex, sink);
-            sink.putAscii("\n");
-        }
-
-        @Override
-        public void printHeader(RecordMetadata metadata, Utf16Sink sink) {
-            sink.put(metadata.getColumnName(columnIndex));
-            sink.putAscii('\n');
-        }
     }
 }

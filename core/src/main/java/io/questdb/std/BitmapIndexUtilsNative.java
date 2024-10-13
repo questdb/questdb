@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,10 @@
 
 package io.questdb.std;
 
+import org.jetbrains.annotations.TestOnly;
+
 public class BitmapIndexUtilsNative {
+
     public static int findFirstLastInFrame(
             int outIndex,
             long rowIdLo,
@@ -38,7 +41,8 @@ public class BitmapIndexUtilsNative {
             int samplePeriodsCount,
             long samplePeriodIndexOffset,
             long rowIdOutAddress,
-            int outSize) {
+            int outSize
+    ) {
         if (symbolIndexAddress > 0) {
             return findFirstLastInFrame0(
                     outIndex,
@@ -56,6 +60,7 @@ public class BitmapIndexUtilsNative {
                     outSize
             );
         } else {
+            // null value in filter case
             return findFirstLastInFrameNoFilter0(
                     outIndex,
                     rowIdLo,
@@ -71,20 +76,39 @@ public class BitmapIndexUtilsNative {
         }
     }
 
-    public static void latestScanBackward(long keysMemory, long keysMemorySize, long valuesMemory,
-                                          long valuesMemorySize, long argsMemory, long unIndexedNullCount,
-                                          long maxValue, long minValue,
-                                          int partitionIndex, int blockValueCountMod) {
+    @TestOnly
+    public static void latestScanBackward(
+            long keysMemory,
+            long keysMemorySize,
+            long valuesMemory,
+            long valuesMemorySize,
+            long argsMemory,
+            long unIndexedNullCount,
+            long maxValue,
+            long minValue,
+            int frameIndex,
+            int blockValueCountMod
+    ) {
         assert keysMemory > 0;
         assert keysMemorySize > 0;
         assert valuesMemory > 0;
         assert valuesMemorySize > 0;
         assert argsMemory > 0;
-        assert partitionIndex >= 0;
+        assert frameIndex >= 0;
         assert blockValueCountMod + 1 == Numbers.ceilPow2(blockValueCountMod + 1);
 
-        latestScanBackward0(keysMemory, keysMemorySize, valuesMemory, valuesMemorySize, argsMemory, unIndexedNullCount,
-                maxValue, minValue, partitionIndex, blockValueCountMod);
+        latestScanBackward0(
+                keysMemory,
+                keysMemorySize,
+                valuesMemory,
+                valuesMemorySize,
+                argsMemory,
+                unIndexedNullCount,
+                maxValue,
+                minValue,
+                frameIndex,
+                blockValueCountMod
+        );
     }
 
     private static native int findFirstLastInFrame0(
@@ -100,7 +124,8 @@ public class BitmapIndexUtilsNative {
             int samplePeriodCount,
             long samplePeriodIndexOffset,
             long rowIdOutAddress,
-            int outSize);
+            int outSize
+    );
 
     private static native int findFirstLastInFrameNoFilter0(
             int outIndex,
@@ -112,10 +137,19 @@ public class BitmapIndexUtilsNative {
             int samplePeriodCount,
             long samplePeriodIndexOffset,
             long rowIdOutAddress,
-            int outSize);
+            int outSize
+    );
 
-    private static native void latestScanBackward0(long keysMemory, long keysMemorySize, long valuesMemory,
-                                                   long valuesMemorySize, long argsMemory, long unIndexedNullCount,
-                                                   long maxValue, long minValue,
-                                                   int partitionIndex, int blockValueCountMod);
+    private static native void latestScanBackward0(
+            long keysMemory,
+            long keysMemorySize,
+            long valuesMemory,
+            long valuesMemorySize,
+            long argsMemory,
+            long unIndexedNullCount,
+            long maxValue,
+            long minValue,
+            int partitionIndex,
+            int blockValueCountMod
+    );
 }

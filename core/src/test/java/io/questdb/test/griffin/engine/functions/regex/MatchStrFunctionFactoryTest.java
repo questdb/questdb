@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,12 +38,12 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
-            try {
-                assertException("select * from x where name ~ null");
-            } catch (SqlException e) {
-                Assert.assertEquals(29, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
-            }
+            assertQuery(
+                    "name\n",
+                    "select * from x where name ~ null",
+                    false,
+                    true
+            );
         });
     }
 
@@ -52,7 +52,7 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_str() name from long_sequence(2000))");
             try {
-                assertException("select * from x where name ~ 'XJ**'");
+                assertExceptionNoLeakCheck("select * from x where name ~ 'XJ**'");
             } catch (SqlException e) {
                 Assert.assertEquals(33, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Dangling meta");
@@ -86,8 +86,25 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
 
             try (RecordCursorFactory factory = select("select * from x where name ~ 'XJ'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    println(factory, cursor);
+                    TestUtils.assertEquals(expected, sink);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStrWithNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = "name\n" +
+                    "NGST\n" +
+                    "NGVP\n" +
+                    "NGTDNKSBXM\n";
+            ddl("create table x as (select rnd_str(4,10,1) name from long_sequence(2000))");
+
+            try (RecordCursorFactory factory = select("select * from x where name ~ '^NG.*'")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
                     TestUtils.assertEquals(expected, sink);
                 }
             }

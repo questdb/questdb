@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -59,25 +59,26 @@ public class InsertCastTest extends AbstractCairoTest {
             }
             assertSql(
                     "a\n" +
-                            "9\n", "y"
+                            "9\n",
+                    "y"
             );
         });
     }
 
     @Test
     public void testCastCharByteFunc() throws Exception {
-        assertCharFunc(
+        assertMemoryLeak(() -> assertCharFunc(
                 "byte",
                 "a\n" +
                         "5\n" +
                         "3\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharByteTab() throws Exception {
-        assertCharTab(
+        assertMemoryLeak(() -> assertCharTab(
                 "byte",
                 "a\n" +
                         "5\n" +
@@ -85,23 +86,23 @@ public class InsertCastTest extends AbstractCairoTest {
                         "0\n" +
                         "7\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharDateFunc() throws Exception {
-        assertCharFunc(
+        assertMemoryLeak(() -> assertCharFunc(
                 "date",
                 "a\n" +
                         "1970-01-01T00:00:00.005Z\n" +
                         "1970-01-01T00:00:00.003Z\n" +
                         "1970-01-01T00:00:00.000Z\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharDateTab() throws Exception {
-        assertCharTab(
+        assertMemoryLeak(() -> assertCharTab(
                 "date",
                 "a\n" +
                         "1970-01-01T00:00:00.005Z\n" +
@@ -109,23 +110,23 @@ public class InsertCastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.007Z\n" +
                         "1970-01-01T00:00:00.000Z\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharDoubleFunc() throws Exception {
-        assertCharFunc(
+        assertMemoryLeak(() -> assertCharFunc(
                 "double",
                 "a\n" +
                         "5.0\n" +
                         "3.0\n" +
                         "0.0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharDoubleTab() throws Exception {
-        assertCharTab(
+        assertMemoryLeak(() -> assertCharTab(
                 "double",
                 "a\n" +
                         "5.0\n" +
@@ -133,23 +134,23 @@ public class InsertCastTest extends AbstractCairoTest {
                         "0.0\n" +
                         "7.0\n" +
                         "0.0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharFloatFunc() throws Exception {
-        assertCharFunc(
+        assertMemoryLeak(() -> assertCharFunc(
                 "float",
                 "a\n" +
                         "5.0000\n" +
                         "3.0000\n" +
                         "0.0000\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharFloatTab() throws Exception {
-        assertCharTab(
+        assertMemoryLeak(() -> assertCharTab(
                 "float",
                 "a\n" +
                         "5.0000\n" +
@@ -157,12 +158,12 @@ public class InsertCastTest extends AbstractCairoTest {
                         "0.0000\n" +
                         "7.0000\n" +
                         "0.0000\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharGeoByteTab() throws Exception {
-        assertCharTab(
+        assertMemoryLeak(() -> assertCharTab(
                 "geohash(1c)",
                 "a\n" +
                         "5\n" +
@@ -170,23 +171,23 @@ public class InsertCastTest extends AbstractCairoTest {
                         "0\n" +
                         "7\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharIntFunc() throws Exception {
-        assertCharFunc(
+        assertMemoryLeak(() -> assertCharFunc(
                 "int",
                 "a\n" +
                         "5\n" +
                         "3\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharIntTab() throws Exception {
-        assertCharTab(
+        assertMemoryLeak(() -> assertCharTab(
                 "int",
                 "a\n" +
                         "5\n" +
@@ -194,23 +195,23 @@ public class InsertCastTest extends AbstractCairoTest {
                         "0\n" +
                         "7\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharLongFunc() throws Exception {
-        assertCharFunc(
+        assertMemoryLeak(() -> assertCharFunc(
                 "long",
                 "a\n" +
                         "5\n" +
                         "3\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharLongTab() throws Exception {
-        assertCharTab(
+        assertMemoryLeak(() -> assertCharTab(
                 "long",
                 "a\n" +
                         "5\n" +
@@ -218,23 +219,23 @@ public class InsertCastTest extends AbstractCairoTest {
                         "0\n" +
                         "7\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharShortFunc() throws Exception {
-        assertCharFunc(
+        assertMemoryLeak(() -> assertCharFunc(
                 "short",
                 "a\n" +
                         "5\n" +
                         "3\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharShortTab() throws Exception {
-        assertCharTab(
+        assertMemoryLeak(() -> assertCharTab(
                 "short",
                 "a\n" +
                         "5\n" +
@@ -242,23 +243,23 @@ public class InsertCastTest extends AbstractCairoTest {
                         "0\n" +
                         "7\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharTimestampFunc() throws Exception {
-        assertCharFunc(
+        assertMemoryLeak(() -> assertCharFunc(
                 "timestamp",
                 "a\n" +
                         "1970-01-01T00:00:00.000005Z\n" +
                         "1970-01-01T00:00:00.000003Z\n" +
                         "1970-01-01T00:00:00.000000Z\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharTimestampTab() throws Exception {
-        assertCharTab(
+        assertMemoryLeak(() -> assertCharTab(
                 "timestamp",
                 "a\n" +
                         "1970-01-01T00:00:00.000005Z\n" +
@@ -266,213 +267,215 @@ public class InsertCastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000007Z\n" +
                         "1970-01-01T00:00:00.000000Z\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToByteBind() throws Exception {
-        assertCharBind(
+        assertMemoryLeak(() -> assertCharBind(
                 "byte",
                 "a\n" +
                         "0\n" +
                         "3\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToByteLit() throws Exception {
-        assertCharLit(
+        assertMemoryLeak(() -> assertCharLit(
                 "byte",
                 "a\n" +
                         "4\n" +
                         "7\n" +
                         "1\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToDateBind() throws Exception {
         // this is internal widening cast
-        assertCharBind(
+        assertMemoryLeak(() -> assertCharBind(
                 "date",
                 "a\n" +
                         "1970-01-01T00:00:00.000Z\n" +
                         "1970-01-01T00:00:00.003Z\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToDateLit() throws Exception {
-        assertCharLit(
+        assertMemoryLeak(() -> assertCharLit(
                 "date",
                 "a\n" +
                         "1970-01-01T00:00:00.004Z\n" +
                         "1970-01-01T00:00:00.007Z\n" +
                         "1970-01-01T00:00:00.001Z\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToDoubleBind() throws Exception {
-        assertCharBind(
+        assertMemoryLeak(() -> assertCharBind(
                 "double",
                 "a\n" +
                         "0.0\n" +
                         "3.0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToDoubleLit() throws Exception {
-        assertCharLit(
+        assertMemoryLeak(() -> assertCharLit(
                 "double",
                 "a\n" +
                         "4.0\n" +
                         "7.0\n" +
                         "1.0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToFloatBind() throws Exception {
-        assertCharBind(
+        assertMemoryLeak(() -> assertCharBind(
                 "float",
                 "a\n" +
                         "0.0000\n" +
                         "3.0000\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToFloatLit() throws Exception {
-        assertCharLit(
+        assertMemoryLeak(() -> assertCharLit(
                 "float",
                 "a\n" +
                         "4.0000\n" +
                         "7.0000\n" +
                         "1.0000\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToGeoByteBind() throws Exception {
-        assertCharBind(
+        assertMemoryLeak(() -> assertCharBind(
                 "geohash(1c)",
                 "a\n" +
                         "0\n" +
                         "3\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToGeoByteLit() throws Exception {
-        assertCharLit(
+        assertMemoryLeak(() -> assertCharLit(
                 "geohash(1c)",
                 "a\n" +
                         "4\n" +
                         "7\n" +
                         "1\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToIntBind() throws Exception {
-        assertCharBind(
+        assertMemoryLeak(() -> assertCharBind(
                 "int",
                 "a\n" +
                         "0\n" +
                         "3\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToIntLit() throws Exception {
-        assertCharLit(
+        assertMemoryLeak(() -> assertCharLit(
                 "int",
                 "a\n" +
                         "4\n" +
                         "7\n" +
                         "1\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToLong256Bind() throws Exception {
-        try {
-            assertCharBind(
-                    "long256",
-                    "a\n" +
-                            "0\n" +
-                            "3\n"
-            );
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept CHAR");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                assertCharBind(
+                        "long256",
+                        "a\n" +
+                                "0\n" +
+                                "3\n"
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept CHAR");
+            }
+        });
     }
 
     @Test
     public void testCastCharToLongBind() throws Exception {
-        assertCharBind(
+        assertMemoryLeak(() -> assertCharBind(
                 "long",
                 "a\n" +
                         "0\n" +
                         "3\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToLongLit() throws Exception {
-        assertCharLit(
+        assertMemoryLeak(() -> assertCharLit(
                 "long",
                 "a\n" +
                         "4\n" +
                         "7\n" +
                         "1\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToShortBind() throws Exception {
-        assertCharBind(
+        assertMemoryLeak(() -> assertCharBind(
                 "short",
                 "a\n" +
                         "0\n" +
                         "3\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToShortLit() throws Exception {
-        assertCharLit(
+        assertMemoryLeak(() -> assertCharLit(
                 "short",
                 "a\n" +
                         "4\n" +
                         "7\n" +
                         "1\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToTimestampBind() throws Exception {
         // this is internal widening cast
-        assertCharBind(
+        assertMemoryLeak(() -> assertCharBind(
                 "timestamp",
                 "a\n" +
                         "1970-01-01T00:00:00.000000Z\n" +
                         "1970-01-01T00:00:00.000003Z\n"
-        );
+        ));
     }
 
     @Test
     public void testCastCharToTimestampLit() throws Exception {
-        assertCharLit(
+        assertMemoryLeak(() -> assertCharLit(
                 "timestamp",
                 "a\n" +
                         "1970-01-01T00:00:00.000004Z\n" +
                         "1970-01-01T00:00:00.000007Z\n" +
                         "1970-01-01T00:00:00.000001Z\n"
-        );
+        ));
     }
 
     @Test
@@ -501,14 +504,16 @@ public class InsertCastTest extends AbstractCairoTest {
             assertSql(
                     "a\n" +
                             "1.7E25\n" +
-                            "NaN\n", "y"
+                            "null\n",
+                    "y"
             );
         });
     }
 
     @Test
     public void testCastFloatByteTab() throws Exception {
-        assertCastFloatTab("byte",
+        assertMemoryLeak(() -> assertCastFloatTab(
+                "byte",
                 "a\n" +
                         "28\n" +
                         "29\n" +
@@ -523,19 +528,20 @@ public class InsertCastTest extends AbstractCairoTest {
                         "8\n",
                 -210f,
                 220f
-        );
+        ));
     }
 
     @Test
     public void testCastFloatIntTab() throws Exception {
-        assertCastFloatTab("int",
+        assertMemoryLeak(() -> assertCastFloatTab(
+                "int",
                 "a\n" +
                         "28\n" +
                         "29\n" +
                         "8\n" +
                         "20\n" +
                         "93\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "66\n" +
                         "80\n" +
                         "22\n" +
@@ -543,19 +549,20 @@ public class InsertCastTest extends AbstractCairoTest {
                         "8\n",
                 -3.4e20f,
                 3.4e20f
-        );
+        ));
     }
 
     @Test
     public void testCastFloatLongTab() throws Exception {
-        assertCastFloatTab("long",
+        assertMemoryLeak(() -> assertCastFloatTab(
+                "long",
                 "a\n" +
                         "28\n" +
                         "29\n" +
                         "8\n" +
                         "20\n" +
                         "93\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "66\n" +
                         "80\n" +
                         "22\n" +
@@ -563,12 +570,13 @@ public class InsertCastTest extends AbstractCairoTest {
                         "8\n",
                 -3.4e35f,
                 3.4e35f
-        );
+        ));
     }
 
     @Test
     public void testCastFloatShortTab() throws Exception {
-        assertCastFloatTab("short",
+        assertMemoryLeak(() -> assertCastFloatTab(
+                "short",
                 "a\n" +
                         "28\n" +
                         "29\n" +
@@ -583,102 +591,106 @@ public class InsertCastTest extends AbstractCairoTest {
                         "8\n",
                 -42230f,
                 42230f
-        );
+        ));
     }
 
     @Test
     public void testCastIntToByteBind() throws Exception {
-        assertIntBind(
+        assertMemoryLeak(() -> assertIntBind(
                 "byte",
                 "a\n" +
                         "3\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastIntToCharBind() throws Exception {
-        assertIntBind(
+        assertMemoryLeak(() -> assertIntBind(
                 "char",
                 "a\n" +
                         "3\n" +
                         "\n"
-        );
+        ));
     }
 
     @Test
     public void testCastIntToLong256Bind() throws Exception {
-        try {
-            assertIntBind(
-                    "long256",
-                    "a\n" +
-                            "3\n" +
-                            "0\n"
-            );
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept INT");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                assertIntBind(
+                        "long256",
+                        "a\n" +
+                                "3\n" +
+                                "0\n"
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept INT");
+            }
+        });
     }
 
     @Test
     public void testCastIntToShortBind() throws Exception {
-        assertIntBind(
+        assertMemoryLeak(() -> assertIntBind(
                 "short",
                 "a\n" +
                         "3\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastLongToByteBind() throws Exception {
-        assertLongBind(
+        assertMemoryLeak(() -> assertLongBind(
                 "byte",
                 "a\n" +
                         "8\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastLongToCharBind() throws Exception {
-        assertLongBind(
+        assertMemoryLeak(() -> assertLongBind(
                 "char",
                 "a\n" +
                         "8\n" +
                         "\n"
-        );
+        ));
     }
 
     @Test
     public void testCastLongToLong256Bind() throws Exception {
-        try {
-            assertLongBind(
-                    "long256",
-                    "a\n" +
-                            "3\n" +
-                            "0\n"
-            );
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept LONG");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                assertLongBind(
+                        "long256",
+                        "a\n" +
+                                "3\n" +
+                                "0\n"
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept LONG");
+            }
+        });
     }
 
     @Test
     public void testCastLongToShortBind() throws Exception {
-        assertLongBind(
+        assertMemoryLeak(() -> assertLongBind(
                 "short",
                 "a\n" +
                         "8\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastShortToByteBind() throws Exception {
-        assertShortBind("byte");
+        assertMemoryLeak(() -> assertShortBind("byte"));
     }
 
     @Test
@@ -707,24 +719,27 @@ public class InsertCastTest extends AbstractCairoTest {
             assertSql(
                     "a\n" +
                             "2\n" +
-                            "8\n", "y"
+                            "8\n",
+                    "y"
             );
         });
     }
 
     @Test
     public void testCastShortToLong256Bind() throws Exception {
-        try {
-            assertShortBind("long256");
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept SHORT");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                assertShortBind("long256");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept SHORT");
+            }
+        });
     }
 
     @Test
     public void testCastStrByteTab() throws Exception {
-        assertStrTab(
+        assertMemoryLeak(() -> assertStrTab(
                 "byte",
                 "a\tb\n" +
                         "76\t76\n" +
@@ -732,7 +747,7 @@ public class InsertCastTest extends AbstractCairoTest {
                         "27\t27\n" +
                         "87\t87\n" +
                         "79\t79\n"
-        );
+        ));
     }
 
     @Test
@@ -749,14 +764,15 @@ public class InsertCastTest extends AbstractCairoTest {
                             "2\t2\n" +
                             "7\t7\n" +
                             "7\t7\n" +
-                            "9\t9\n", "y"
+                            "9\t9\n",
+                    "y"
             );
         });
     }
 
     @Test
     public void testCastStrDateTab() throws Exception {
-        assertStrTab(
+        assertMemoryLeak(() -> assertStrTab(
                 "date",
                 "a\tb\n" +
                         "1970-01-01T00:00:00.076Z\t76\n" +
@@ -764,12 +780,12 @@ public class InsertCastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.027Z\t27\n" +
                         "1970-01-01T00:00:00.087Z\t87\n" +
                         "1970-01-01T00:00:00.079Z\t79\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrDoubleTab() throws Exception {
-        assertStrTab(
+        assertMemoryLeak(() -> assertStrTab(
                 "double",
                 "a\tb\n" +
                         "76.0\t76\n" +
@@ -777,12 +793,12 @@ public class InsertCastTest extends AbstractCairoTest {
                         "27.0\t27\n" +
                         "87.0\t87\n" +
                         "79.0\t79\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrFloatTab() throws Exception {
-        assertStrTab(
+        assertMemoryLeak(() -> assertStrTab(
                 "float",
                 "a\tb\n" +
                         "76.0000\t76\n" +
@@ -790,12 +806,12 @@ public class InsertCastTest extends AbstractCairoTest {
                         "27.0000\t27\n" +
                         "87.0000\t87\n" +
                         "79.0000\t79\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrIntTab() throws Exception {
-        assertStrTab(
+        assertMemoryLeak(() -> assertStrTab(
                 "int",
                 "a\tb\n" +
                         "76\t76\n" +
@@ -803,12 +819,12 @@ public class InsertCastTest extends AbstractCairoTest {
                         "27\t27\n" +
                         "87\t87\n" +
                         "79\t79\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrLongTab() throws Exception {
-        assertStrTab(
+        assertMemoryLeak(() -> assertStrTab(
                 "long",
                 "a\tb\n" +
                         "76\t76\n" +
@@ -816,12 +832,12 @@ public class InsertCastTest extends AbstractCairoTest {
                         "27\t27\n" +
                         "87\t87\n" +
                         "79\t79\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrShortTab() throws Exception {
-        assertStrTab(
+        assertMemoryLeak(() -> assertStrTab(
                 "short",
                 "a\tb\n" +
                         "76\t76\n" +
@@ -829,12 +845,12 @@ public class InsertCastTest extends AbstractCairoTest {
                         "27\t27\n" +
                         "87\t87\n" +
                         "79\t79\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrTimestampTab() throws Exception {
-        assertStrTab(
+        assertMemoryLeak(() -> assertStrTab(
                 "timestamp",
                 "a\tb\n" +
                         "1970-01-01T00:00:00.000076Z\t76\n" +
@@ -842,29 +858,29 @@ public class InsertCastTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000027Z\t27\n" +
                         "1970-01-01T00:00:00.000087Z\t87\n" +
                         "1970-01-01T00:00:00.000079Z\t79\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrToByteBind() throws Exception {
-        assertStrBind(
+        assertMemoryLeak(() -> assertStrBind(
                 "byte",
                 "a\n" +
                         "12\n" +
                         "31\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrToByteLit() throws Exception {
-        assertStrLit(
+        assertMemoryLeak(() -> assertStrLit(
                 "byte",
                 "a\n" +
                         "45\n" +
                         "76\n" +
                         "124\n"
-        );
+        ));
     }
 
     @Test
@@ -886,7 +902,8 @@ public class InsertCastTest extends AbstractCairoTest {
                     "a\n" +
                             "A\n" +
                             "7\n" +
-                            "K\n", "y"
+                            "K\n",
+                    "y"
             );
         });
     }
@@ -923,7 +940,6 @@ public class InsertCastTest extends AbstractCairoTest {
                 } catch (ImplicitCastException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
                 }
-
             }
             assertSql(
                     "a\n" +
@@ -931,20 +947,21 @@ public class InsertCastTest extends AbstractCairoTest {
                             "2012-04-11T10:45:11.344Z\n" +
                             "2012-04-11T00:00:00.000Z\n" +
                             "2013-05-12T00:00:00.000Z\n" +
-                            "\n", "y"
+                            "\n",
+                    "y"
             );
         });
     }
 
     @Test
     public void testCastStrToDateLit() throws Exception {
-        assertStrLit(
+        assertMemoryLeak(() -> assertStrLit(
                 "date",
                 "a\n" +
                         "1970-01-01T00:00:00.045Z\n" +
                         "1970-01-01T00:00:00.076Z\n" +
                         "1970-01-01T00:00:00.124Z\n"
-        );
+        ));
     }
 
     @Test
@@ -966,130 +983,131 @@ public class InsertCastTest extends AbstractCairoTest {
                     "a\n" +
                             "2022-01-01T00:00:00.045Z\n" +
                             "2022-01-01T00:00:00.076Z\n" +
-                            "2222-01-01T00:00:00.124Z\n", "y"
+                            "2222-01-01T00:00:00.124Z\n",
+                    "y"
             );
         });
     }
 
     @Test
     public void testCastStrToDoubleBind() throws Exception {
-        assertStrBind(
+        assertMemoryLeak(() -> assertStrBind(
                 "double",
                 "a\n" +
                         "12.0\n" +
                         "31.0\n" +
-                        "NaN\n"
-        );
+                        "null\n"
+        ));
     }
 
     @Test
     public void testCastStrToDoubleLit() throws Exception {
-        assertStrLit(
+        assertMemoryLeak(() -> assertStrLit(
                 "double",
                 "a\n" +
                         "45.0\n" +
                         "76.0\n" +
                         "124.0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrToFloatBind() throws Exception {
-        assertStrBind(
+        assertMemoryLeak(() -> assertStrBind(
                 "float",
                 "a\n" +
                         "12.0000\n" +
                         "31.0000\n" +
-                        "NaN\n"
-        );
+                        "null\n"
+        ));
     }
 
     @Test
     public void testCastStrToFloatLit() throws Exception {
-        assertStrLit(
+        assertMemoryLeak(() -> assertStrLit(
                 "float",
                 "a\n" +
                         "45.0000\n" +
                         "76.0000\n" +
                         "124.0000\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrToIntBind() throws Exception {
-        assertStrBind(
+        assertMemoryLeak(() -> assertStrBind(
                 "int",
                 "a\n" +
                         "12\n" +
                         "31\n" +
-                        "NaN\n"
-        );
+                        "null\n"
+        ));
     }
 
     @Test
     public void testCastStrToIntLit() throws Exception {
-        assertStrLit(
+        assertMemoryLeak(() -> assertStrLit(
                 "int",
                 "a\n" +
                         "45\n" +
                         "76\n" +
                         "124\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrToLong256Bind() throws Exception {
-        assertStrBind(
+        assertMemoryLeak(() -> assertStrBind(
                 "long256",
                 "a\n" +
                         "0x12\n" +
                         "0x31\n" +
                         "\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrToLongBind() throws Exception {
-        assertStrBind(
+        assertMemoryLeak(() -> assertStrBind(
                 "long",
                 "a\n" +
                         "12\n" +
                         "31\n" +
-                        "NaN\n"
-        );
+                        "null\n"
+        ));
     }
 
     @Test
     public void testCastStrToLongLit() throws Exception {
-        assertStrLit(
+        assertMemoryLeak(() -> assertStrLit(
                 "long",
                 "a\n" +
                         "45\n" +
                         "76\n" +
                         "124\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrToShortBind() throws Exception {
-        assertStrBind(
+        assertMemoryLeak(() -> assertStrBind(
                 "short",
                 "a\n" +
                         "12\n" +
                         "31\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastStrToShortLit() throws Exception {
-        assertStrLit(
+        assertMemoryLeak(() -> assertStrLit(
                 "short",
                 "a\n" +
                         "45\n" +
                         "76\n" +
                         "124\n"
-        );
+        ));
     }
 
     @Test
@@ -1123,20 +1141,21 @@ public class InsertCastTest extends AbstractCairoTest {
                     "a\n" +
                             "2012-04-11T10:45:11.000000Z\n" +
                             "2012-04-11T10:45:11.344999Z\n" +
-                            "\n", "y"
+                            "\n",
+                    "y"
             );
         });
     }
 
     @Test
     public void testCastStrToTimestampLit() throws Exception {
-        assertStrLit(
+        assertMemoryLeak(() -> assertStrLit(
                 "timestamp",
                 "a\n" +
                         "1970-01-01T00:00:00.000045Z\n" +
                         "1970-01-01T00:00:00.000076Z\n" +
                         "1970-01-01T00:00:00.000124Z\n"
-        );
+        ));
     }
 
     @Test
@@ -1158,99 +1177,116 @@ public class InsertCastTest extends AbstractCairoTest {
                     "a\n" +
                             "2022-01-01T00:00:00.000045Z\n" +
                             "2222-01-01T00:00:00.000076Z\n" +
-                            "2222-01-01T00:00:00.000124Z\n", "y"
+                            "2222-01-01T00:00:00.000124Z\n",
+                    "y"
             );
         });
     }
 
     @Test
     public void testCastTimestampToByteBind() throws Exception {
-        assertTimestampBind(
+        assertMemoryLeak(() -> assertTimestampBind(
                 "byte",
                 "a\n" +
                         "8\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastTimestampToDoubleBind() throws Exception {
-        assertTimestampBindNoOverflow(
+        assertMemoryLeak(() -> assertTimestampBindNoOverflow(
                 "double",
                 "a\n" +
                         "8.0\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "8.8990229990007E13\n"
-        );
+        ));
     }
 
     @Test
     public void testCastTimestampToFloatBind() throws Exception {
-        assertTimestampBindNoOverflow(
+        assertMemoryLeak(() -> assertTimestampBindNoOverflow(
                 "float",
                 "a\n" +
                         "8.0000\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "8.8990229E13\n"
-        );
+        ));
     }
 
     @Test
     public void testCastTimestampToIntBind() throws Exception {
-        assertTimestampBind(
+        assertMemoryLeak(() -> assertTimestampBind(
                 "int",
                 "a\n" +
                         "8\n" +
-                        "NaN\n"
-        );
+                        "null\n"
+        ));
     }
 
     @Test
     public void testCastTimestampToLong256Bind() throws Exception {
-        try {
-            assertTimestampBindNoOverflow(
-                    "long256",
-                    "a\n" +
-                            "1970-01-01T00:00:00.000008Z\n" +
-                            "\n" +
-                            "1972-10-26T23:30:29.990007Z\n"
-            );
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept TIMESTAMP");
-        }
+        assertMemoryLeak(() -> {
+            try {
+                assertTimestampBindNoOverflow(
+                        "long256",
+                        "a\n" +
+                                "1970-01-01T00:00:00.000008Z\n" +
+                                "\n" +
+                                "1972-10-26T23:30:29.990007Z\n"
+                );
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bind variable at 0 is defined as LONG256 and cannot accept TIMESTAMP");
+            }
+        });
     }
 
     @Test
     public void testCastTimestampToLongBind() throws Exception {
-        assertTimestampBindNoOverflow(
+        assertMemoryLeak(() -> assertTimestampBindNoOverflow(
                 "long",
                 "a\n" +
                         "8\n" +
-                        "NaN\n" +
+                        "null\n" +
                         "88990229990007\n"
-        );
+        ));
     }
 
     @Test
     public void testCastTimestampToShortBind() throws Exception {
-        assertTimestampBind(
+        assertMemoryLeak(() -> assertTimestampBind(
                 "short",
                 "a\n" +
                         "8\n" +
                         "0\n"
-        );
+        ));
     }
 
     @Test
     public void testCastTimestampToStringBind() throws Exception {
-        assertTimestampBindNoOverflow(
+        assertMemoryLeak(() -> assertTimestampBindNoOverflow(
                 "string",
                 "a\n" +
                         "1970-01-01T00:00:00.000008Z\n" +
                         "\n" +
                         "1972-10-26T23:30:29.990007Z\n"
-        );
+        ));
+    }
+
+    @Test
+    public void testCastVarcharToDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(d string, ts timestamp) timestamp(ts) partition by day");
+            insert("insert into tab values ('string', '2000'::string), ('varchar', '2000'::varchar);");
+            assertSql(
+                    "d\tts\n" +
+                            "string\t2000-01-01T00:00:00.000000Z\n" +
+                            "varchar\t2000-01-01T00:00:00.000000Z\n",
+                    "select * from tab order by d"
+            );
+        });
     }
 
     @Test
@@ -1260,304 +1296,303 @@ public class InsertCastTest extends AbstractCairoTest {
             insert("insert into x values (cast(null as date))");
             assertSql(
                     "ts\n" +
-                            "\n", "x"
+                            "\n",
+                    "x"
             );
+        });
+    }
+
+    @Test
+    public void testNullStringToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(ts timestamp) timestamp(ts)");
+            try {
+                insert("insert into tab values(null::string)");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "designated timestamp column cannot be NULL");
+            }
+        });
+    }
+
+    @Test
+    public void testNullVarcharToTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tab(ts timestamp) timestamp(ts)");
+            try {
+                insert("insert into tab values(null::varchar)");
+                Assert.fail();
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "designated timestamp column cannot be NULL");
+            }
         });
     }
 
     private void assertCastFloatTab(String type, String expected, float outOfRangeLeft, float outOfRangeRight) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + type + ");");
-            ddl("create table x as (select rnd_float()*100 a from long_sequence(5));");
-            ddl("insert into y select rnd_float()*100 a from long_sequence(5);");
-            insert("insert into y values (cast ('NaN' as float));");
-            // execute insert statement for each value of reference table
-            ddl("insert into y select a from x");
+        // insert table
+        ddl("create table y(a " + type + ");");
+        ddl("create table x as (select rnd_float()*100 a from long_sequence(5));");
+        ddl("insert into y select rnd_float()*100 a from long_sequence(5);");
+        insert("insert into y values (cast ('null' as float));");
+        // execute insert statement for each value of reference table
+        ddl("insert into y select a from x");
 
-            try {
-                insert("insert into y values (cast ('" + outOfRangeLeft + "' as float));");
-                Assert.fail();
-            } catch (ImplicitCastException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-            }
+        try {
+            insert("insert into y values (cast ('" + outOfRangeLeft + "' as float));");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+        }
 
-            try {
-                insert("insert into y values (cast ('" + outOfRangeRight + "' as float));");
-                Assert.fail();
-            } catch (ImplicitCastException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-            }
+        try {
+            insert("insert into y values (cast ('" + outOfRangeRight + "' as float));");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+        }
 
-            assertSql(
-                    expected, "y"
-            );
-        });
+        assertSql(expected, "y");
     }
 
     private void assertCharBind(String toType, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + toType + ");");
-            // execute insert statement for each value of reference table
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
-            ) {
-                bindVariableService.setChar(0, '0');
-                insert.execute(sqlExecutionContext);
+        // insert table
+        ddl("create table y(a " + toType + ");");
+        // execute insert statement for each value of reference table
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+        ) {
+            bindVariableService.setChar(0, '0');
+            insert.execute(sqlExecutionContext);
 
-                bindVariableService.setChar(0, '3');
-                insert.execute(sqlExecutionContext);
+            bindVariableService.setChar(0, '3');
+            insert.execute(sqlExecutionContext);
 
-                try {
-                    bindVariableService.setChar(0, 'a');
-                    insert.execute(sqlExecutionContext);
-                    Assert.fail();
-                } catch (ImplicitCastException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-                }
+            try {
+                bindVariableService.setChar(0, 'a');
+                insert.execute(sqlExecutionContext);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
-            assertSql(expected, "y");
-        });
+        }
+        assertSql(expected, "y");
     }
 
     private void assertCharFunc(String toType, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + toType + ");");
-            // execute insert statement for each value of reference table
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile(
-                            "insert into y values (cast(rnd_int(0, 10, 0) + 47 as char))",
-                            sqlExecutionContext
-                    ).getInsertOperation()
-            ) {
-                insert.execute(sqlExecutionContext);
-                insert.execute(sqlExecutionContext);
-                insert.execute(sqlExecutionContext);
-            }
-            assertSql(expected, "y");
-        });
+        // insert table
+        ddl("create table y(a " + toType + ");");
+        // execute insert statement for each value of reference table
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                InsertOperation insert = compiler.compile(
+                        "insert into y values (cast(rnd_int(0, 10, 0) + 47 as char))",
+                        sqlExecutionContext
+                ).getInsertOperation()
+        ) {
+            insert.execute(sqlExecutionContext);
+            insert.execute(sqlExecutionContext);
+            insert.execute(sqlExecutionContext);
+        }
+        assertSql(expected, "y");
     }
 
     private void assertCharLit(String toType, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + toType + ");");
-            // execute insert statement for each value of reference table
-            insert("insert into y values ('4')");
-            insert("insert into y values ('7')");
-            try {
-                // 'a' is an invalid geohash and also invalid number
-                insert("insert into y values ('a')");
-                Assert.fail();
-            } catch (ImplicitCastException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-            }
-            insert("insert into y values ('1')");
-            assertSql(expected, "y");
-        });
+        // insert table
+        ddl("create table y(a " + toType + ");");
+        // execute insert statement for each value of reference table
+        insert("insert into y values ('4')");
+        insert("insert into y values ('7')");
+        try {
+            // 'a' is an invalid geohash and also invalid number
+            insert("insert into y values ('a')");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+        }
+        insert("insert into y values ('1')");
+        assertSql(expected, "y");
     }
 
     private void assertCharTab(String toType, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + toType + ");");
-            ddl("create table x as (select cast(rnd_int(0,10,0)+47 as char) a from long_sequence(5));");
-            // execute insert statement for each value of reference table
-            ddl("insert into y select a from x");
-            assertSql(expected, "y");
-        });
+        // insert table
+        ddl("create table y(a " + toType + ");");
+        ddl("create table x as (select cast(rnd_int(0,10,0)+47 as char) a from long_sequence(5));");
+        // execute insert statement for each value of reference table
+        ddl("insert into y select a from x");
+        assertSql(expected, "y");
     }
 
     private void assertIntBind(String type, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + type + ");");
-            // execute insert statement for each value of reference table
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
-            ) {
-                bindVariableService.setInt(0, 3); // compatible with everything
-                insert.execute(sqlExecutionContext);
+        // insert table
+        ddl("create table y(a " + type + ");");
+        // execute insert statement for each value of reference table
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+        ) {
+            bindVariableService.setInt(0, 3); // compatible with everything
+            insert.execute(sqlExecutionContext);
 
-                bindVariableService.setInt(0, Numbers.INT_NaN);
-                insert.execute(sqlExecutionContext);
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            insert.execute(sqlExecutionContext);
 
-                try {
-                    bindVariableService.setInt(0, 88990227); // overflow
-                    Assert.fail();
-                } catch (ImplicitCastException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-                }
-            }
-            assertSql(expected, "y");
-        });
-    }
-
-    private void assertLongBind(String type, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + type + ");");
-            // execute insert statement for each value of reference table
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
-            ) {
-                bindVariableService.setLong(0, 8); // compatible with everything
-                insert.execute(sqlExecutionContext);
-
-                bindVariableService.setLong(0, Numbers.LONG_NaN);
-                insert.execute(sqlExecutionContext);
-
-                try {
-                    bindVariableService.setLong(0, 88990229990007L); // overflow
-                    Assert.fail();
-                } catch (ImplicitCastException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-                }
-            }
-            assertSql(expected, "y");
-        });
-    }
-
-    private void assertShortBind(String type) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + type + ");");
-            // execute insert statement for each value of reference table
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
-            ) {
-                bindVariableService.setShort(0, (short) 12);
-                insert.execute(sqlExecutionContext);
-
-                bindVariableService.setShort(0, (short) 31);
-                insert.execute(sqlExecutionContext);
-
-                try {
-                    bindVariableService.setShort(0, (short) 210); // overflow
-                    Assert.fail();
-                } catch (ImplicitCastException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-                }
-            }
-            assertSql(
-                    "a\n" +
-                            "12\n" +
-                            "31\n", "y"
-            );
-        });
-    }
-
-    private void assertStrBind(String toType, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + toType + ");");
-            // execute insert statement for each value of reference table
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
-            ) {
-                bindVariableService.setStr(0, "12");
-                insert.execute(sqlExecutionContext);
-
-                bindVariableService.setStr(0, "31");
-                insert.execute(sqlExecutionContext);
-
-                bindVariableService.setStr(0, null);
-                insert.execute(sqlExecutionContext);
-
-                try {
-                    bindVariableService.setStr(0, "iabc");
-                    insert.execute(sqlExecutionContext);
-                    Assert.fail();
-                } catch (ImplicitCastException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-                }
-            }
-            assertSql(expected, "y");
-        });
-    }
-
-    private void assertStrLit(String toType, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + toType + ");");
-            // execute insert statement for each value of reference table
-            insert("insert into y values ('45')");
-            insert("insert into y values ('76')");
             try {
-                insert("insert into y values ('cc')");
+                bindVariableService.setInt(0, 88990227); // overflow
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
-            insert("insert into y values ('124')");
-            assertSql(expected, "y");
-        });
+        }
+        assertSql(expected, "y");
+    }
+
+    private void assertLongBind(String type, String expected) throws Exception {
+        // insert table
+        ddl("create table y(a " + type + ");");
+        // execute insert statement for each value of reference table
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+        ) {
+            bindVariableService.setLong(0, 8); // compatible with everything
+            insert.execute(sqlExecutionContext);
+
+            bindVariableService.setLong(0, Numbers.LONG_NULL);
+            insert.execute(sqlExecutionContext);
+
+            try {
+                bindVariableService.setLong(0, 88990229990007L); // overflow
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            }
+        }
+        assertSql(expected, "y");
+    }
+
+    private void assertShortBind(String type) throws Exception {
+        // insert table
+        ddl("create table y(a " + type + ");");
+        // execute insert statement for each value of reference table
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+        ) {
+            bindVariableService.setShort(0, (short) 12);
+            insert.execute(sqlExecutionContext);
+
+            bindVariableService.setShort(0, (short) 31);
+            insert.execute(sqlExecutionContext);
+
+            try {
+                bindVariableService.setShort(0, (short) 210); // overflow
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            }
+        }
+        assertSql(
+                "a\n" +
+                        "12\n" +
+                        "31\n", "y"
+        );
+    }
+
+    private void assertStrBind(String toType, String expected) throws Exception {
+        // insert table
+        ddl("create table y(a " + toType + ");");
+        // execute insert statement for each value of reference table
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+        ) {
+            bindVariableService.setStr(0, "12");
+            insert.execute(sqlExecutionContext);
+
+            bindVariableService.setStr(0, "31");
+            insert.execute(sqlExecutionContext);
+
+            bindVariableService.setStr(0, null);
+            insert.execute(sqlExecutionContext);
+
+            try {
+                bindVariableService.setStr(0, "iabc");
+                insert.execute(sqlExecutionContext);
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            }
+        }
+        assertSql(expected, "y");
+    }
+
+    private void assertStrLit(String toType, String expected) throws Exception {
+        // insert table
+        ddl("create table y(a " + toType + ");");
+        // execute insert statement for each value of reference table
+        insert("insert into y values ('45')");
+        insert("insert into y values ('76')");
+        try {
+            insert("insert into y values ('cc')");
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+        }
+        insert("insert into y values ('124')");
+        assertSql(expected, "y");
     }
 
     private void assertStrTab(String toType, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + toType + ", b string);");
-            ddl("create table x as (select cast(rnd_byte() as string) a from long_sequence(5));");
-            // execute insert statement for each value of reference table
-            ddl("insert into y select a,a from x");
-            assertSql(expected, "y");
-        });
+        // insert table
+        ddl("create table y(a " + toType + ", b string);");
+        ddl("create table x as (select cast(rnd_byte() as string) a from long_sequence(5));");
+        // execute insert statement for each value of reference table
+        ddl("insert into y select a,a from x");
+        assertSql(expected, "y");
     }
 
     private void assertTimestampBind(String type, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + type + ");");
-            // execute insert statement for each value of reference table
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
-            ) {
-                bindVariableService.setTimestamp(0, 8); // compatible with everything
-                insert.execute(sqlExecutionContext);
+        // insert table
+        ddl("create table y(a " + type + ");");
+        // execute insert statement for each value of reference table
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+        ) {
+            bindVariableService.setTimestamp(0, 8); // compatible with everything
+            insert.execute(sqlExecutionContext);
 
-                bindVariableService.setTimestamp(0, Numbers.LONG_NaN);
-                insert.execute(sqlExecutionContext);
+            bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+            insert.execute(sqlExecutionContext);
 
-                try {
-                    bindVariableService.setTimestamp(0, 88990229990007L); // overflow
-                    Assert.fail();
-                } catch (ImplicitCastException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
-                }
+            try {
+                bindVariableService.setTimestamp(0, 88990229990007L); // overflow
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
             }
-            assertSql(expected, "y");
-        });
+        }
+        assertSql(expected, "y");
     }
 
     private void assertTimestampBindNoOverflow(String type, String expected) throws Exception {
-        assertMemoryLeak(() -> {
-            // insert table
-            ddl("create table y(a " + type + ");");
-            // execute insert statement for each value of reference table
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
-            ) {
-                bindVariableService.setTimestamp(0, 8); // compatible with everything
-                insert.execute(sqlExecutionContext);
+        // insert table
+        ddl("create table y(a " + type + ");");
+        // execute insert statement for each value of reference table
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                InsertOperation insert = compiler.compile("insert into y values ($1)", sqlExecutionContext).getInsertOperation()
+        ) {
+            bindVariableService.setTimestamp(0, 8); // compatible with everything
+            insert.execute(sqlExecutionContext);
 
-                bindVariableService.setTimestamp(0, Numbers.LONG_NaN);
-                insert.execute(sqlExecutionContext);
+            bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+            insert.execute(sqlExecutionContext);
 
-                bindVariableService.setTimestamp(0, 88990229990007L);
-                insert.execute(sqlExecutionContext);
-            }
-            assertSql(expected, "y");
-        });
+            bindVariableService.setTimestamp(0, 88990229990007L);
+            insert.execute(sqlExecutionContext);
+        }
+        assertSql(expected, "y");
     }
 }

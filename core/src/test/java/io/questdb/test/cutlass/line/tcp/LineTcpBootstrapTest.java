@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,27 +24,25 @@
 
 package io.questdb.test.cutlass.line.tcp;
 
-import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
-import io.questdb.std.Chars;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
-import org.postgresql.util.PSQLException;
 
-import java.sql.Connection;
+import java.time.temporal.ChronoUnit;
+
+import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class LineTcpBootstrapTest extends AbstractBootstrapTest {
     @Before
@@ -52,6 +50,81 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testAsciiFlagCorrectlySetForVarcharColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+                CairoEngine engine = serverMain.getEngine();
+                try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    engine.ddl(
+                            "CREATE TABLE 'betfairRunners' (\n" +
+                                    "  id INT,\n" +
+                                    "  runner VARCHAR,\n" +
+                                    "  age BYTE,\n" +
+                                    "  remarks SYMBOL CAPACITY 2048 CACHE INDEX CAPACITY 256,\n" +
+                                    "  timestamp TIMESTAMP\n" +
+                                    ") timestamp (timestamp) PARTITION BY MONTH WAL\n" +
+                                    "DEDUP UPSERT KEYS(timestamp, id);",
+                            sqlExecutionContext
+                    );
+
+                    try (Sender sender = Sender.fromConfig("http::addr=localhost:" + serverMain.getHttpServerPort() + ";")) {
+                        for (int i = 0; i < 1; i++) {
+                            sender.table("betfairRunners").symbol("remarks", "SAw,CkdRnUp&2").
+                                    stringColumn("runner", "BallyMac Fifra")
+                                    .longColumn("id", 548738)
+                                    .longColumn("age", 58)
+                                    .at(TimestampFormatUtils.parseTimestamp("2024-06-30T00:00:00Z"), ChronoUnit.MICROS);
+                            sender.table("betfairRunners").symbol("remarks", "Fcd-Ck1").
+                                    stringColumn("runner", "BallyMac Fifra")
+                                    .longColumn("id", 548738)
+                                    .longColumn("age", 58)
+                                    .at(TimestampFormatUtils.parseTimestamp("2024-06-24T00:00:00Z"), ChronoUnit.MICROS);
+                            sender.table("betfairRunners").symbol("remarks", "(R8) LdRnIn військові").
+                                    stringColumn("runner", "BallyMac Fifra")
+                                    .longColumn("id", 548738)
+                                    .longColumn("age", 58)
+                                    .at(TimestampFormatUtils.parseTimestamp("2024-06-17T00:00:00Z"), ChronoUnit.MICROS);
+                            sender.flush();
+                        }
+                    }
+
+                    // server main already runs Apply2Wal job in the background. We have to wait for the table to catchup
+                    try (RecordCursorFactory waitFact = engine.select("wal_tables where writertxn <> sequencertxn;", sqlExecutionContext)) {
+                        assertEventually(() -> {
+                            try {
+                                try (RecordCursor cursor = waitFact.getCursor(sqlExecutionContext)) {
+                                    Assert.assertFalse(cursor.hasNext());
+                                }
+                            } catch (SqlException e) {
+                                throw new RuntimeException(e);
+                            }
+                        });
+                    }
+
+                    try (
+                            RecordCursorFactory factory = engine.select("select distinct runner from betfairRunners", sqlExecutionContext);
+                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    ) {
+                        Assert.assertTrue(cursor.hasNext());
+                        if (cursor.hasNext()) {
+                            // more than 1 distinct result...
+                            // i.e.
+                            // runner
+                            // varchar
+                            // BallyMac Fifra
+                            // BallyMac Fifra
+                            // both are ascii but one of the above has isAscii set to false
+                            // this messes up the hash calculation in OrderedMap when Distinct is executed
+                            throw SqlException.$(0, "More than one result in record cursor. Should be one row after distinct query.");
+                        }
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -66,69 +139,13 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 }
 
                 int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort();
-                try (Sender sender = Sender.builder().address("localhost").port(port).build()) {
+                try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost").port(port).build()) {
                     for (int i = 0; i < 1_000_000; i++) {
                         sender.table("x").stringColumn("a", "42").atNow();
                     }
                     Assert.fail();
                 } catch (LineSenderException expected) {
                 }
-            }
-        });
-    }
-
-    @Ignore// update statements don't time out anymore but can be cancelled manually
-    @Test
-    public void testUpdateTimeout() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
-            try (final ServerMain serverMain = startWithEnvVariables(
-                    PropertyKey.QUERY_TIMEOUT_SEC.getEnvVarName(), "0.015"
-            )) {
-                serverMain.start();
-                CairoEngine engine = serverMain.getEngine();
-                try (SqlCompiler sqlCompiler = engine.getSqlCompiler();
-                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                    sqlCompiler.compile("create table abc as " +
-                            "(select rnd_symbol('a', 'b', 'c', null) sym1," +
-                            " rnd_symbol('a', 'b', 'c', null) sym2," +
-                            " rnd_symbol('a', 'b', 'c', null) sym3," +
-                            " timestamp_sequence('2022-02-24T04', 1000000L) ts" +
-                            " from long_sequence(100 * 60 * 60)), " +
-                            "index(sym1), index(sym2), index(sym3) timestamp(ts) partition by HOUR BYPASS WAL", sqlExecutionContext);
-                }
-
-                int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort();
-                Thread th = new Thread(() -> {
-                    try (Sender sender = Sender.builder().address("localhost").port(port).build()) {
-                        for (int i = 0; i < 100; i++) {
-                            sender.table("abc").symbol("sym1", "10").atNow();
-                        }
-                    }
-                });
-                th.start();
-
-                int pgPort = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
-                try (Connection conn = getConnection("admin", "quest", pgPort)) {
-                    conn.createStatement().execute("update abc set sym1 = '0', sym2='2', sym3='3'");
-                } catch (PSQLException e) {
-                    if (!Chars.contains(e.getMessage(), "timeout")) {
-                        // No timeout, shame, will happen another time
-                        return;
-                    }
-                }
-
-                LOG.info().$("HURRAY! TIMEOUT REPRODUCED").$();
-
-                // The update should be rolled back and no rows with sym1 = '0' should be present
-                TestUtils.assertSql(serverMain.getEngine(),
-                        new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(engine.getConfiguration())),
-                        "select count() from abc where sym1 = '0'",
-                        new StringSink(),
-                        "count\n" +
-                                "0\n"
-                );
-                th.join();
             }
         });
     }

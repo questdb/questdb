@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,69 +50,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 import static org.junit.Assert.*;
 
 /**
  * Class contains tests of PostgreSQL simple query statements containing multiple commands separated by ';'
  */
 public class PGMultiStatementMessageTest extends BasePGTest {
-
-    @Test
-    public void testRestartDueToStaleCompilationDoesNotDuplicate() throws Exception {
-        assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, Integer.MAX_VALUE - 1);
-            engine.ddl("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
-
-            CyclicBarrier barrier = new CyclicBarrier(2);
-            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            new Thread(() -> {
-                try {
-                    while (System.nanoTime() < deadlineNanos && barrier.getNumberWaiting() == 0) {
-                        engine.ddl("alter table x add column distraction int", sqlExecutionContext);
-                        Os.sleep(1); // give compiler a chance to compile and execute
-                        if (barrier.getNumberWaiting() != 0) {
-                            break;
-                        }
-                        engine.ddl("alter table x drop column distraction", sqlExecutionContext);
-                        Os.sleep(1);
-                    }
-                } catch (SqlException e) {
-                    throw new RuntimeException(e);
-                } finally {
-                    Path.clearThreadLocals();
-                    try {
-                        barrier.await();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        e.printStackTrace();
-                    } catch (BrokenBarrierException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }).start();
-
-            // the SQL includes INSERT can later test that we don't get duplicate rows
-            // when SQL execution is re-started
-            try (PGTestSetup test = new PGTestSetup()) {
-                Statement statement = test.statement;
-                for (int i = 0; i < 1000; i++) {
-                    statement.execute(
-                            "INSERT INTO x (ts, i) VALUES(now(), 1); " +
-                                    "SELECT * FROM x; ");
-                }
-            } finally {
-                barrier.await();
-            }
-            drainWalQueue();
-            try (RecordCursorFactory factory = select("select count() from x", sqlExecutionContext)) {
-                assertCursor("count\n" +
-                                "1000\n",
-                        factory,
-                        false, false, true
-                );
-            }
-        });
-    }
 
     // https://github.com/questdb/questdb/issues/1777
     // all of these commands are no-op (at the moment)
@@ -211,7 +155,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "COMMIT; " +
                                     "DELETE FROM test; " +
                                     "INSERT INTO test VALUES (21, 'x');");
-                    assertException("PSQLException should be thrown");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
                     assertEquals("ERROR: unexpected token [FROM]\n  Position: 94", e.getMessage());
                 }
@@ -238,7 +182,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "COMMIT; " +
                             "DELETE FROM testA; " +
                             "DELETE FROM testB;");
-                    assertException("PSQLException should be thrown");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
                     assertEquals("ERROR: unexpected token [FROM]\n  Position: 173", e.getMessage());
                 }
@@ -375,6 +319,15 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
+    @Test
+    public void testCommentOnlyQuery() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("/*comment*/");
+            assertResults(statement, hasResult, Result.ZERO);
+        });
+    }
+
     @Ignore("without implicit transaction second insert runs in autocommit mode")
     @Test // example taken from https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4
     public void testCreateBeginInsertCommitInsertErrorRetainsOnlyCommittedData() throws Exception {
@@ -390,7 +343,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "COMMIT; " +
                             "INSERT INTO mytable VALUES(2); " +
                             "DELETE from mytable3;");
-                    assertException("PSQLException expected");
+                    assertExceptionNoLeakCheck("PSQLException expected");
                 } catch (PSQLException e) {
                     assertEquals("ERROR: unexpected token [mytable3]\n  Position: 120", e.getMessage());
                 }
@@ -475,7 +428,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
                                     "ALTER TABLE test ATTACH PARTITION LIST '2020';" +
                                     "SELECT l from TEST;");
-                    assertException("PSQLException should be thrown");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
                     TestUtils.assertContains(e.getMessage(), "could not attach partition [table=test, detachStatus=ATTACH_ERR_PARTITION_EXISTS");
                 }
@@ -649,7 +602,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "COMMIT; " +
                             "DELETE FROM test; " +
                             "INSERT INTO test VALUES (21, 'x');");
-                    assertException("PSQLException should be thrown");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
                     assertEquals("ERROR: unexpected token [FROM]\n  Position: 87", e.getMessage());
                 }
@@ -676,7 +629,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "DELETE FROM testA; " +
                             "DELETE FROM testB; " +
                             "INSERT INTO testA VALUES (21, 'x');");
-                    assertException("PSQLException should be thrown");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
                     assertEquals("ERROR: unexpected token [FROM]\n  Position: 171", e.getMessage());
                 }
@@ -1109,6 +1062,63 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     hasResult = stmt.execute("SELECT * FROM mytable");
                     assertResults(stmt, hasResult, data(row(33L, "x")));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRestartDueToStaleCompilationDoesNotDuplicate() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, Integer.MAX_VALUE - 1);
+            engine.ddl("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
+
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            new Thread(() -> {
+                try {
+                    while (System.nanoTime() < deadlineNanos && barrier.getNumberWaiting() == 0) {
+                        engine.ddl("alter table x add column distraction int", sqlExecutionContext);
+                        Os.sleep(1); // give compiler a chance to compile and execute
+                        if (barrier.getNumberWaiting() != 0) {
+                            break;
+                        }
+                        engine.ddl("alter table x drop column distraction", sqlExecutionContext);
+                        Os.sleep(1);
+                    }
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    Path.clearThreadLocals();
+                    try {
+                        barrier.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        e.printStackTrace();
+                    } catch (BrokenBarrierException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }).start();
+
+            // the SQL includes INSERT can later test that we don't get duplicate rows
+            // when SQL execution is re-started
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+                for (int i = 0; i < 1000; i++) {
+                    statement.execute(
+                            "INSERT INTO x (ts, i) VALUES(now(), 1); " +
+                                    "SELECT * FROM x; ");
+                }
+            } finally {
+                barrier.await();
+            }
+            drainWalQueue();
+            try (RecordCursorFactory factory = select("select count() from x", sqlExecutionContext)) {
+                assertCursor("count\n" +
+                                "1000\n",
+                        factory,
+                        false, false, true
+                );
             }
         });
     }
@@ -1660,9 +1670,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     // TODOs:
     //test when no earlier transaction nor begin/commit/rollback then block is wrapped in implicit transaction and committed at the end
     //test when there's rollback/commit in middle and rest is wrapped in transaction
-    //test when there's error in the middle then implicit transaction is rolled back 
+    //test when there's error in the middle then implicit transaction is rolled back
 
-    //test when there's earlier transaction then block is not committed at the end 
+    //test when there's earlier transaction then block is not committed at the end
     //test if there's begin in the middle then this piece of block is not committed
     //test if there's earlier transaction with commit or rollback then later begin includes lines wrapped in implicit transactions
 

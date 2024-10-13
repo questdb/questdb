@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -57,17 +57,18 @@ public interface CompiledQuery {
     short COMMIT = BEGIN + 1; // 19
     short ROLLBACK = COMMIT + 1; // 20
     short CREATE_TABLE_AS_SELECT = ROLLBACK + 1; // 21
-    short SNAPSHOT_DB_PREPARE = CREATE_TABLE_AS_SELECT + 1; // 22
-    short SNAPSHOT_DB_COMPLETE = SNAPSHOT_DB_PREPARE + 1; // 23
-    short DEALLOCATE = SNAPSHOT_DB_COMPLETE + 1; // 24
+    short CHECKPOINT_CREATE = CREATE_TABLE_AS_SELECT + 1; // 22
+    short CHECKPOINT_RELEASE = CHECKPOINT_CREATE + 1; // 23
+    short DEALLOCATE = CHECKPOINT_RELEASE + 1; // 24
     short EXPLAIN = DEALLOCATE + 1; // 25
     short TABLE_RESUME = EXPLAIN + 1; // 26
     short TABLE_SET_TYPE = TABLE_RESUME + 1; // 27
     short CREATE_USER = TABLE_SET_TYPE + 1; // 28
     short ALTER_USER = CREATE_USER + 1; // 29
-
     short CANCEL_QUERY = ALTER_USER + 1; // 30
-    short TYPES_COUNT = CANCEL_QUERY;
+    short TABLE_SUSPEND = CANCEL_QUERY + 1; // 31
+    short EMPTY = TABLE_SUSPEND + 1;
+    short TYPES_COUNT = EMPTY;
 
     /**
      * Executes the query.

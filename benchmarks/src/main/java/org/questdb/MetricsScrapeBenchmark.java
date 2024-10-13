@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,10 @@ import io.questdb.metrics.LongGauge;
 import io.questdb.metrics.MetricsRegistry;
 import io.questdb.metrics.MetricsRegistryImpl;
 import io.questdb.std.bytes.NativeByteSink;
-import io.questdb.std.str.*;
+import io.questdb.std.str.BorrowableUtf8Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import org.jetbrains.annotations.NotNull;
 import org.openjdk.jmh.annotations.*;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
@@ -84,7 +87,7 @@ public class MetricsScrapeBenchmark {
     private static class NullUtf8Sink implements BorrowableUtf8Sink {
 
         @Override
-        public NativeByteSink borrowDirectByteSink() {
+        public @NotNull NativeByteSink borrowDirectByteSink() {
             return new NativeByteSink() {
                 @Override
                 public void close() {
@@ -99,17 +102,17 @@ public class MetricsScrapeBenchmark {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
-            return this;
-        }
-
-        @Override
         public Utf8Sink put(Utf8Sequence us) {
             return this;
         }
 
         @Override
         public Utf8Sink put(byte b) {
+            return this;
+        }
+
+        @Override
+        public Utf8Sink putNonAscii(long lo, long hi) {
             return this;
         }
     }

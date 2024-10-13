@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -64,23 +64,11 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default boolean isParallelismSupported() {
+    default boolean isThreadSafe() {
         final ObjList<Function> args = getArgs();
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
-            if (!function.isParallelismSupported()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    @Override
-    default boolean isReadThreadSafe() {
-        final ObjList<Function> args = getArgs();
-        for (int i = 0, n = args.size(); i < n; i++) {
-            final Function function = args.getQuick(i);
-            if (!function.isReadThreadSafe()) {
+            if (!function.isThreadSafe()) {
                 return false;
             }
         }
@@ -93,6 +81,18 @@ public interface MultiArgFunction extends Function {
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
             if (!function.isRuntimeConstant() && !function.isConstant()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    default boolean supportsParallelism() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (!function.supportsParallelism()) {
                 return false;
             }
         }

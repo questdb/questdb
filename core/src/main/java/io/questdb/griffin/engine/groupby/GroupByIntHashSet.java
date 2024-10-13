@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,14 +45,14 @@ import io.questdb.std.Vect;
  */
 public class GroupByIntHashSet {
     private static final long HEADER_SIZE = 3 * Integer.BYTES;
-    private static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 2;
     private static final long SIZE_LIMIT_OFFSET = 2 * Integer.BYTES;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private final int initialCapacity;
     private final double loadFactor;
     private final int noKeyValue;
     private GroupByAllocator allocator;
-    private int mask;
+    private long mask;
     private long ptr;
 
     public GroupByIntHashSet(int initialCapacity, double loadFactor, int noKeyValue) {
@@ -71,7 +71,7 @@ public class GroupByIntHashSet {
      * @return false if key is already in the set and true otherwise.
      */
     public boolean add(int key) {
-        int index = keyIndex(key);
+        long index = keyIndex(key);
         if (index < 0) {
             return false;
         }
@@ -79,7 +79,7 @@ public class GroupByIntHashSet {
         return true;
     }
 
-    public void addAt(int index, int key) {
+    public void addAt(long index, int key) {
         setKeyAt(index, key);
         int size = size();
         int sizeLimit = sizeLimit();
@@ -93,13 +93,13 @@ public class GroupByIntHashSet {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr) : 0;
     }
 
-    public int keyAt(int index) {
+    public int keyAt(long index) {
         return Unsafe.getUnsafe().getInt(ptr + HEADER_SIZE + 4L * index);
     }
 
-    public int keyIndex(int key) {
-        int hashCode = Hash.hashInt(key);
-        int index = hashCode & mask;
+    public long keyIndex(int key) {
+        long hashCode = Hash.hashInt64(key);
+        long index = hashCode & mask;
         int k = keyAt(index);
         if (k == noKeyValue) {
             return index;
@@ -111,24 +111,10 @@ public class GroupByIntHashSet {
     }
 
     public void merge(GroupByIntHashSet srcSet) {
-        final int size = size();
-        // Math.max is here for overflow protection.
-        final int newSize = Math.max(size + srcSet.size(), size);
-        final int sizeLimit = sizeLimit();
-        if (sizeLimit < newSize) {
-            int newSizeLimit = sizeLimit;
-            int newCapacity = capacity();
-            while (newSizeLimit < newSize) {
-                newSizeLimit *= 2;
-                newCapacity *= 2;
-            }
-            rehash(newCapacity, newSizeLimit);
-        }
-
         for (long p = srcSet.ptr + HEADER_SIZE, lim = srcSet.ptr + HEADER_SIZE + 4L * srcSet.capacity(); p < lim; p += 4L) {
             int val = Unsafe.getUnsafe().getInt(p);
             if (val != noKeyValue) {
-                final int index = keyIndex(val);
+                final long index = keyIndex(val);
                 if (index >= 0) {
                     addAt(index, val);
                 }
@@ -171,7 +157,8 @@ public class GroupByIntHashSet {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + SIZE_LIMIT_OFFSET) : 0;
     }
 
-    private int probe(int key, int index) {
+    private long probe(int key, long index) {
+        final long index0 = index;
         do {
             index = (index + 1) & mask;
             int k = keyAt(index);
@@ -181,12 +168,14 @@ public class GroupByIntHashSet {
             if (key == k) {
                 return -index - 1;
             }
-        } while (true);
+        } while (index != index0);
+
+        throw CairoException.critical(0).put("corrupt int hash set");
     }
 
     private void rehash(int newCapacity, int newSizeLimit) {
         if (newCapacity < 0) {
-            throw CairoException.nonCritical().put("set capacity overflow");
+            throw CairoException.nonCritical().put("int hash set capacity overflow");
         }
 
         final int oldSize = size();
@@ -203,7 +192,7 @@ public class GroupByIntHashSet {
         for (long p = oldPtr + HEADER_SIZE, lim = oldPtr + HEADER_SIZE + 4L * oldCapacity; p < lim; p += 4L) {
             int key = Unsafe.getUnsafe().getInt(p);
             if (key != noKeyValue) {
-                int index = keyIndex(key);
+                long index = keyIndex(key);
                 setKeyAt(index, key);
             }
         }
@@ -211,7 +200,7 @@ public class GroupByIntHashSet {
         allocator.free(oldPtr, HEADER_SIZE + 4L * oldCapacity);
     }
 
-    private void setKeyAt(int index, int key) {
+    private void setKeyAt(long index, int key) {
         Unsafe.getUnsafe().putInt(ptr + HEADER_SIZE + 4L * index, key);
     }
 

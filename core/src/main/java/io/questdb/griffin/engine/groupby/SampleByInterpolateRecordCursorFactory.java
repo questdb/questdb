@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,13 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.*;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
+import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 
 public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -75,78 +81,87 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             @Transient @NotNull ArrayColumnTypes valueTypes,
             @Transient @NotNull EntityColumnFilter entityColumnFilter,
             @Transient @NotNull IntList groupByFunctionPositions,
-            int timestampIndex
+            int timestampIndex,
+            Function timezoneNameFunc,
+            int timezoneNameFuncPos,
+            Function offsetFunc,
+            int offsetFuncPos
     ) throws SqlException {
         super(metadata);
-        final int columnCount = model.getBottomUpColumns().size();
-        this.groupByFunctions = groupByFunctions;
-        this.recordFunctions = recordFunctions;
-        this.base = base;
-        this.sampler = timestampSampler;
+        try {
+            final int columnCount = model.getBottomUpColumns().size();
+            this.base = base;
+            this.groupByFunctions = groupByFunctions;
+            this.recordFunctions = recordFunctions;
+            this.sampler = timestampSampler;
 
-        // create timestamp column
-        TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount());
-        for (int i = 0, n = recordFunctions.size(); i < n; i++) {
-            if (recordFunctions.getQuick(i) == null) {
-                recordFunctions.setQuick(i, timestampColumn);
-            }
-        }
-
-        this.groupByScalarFunctions = new ObjList<>(columnCount);
-        this.groupByTwoPointFunctions = new ObjList<>(columnCount);
-        this.storeYFunctions = new ObjList<>(columnCount);
-        this.interpolatorFunctions = new ObjList<>(columnCount);
-        this.groupByFunctionCount = groupByFunctions.size();
-        for (int i = 0; i < groupByFunctionCount; i++) {
-            GroupByFunction function = groupByFunctions.getQuick(i);
-            if (function.isScalar()) {
-                groupByScalarFunctions.add(function);
-                switch (ColumnType.tagOf(function.getType())) {
-                    case ColumnType.BYTE:
-                        storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);
-                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_BYTE);
-                        break;
-                    case ColumnType.SHORT:
-                        storeYFunctions.add(InterpolationUtil.STORE_Y_SHORT);
-                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_SHORT);
-                        break;
-                    case ColumnType.INT:
-                        storeYFunctions.add(InterpolationUtil.STORE_Y_INT);
-                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_INT);
-                        break;
-                    case ColumnType.LONG:
-                        storeYFunctions.add(InterpolationUtil.STORE_Y_LONG);
-                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_LONG);
-                        break;
-                    case ColumnType.DOUBLE:
-                        storeYFunctions.add(InterpolationUtil.STORE_Y_DOUBLE);
-                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DOUBLE);
-                        break;
-                    case ColumnType.FLOAT:
-                        storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);
-                        interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);
-                        break;
-                    default:
-                        Misc.freeObjList(groupByScalarFunctions);
-                        throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
+            // create timestamp column
+            TimestampColumn timestampColumn = TimestampColumn.newInstance(valueTypes.getColumnCount() + keyTypes.getColumnCount());
+            for (int i = 0, n = recordFunctions.size(); i < n; i++) {
+                if (recordFunctions.getQuick(i) == null) {
+                    recordFunctions.setQuick(i, timestampColumn);
                 }
-            } else {
-                groupByTwoPointFunctions.add(function);
             }
+
+            this.groupByScalarFunctions = new ObjList<>(columnCount);
+            this.groupByTwoPointFunctions = new ObjList<>(columnCount);
+            this.storeYFunctions = new ObjList<>(columnCount);
+            this.interpolatorFunctions = new ObjList<>(columnCount);
+            this.groupByFunctionCount = groupByFunctions.size();
+            for (int i = 0; i < groupByFunctionCount; i++) {
+                GroupByFunction function = groupByFunctions.getQuick(i);
+                if (function.isScalar()) {
+                    groupByScalarFunctions.add(function);
+                    switch (ColumnType.tagOf(function.getType())) {
+                        case ColumnType.BYTE:
+                            storeYFunctions.add(InterpolationUtil.STORE_Y_BYTE);
+                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_BYTE);
+                            break;
+                        case ColumnType.SHORT:
+                            storeYFunctions.add(InterpolationUtil.STORE_Y_SHORT);
+                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_SHORT);
+                            break;
+                        case ColumnType.INT:
+                            storeYFunctions.add(InterpolationUtil.STORE_Y_INT);
+                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_INT);
+                            break;
+                        case ColumnType.LONG:
+                            storeYFunctions.add(InterpolationUtil.STORE_Y_LONG);
+                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_LONG);
+                            break;
+                        case ColumnType.DOUBLE:
+                            storeYFunctions.add(InterpolationUtil.STORE_Y_DOUBLE);
+                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_DOUBLE);
+                            break;
+                        case ColumnType.FLOAT:
+                            storeYFunctions.add(InterpolationUtil.STORE_Y_FLOAT);
+                            interpolatorFunctions.add(InterpolationUtil.INTERPOLATE_FLOAT);
+                            break;
+                        default:
+                            Misc.freeObjList(groupByScalarFunctions);
+                            throw SqlException.$(groupByFunctionPositions.getQuick(i), "Unsupported interpolation type: ").put(ColumnType.nameOf(function.getType()));
+                    }
+                } else {
+                    groupByTwoPointFunctions.add(function);
+                }
+            }
+
+            this.groupByScalarFunctionCount = groupByScalarFunctions.size();
+            this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();
+            this.timestampIndex = timestampIndex;
+            this.yDataSize = groupByFunctionCount * 16;
+            this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_FUNC_RSS);
+
+            // sink will be storing record columns to map key
+            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter);
+            entityColumnFilter.of(keyTypes.getColumnCount());
+            this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter);
+
+            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos);
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-
-        this.groupByScalarFunctionCount = groupByScalarFunctions.size();
-        this.groupByTwoPointFunctionCount = groupByTwoPointFunctions.size();
-        this.timestampIndex = timestampIndex;
-        this.yDataSize = groupByFunctionCount * 16;
-        this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_FUNC_RSS);
-
-        // sink will be storing record columns to map key
-        this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
-        entityColumnFilter.of(keyTypes.getColumnCount());
-        this.mapSink2 = RecordSinkFactory.getInstance(asm, keyTypes, entityColumnFilter, false);
-
-        this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes);
     }
 
     @Override
@@ -167,12 +182,17 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
+        }
+
+        try {
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable e) {
-            baseCursor.close();
+        } catch (Throwable th) {
             cursor.close();
-            throw e;
+            throw th;
         }
     }
 
@@ -183,7 +203,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleBy");
+        sink.type("Sample By");
         sink.attr("fill").val("linear");
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", groupByFunctions, true);
@@ -202,8 +222,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
     private void freeYData() {
         if (yData != 0) {
-            Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);
-            yData = 0;
+            yData = Unsafe.free(yData, yDataSize, MemoryTag.NATIVE_FUNC_RSS);
         }
     }
 
@@ -216,11 +235,16 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     }
 
     private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
-
         protected final Map recordKeyMap;
         private final GroupByAllocator allocator;
         private final Map dataMap;
+        private final Function offsetFunc;
+        private final int offsetFuncPos;
+        private final Function timezoneNameFunc;
+        private final int timezoneNameFuncPos;
+        private boolean areTimestampsInitialized;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private long fixedOffset;
         private long hiSample = -1;
         private boolean isHasNextPending;
         private boolean isMapBuilt;
@@ -230,23 +254,40 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private long loSample = -1;
         private Record managedRecord;
         private long prevSample = -1;
+        private long rowId;
+        private TimeZoneRules rules;
+        private long tzOffset;
 
         public SampleByInterpolateRecordCursor(
                 CairoConfiguration configuration,
                 ObjList<Function> functions,
                 ObjList<GroupByFunction> groupByFunctions,
                 @Transient @NotNull ArrayColumnTypes keyTypes,
-                @Transient @NotNull ArrayColumnTypes valueTypes
+                @Transient @NotNull ArrayColumnTypes valueTypes,
+                Function timezoneNameFunc,
+                int timezoneNameFuncPos,
+                Function offsetFunc,
+                int offsetFuncPos
         ) {
             super(functions);
-            // this is the map itself, which we must not forget to free when factory closes
-            recordKeyMap = MapFactory.createOrderedMap(configuration, keyTypes);
-            // data map will contain rounded timestamp value as last key column
-            keyTypes.add(ColumnType.TIMESTAMP);
-            dataMap = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
-            allocator = new GroupByAllocator(configuration);
-            GroupByUtils.setAllocator(groupByFunctions, allocator);
-            isOpen = true;
+            try {
+                isOpen = true;
+                // this is the map itself, which we must not forget to free when factory closes
+                recordKeyMap = MapFactory.createOrderedMap(configuration, keyTypes);
+                // data map will contain rounded timestamp value as last key column
+                keyTypes.add(ColumnType.TIMESTAMP);
+                dataMap = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+                allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                GroupByUtils.setAllocator(groupByFunctions, allocator);
+
+                this.timezoneNameFunc = timezoneNameFunc;
+                this.timezoneNameFuncPos = timezoneNameFuncPos;
+                this.offsetFunc = offsetFunc;
+                this.offsetFuncPos = offsetFuncPos;
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override
@@ -259,6 +300,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Misc.clearObjList(groupByFunctions);
                 super.close();
             }
+            Misc.clear(timezoneNameFunc);
+            Misc.free(timezoneNameFunc);
+            Misc.clear(offsetFunc);
+            Misc.free(offsetFunc);
         }
 
         @Override
@@ -270,22 +315,25 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             return super.hasNext();
         }
 
-        public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) {
+        public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {
+            super.of(managedCursor, dataMap.getCursor());
             if (!isOpen) {
                 isOpen = true;
                 recordKeyMap.reopen();
                 dataMap.reopen();
             }
-            super.of(managedCursor, dataMap.getCursor());
             circuitBreaker = executionContext.getCircuitBreaker();
             managedRecord = managedCursor.getRecord();
             loSample = -1;
             hiSample = -1;
             prevSample = -1;
+            rowId = 0;
             isHasNextPending = false;
             isMapInitialized = false;
             isMapFilled = false;
             isMapBuilt = false;
+            parseParams(this, executionContext);
+            areTimestampsInitialized = false;
         }
 
         @Override
@@ -303,6 +351,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 loSample = -1;
                 hiSample = -1;
                 prevSample = -1;
+                rowId = 0;
                 isHasNextPending = false;
                 isMapInitialized = false;
                 isMapFilled = false;
@@ -316,6 +365,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     return;
                 }
                 isMapInitialized = true;
+            }
+
+            if (!areTimestampsInitialized) {
+                initTimestamps();
+                areTimestampsInitialized = true;
             }
 
             if (!isMapFilled) {
@@ -483,15 +537,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // check group for gaps and fill them with placeholder
             // entries. Values for these entries will be interpolated later.
 
-            if (prevSample == -1) {
-                // we have data in cursor, so we can grab first value
-                final boolean good = managedCursor.hasNext();
-                assert good;
-                long timestamp = managedRecord.getTimestamp(timestampIndex);
-                sampler.setStart(timestamp);
-                prevSample = sampler.round(timestamp);
-                loSample = prevSample; // the lowest timestamp value
-            }
+            assert prevSample != -1;
 
             do {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -520,11 +566,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     if (value.isNew()) {
                         value.putByte(0, (byte) 0); // not a gap
                         for (int i = 0; i < groupByFunctionCount; i++) {
-                            groupByFunctions.getQuick(i).computeFirst(value, managedRecord);
+                            groupByFunctions.getQuick(i).computeFirst(value, managedRecord, rowId++);
                         }
                     } else {
                         for (int i = 0; i < groupByFunctionCount; i++) {
-                            groupByFunctions.getQuick(i).computeNext(value, managedRecord);
+                            groupByFunctions.getQuick(i).computeNext(value, managedRecord, rowId++);
                         }
                     }
                 }
@@ -631,6 +677,70 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 for (int i = 0; i < groupByFunctionCount; i++) {
                     groupByFunctions.getQuick(i).setNull(value);
                 }
+            }
+        }
+
+        protected void initTimestamps() {
+            if (areTimestampsInitialized) {
+                return;
+            }
+
+            final boolean good = managedCursor.hasNext();
+            assert good;
+
+            final long timestamp = managedRecord.getTimestamp(timestampIndex);
+            if (rules != null) {
+                tzOffset = rules.getOffset(timestamp);
+            }
+
+            if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
+                // this is the default path, we align time intervals to the first observation
+                sampler.setStart(timestamp);
+            } else {
+                sampler.setStart(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
+            }
+            prevSample = sampler.round(timestamp);
+            loSample = prevSample; // the lowest timestamp value
+        }
+
+        protected void parseParams(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+            // factory guarantees that base cursor is not empty
+            timezoneNameFunc.init(base, executionContext);
+            offsetFunc.init(base, executionContext);
+            rules = null;
+
+            final CharSequence tz = timezoneNameFunc.getStrA(null);
+            if (tz != null) {
+                try {
+                    long opt = Timestamps.parseOffset(tz);
+                    if (opt == Long.MIN_VALUE) {
+                        // this is timezone name
+                        // fixed rules means the timezone does not have historical or daylight time changes
+                        rules = TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                                Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, tz.length())),
+                                RESOLUTION_MICROS
+                        );
+                    } else {
+                        // here timezone is in numeric offset format
+                        tzOffset = Numbers.decodeLowInt(opt) * MINUTE_MICROS;
+                    }
+                } catch (NumericException e) {
+                    throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
+                }
+            } else {
+                tzOffset = 0;
+            }
+
+            final CharSequence offset = offsetFunc.getStrA(null);
+            if (offset != null) {
+                final long val = Timestamps.parseOffset(offset);
+                if (val == Numbers.LONG_NULL) {
+                    // bad value for offset
+                    throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
+                }
+                fixedOffset = Numbers.decodeLowInt(val) * MINUTE_MICROS;
+            } else {
+                fixedOffset = Long.MIN_VALUE;
             }
         }
     }

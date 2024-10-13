@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,12 +44,14 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putInt(valueIndex, arg.getIPv4(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putInt(valueIndex + 1, arg.getIPv4(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
+        // empty
     }
 
     @Override
@@ -59,7 +61,7 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
 
     @Override
     public int getIPv4(Record rec) {
-        return rec.getIPv4(valueIndex);
+        return rec.getIPv4(valueIndex + 1);
     }
 
     @Override
@@ -73,24 +75,43 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.IPv4); // value
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.IPv4);
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putInt(valueIndex + 1, srcValue.getIPv4(valueIndex + 1));
+        }
     }
 
     @Override
     public void setInt(MapValue mapValue, int value) {
-        mapValue.putInt(valueIndex, value);
+        // This method is used to define interpolated points and to init
+        // an empty value, so it's ok to reset the row id field here.
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putInt(valueIndex + 1, value);
     }
 
     @Override
@@ -99,7 +120,7 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

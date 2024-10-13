@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class CountTest extends AbstractCairoTest {
@@ -72,39 +73,23 @@ public class CountTest extends AbstractCairoTest {
         );
     }
 
-    @Test(expected = SqlException.class)
-    public void testConstNullThrows() throws Exception {
-        assertQuery(
-                "cnt_1\tcnt_42\n" +
-                        "20\t20\n",
-                "select count(NULL) from x",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_float(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " rnd_double(0)*100 c," +
-                        " timestamp_sequence(0, 0) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                false,
-                true
-        );
-    }
-
-    @Test(expected = SqlException.class)
+    @Test
     public void testCountOverCursorThrows() throws Exception {
-        assertQuery(
-                "cnt_1\tcnt_42\n" +
-                        "20\t20\n",
-                "count(select distinct s from x where right(s, 1)='/')",
-                "create table x (s string, ts timestamp) timestamp(ts) partition by day",
-                null,
-                false,
-                true
-        );
+        assertMemoryLeak(() -> {
+            try {
+                assertQueryNoLeakCheck(
+                        "cnt_1\tcnt_42\n" +
+                                "20\t20\n",
+                        "count(select distinct s from x where right(s, 1)='/')",
+                        "create table x (s string, ts timestamp) timestamp(ts) partition by day",
+                        null,
+                        false,
+                        true
+                );
+                Assert.fail();
+            } catch (SqlException ignore) {
+            }
+        });
     }
 
     @Test

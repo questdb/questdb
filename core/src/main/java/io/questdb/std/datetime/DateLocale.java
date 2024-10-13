@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ public class DateLocale {
     private final IntObjHashMap<ObjList<CharSequence>> amspms = new IntObjHashMap<>();
     private final String[] eraArray;
     private final IntObjHashMap<ObjList<CharSequence>> eras = new IntObjHashMap<>();
+    private final String name;
     private final TimeZoneRuleFactory factory;
     private final String[] monthArray;
     private final IntObjHashMap<ObjList<CharSequence>> months = new IntObjHashMap<>();
@@ -42,7 +43,8 @@ public class DateLocale {
     private final IntObjHashMap<ObjList<CharSequence>> weekdays = new IntObjHashMap<>();
     private final IntObjHashMap<ObjList<CharSequence>> zones = new IntObjHashMap<>();
 
-    public DateLocale(DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory) {
+    public DateLocale(String name, DateFormatSymbols symbols, TimeZoneRuleFactory timeZoneRuleFactory) {
+        this.name = name;
         this.factory = timeZoneRuleFactory;
         index(monthArray = symbols.getMonths(), months);
         index(shortMonthArray = symbols.getShortMonths(), months);
@@ -64,6 +66,10 @@ public class DateLocale {
                 }
             }
         }
+    }
+
+    public String getName() {
+        return name;
     }
 
     public String getAMPM(int index) {

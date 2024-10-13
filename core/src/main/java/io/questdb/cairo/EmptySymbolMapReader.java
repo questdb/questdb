@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.api.MemoryR;
 
 public class EmptySymbolMapReader implements SymbolMapReader {
 
@@ -44,6 +45,16 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     @Override
     public int getSymbolCount() {
         return 0;
+    }
+
+    @Override
+    public MemoryR getSymbolOffsetsColumn() {
+        return null;
+    }
+
+    @Override
+    public MemoryR getSymbolValuesColumn() {
+        return null;
     }
 
     @Override

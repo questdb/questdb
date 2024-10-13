@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,11 +34,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
 public class QueryActivityFunctionFactory implements FunctionFactory {
-
     private static final RecordMetadata METADATA;
-
-    private static final String NAME = "query_activity";
-    private static final String SIGNATURE = NAME + "()";
+    private static final String SIGNATURE = "query_activity()";
 
     @Override
     public String getSignature() {
@@ -140,7 +137,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 if (col == 2) {
                     return entry.getPoolName();
                 } else if (col == 3) {
@@ -151,17 +148,17 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
                     return entry.getQuery();
                 }
 
-                return Record.super.getStr(col);
+                return Record.super.getStrA(col);
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override
             public int getStrLen(int col) {
-                CharSequence str = getStr(col);
+                CharSequence str = getStrA(col);
                 return str != null ? str.length() : -1;
             }
 

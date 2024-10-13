@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -89,7 +89,7 @@ public class DropStatementTest extends AbstractCairoTest {
             ddl("CREATE TABLE \"large table\" (a int)");
 
             try (TableWriter ignored = getWriter("large table")) {
-                assertException("DROP TABLE \"large table\"");
+                assertExceptionNoLeakCheck("DROP TABLE \"large table\"");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not lock");
             }
@@ -123,7 +123,7 @@ public class DropStatementTest extends AbstractCairoTest {
     public void testDropTableMissingFrom() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertException("drop i_am_missing");
+                assertExceptionNoLeakCheck("drop i_am_missing");
             } catch (SqlException e) {
                 Assert.assertEquals(5, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "'table' or 'all tables' expected");
@@ -170,7 +170,7 @@ public class DropStatementTest extends AbstractCairoTest {
             Assert.assertEquals(TABLE_EXISTS, engine.getTableStatus("x.csv"));
 
             try {
-                assertException("DROP TABLE x.csv");
+                assertExceptionNoLeakCheck("DROP TABLE x.csv");
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [.]");
@@ -193,7 +193,7 @@ public class DropStatementTest extends AbstractCairoTest {
 
             try (RecordCursorFactory factory = select("\"" + tab0 + '"')) {
                 try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                    assertException("DROP ALL TABLES");
+                    assertExceptionNoLeakCheck("DROP ALL TABLES");
                 }
             } catch (CairoException expected) {
                 TestUtils.assertContains(

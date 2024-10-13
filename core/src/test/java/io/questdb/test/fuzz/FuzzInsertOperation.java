@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TestRecord;
 
 public class FuzzInsertOperation implements FuzzTransactionOperation {
@@ -43,6 +44,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
             ColumnType.FLOAT,
             ColumnType.DOUBLE,
             ColumnType.STRING,
+            ColumnType.VARCHAR,
             ColumnType.BINARY,
             ColumnType.SHORT,
             ColumnType.BYTE,
@@ -58,6 +60,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
     };
     private static final ThreadLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new ThreadLocal<>(TestRecord.ArrayBinarySequence::new);
     private static final ThreadLocal<IntList> tlIntList = new ThreadLocal<>(IntList::new);
+    private static final ThreadLocal<Utf8StringSink> tlUtf8 = new ThreadLocal<>(Utf8StringSink::new);
     private final double cancelRows;
     private final double notSet;
     private final double nullSet;
@@ -96,6 +99,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
 
         final IntList tempList = tlIntList.get();
         final TestRecord.ArrayBinarySequence binarySequence = tlBinSeq.get();
+        final Utf8StringSink utf8StringSink = tlUtf8.get();
 
         TableWriter.Row row = tableWriter.newRow(timestamp);
         // this is hack for populating a table without designated timestamp
@@ -132,7 +136,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 break;
 
                             case ColumnType.INT:
-                                row.putInt(index, isNull ? Numbers.INT_NaN : rnd.nextInt());
+                                row.putInt(index, isNull ? Numbers.INT_NULL : rnd.nextInt());
                                 break;
 
                             case ColumnType.IPv4:
@@ -140,15 +144,15 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 break;
 
                             case ColumnType.LONG:
-                                row.putLong(index, isNull ? Numbers.LONG_NaN : rnd.nextLong());
+                                row.putLong(index, isNull ? Numbers.LONG_NULL : rnd.nextLong());
                                 break;
 
                             case ColumnType.TIMESTAMP:
-                                row.putTimestamp(index, isNull ? Numbers.LONG_NaN : rnd.nextLong());
+                                row.putTimestamp(index, isNull ? Numbers.LONG_NULL : rnd.nextLong());
                                 break;
 
                             case ColumnType.DATE:
-                                row.putDate(index, isNull ? Numbers.LONG_NaN : rnd.nextLong());
+                                row.putDate(index, isNull ? Numbers.LONG_NULL : rnd.nextLong());
                                 break;
 
                             case ColumnType.SYMBOL:
@@ -175,7 +179,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
                                 if (!isNull) {
                                     row.putLong128(index, rnd.nextLong(), rnd.nextLong());
                                 } else {
-                                    row.putLong128(index, Numbers.LONG_NaN, Numbers.LONG_NaN);
+                                    row.putLong128(index, Numbers.LONG_NULL, Numbers.LONG_NULL);
                                 }
                                 break;
 
@@ -189,6 +193,17 @@ public class FuzzInsertOperation implements FuzzTransactionOperation {
 
                             case ColumnType.DOUBLE:
                                 row.putDouble(index, isNull ? Double.NaN : rnd.nextDouble());
+                                break;
+
+                            case ColumnType.VARCHAR:
+                                if (isNull) {
+                                    row.putVarchar(index, null);
+                                    break;
+                                }
+                                utf8StringSink.clear();
+                                int varcharLen = strLen > 0 ? rnd.nextInt(strLen) : 0;
+                                rnd.nextUtf8Str(varcharLen, utf8StringSink);
+                                row.putVarchar(index, utf8StringSink);
                                 break;
 
                             case ColumnType.STRING:

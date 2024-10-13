@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,7 +56,7 @@ public class O3MetricsTest extends AbstractO3Test {
                 w.commit();
             }
 
-            printSqlResult(compiler, sqlExecutionContext, "x");
+            engine.print("x", sink, sqlExecutionContext);
             final String expected = "i\tts\n" +
                     "1\t2000-01-01T05:00:00.000000Z\n" +
                     "2\t2000-01-01T06:00:00.000000Z\n" +
@@ -93,7 +93,7 @@ public class O3MetricsTest extends AbstractO3Test {
             }
 
             {
-                printSqlResult(compiler, sqlExecutionContext, "x");
+                engine.print("x", sink, sqlExecutionContext);
                 final String expected = "i\tts\n" +
                         "1\t2000-01-01T05:00:00.000000Z\n" +
                         "2\t2000-01-01T06:00:00.000000Z\n" +
@@ -119,7 +119,7 @@ public class O3MetricsTest extends AbstractO3Test {
             }
 
             {
-                printSqlResult(compiler, sqlExecutionContext, "x");
+                engine.print("x", sink, sqlExecutionContext);
                 final String expected = "i\tts\n" +
                         "1\t2000-01-01T05:00:00.000000Z\n" +
                         "2\t2000-01-01T06:00:00.000000Z\n" +
@@ -152,7 +152,7 @@ public class O3MetricsTest extends AbstractO3Test {
                 w.commit();
             }
 
-            printSqlResult(compiler, sqlExecutionContext, "x");
+            engine.print("x", sink, sqlExecutionContext);
             final String expected = "i\tts\n" +
                     "0\t2000-01-01T04:00:00.000000Z\n" +  // new row
                     "1\t2000-01-01T05:00:00.000000Z\n" +
@@ -190,7 +190,7 @@ public class O3MetricsTest extends AbstractO3Test {
                 w.commit();
             }
 
-            printSqlResult(compiler, sqlExecutionContext, "x");
+            engine.print("x", sink, sqlExecutionContext);
             final String expected = "i\tts\n" +
                     "1\t2000-01-01T05:00:00.000000Z\n" +
                     "2\t2000-01-01T06:00:00.000000Z\n" +
@@ -248,7 +248,7 @@ public class O3MetricsTest extends AbstractO3Test {
                 w.commit();
             }
 
-            printSqlResult(compiler, sqlExecutionContext, "x");
+            engine.print("x", sink, sqlExecutionContext);
             final String expected = "i\tts\n" +
                     "1\t2000-01-01T05:00:00.000000Z\n" +
                     "2\t2000-01-01T06:00:00.000000Z\n" +
@@ -307,7 +307,7 @@ public class O3MetricsTest extends AbstractO3Test {
                 w.commit();
             }
 
-            printSqlResult(compiler, sqlExecutionContext, "x");
+            engine.print("x", sink, sqlExecutionContext);
             final String expected = "i\tts\n" +
                     "-1\t1999-12-31T23:00:00.000000Z\n" +  // new row
                     "1\t2000-01-01T05:00:00.000000Z\n" +

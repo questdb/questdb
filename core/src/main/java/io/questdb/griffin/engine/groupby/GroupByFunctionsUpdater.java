@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ public interface GroupByFunctionsUpdater extends MapValueMergeFunction {
 
     void updateEmpty(MapValue value);
 
-    void updateExisting(MapValue value, Record record);
+    void updateExisting(MapValue value, Record record, long rowId);
 
-    void updateNew(MapValue value, Record record);
+    void updateNew(MapValue value, Record record, long rowId);
 }

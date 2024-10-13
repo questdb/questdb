@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,11 +24,17 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.Interval;
+import org.jetbrains.annotations.NotNull;
 
 public interface ScalarFunction extends Function {
     @Override
     default int getArrayLength() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default @NotNull Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -38,12 +44,7 @@ public interface ScalarFunction extends Function {
     }
 
     @Override
-    default void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    default CharSequence getStr(Record rec, int arrayIndex) {
+    default CharSequence getStrA(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 

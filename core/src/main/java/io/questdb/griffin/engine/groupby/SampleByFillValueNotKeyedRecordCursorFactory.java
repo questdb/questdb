@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -54,7 +55,11 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) throws SqlException {
         super(base, groupByMetadata, recordFunctions);
         try {
@@ -81,7 +86,12 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
-                    offsetFuncPos
+                    offsetFuncPos,
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
+
             );
             peeker.setCursor(cursor);
         } catch (Throwable e) {
@@ -92,8 +102,10 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleBy");
+        sink.type("Sample By");
         sink.attr("fill").val("value");
+        if (cursor.sampleFromFunc != TimestampConstant.NULL || cursor.sampleToFunc != TimestampConstant.NULL)
+            sink.attr("range").val('(').val(cursor.sampleFromFunc).val(',').val(cursor.sampleToFunc).val(')');
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
     }

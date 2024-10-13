@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -73,7 +73,7 @@ public class IntPlusIPv4FunctionFactory implements FunctionFactory {
             if (sum >> 32 != 0) {
                 return Numbers.IPv4_NULL;
             }
-            return l != Numbers.INT_NaN && r != Numbers.IPv4_NULL ? (int) sum : Numbers.IPv4_NULL;
+            return l != Numbers.INT_NULL && r != Numbers.IPv4_NULL ? (int) sum : Numbers.IPv4_NULL;
         }
 
         @Override

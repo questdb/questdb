@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,25 +46,27 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testExpression() throws Exception {
-        final String expected = "a\tcount_distinct\n" +
-                "1\t1\n" +
-                "3\t1\n" +
-                "4\t2\n" +
-                "5\t2\n" +
-                "6\t2\n" +
-                "7\t3\n" +
-                "8\t2\n";
-        assertQuery(
-                expected,
-                "select a, count_distinct(concat(s, 'foobar')::symbol) from x order by a",
-                "create table x as (select * from (select rnd_int(1, 8, 0) a, rnd_symbol('a','b','c') s from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
-        // concatenation shouldn't affect the number of distinct values,
-        // so the result should stay the same
-        assertSql(expected, "select a, count_distinct(s) from x order by a");
+        assertMemoryLeak(() -> {
+            final String expected = "a\tcount_distinct\n" +
+                    "1\t1\n" +
+                    "3\t1\n" +
+                    "4\t2\n" +
+                    "5\t2\n" +
+                    "6\t2\n" +
+                    "7\t3\n" +
+                    "8\t2\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select a, count_distinct(concat(s, 'foobar')::symbol) from x order by a",
+                    "create table x as (select * from (select rnd_int(1, 8, 0) a, rnd_symbol('a','b','c') s from long_sequence(20)))",
+                    null,
+                    true,
+                    true
+            );
+            // concatenation shouldn't affect the number of distinct values,
+            // so the result should stay the same
+            assertSql(expected, "select a, count_distinct(s) from x order by a");
+        });
     }
 
     @Test
@@ -114,20 +116,22 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testGroupNotKeyedWithNulls() throws Exception {
-        String expected = "count_distinct\n" +
-                "62\n";
-        assertQuery(
-                expected,
-                "select count_distinct(s) from x",
-                "create table x as (select * from (select rnd_symbol(100, 10, 10, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
-                null,
-                false,
-                true
-        );
+        assertMemoryLeak(() -> {
+            String expected = "count_distinct\n" +
+                    "62\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select count_distinct(s) from x",
+                    "create table x as (select * from (select rnd_symbol(100, 10, 10, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)) timestamp(ts) PARTITION BY YEAR",
+                    null,
+                    false,
+                    true
+            );
 
-        insert("insert into x values(cast(null as SYMBOL), '2021-05-21')");
-        insert("insert into x values(cast(null as SYMBOL), '1970-01-01')");
-        assertSql(expected, "select count_distinct(s) from x");
+            insert("insert into x values(cast(null as SYMBOL), '2021-05-21')");
+            insert("insert into x values(cast(null as SYMBOL), '1970-01-01')");
+            assertSql(expected, "select count_distinct(s) from x");
+        });
     }
 
     @Test
@@ -147,14 +151,15 @@ public class CountDistinctSymbolGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testSampleKeyed() throws Exception {
-        assertQuery(
-                "count_distinct\tts\n" +
-                        "6\t1970-01-01T00:00:00.000000Z\n" +
-                        "6\t1970-01-01T00:00:05.000000Z\n",
-                "select count_distinct(s), ts from x sample by 5s",
-                "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
-                "ts",
-                false
-        );
+        final String expected = "count_distinct\tts\n" +
+                "6\t1970-01-01T00:00:00.000000Z\n" +
+                "6\t1970-01-01T00:00:05.000000Z\n";
+        final String query = "select count_distinct(s), ts from x sample by 5s";
+        final String ddl = "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))";
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(expected, query, ddl, "ts", true, true);
+            assertQueryNoLeakCheck(expected, query + " align to first observation", "ts", false);
+            assertQueryNoLeakCheck(expected, query + " align to calendar", "ts", true, true);
+        });
     }
 }

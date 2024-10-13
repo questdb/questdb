@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -152,23 +151,13 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
+    public CharSequence getStrA(Record rec) {
         return initSink();
     }
 
     @Override
-    public CharSequence getStr(Record rec, int arrayIndex) {
+    public CharSequence getStrA(Record rec, int arrayIndex) {
         return items.getQuick(arrayIndex);
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink sink) {
-        sink.put(initSink());
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
-        sink.put(getStr(rec, arrayIndex));
     }
 
     @Override
@@ -178,7 +167,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
 
     @Override
     public CharSequence getStrB(Record rec, int arrayIndex) {
-        return getStr(rec, arrayIndex);
+        return getStrA(rec, arrayIndex);
     }
 
     @Override
@@ -188,7 +177,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
 
     @Override
     public int getStrLen(Record rec, int arrayIndex) {
-        return getStr(rec, arrayIndex).length();
+        return getStrA(rec, arrayIndex).length();
     }
 
     @Override
@@ -197,7 +186,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

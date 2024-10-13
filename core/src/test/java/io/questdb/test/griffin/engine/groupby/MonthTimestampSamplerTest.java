@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,21 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class MonthTimestampSamplerTest {
+
+    @Test
+    public void testBucketIndex() throws NumericException {
+        for (int i = 0; i < 1000; i++) {
+            MonthTimestampSampler sampler = new MonthTimestampSampler(4);
+            long startTimestamp = TimestampFormatUtils.parseUTCTimestamp("2018-11-16T15:00:00.000000Z");
+            sampler.setStart(startTimestamp);
+            long currentTimestamp = startTimestamp;
+            for (int j = 0; j < 100; j++) {
+                currentTimestamp = sampler.nextTimestamp(currentTimestamp);
+                Assert.assertEquals(j + 1, sampler.bucketIndex(currentTimestamp));
+            }
+        }
+    }
+
     @Test
     public void testNextTimestamp() throws NumericException {
         MonthTimestampSampler sampler = new MonthTimestampSampler(1);

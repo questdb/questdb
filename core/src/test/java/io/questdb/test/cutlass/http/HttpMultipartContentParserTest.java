@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,9 +46,9 @@ import java.util.concurrent.TimeUnit;
 
 public class HttpMultipartContentParserTest {
 
-    private final static TestHttpMultipartContentListener LISTENER = new TestHttpMultipartContentListener();
-    private final static ObjectPool<DirectUtf8String> pool = new ObjectPool<>(DirectUtf8String::new, 32);
-    private final static StringSink sink = new StringSink();
+    private static final TestHttpMultipartContentListener LISTENER = new TestHttpMultipartContentListener();
+    private static final ObjectPool<DirectUtf8String> pool = new ObjectPool<>(DirectUtf8String::new, 32);
+    private static final StringSink sink = new StringSink();
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)

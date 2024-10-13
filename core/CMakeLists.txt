@@ -18,6 +18,24 @@ if ($ENV{JAVA_HOME})
     FILE(TO_CMAKE_PATH $ENV{JAVA_HOME} JAVA_HOME)
 endif ($ENV{JAVA_HOME})
 
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "^arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
+    set(ARCH_AARCH64 1)
+else ()
+    set(ARCH_AMD64 1)
+endif ()
+
+if (APPLE)
+    set(OS_DARWIN 1)
+elseif (UNIX)
+    if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
+        set(OS_FREEBSD 1)
+    elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
+        set(OS_LINUX 1)
+    endif ()
+elseif (WIN32)
+    set(OS_WINDOWS 1)
+endif (APPLE)
+
 set(
         VCL_FILES
         src/main/c/share/vec_agg.cpp
@@ -60,19 +78,16 @@ set(
         src/main/c/share/dedup.cpp
         src/main/c/share/byte_sink.cpp
         src/main/c/share/byte_sink.h
+        src/main/c/share/converters.cpp
+        src/main/c/share/converters.h
+        src/main/c/share/json.cpp
 )
 
 # JNI includes
 include_directories($ENV{JAVA_HOME}/include/)
 
-if (APPLE)
+if (OS_DARWIN)
     include_directories($ENV{JAVA_HOME}/include/darwin/)
-    if (CMAKE_SYSTEM_PROCESSOR MATCHES "^arm64")
-        set(AARCH64 1)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armosx)
-    else()
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/osx)
-    endif()
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/osx/kqueue.c
@@ -81,45 +96,35 @@ if (APPLE)
             src/main/c/osx/accept.c
             src/main/c/freebsd/files.c
     )
-elseif (UNIX)
-    if (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
-        MESSAGE("Building for FreeBSD")
-        include_directories($ENV{JAVA_HOME}/include/freebsd/)
-        set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/freebsd)
-        set(
-                SOURCE_FILES ${SOURCE_FILES}
-                src/main/c/freebsd/kqueue.c
-                src/main/c/share/net.c
-                src/main/c/freebsd/affinity.c
-                src/main/c/freebsd/accept.c
-                src/main/c/freebsd/files.c
-        )
-    else (CMAKE_SYSTEM_NAME MATCHES "Linux")
-        MESSAGE("Building for GNU/Linux")
-        include_directories($ENV{JAVA_HOME}/include/linux/)
-        if (CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
-            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/armlinux)
-            set(AARCH64 1)
-        else ()
-            set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/linux)
-        endif ()
-        set(
-                SOURCE_FILES ${SOURCE_FILES}
-                src/main/c/share/net.c
-                src/main/c/linux/epoll.c
-                src/main/c/linux/recvmmsg.c
-                src/main/c/linux/affinity.c
-                src/main/c/linux/accept.c
-                src/main/c/linux/files.c
-                src/main/c/linux/io_uring.c
-        )
+elseif (OS_FREEBSD)
+    MESSAGE("Building for FreeBSD")
+    include_directories($ENV{JAVA_HOME}/include/freebsd/)
+    set(
+            SOURCE_FILES ${SOURCE_FILES}
+            src/main/c/freebsd/kqueue.c
+            src/main/c/share/net.c
+            src/main/c/freebsd/affinity.c
+            src/main/c/freebsd/accept.c
+            src/main/c/freebsd/files.c
+    )
+elseif (OS_LINUX)
+    MESSAGE("Building for GNU/Linux")
+    include_directories($ENV{JAVA_HOME}/include/linux/)
+    set(
+            SOURCE_FILES ${SOURCE_FILES}
+            src/main/c/share/net.c
+            src/main/c/linux/epoll.c
+            src/main/c/linux/recvmmsg.c
+            src/main/c/linux/affinity.c
+            src/main/c/linux/accept.c
+            src/main/c/linux/files.c
+            src/main/c/linux/io_uring.c
+            src/main/c/linux/inotify.c
+    )
+endif ()
 
-    endif (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
-endif (APPLE)
-
-if (WIN32)
+if (OS_WINDOWS)
     include_directories($ENV{JAVA_HOME}/include/win32/)
-    set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/main/resources/io/questdb/bin/windows)
     set(
             SOURCE_FILES ${SOURCE_FILES}
             src/main/c/windows/files.c
@@ -132,6 +137,7 @@ if (WIN32)
             src/main/c/windows/timer.c
             src/main/c/windows/timer.h
             src/main/c/windows/accept.c
+            src/main/c/windows/filewatch.c
             src/main/c/share/fs.h
     )
 else ()
@@ -140,7 +146,9 @@ else ()
             src/main/c/share/files.c
             src/main/c/share/os.c
     )
-endif (WIN32)
+endif ()
+
+set(OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/target/classes/io/questdb/bin-local/)
 
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${OUTPUT})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OUTPUT})
@@ -150,19 +158,19 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUTPUT})
 
 if (NOT DEFINED ASMJIT_EMBED)
     set(ASMJIT_EMBED TRUE)
-endif()
+endif ()
 
 include(FetchContent)
 FetchContent_Declare(
         asmjit
         GIT_REPOSITORY https://github.com/questdb/asmjit.git
-        GIT_TAG        4ec760a3d1f69e32ba460ecd2513f29b8428700b # Fixed typos in documentation
+        GIT_TAG 4ec760a3d1f69e32ba460ecd2513f29b8428700b # Fixed typos in documentation
 )
 
 FetchContent_GetProperties(asmjit)
 if (NOT asmjit_POPULATED)
     FetchContent_Populate(asmjit)
-endif()
+endif ()
 include("${asmjit_SOURCE_DIR}/CMakeLists.txt")
 include_directories(${asmjit_SOURCE_DIR}/src SYSTEM)
 add_compile_definitions(ASMJIT_NO_STDCXX)
@@ -172,13 +180,13 @@ add_compile_definitions(ASMJIT_NO_STDCXX)
 
 if (NOT DEFINED JIT_TEST)
     set(JIT_TEST FALSE)
-endif()
+endif ()
 
-if(JIT_TEST)
+if (JIT_TEST)
     include_directories(${asmjit_SOURCE_DIR}/test SYSTEM)
     add_executable(jittests src/test/c/jittests/test_app.cpp)
     target_link_libraries(jittests questdb)
-endif()
+endif ()
 
 #zlib
 
@@ -188,7 +196,7 @@ include(${ZLIB_SOURCE_DIR}/CMakeLists.txt)
 
 #liburing
 
-if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+if (OS_LINUX)
     MESSAGE("Downloading io_uring")
     ExternalProject_Add(
             liburing_git
@@ -217,17 +225,16 @@ set(COMMON_OPTIONS "-Wno-gnu-anonymous-struct;-Wno-nested-anon-types;-Wno-unused
 set(DEBUG_OPTIONS "-Wall;-pedantic;-Wextra;-g;-O0")
 set(RELEASE_OPTIONS "-O3")
 
-list(APPEND DEBUG_OPTIONS  "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
-list(APPEND RELEASE_OPTIONS  "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
+list(APPEND DEBUG_OPTIONS "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
+list(APPEND RELEASE_OPTIONS "${ASMJIT_CFLAGS};${COMMON_OPTIONS}")
 
-if (UNIX AND NOT APPLE AND CMAKE_SYSTEM_NAME MATCHES "Linux")
+if (OS_LINUX)
     target_link_libraries(questdb liburing)
     add_dependencies(questdb liburing)
 endif ()
 
-if (AARCH64)
-
-    add_compile_definitions(__aarch64__)
+if (ARCH_AARCH64)
+    add_compile_definitions(__AARCH64__)
 
     ## on ARM64 we use vanilla arithmetic functions for now
     set(
@@ -321,14 +328,30 @@ else ()
             questdb-avx512
             asm
     )
-endif (AARCH64)
+endif (ARCH_AARCH64)
 
-if (WIN32)
-    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc)
+#simdjson
+set(SIMDJSON_ENABLE_THREADS OFF CACHE BOOL "Link with thread support" FORCE)
+include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/simdjson-cmake/CMakeLists.txt)
+
+if (OS_WINDOWS)
+    target_link_libraries(questdb wsock32 ws2_32 secur32 shlwapi psapi -s -static-libgcc -static-libstdc++ _simdjson)
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics)
-elseif (APPLE)
-    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++)
+elseif (OS_DARWIN)
+    target_link_libraries(questdb -nostdlib++ -dead_strip -lc++ _simdjson)
 else ()
     target_compile_options(questdb PRIVATE -fno-threadsafe-statics -ffunction-sections -fdata-sections)
-    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc)
-endif (WIN32)
+    target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _simdjson)
+endif ()
+
+# Define the secondary output directory
+
+set(SECONDARY_OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/questdb/bin-local/)
+
+add_custom_command(TARGET questdb POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${OUTPUT} ${SECONDARY_OUTPUT}
+        COMMENT "Copying all build outputs from ${OUTPUT} to ${SECONDARY_OUTPUT}"
+)
+
+#jemalloc
+include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)

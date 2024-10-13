@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -106,14 +106,12 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     public void testMultipleTables() throws Exception {
         assertMemoryLeak(() -> {
             // create a table
-            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 20, "2020-01-01", 1);
-            }
-            try (TableModel tm = new TableModel(configuration, "tab2", PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 20, "2020-01-01", 1);
-            }
+            TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
+            tm = new TableModel(configuration, "tab2", PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
 
             int readerAcquisitionCount = ReaderPool.ENTRY_SIZE * 2;
             long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
@@ -132,8 +130,8 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
             // all readers should be released. there should have a timestamp set >= timestamp when all readers were acquired
             assertReaderPool(readerAcquisitionCount * 2, eitherOf(
-                    recordValidator(allReadersAcquiredTime, "tab1", Numbers.LONG_NaN, 1),
-                    recordValidator(allReadersAcquiredTime, "tab2", Numbers.LONG_NaN, 1))
+                    recordValidator(allReadersAcquiredTime, "tab1", Numbers.LONG_NULL, 1),
+                    recordValidator(allReadersAcquiredTime, "tab2", Numbers.LONG_NULL, 1))
             );
         });
     }
@@ -172,10 +170,9 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String tableName = "tab1";
             // create a table
-            try (TableModel tm = new TableModel(configuration, tableName, PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 20, "2020-01-01", 1);
-            }
+            TableModel tm = new TableModel(configuration, tableName, PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
 
             // add 3 more transactions
             for (int i = 0; i < 3; i++) {
@@ -191,7 +188,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
             });
 
             // all readers should be released. they should have a timestamp set >= timestamp when all readers were acquired
-            assertReaderPool(readerAcquisitionCount, recordValidator(allReadersAcquiredTime, tableName, Numbers.LONG_NaN, 4));
+            assertReaderPool(readerAcquisitionCount, recordValidator(allReadersAcquiredTime, tableName, Numbers.LONG_NULL, 4));
         });
     }
 
@@ -199,10 +196,9 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     public void testReleaseAcquisitionTimeRecorded() throws Exception {
         assertMemoryLeak(() -> {
             // create a table
-            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 20, "2020-01-01", 1);
-            }
+            TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
 
             long startTime = MicrosecondClockImpl.INSTANCE.getTicks();
             long threadId = Thread.currentThread().getId();
@@ -215,7 +211,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
 
             // check table reader timestamp was updated when it was returned to the pool
             assertTrue(allReadersAcquiredTime > startTime);
-            assertReaderPool(1, recordValidator(allReadersAcquiredTime, "tab1", Numbers.LONG_NaN, 1));
+            assertReaderPool(1, recordValidator(allReadersAcquiredTime, "tab1", Numbers.LONG_NULL, 1));
 
             // acquire again and check timestamp made progress
             // this is to make sure time is updated on re-acquisition too
@@ -230,27 +226,25 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     @Test
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 2, "2020-01-01", 1);
-            }
+            TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 2, "2020-01-01", 1);
 
             assertSql("ts\tID\n" +
                     "2020-01-01T00:00:00.000000Z\t1\n" +
                     "2020-01-01T00:00:00.000000Z\t2\n", "select * from tab1");
 
             assertSql("table_name\towner_thread_id\tcurrent_txn\n" +
-                    "tab1\tNaN\t1\n", "select table_name, owner_thread_id, current_txn from reader_pool");
+                    "tab1\tnull\t1\n", "select table_name, owner_thread_id, current_txn from reader_pool");
         });
     }
 
     @Test
     public void testToTop() throws Exception {
         assertMemoryLeak(() -> {
-            try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-                tm.timestamp("ts").col("ID", ColumnType.INT);
-                createPopulateTable(tm, 20, "2020-01-01", 1);
-            }
+            TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+            tm.timestamp("ts").col("ID", ColumnType.INT);
+            createPopulateTable(tm, 20, "2020-01-01", 1);
 
             try (TableReader ignored = getReader("tab1");
                  RecordCursorFactory readerPoolFactory = new ReaderPoolRecordCursorFactory(sqlExecutionContext.getCairoEngine());
@@ -274,7 +268,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
             int i = 0;
             Record record = cursor.getRecord();
             while (cursor.hasNext()) {
-                CharSequence table = record.getStr(metadata.getColumnIndex("table_name"));
+                CharSequence table = record.getStrA(metadata.getColumnIndex("table_name"));
                 long owner = record.getLong(metadata.getColumnIndex("owner_thread_id"));
                 long txn = record.getLong(metadata.getColumnIndex("current_txn"));
                 long timestamp = record.getTimestamp(metadata.getColumnIndex("last_access_timestamp"));

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        currentMicros = 0;
+        setCurrentMicros(0);
         roConfig = new DefaultTestCairoConfiguration(root) {
             @Override
             public boolean getAllowTableRegistrySharedWrite() {
@@ -68,7 +68,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCannotCreateSecondWriteInsance() throws Exception {
+    public void testCannotCreateSecondWriteInstance() throws Exception {
         assertMemoryLeak(() -> {
             try (CairoEngine ignore = new CairoEngine(new DefaultTestCairoConfiguration(root) {
                 @Override
@@ -177,7 +177,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                     );
                 }
 
-                currentMicros += 1_100_000L;
+                setCurrentMicros(1_100_000L);
                 Assert.assertEquals(
                         engine.verifyTableName(tableName),
                         roEngine.verifyTableName(tableName)
@@ -187,15 +187,14 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
     }
 
     private static TableToken createTable(String tableName, CairoEngine cairoEngine) {
-        try (TableModel table1 = new TableModel(
+        TableModel table1 = new TableModel(
                 configuration,
                 tableName,
                 PartitionBy.NONE
-        )) {
-            table1.timestamp("ts")
-                    .col("x", ColumnType.INT)
-                    .col("y", ColumnType.STRING);
-            return TestUtils.create(table1, cairoEngine);
-        }
+        );
+        table1.timestamp("ts")
+                .col("x", ColumnType.INT)
+                .col("y", ColumnType.STRING);
+        return TestUtils.create(table1, cairoEngine);
     }
 }

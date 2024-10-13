@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ import io.questdb.std.str.Path;
  * Cursors returned by this class are not thread-safe.
  */
 public class BitmapIndexFwdReader extends AbstractIndexReader {
-    private final static Log LOG = LogFactory.getLog(BitmapIndexFwdReader.class);
+    private static final Log LOG = LogFactory.getLog(BitmapIndexFwdReader.class);
     private final Cursor cursor = new Cursor();
     private final NullCursor nullCursor = new NullCursor();
 
@@ -55,12 +55,12 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
             updateKeyCount();
         }
 
-        if (key == 0 && unIndexedNullCount > 0 && minValue < unIndexedNullCount) {
+        if (key == 0 && unindexedNullCount > 0 && minValue < unindexedNullCount) {
             // we need to return some nulls and the whole set of actual index values
             final NullCursor nullCursor = getNullCursor(cachedInstance);
             nullCursor.nullPos = minValue;
-            nullCursor.nullCount = unIndexedNullCount;
-            nullCursor.of(key, 0, maxValue, keyCount);
+            nullCursor.nullCount = Math.min(unindexedNullCount, maxValue + 1);
+            nullCursor.of(key, minValue, maxValue, keyCount);
             return nullCursor;
         }
 
@@ -102,27 +102,9 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
         protected long position;
         protected long valueCount;
         private long maxValue;
+        private long minValue;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
-
-        @Override
-        public IndexFrame getNext() {
-            if (position < valueCount) {
-                long cellIndex = getValueCellIndex(position);
-                long address = valueMem.addressOf(valueBlockOffset + cellIndex * Long.BYTES);
-
-                long pageSize = Math.min(valueCount - position, blockValueCountMod - cellIndex + 1);
-                position += pageSize;
-                if (position < valueCount) {
-                    // we are at edge of block right now, next value will be in next block
-                    jumpToNextValueBlock();
-                }
-
-                return indexFrame.of(address, pageSize);
-            }
-
-            return IndexFrame.NULL_INSTANCE;
-        }
 
         @Override
         public boolean hasNext() {
@@ -148,7 +130,26 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
 
         @Override
         public long next() {
-            return next;
+            return next - minValue;
+        }
+
+        @Override
+        public IndexFrame nextIndexFrame() {
+            if (position < valueCount) {
+                long cellIndex = getValueCellIndex(position);
+                long address = valueMem.addressOf(valueBlockOffset + cellIndex * Long.BYTES);
+
+                long pageSize = Math.min(valueCount - position, blockValueCountMod - cellIndex + 1);
+                position += pageSize;
+                if (position < valueCount) {
+                    // we are at edge of block right now, next value will be in next block
+                    jumpToNextValueBlock();
+                }
+
+                return indexFrame.of(address, pageSize);
+            }
+
+            return IndexFrame.NULL_INSTANCE;
         }
 
         private long getNextBlock(long currentValueBlockOffset) {
@@ -212,6 +213,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
                     seekValue(valueCount, valueBlockOffset);
                 }
 
+                this.minValue = minValue;
                 this.maxValue = maxValue;
             }
         }

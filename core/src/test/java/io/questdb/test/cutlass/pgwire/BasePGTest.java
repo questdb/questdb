@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,10 +43,11 @@ import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -63,6 +64,29 @@ import static io.questdb.std.Numbers.hexDigits;
 
 public abstract class BasePGTest extends AbstractCairoTest {
 
+    public static final int CONN_AWARE_EXTENDED_BINARY = 4;
+    public static final int CONN_AWARE_EXTENDED_CACHED_BINARY = 64;
+    public static final int CONN_AWARE_EXTENDED_CACHED_TEXT = 128;
+    public static final int CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
+    public static final int CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
+    public static final int CONN_AWARE_EXTENDED_TEXT = 8;
+    public static final int CONN_AWARE_EXTENDED_ALL = CONN_AWARE_EXTENDED_BINARY
+            | CONN_AWARE_EXTENDED_TEXT
+            | CONN_AWARE_EXTENDED_PREPARED_BINARY
+            | CONN_AWARE_EXTENDED_PREPARED_TEXT
+            | CONN_AWARE_EXTENDED_CACHED_BINARY
+            | CONN_AWARE_EXTENDED_CACHED_TEXT;
+    public static final int CONN_AWARE_SIMPLE_BINARY = 1;
+    public static final int CONN_AWARE_SIMPLE_TEXT = 2;
+    public static final int CONN_AWARE_ALL =
+            CONN_AWARE_SIMPLE_BINARY
+                    | CONN_AWARE_SIMPLE_TEXT
+                    | CONN_AWARE_EXTENDED_BINARY
+                    | CONN_AWARE_EXTENDED_TEXT
+                    | CONN_AWARE_EXTENDED_PREPARED_BINARY
+                    | CONN_AWARE_EXTENDED_PREPARED_TEXT
+                    | CONN_AWARE_EXTENDED_CACHED_BINARY
+                    | CONN_AWARE_EXTENDED_CACHED_TEXT;
     protected CopyRequestJob copyRequestJob = null;
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
     protected int forceSendFragmentationChunkSize = 1024 * 1024;
@@ -77,14 +101,13 @@ public abstract class BasePGTest extends AbstractCairoTest {
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
-            PGWireServer.PGConnectionContextFactory contextFactory,
-            CircuitBreakerRegistry registry
+            CircuitBreakerRegistry registry,
+            ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
     ) {
         if (!configuration.isEnabled()) {
             return null;
         }
-
-        return new PGWireServer(configuration, cairoEngine, workerPool, contextFactory, registry);
+        return new PGWireServer(configuration, cairoEngine, workerPool, registry, executionContextObjectFactory);
     }
 
     public static PGWireServer createPGWireServer(
@@ -98,18 +121,12 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
-
         return new PGWireServer(
                 configuration,
                 cairoEngine,
                 workerPool,
-                new PGWireServer.PGConnectionContextFactory(
-                        cairoEngine,
-                        configuration,
-                        registry,
-                        () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-                ),
-                registry
+                registry,
+                () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
         );
     }
 
@@ -259,7 +276,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
             } else {
                 Numbers.appendHexPadded(sink, i);
             }
-            sink.put(' ');
+            sink.putAscii(' ');
 
             final int v;
             if (b < 0) {
@@ -269,11 +286,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
 
             if (v < 0x10) {
-                sink.put('0');
-                sink.put(hexDigits[b]);
+                sink.putAscii('0');
+                sink.putAscii(hexDigits[b]);
             } else {
-                sink.put(hexDigits[v / 0x10]);
-                sink.put(hexDigits[v % 0x10]);
+                sink.putAscii(hexDigits[v / 0x10]);
+                sink.putAscii(hexDigits[v % 0x10]);
             }
 
             i++;
@@ -290,8 +307,110 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     protected static void assertResultSet(String message, CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
+        sink.clear();
         printToSink(sink, rs, null);
         TestUtils.assertEquals(message, expected, sink);
+    }
+
+    protected static Connection getConnection(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
+        properties.setProperty("sslmode", "disable");
+        properties.setProperty("binaryTransfer", Boolean.toString(binary));
+        properties.setProperty("preferQueryMode", mode.value);
+        if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
+            properties.setProperty("prepareThreshold", String.valueOf(prepareThreshold));
+        }
+
+        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+        // use this line to switch to local postgres
+        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
+        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
+        return DriverManager.getConnection(url, properties);
+    }
+
+    protected void assertWithPgServer(
+            Mode mode,
+            boolean binary,
+            PGJobContextTest.ConnectionAwareRunnable runnable,
+            int prepareThreshold,
+            long queryTimeout
+    ) throws Exception {
+        LOG.info().$("asserting PG Wire server [mode=").$(mode)
+                .$(", binary=").$(binary)
+                .$(", prepareThreshold=").$(prepareThreshold)
+                .I$();
+        super.setUp();
+        try {
+            assertMemoryLeak(() -> {
+                try (
+                        final PGWireServer server = createPGServer(2, queryTimeout);
+                        WorkerPool workerPool = server.getWorkerPool()
+                ) {
+                    workerPool.start(LOG);
+                    try (final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)) {
+                        runnable.run(connection, binary, mode, server.getPort());
+                    }
+                }
+            });
+        } finally {
+            super.tearDown();
+        }
+    }
+
+    protected void assertWithPgServer(long bits, long queryTimeout, PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
+        if ((bits & BasePGTest.CONN_AWARE_SIMPLE_BINARY) == BasePGTest.CONN_AWARE_SIMPLE_BINARY) {
+            LOG.info().$("Mode: asserting simple binary").$();
+            assertWithPgServer(Mode.SIMPLE, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.SIMPLE, true, runnable, -1, queryTimeout);
+        }
+
+        if ((bits & BasePGTest.CONN_AWARE_SIMPLE_TEXT) == BasePGTest.CONN_AWARE_SIMPLE_TEXT) {
+            LOG.info().$("Mode: asserting simple text").$();
+            assertWithPgServer(Mode.SIMPLE, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.SIMPLE, false, runnable, -1, queryTimeout);
+        }
+
+        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_BINARY) {
+            LOG.info().$("Mode: asserting extended binary").$();
+            assertWithPgServer(Mode.EXTENDED, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED, true, runnable, -1, queryTimeout);
+        }
+
+        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_TEXT) {
+            LOG.info().$("Mode: asserting extended text").$();
+            assertWithPgServer(Mode.EXTENDED, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED, false, runnable, -1, queryTimeout);
+        }
+
+        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) {
+            LOG.info().$("Mode: asserting extended prepared binary").$();
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -1, queryTimeout);
+        }
+
+        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_PREPARED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_PREPARED_TEXT) {
+            LOG.info().$("Mode: asserting extended prepared text").$();
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -1, queryTimeout);
+        }
+
+        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_CACHED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_CACHED_BINARY) {
+            LOG.info().$("Mode: asserting extended cached binary").$();
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -1, queryTimeout);
+        }
+
+        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_CACHED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_CACHED_TEXT) {
+            LOG.info().$("Mode: asserting extended cached text").$();
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -1, queryTimeout);
+        }
+    }
+
+    protected void assertWithPgServer(long bits, PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
+        assertWithPgServer(bits, Long.MAX_VALUE, runnable);
     }
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
@@ -408,24 +527,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
         return DriverManager.getConnection(url, properties);
     }
 
-    protected Connection getConnection(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
-        Properties properties = new Properties();
-        properties.setProperty("user", "admin");
-        properties.setProperty("password", "quest");
-        properties.setProperty("sslmode", "disable");
-        properties.setProperty("binaryTransfer", Boolean.toString(binary));
-        properties.setProperty("preferQueryMode", mode.value);
-        if (prepareThreshold > -2) { // -1 has special meaning in pg jdbc ...
-            properties.setProperty("prepareThreshold", String.valueOf(prepareThreshold));
-        }
-
-        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-        // use this line to switch to local postgres
-        // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
-        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
-        return DriverManager.getConnection(url, properties);
-    }
-
     protected Connection getConnectionWitSslInitRequest(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
@@ -447,7 +548,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected NetworkFacade getFragmentedSendFacade() {
         return new NetworkFacadeImpl() {
             @Override
-            public int sendRaw(int fd, long buffer, int bufferLen) {
+            public int sendRaw(long fd, long buffer, int bufferLen) {
                 int total = 0;
                 for (int i = 0; i < bufferLen; i++) {
                     int n = super.sendRaw(fd, buffer + i, 1);

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,10 +32,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public final class NullConstant implements ConstantFunction, ScalarFunction {
 
@@ -123,18 +125,23 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
+    public @NotNull Interval getInterval(Record rec) {
+        return Interval.NULL;
+    }
+
+    @Override
     public long getLong(Record rec) {
         return LongConstant.NULL.getLong(null);
     }
 
     @Override
     public long getLong128Hi(Record rec) {
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     @Override
     public long getLong128Lo(Record rec) {
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     @Override
@@ -168,22 +175,12 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public CharSequence getStr(Record rec) {
-        return StrConstant.NULL.getStr(null);
+    public CharSequence getStrA(Record rec) {
+        return StrConstant.NULL.getStrA(null);
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink sink) {
-        // intentionally left empty
-    }
-
-    @Override
-    public CharSequence getStr(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
+    public CharSequence getStrA(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 
@@ -228,12 +225,22 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     }
 
     @Override
-    public boolean isNullConstant() {
-        return true;
+    public Utf8Sequence getVarcharA(Record rec) {
+        return null;
     }
 
     @Override
-    public boolean isRuntimeConstant() {
+    public Utf8Sequence getVarcharB(Record rec) {
+        return null;
+    }
+
+    @Override
+    public int getVarcharSize(Record rec) {
+        return VarcharConstant.NULL.getVarcharSize(null);
+    }
+
+    @Override
+    public boolean isNullConstant() {
         return true;
     }
 

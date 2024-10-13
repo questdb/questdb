@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -54,29 +54,28 @@ public class CastDoubleToLong256FunctionFactory implements FunctionFactory {
         @Override
         public void getLong256(Record rec, CharSink<?> sink) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
-                return;
+            if (Numbers.isFinite(value)) {
+                Numbers.appendLong256((long) value, 0, 0, 0, sink);
             }
-            Numbers.appendLong256((long) value, 0, 0, 0, sink);
         }
 
         @Override
         public Long256 getLong256A(Record rec) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
+            if (Numbers.isNull(value)) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256a.setAll((long) value, 0, 0, 0);
+            long256a.setLow((long) value);
             return long256a;
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
             final double value = arg.getDouble(rec);
-            if (Double.isNaN(value)) {
+            if (Numbers.isNull(value)) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256b.setAll((long) value, 0, 0, 0);
+            long256b.setLow((long) value);
             return long256b;
         }
     }

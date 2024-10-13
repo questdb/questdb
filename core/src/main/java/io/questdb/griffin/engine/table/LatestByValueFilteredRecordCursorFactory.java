@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -33,24 +34,25 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
-
-    private final DataFrameRecordCursor cursor;
+public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+    private final PageFrameRecordCursor cursor;
     private final Function filter;
 
     public LatestByValueFilteredRecordCursorFactory(
-            RecordMetadata metadata,
-            DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             int symbolKey,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         if (filter == null) {
-            this.cursor = new LatestByValueRecordCursor(columnIndex, symbolKey, columnIndexes);
+            this.cursor = new LatestByValueRecordCursor(configuration, metadata, columnIndex, symbolKey);
         } else {
-            this.cursor = new LatestByValueFilteredRecordCursor(columnIndex, symbolKey, filter, columnIndexes);
+            this.cursor = new LatestByValueFilteredRecordCursor(configuration, metadata, columnIndex, symbolKey, filter);
         }
         this.filter = filter;
     }
@@ -64,7 +66,7 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
     public void toPlan(PlanSink sink) {
         sink.type("LatestByValueFiltered");
         sink.child(cursor);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override
@@ -74,11 +76,11 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractDataFrameR
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        cursor.of(dataFrameCursor, executionContext);
+        cursor.of(pageFrameCursor, executionContext);
         return cursor;
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,10 +29,11 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
@@ -71,7 +72,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         Misc.free(indexReader);
         Misc.free(charMem);
         this.cache.clear();
-        int fd = this.offsetMem.getFd();
+        long fd = this.offsetMem.getFd();
         Misc.free(offsetMem);
         Misc.free(path);
         LOG.debug().$("closed [fd=").$(fd).$(']').$();
@@ -98,6 +99,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     @Override
+    public MemoryR getSymbolOffsetsColumn() {
+        return offsetMem;
+    }
+
+    @Override
+    public MemoryR getSymbolValuesColumn() {
+        return charMem;
+    }
+
+    @Override
     public boolean isCached() {
         return cached;
     }
@@ -114,7 +125,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             final RowCursor cursor = indexReader.getCursor(true, hash, 0, maxOffset - Long.BYTES);
             while (cursor.hasNext()) {
                 final long offsetOffset = cursor.next();
-                if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset)))) {
+                if (Chars.equals(value, charMem.getStrA(offsetMem.getLong(offsetOffset)))) {
                     return SymbolMapWriter.offsetToKey(offsetOffset);
                 }
             }
@@ -144,14 +155,13 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         try {
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
-            offsetFileName(path.trimTo(plen), columnName, columnNameTxn);
-            if (!ff.exists(path)) {
+            if (!ff.exists(offsetFileName(path.trimTo(plen), columnName, columnNameTxn))) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
             }
 
             // is there enough length in "offset" file for "header"?
-            long len = ff.length(path);
+            long len = ff.length(path.$());
             if (len < SymbolMapWriter.HEADER_SIZE) {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
@@ -161,7 +171,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // we left off. Where we left off is stored externally to symbol map
             final long offsetMemSize = SymbolMapWriter.keyToOffset(symbolCount) + Long.BYTES;
             LOG.debug().$("offsetMem.of [columnName=").$(path).$(",offsetMemSize=").$(offsetMemSize).I$();
-            this.offsetMem.of(ff, path, offsetMemSize, offsetMemSize, MemoryTag.MMAP_INDEX_READER);
+            this.offsetMem.of(ff, path.$(), offsetMemSize, offsetMemSize, MemoryTag.MMAP_INDEX_READER);
             this.symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
             assert this.symbolCapacity > 0;
             this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
@@ -247,17 +257,17 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     }
 
     private CharSequence uncachedValue(int key) {
-        return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        return charMem.getStrA(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     private CharSequence uncachedValue2(int key) {
-        return charMem.getStr2(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
+        return charMem.getStrB(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     private class SymbolTableView implements StaticSymbolTable {
-        private final MemoryCR.CharSequenceView csview = new MemoryCR.CharSequenceView();
-        private final MemoryCR.CharSequenceView csview2 = new MemoryCR.CharSequenceView();
-        private final MemoryCR.CharSequenceView csviewInternal = new MemoryCR.CharSequenceView();
+        private final DirectString csviewA = new DirectString();
+        private final DirectString csviewB = new DirectString();
+        private final DirectString csviewInternal = new DirectString();
         private RowCursor rowCursor;
 
         @Override
@@ -274,6 +284,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         public int keyOf(CharSequence value) {
             if (value != null) {
                 int hash = Hash.boundedHash(value, maxHash);
+                // Here we need absolute row indexes within the partition while the cursor gives us relative ones.
+                // But since the minimum row index (minValue) is 0, they match.
                 rowCursor = indexReader.initCursor(rowCursor, hash, 0, maxOffset - Long.BYTES);
                 while (rowCursor.hasNext()) {
                     final long offsetOffset = rowCursor.next();
@@ -303,11 +315,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         }
 
         private CharSequence uncachedValue(int key) {
-            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csview);
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csviewA);
         }
 
         private CharSequence uncachedValue2(int key) {
-            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csview2);
+            return charMem.getStr(offsetMem.getLong(SymbolMapWriter.keyToOffset(key)), csviewB);
         }
     }
 }

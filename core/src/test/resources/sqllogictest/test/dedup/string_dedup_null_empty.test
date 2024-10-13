@@ -1,0 +1,98 @@
+# description: Test dedup cases with string column type
+# group: [dedup]
+
+control iso_timestamp on
+
+# Absolute path
+statement ok
+create table x (x int, ts timestamp)
+timestamp(ts) partition by DAY WAL;
+
+
+# Insert some data
+statement ok
+insert into x(x, ts)
+values
+(01, '2020-01-01T00:00:00.000Z'),
+(-1, '2020-01-01T00:00:00.000Z'),
+(10, '2020-01-03T00:00:00.000Z');
+
+
+# add column
+statement ok
+alter table x add column s string;
+
+# enable dedup
+statement ok
+alter table x dedup enable upsert keys(ts, s);
+
+
+# Insert data with dedup
+statement ok
+insert into x(s, x, ts)
+values
+('1234¢6؆89©', 01, '2020-01-01T00:00:00.000Z'),
+(NULL,         -1, '2020-01-01T00:00:00.000Z'),
+('',           1,  '2020-01-01T00:00:00.000Z'),
+('bc',         10, '2020-01-03T00:00:00.000Z'),
+('b®',          2,  '2020-01-01T00:10:00.000Z'),
+('1234¢6؆89©', 3,  '2020-01-01T00:00:00.000Z'),
+('bc',         20, '2020-01-03T00:00:00.000Z');
+
+
+# Insert partially matched data
+statement ok
+insert into x(s, x, ts)
+values ('1234¢6؆89©', 31, '2020-01-01T00:00:00.000Z'),
+       ('bc',         32, '2020-01-04T00:00:00.000Z'),
+       ('b®',          33, '2020-01-01T00:10:00.000Z'),
+       ('1234¢6؆89©', 34, '2020-01-01T00:00:00.000Z'),
+       ('bc',         35, '2020-01-03T00:00:00.000Z');
+
+
+# Add another string column
+statement ok
+alter table x add column s2 string;
+
+# enable dedup on both string columns
+statement ok
+alter table x dedup enable upsert keys(ts, s, s2);
+
+# Insert non-matching data
+statement ok
+insert into x(s, s2, x, ts)
+values ('1234¢6؆89©', '', 51, '2020-01-01T00:10:00.000Z'),
+       ('',           '', 0,  '2020-01-01T00:10:00.000Z'),
+       ('',           '', 53, '2020-01-01T00:10:00.000Z'),
+       (NULL,         '', 55, '2020-01-01T00:10:00.000Z'),
+       ('',         NULL, 56, '2020-01-01T00:10:00.000Z');
+
+
+# Insert partially matched data
+statement ok
+insert into x(s, s2, x, ts)
+values ('1234¢6؆89©', NULL, 151, '2020-01-01T00:10:00.000Z'),
+       (NULL,         '',   100,  '2020-01-01T00:10:00.000Z'),
+       ('',           '', 153, '2020-01-01T00:10:00.000Z');
+
+# wait data inserted
+statement ok
+select wait_wal_table('x');
+
+# check dedup data
+query TIT
+select s, s2, x, ts from x order by ts, s, s2, x;
+----
+NULL        NULL    -1  2020-01-01T00:00:00.000000Z
+NULL        NULL    -1  2020-01-01T00:00:00.000000Z
+(empty)     NULL     1  2020-01-01T00:00:00.000000Z
+1234¢6؆89©  NULL    34  2020-01-01T00:00:00.000000Z
+NULL        (empty) 100  2020-01-01T00:10:00.000000Z
+(empty)     NULL    56 2020-01-01T00:10:00.000000Z
+(empty)     (empty) 153  2020-01-01T00:10:00.000000Z
+1234¢6؆89©  NULL    151  2020-01-01T00:10:00.000000Z
+1234¢6؆89©  (empty) 51  2020-01-01T00:10:00.000000Z
+b®          NULL    33  2020-01-01T00:10:00.000000Z
+NULL        NULL    10	2020-01-03T00:00:00.000000Z
+bc          NULL    35  2020-01-03T00:00:00.000000Z
+bc          NULL    32  2020-01-04T00:00:00.000000Z

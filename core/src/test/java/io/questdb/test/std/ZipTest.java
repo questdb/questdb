@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -60,9 +60,9 @@ public class ZipTest {
 
                     long pIn = 0;
                     long pOut = 0;
-                    int fdIn = Files.openRO(path.of(expected.getAbsolutePath()).$());
+                    long fdIn = Files.openRO(path.of(expected.getAbsolutePath()).$());
                     try {
-                        int fdOut = Files.openRW(path.of(outFile.getAbsolutePath()).$());
+                        long fdOut = Files.openRW(path.of(outFile.getAbsolutePath()).$());
                         try {
                             // header
                             Files.write(fdOut, Zip.gzipHeader, Zip.gzipHeaderLen, pOut);

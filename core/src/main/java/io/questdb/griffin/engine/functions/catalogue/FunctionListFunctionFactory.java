@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 public class FunctionListFunctionFactory implements FunctionFactory {
 
@@ -206,7 +207,8 @@ public class FunctionListFunctionFactory implements FunctionFactory {
                 }
 
                 @Override
-                public CharSequence getStr(int col) {
+                @NotNull
+                public CharSequence getStrA(int col) {
                     if (col == NAME_COLUMN) {
                         return funcName;
                     }
@@ -225,12 +227,12 @@ public class FunctionListFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrB(int col) {
-                    return getStr(col);
+                    return getStrA(col);
                 }
 
                 @Override
                 public int getStrLen(int col) {
-                    return getStr(col).length();
+                    return getStrA(col).length();
                 }
 
                 private void init(CharSequence funcName, FunctionFactory factory) {

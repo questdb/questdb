@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -72,7 +72,9 @@ public final class Vect {
 
     public static native long countLong(long pLong, long count);
 
-    public static native long dedupMergeVarColumnLen(long mergeIndexAddr, long mergeIndexSize, long srcDataFixAddr, long srcOooFixAddr);
+    public static native long dedupMergeStrBinColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
+
+    public static native long dedupMergeVarcharColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
 
     public static native long dedupSortedTimestampIndex(
             long inIndexAddr,
@@ -251,6 +253,18 @@ public final class Vect {
             long dstVarOffset
     );
 
+    public static native void oooMergeCopyVarcharColumn(
+            long mergeIndexAddr,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstVarAddr,
+            long dstVarOffset
+    );
+
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
     public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy);
@@ -274,7 +288,11 @@ public final class Vect {
 
     public static native void setVarColumnRefs64Bit(long address, long initialOffset, long count);
 
-    public static native void shiftCopyFixedSizeColumnData(long shift, long src, long srcLo, long srcHi, long dstAddr);
+    public static native void setVarcharColumnNullRefs(long address, long initialOffset, long count);
+
+    public static native void shiftCopyFixedSizeColumnData(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr);
+
+    public static native void shiftCopyVarcharColumnAux(long shift, long srcAddr, long srcLo, long srcHi, long dstAddr);
 
     public static native long shiftTimestampIndex(long pSrc, long count, long pDest);
 
@@ -302,6 +320,15 @@ public final class Vect {
             long tgtIndxAdd
     );
 
+    public static native long sortVarcharColumn(
+            long mergedTimestampsAddr,
+            long valueCount,
+            long srcDataAddr,
+            long srcAuxAddr,
+            long tgtDataAddr,
+            long tgtAuxAdd
+    );
+
     public static native double sumDouble(long pDouble, long count);
 
     public static native double sumDoubleKahan(long pDouble, long count);
@@ -319,7 +346,7 @@ public final class Vect {
     private static native void memcpy0(long src, long dst, long len);
 
     private static boolean memeq0(long a, long b, long len) {
-        int i = 0;
+        long i = 0;
         for (; i + 7 < len; i += 8) {
             if (Unsafe.getUnsafe().getLong(a + i) != Unsafe.getUnsafe().getLong(b + i)) {
                 return false;

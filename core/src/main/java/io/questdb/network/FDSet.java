@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.network;
 import io.questdb.std.*;
 
 public class FDSet implements QuietCloseable, Mutable {
+    private final IntLongHashMap longFds = new IntLongHashMap();
     private long _wptr;
     private long address;
     private long lim;
@@ -40,13 +41,15 @@ public class FDSet implements QuietCloseable, Mutable {
         this.lim = address + l;
     }
 
-    public void add(int fd) {
+    public void add(long fd) {
         if (_wptr == lim) {
             resize();
         }
         long p = _wptr;
-        Unsafe.getUnsafe().putLong(p, fd);
+        int osFd = Files.toOsFd(fd);
+        Unsafe.getUnsafe().putLong(p, osFd);
         _wptr = p + 8;
+        longFds.put(osFd, fd);
     }
 
     public long address() {
@@ -56,17 +59,20 @@ public class FDSet implements QuietCloseable, Mutable {
     @Override
     public void clear() {
         _wptr = address + SelectAccessor.ARRAY_OFFSET;
+        longFds.clear();
     }
 
     @Override
     public void close() {
         if (address != 0) {
             address = Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+            longFds.clear();
         }
     }
 
     public long get(int index) {
-        return Unsafe.getUnsafe().getLong(address + SelectAccessor.ARRAY_OFFSET + index * 8L);
+        int fd = (int) Unsafe.getUnsafe().getLong(address + SelectAccessor.ARRAY_OFFSET + index * 8L);
+        return longFds.get(fd);
     }
 
     public int getCount() {
@@ -78,14 +84,11 @@ public class FDSet implements QuietCloseable, Mutable {
     }
 
     private void resize() {
-        int sz = size * 2;
-        int l = SelectAccessor.ARRAY_OFFSET + 8 * sz;
-        long _addr = Unsafe.malloc(l, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-        Vect.memcpy(_addr, address, lim - address);
-        Unsafe.free(address, lim - address, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-        lim = _addr + l;
-        size = sz;
-        _wptr = _addr + (_wptr - address);
-        address = _addr;
+        int l = SelectAccessor.ARRAY_OFFSET + 8 * size * 2;
+        long offset = _wptr - address;
+        address = Unsafe.realloc(address, lim - address, l, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        lim = address + l;
+        size = size * 2;
+        _wptr = address + offset;
     }
 }

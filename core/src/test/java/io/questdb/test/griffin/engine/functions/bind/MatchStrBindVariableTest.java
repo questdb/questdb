@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,9 +27,7 @@ package io.questdb.test.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class MatchStrBindVariableTest extends AbstractCairoTest {
@@ -40,7 +38,7 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("select x from long_sequence(1) where '1GQO2' ~ $1")) {
                 bindVariableService.setStr(0, "GQO");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
                 TestUtils.assertEquals("x\n" +
@@ -48,19 +46,17 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
 
                 bindVariableService.setStr(0, "QTQ");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
                 TestUtils.assertEquals("x\n", sink);
 
                 bindVariableService.setStr(0, null);
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(47, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
                 }
+
+                TestUtils.assertEquals("x\n", sink);
             }
         });
     }
@@ -83,7 +79,7 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select("x where s ~ $1")) {
                 bindVariableService.setStr(0, "GQO");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
                 TestUtils.assertEquals("s\n" +
@@ -91,20 +87,18 @@ public class MatchStrBindVariableTest extends AbstractCairoTest {
 
                 bindVariableService.setStr(0, "QTQ");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
                 TestUtils.assertEquals("s\n" +
                         "ZWEVQTQO\n", sink);
 
                 bindVariableService.setStr(0, null);
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(12, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
                 }
+
+                TestUtils.assertEquals("s\n", sink);
             }
         });
     }

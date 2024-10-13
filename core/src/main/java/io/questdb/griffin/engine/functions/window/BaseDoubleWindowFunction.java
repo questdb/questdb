@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 
-abstract class BaseDoubleWindowFunction extends DoubleFunction implements WindowFunction, ScalarFunction {
+public abstract class BaseDoubleWindowFunction extends DoubleFunction implements WindowFunction, ScalarFunction {
     protected final Function arg;
     protected int columnIndex;
 
@@ -48,6 +48,11 @@ abstract class BaseDoubleWindowFunction extends DoubleFunction implements Window
     @Override
     public void close() {
         arg.close();
+    }
+
+    @Override
+    public void cursorClosed() {
+        arg.cursorClosed();
     }
 
     @Override

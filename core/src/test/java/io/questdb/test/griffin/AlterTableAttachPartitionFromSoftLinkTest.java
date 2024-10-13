@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -112,7 +112,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             );
 
                             // verify cold storage folder exists
-                            Assert.assertTrue(Files.exists(other));
+                            Assert.assertTrue(Files.exists(other.$()));
                             AtomicInteger fileCount = new AtomicInteger();
                             ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                             Assert.assertTrue(fileCount.get() > 0);
@@ -123,7 +123,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     .concat(readOnlyPartitionName)
                                     .put(configuration.getAttachPartitionSuffix())
                                     .$();
-                            Assert.assertFalse(ff.exists(other));
+                            Assert.assertFalse(ff.exists(other.$()));
 
                             // insert a row at the end of the partition, the only row, which will create the partition
                             // at this point there is no longer information as to weather it was read-only in the past
@@ -192,7 +192,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             );
 
                             // verify cold storage folder exists
-                            Assert.assertTrue(Files.exists(other));
+                            Assert.assertTrue(Files.exists(other.$()));
                             AtomicInteger fileCount = new AtomicInteger();
                             ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                             Assert.assertTrue(fileCount.get() > 0);
@@ -201,7 +201,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     .concat(readOnlyPartitionName)
                                     .put(".2")
                                     .$();
-                            Assert.assertFalse(ff.exists(path));
+                            Assert.assertFalse(ff.exists(path.$()));
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -227,7 +227,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                         .concat(readOnlyPartitionName)
                                         .put(".2")
                                         .$();
-                                Assert.assertTrue(Files.exists(path));
+                                Assert.assertTrue(Files.exists(path.$()));
                             }
                             engine.releaseAllReaders();
                             assertSql("min\tmax\tcount\n" +
@@ -237,11 +237,11 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             runO3PartitionPurgeJob();
 
                             // verify cold storage folder still exists
-                            Assert.assertTrue(Files.exists(other));
+                            Assert.assertTrue(Files.exists(other.$()));
                             AtomicInteger fileCount = new AtomicInteger();
                             ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                             Assert.assertTrue(fileCount.get() > 0);
-                            Assert.assertFalse(Files.exists(path));
+                            Assert.assertFalse(Files.exists(path.$()));
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -422,7 +422,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                     "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                     "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
-                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d"
+                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
 
             String lastReadOnlyPartitionName = "2022-10-20";
@@ -464,7 +464,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                     "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                     "2022-10-20T00:01:25.799800Z\t2022-10-21T00:00:42.399900Z\t2000\n" +
-                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d"
+                    "2022-10-21T00:01:25.599800Z\t2022-10-21T23:59:59.000000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
 
             // drop active partition
@@ -473,7 +473,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                     "2022-10-17T00:00:43.199900Z\t2022-10-18T00:00:42.999900Z\t2001\n" +
                     "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                     "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
-                    "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d"
+                    "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
 
             // the previously read-only partition becomes now the active partition, and cannot be written to
@@ -541,7 +541,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             "2022-10-18T00:01:26.199800Z\t2022-10-19T00:00:42.799900Z\t2000\n" +
                             "2022-10-19T00:01:25.999800Z\t2022-10-20T00:00:42.599900Z\t2000\n" +
                             "2022-10-20T00:01:25.799800Z\t2022-10-20T23:59:59.200000Z\t1999\n" +
-                            "2022-10-21T20:00:00.202312Z\t2022-10-21T20:00:00.202312Z\t1\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d"
+                            "2022-10-21T20:00:00.202312Z\t2022-10-21T20:00:00.202312Z\t1\n", "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO FIRST OBSERVATION"
             );
         });
     }
@@ -710,18 +710,17 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             String otherLocation = "CON-CHIN-CHINA";
             int txn = 0;
             TableToken tableToken;
-            try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-                tableToken = createPopulateTable(
-                        1,
-                        src.col("l", ColumnType.LONG)
-                                .col("i", ColumnType.INT)
-                                .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                                .timestamp("ts"),
-                        10000,
-                        partitionName[0],
-                        partitionCount
-                );
-            }
+            TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY);
+            tableToken = createPopulateTable(
+                    1,
+                    src.col("l", ColumnType.LONG)
+                            .col("i", ColumnType.INT)
+                            .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                            .timestamp("ts"),
+                    10000,
+                    partitionName[0],
+                    partitionCount
+            );
             txn++;
             assertSql("min\tmax\tcount\n" +
                     expectedMinTimestamp + "\t" + expectedMaxTimestamp + "\t10000\n", "SELECT min(ts), max(ts), count() FROM " + tableName
@@ -784,7 +783,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             AtomicInteger fileCount = new AtomicInteger();
             for (int i = 0; i < partitionCount - 2; i++) {
                 other.trimTo(otherLen).concat(partitionName[i]).put(TableUtils.DETACHED_DIR_MARKER).$();
-                Assert.assertTrue(Files.exists(other));
+                Assert.assertTrue(Files.exists(other.$()));
                 fileCount.set(0);
                 ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                 Assert.assertTrue(fileCount.get() > 0);
@@ -793,7 +792,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             // verify all partitions but last one are gone
             for (int i = 0; i < partitionCount - 1; i++) {
                 path.trimTo(pathLen).concat(partitionName[i]).$();
-                Assert.assertFalse(Files.exists(path));
+                Assert.assertFalse(Files.exists(path.$()));
             }
         });
     }
@@ -933,7 +932,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                             );
 
                             // verify cold storage folder exists
-                            Assert.assertTrue(Files.exists(other));
+                            Assert.assertTrue(Files.exists(other.$()));
                             AtomicInteger fileCount = new AtomicInteger();
                             ff.walk(other, (file, type) -> fileCount.incrementAndGet());
                             Assert.assertTrue(fileCount.get() > 0);
@@ -942,7 +941,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                                     .concat(readOnlyPartitionName)
                                     .put(".2")
                                     .$();
-                            Assert.assertFalse(ff.exists(path));
+                            Assert.assertFalse(ff.exists(path.$()));
                         } catch (SqlException ex) {
                             Assert.fail(ex.getMessage());
                         }
@@ -1068,7 +1067,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     private static void runO3PartitionPurgeJob() {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
-        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine.getMessageBus(), engine.getSnapshotAgent(), 1)) {
+        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
             while (purgeJob.run(0)) {
                 Os.pause();
             }
@@ -1077,7 +1076,7 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
 
     private void assertUpdateFailsBecausePartitionIsReadOnly(String updateSql, String tableName, String partitionName) {
         try {
-            assertException(updateSql);
+            assertExceptionNoLeakCheck(updateSql);
         } catch (CairoException e) {
             TestUtils.assertContains(
                     "cannot update read-only partition [table=" + tableName + ", partitionTimestamp=" + partitionName + "T00:00:00.000Z]",
@@ -1157,23 +1156,22 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 .concat(partitionName)
                 .put(configuration.getAttachPartitionSuffix())
                 .$();
-        Assert.assertEquals(0, ff.softLink(other, path));
+        Assert.assertEquals(0, ff.softLink(other.$(), path.$()));
     }
 
     private TableToken createPopulateTable(String tableName, int partitionCount) throws Exception {
         TableToken tableToken;
-        try (TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY)) {
-            tableToken = createPopulateTable(
-                    1,
-                    src.col("l", ColumnType.LONG)
-                            .col("i", ColumnType.INT)
-                            .col("s", ColumnType.SYMBOL).indexed(true, 32)
-                            .timestamp("ts"),
-                    10000,
-                    "2022-10-17",
-                    partitionCount
-            );
-        }
+        TableModel src = new TableModel(configuration, tableName, PartitionBy.DAY);
+        tableToken = createPopulateTable(
+                1,
+                src.col("l", ColumnType.LONG)
+                        .col("i", ColumnType.INT)
+                        .col("s", ColumnType.SYMBOL).indexed(true, 32)
+                        .timestamp("ts"),
+                10000,
+                "2022-10-17",
+                partitionCount
+        );
         return tableToken;
     }
 

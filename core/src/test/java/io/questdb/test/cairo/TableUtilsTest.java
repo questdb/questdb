@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -130,7 +130,7 @@ public class TableUtilsTest extends AbstractTest {
             Assert.fail();
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "could not create soft link [src=" + path.toString() + ", tableDir=" + tableName + ']');
-            Assert.assertFalse(Files.exists(path));
+            Assert.assertFalse(Files.exists(path.$()));
         } finally {
             dbRoot.delete();
             volumeRoot.delete();
@@ -219,12 +219,11 @@ public class TableUtilsTest extends AbstractTest {
 
     @Test
     public void testNullValue() {
-        long mem1 = Unsafe.getUnsafe().allocateMemory(32);
-        long mem2 = Unsafe.getUnsafe().allocateMemory(32);
+        long mem1 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
+        long mem2 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int columnType = 0; columnType < ColumnType.NULL; columnType++) {
-
-                if (!ColumnType.isVariableLength(columnType)) {
+                if (!ColumnType.isVarSize(columnType)) {
                     int size = ColumnType.sizeOf(columnType);
                     if (size > 0) {
                         TableUtils.setNull(columnType, mem2, 1);
@@ -238,14 +237,15 @@ public class TableUtilsTest extends AbstractTest {
                             Assert.assertEquals(
                                     type,
                                     Unsafe.getUnsafe().getByte(mem1 + b),
-                                    Unsafe.getUnsafe().getByte(mem1 + b));
+                                    Unsafe.getUnsafe().getByte(mem1 + b)
+                            );
                         }
                     }
                 }
             }
         } finally {
-            Unsafe.getUnsafe().freeMemory(mem1);
-            Unsafe.getUnsafe().freeMemory(mem2);
+            Unsafe.free(mem1, 32, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(mem2, 32, MemoryTag.NATIVE_DEFAULT);
         }
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ package io.questdb.cairo.sql.async;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.PageAddressCacheRecord;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.log.Log;
@@ -51,7 +51,7 @@ public class PageFrameReduceJob implements Job, Closeable {
     private final int shardCount;
     private final int[] shards;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private PageAddressCacheRecord record;
+    private PageFrameMemoryRecord record;
 
     // Each thread should be assigned own instance of this job, making the code effectively
     // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
@@ -81,7 +81,7 @@ public class PageFrameReduceJob implements Job, Closeable {
             shards[randomIndex] = tmp;
         }
 
-        this.record = new PageAddressCacheRecord();
+        this.record = new PageFrameMemoryRecord();
         if (sqlExecutionCircuitBreakerConfiguration != null) {
             this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_CB1);
         } else {
@@ -105,7 +105,7 @@ public class PageFrameReduceJob implements Job, Closeable {
     public static boolean consumeQueue(
             RingQueue<PageFrameReduceTask> queue,
             MCSequence subSeq,
-            PageAddressCacheRecord record,
+            PageFrameMemoryRecord record,
             SqlExecutionCircuitBreaker circuitBreaker,
             PageFrameSequence<?> stealingFrameSequence
     ) {
@@ -120,7 +120,7 @@ public class PageFrameReduceJob implements Job, Closeable {
     }
 
     public static void reduce(
-            PageAddressCacheRecord record,
+            PageFrameMemoryRecord record,
             SqlExecutionCircuitBreaker circuitBreaker,
             PageFrameReduceTask task,
             PageFrameSequence<?> frameSequence,
@@ -155,8 +155,7 @@ public class PageFrameReduceJob implements Job, Closeable {
                     messageBus.getPageFrameReduceSubSeq(shard),
                     record,
                     circuitBreaker,
-                    null // this is correct worker processing tasks rather than PageFrameSequence
-                    // helping to steal work
+                    null // this is correct worker processing tasks rather than PageFrameSequence helping to steal work
             ) || useful;
         }
         return useful;
@@ -166,7 +165,7 @@ public class PageFrameReduceJob implements Job, Closeable {
             int workerId,
             RingQueue<PageFrameReduceTask> queue,
             MCSequence subSeq,
-            PageAddressCacheRecord record,
+            PageFrameMemoryRecord record,
             SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
     ) {
@@ -190,25 +189,25 @@ public class PageFrameReduceJob implements Job, Closeable {
                         reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
                     }
                 } catch (Throwable th) {
+                    LOG.error()
+                            .$("reduce error [error=").$(th)
+                            .$(", id=").$(frameSequence.getId())
+                            .$(", taskType=").$(task.getType())
+                            .$(", frameIndex=").$(task.getFrameIndex())
+                            .$(", frameCount=").$(frameSequence.getFrameCount())
+                            .I$();
                     int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
                     if (th instanceof CairoException) {
                         CairoException e = (CairoException) th;
                         interruptReason = e.getInterruptionReason();
-                        if (e.isCancellation()) {
-                            LOG.error().$(e.getFlyweightMessage()).$();
-                        } else {
-                            LOG.error().$("reduce error [ex=").$(th).I$();
-                        }
-                    } else {
-                        LOG.error().$("reduce error [ex=").$(th).I$();
                     }
                     task.setErrorMsg(th);
                     frameSequence.cancel(interruptReason);
                 } finally {
                     subSeq.done(cursor);
-                    // Reduce counter has to be incremented only when we make
+                    // Reduced counter has to be incremented only when we make
                     // sure that the task is available for consumers.
-                    frameSequence.getReduceCounter().incrementAndGet();
+                    frameSequence.getReduceFinishedCounter().incrementAndGet();
                 }
                 return false;
             } else if (cursor == -1) {
@@ -222,7 +221,7 @@ public class PageFrameReduceJob implements Job, Closeable {
 
     private static void reduce(
             int workerId,
-            PageAddressCacheRecord record,
+            PageFrameMemoryRecord record,
             SqlExecutionCircuitBreaker circuitBreaker,
             PageFrameReduceTask task,
             PageFrameSequence<?> frameSequence,
@@ -236,10 +235,10 @@ public class PageFrameReduceJob implements Job, Closeable {
                 circuitBreaker.getState(frameSequence.getStartTime(), frameSequence.getCircuitBreakerFd());
 
         if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
-            record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
-            record.setFrameIndex(task.getFrameIndex());
+            record.of(frameSequence.getSymbolTableSource());
             assert !frameSequence.done;
             circuitBreaker.setFd(frameSequence.getCircuitBreakerFd());
+            frameSequence.getReduceStartedCounter().incrementAndGet();
             frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
         } else {
             frameSequence.cancel(cbState);

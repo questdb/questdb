@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,12 +48,17 @@ public class TextDelimiterScanner implements Closeable {
     private CharSequence tableName;
 
     public TextDelimiterScanner(TextConfiguration configuration) {
-        this.lineCountLimit = configuration.getTextAnalysisMaxLines();
-        this.matrixRowSize = 256 * Integer.BYTES;
-        this.matrixSize = matrixRowSize * lineCountLimit;
-        this.matrix = Unsafe.malloc(this.matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
-        this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();
-        this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();
+        try {
+            this.lineCountLimit = configuration.getTextAnalysisMaxLines();
+            this.matrixRowSize = 256 * Integer.BYTES;
+            this.matrixSize = matrixRowSize * lineCountLimit;
+            this.matrix = Unsafe.malloc(this.matrixSize, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+            this.maxRequiredDelimiterStdDev = configuration.getMaxRequiredDelimiterStdDev();
+            this.maxRequiredLineLengthStdDev = configuration.getMaxRequiredLineLengthStdDev();
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override

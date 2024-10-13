@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ public class WriterPool extends AbstractPool {
     public static final String OWNERSHIP_REASON_RELEASED = "released";
     public static final String OWNERSHIP_REASON_UNKNOWN = "unknown";
     static final String OWNERSHIP_REASON_WRITER_ERROR = "writer error";
-    private final static long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
+    private static final long ENTRY_OWNER = Unsafe.getFieldOffset(Entry.class, "owner");
     private static final Log LOG = LogFactory.getLog(WriterPool.class);
     private static final long QUEUE_PROCESSING_OWNER = -2L;
     private final MicrosecondClock clock;
@@ -131,7 +131,11 @@ public class WriterPool extends AbstractPool {
      * @return cached TableWriter instance.
      */
     public TableWriter get(TableToken tableToken, @NotNull String lockReason) {
-        return getWriterEntry(tableToken, lockReason, null);
+        // writer cannot be null because our async command is null
+        TableWriter w = getWriterEntry(tableToken, lockReason, null);
+        assert w != null;
+        w.goActive();
+        return w;
     }
 
     /**
@@ -275,8 +279,9 @@ public class WriterPool extends AbstractPool {
                         e,
                         root,
                         engine.getDdlListener(tableToken),
-                        engine.getSnapshotAgent(),
-                        engine.getMetrics()
+                        engine.getCheckpointStatus(),
+                        engine.getMetrics(),
+                        engine
                 );
             }
 
@@ -284,8 +289,7 @@ public class WriterPool extends AbstractPool {
                 // unlock must remove entry because pool does not deal with null writer
                 if (e.lockFd != -1) {
                     Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());
-                    TableUtils.lockName(path);
-                    if (!ff.closeRemove(e.lockFd, path)) {
+                    if (!ff.closeRemove(e.lockFd, TableUtils.lockName(path))) {
                         LOG.error().$("could not remove [file=").$(path).$(']').$();
                     }
                 }
@@ -395,8 +399,9 @@ public class WriterPool extends AbstractPool {
                     e,
                     root,
                     engine.getDdlListener(tableToken),
-                    engine.getSnapshotAgent(),
-                    engine.getMetrics()
+                    engine.getCheckpointStatus(),
+                    engine.getMetrics(),
+                    engine
             );
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
@@ -501,8 +506,7 @@ public class WriterPool extends AbstractPool {
     private boolean lockAndNotify(long thread, Entry e, TableToken tableToken, String lockReason) {
         assertLockReasonIsNone(lockReason);
         Path path = Path.getThreadLocal(root).concat(tableToken.getDirName());
-        TableUtils.lockName(path);
-        e.lockFd = TableUtils.lock(ff, path);
+        e.lockFd = TableUtils.lock(ff, TableUtils.lockName(path));
         if (e.lockFd == -1) {
             LOG.error().$("could not lock [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
             e.ownershipReason = OWNERSHIP_REASON_MISSING;
@@ -542,6 +546,7 @@ public class WriterPool extends AbstractPool {
             }
             // We can apply structure changes with ALTER TABLE and do UPDATE(s) before the writer returned to the pool
             e.writer.tick(true);
+            e.writer.goPassive();
         } catch (Throwable ex) {
             // We are here because of a systemic issues of some kind
             // one of the known issues is "disk is full" so we could not roll back properly.
@@ -640,7 +645,7 @@ public class WriterPool extends AbstractPool {
         private CairoException ex = null;
         // time writer was last released
         private volatile long lastReleaseTime;
-        private volatile int lockFd = -1;
+        private volatile long lockFd = -1;
         // owner thread id or -1 if writer is available for hire
         private volatile long owner = Thread.currentThread().getId();
         private volatile String ownershipReason = OWNERSHIP_REASON_NONE;

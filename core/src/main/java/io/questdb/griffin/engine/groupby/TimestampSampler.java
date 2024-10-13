@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.std.str.Sinkable;
 
 public interface TimestampSampler extends Sinkable {
+
+    int bucketIndex(long timestamp);
 
     default long getBucketSize() {
         throw new UnsupportedOperationException();

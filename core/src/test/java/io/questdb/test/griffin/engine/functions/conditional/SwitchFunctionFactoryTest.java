@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,8 +30,26 @@ import org.junit.Test;
 public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testBindVar() throws Exception {
+        assertException(
+                "select \n" +
+                        "    a,\n" +
+                        "    case a\n" +
+                        "        when '1' then $1\n" +
+                        "        when '2' then $2\n" +
+                        "        else $3\n" +
+                        "    end k\n" +
+                        "from test",
+                "create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))",
+                48,
+                "CASE values cannot be bind variables"
+        );
+    }
+
+    @Test
     public void testBooleanDuplicateFalse() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -55,7 +73,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanDuplicateTrue() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -79,7 +98,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanDuplicateWayTooManyBranches() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -292,7 +312,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanTooManyBranchesIgnoreElse() throws Exception {
-        assertQuery("x\ta\tb\tc\tk\n" +
+        assertQuery(
+                "x\ta\tb\tc\tk\n" +
                         "false\tWCPS\tYRXPE\tRXG\tHELLO2\n" +
                         "false\tUXIBBT\tGWFFYUD\tYQEHBH\tHELLO2\n" +
                         "false\tLPD\tSBEOUOJS\tUED\tHELLO2\n" +
@@ -387,29 +408,65 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastValueToIPv4_1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
+            assertSql(
+                    "x\tip\tk\n" +
+                            "1\t54.206.96.238\t54.206.96.238\n" +
+                            "2\t\t\n" +
+                            "3\t54.98.173.21\t127.0.0.1\n" +
+                            "4\t54.15.250.138\t127.0.0.1\n" +
+                            "5\t\t127.0.0.1\n",
+                    "select \n" +
+                            "    x,\n" +
+                            "    ip,\n" +
+                            "    case x\n" +
+                            "        when 1 then ip\n" +
+                            "        when 2 then null\n" +
+                            "        else '127.0.0.1'\n" +
+                            "    end k\n" +
+                            "from x"
+            );
+        });
+    }
+
+    @Test
+    public void testCastValueToIPv4_2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
+            assertSql(
+                    "x\tip\tk\n" +
+                            "1\t54.206.96.238\t192.168.1.1\n" +
+                            "2\t\t\n" +
+                            "3\t54.98.173.21\t54.98.173.21\n" +
+                            "4\t54.15.250.138\t54.15.250.138\n" +
+                            "5\t\t\n",
+                    "select \n" +
+                            "    x,\n" +
+                            "    ip,\n" +
+                            "    case x\n" +
+                            "        when 1 then '192.168.1.1'\n" +
+                            "        else ip\n" +
+                            "    end k\n" +
+                            "from x"
+            );
+        });
+    }
+
+    @Test
     public void testCastValueToLong256() throws Exception {
-        assertQuery(
-                "x\ta\tb\tc\tk\n" +
-                        "-920\t315515118\t7746536061816329025\t0x965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad159f9b2131d49fcd1d\t0x12ce60ee\n" +
-                        "671\t1868723706\t-1675638984090602536\t0x980eca62a219a0f16846d7a3aa5aecce322a2198864beb14797fa69eb8fec6cc\t\n" +
-                        "481\t1545253512\t-6943924477733600060\t0x6e60a01a5b3ea0db4b0f595f143e5d722f1a8266e7921e3b716de3d25dcc2d91\t\n" +
-                        "147\t-1532328444\t8336855953317473051\t0xa0d8cea7196b33a07e828f56aaa12bde8d076bf991c0ee88c8b1863d4316f9c7\t\n" +
-                        "-55\t-1792928964\t4086802474270249591\t0x9840ad8800156d26c718ab5cbb3fd261c1bf6c24be53876861b1a0b0a5595515\t\n" +
-                        "-769\t-1125169127\t2811900023577169860\t0x6adc00ebd29fdd5373dee145497c54365b9832d4b5522a9474ce62a98a451695\t\n" +
-                        "-831\t-212807500\t3958193676455060057\t0x9c8afa23e6ca6ca17c1b058af93c08086bafc47f4abcd93b7f98b0c74238337e\t\n" +
-                        "-914\t-547127752\t-4442449726822927731\t0xbccb30ed7795ebc85f20a35e80e154f458dfd08eeb9cc39ecec82869edec121b\t\n" +
-                        "-463\t-27395319\t5476540218465058302\t0x83b91ec970b04e788a50f7ff7f6ed3305705e75fe328fa9d6afe61bd7c4ae0d8\t\n" +
-                        "-194\t68265578\t8325936937764905778\t0x9290f9bc187b0cd2bacd57f41b59057caa237cfb02a208e494cfe42988a633de\t\n" +
-                        "-835\t1978144263\t6820495939660535106\t0x655f87a3a21d575f610f69efe063fe79336dc434790ed3312bbfcf66bab932fc\t\n" +
-                        "-933\t936627841\t5334238747895433003\t0x4cd64b0b0a344f8e6698c6c186b7571a9cba3ef59083484d98c2d832d83de993\t\n" +
-                        "416\t-419093579\t-5228148654835984711\t0x5277ee62a5a6e9fb9ff97d73fc0c62d069440048957ae05360802a2ca499f211\t\n" +
-                        "380\t161592763\t-7316123607359392486\t0x9660300cea7db540954a62eca44acb2d71660a9b0890a2f06a0accd425e948d4\t\n" +
-                        "-574\t-235358133\t-4692986177227268943\t0xd4e0ddcd6eb2cff1c736a8b67656c4f159d574d2ff5fb1e3687a84abb7bfac3e\t\n" +
-                        "-722\t-443320374\t8831607763082315932\t0xa5f80be4b45bf437492990e1a29afcac07efe23cedb3250630d46a3a4749c41d\t\n" +
-                        "-128\t-1386539059\t-4608960730952244094\t0x37b4f6e41fbfd55f587274e3ab1ebd4d6cecb916a1ad092b997918f622d62989\t\n" +
-                        "-842\t1234796102\t-3214230645884399728\t0x87c4f865faa4218e8fd993f0e9bcda593c5d8a6969daa0b37d4f1da8fd48b2c3\t\n" +
-                        "-123\t-998315423\t8155981915549526575\t0x84646fead466b67f39d5534da00d272c772c8b7f9505620ebbdfe8ff0cd60c64\t\n" +
-                        "535\t-882371473\t-8425379692364264520\t0x14e2b6a0cb7dddc7781a7e89ba21f328a4099f7e23f05cae7ebaf6ca993f8fc9\t\n",
+        ddl(
+                "create table tanc as (" +
+                        "select rnd_int() % 1000 x," +
+                        " rnd_int() a," +
+                        " rnd_long() b," +
+                        " rnd_long256() c" +
+                        " from long_sequence(20)" +
+                        ")"
+        );
+
+        assertException(
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
@@ -421,68 +478,112 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         "        when -714 then 350\n" +
                         "    end k\n" +
                         "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_long() b," +
-                        " rnd_long256() c" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true,
-                true
+                94,
+                "inconvertible types: LONG256 -> INT [from=LONG256, to=INT]"
         );
     }
 
     @Test
-    public void testCastValueToUuid() throws Exception {
-        assertQuery(
-                "x\ta\tb\tc\td\tk\n" +
-                        "-920\t315515118\t7746536061816329025\t0x965d4c984f0ffa8a7bcd48d8c77aa65572a215ba0462ad159f9b2131d49fcd1d\tdb2d3458-6f62-45fa-b5b2-159a23565217\t315515118\n" +
-                        "-48\t-1191262516\t3614738589890112276\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\t716de3d2-5dcc-4d91-9fa2-397a5d8c84c4\t0xc1e631285c1ab288c72bfc5230158059980eca62a219a0f16846d7a3aa5aecce\n" +
-                        "-405\t339631474\t7953532976996720859\t0xc8b1863d4316f9c773b27651a916ab1b568bc2d7a4aa860483881d4171847cf3\t7e828f56-aaa1-4bde-8d07-6bf991c0ee88\t350\n" +
-                        "968\t-85170055\t5539350449504785212\t0xc718ab5cbb3fd261c1bf6c24be53876861b1a0b0a559551538b73d329210d277\t523eb59d-99c6-47af-9840-ad8800156d26\t523eb59d-99c6-47af-9840-ad8800156d26\n" +
-                        "-127\t1631244228\t8416773233910814357\t0x6f06560981acb5496adc00ebd29fdd5373dee145497c54365b9832d4b5522a94\t36ee542d-654d-4259-8a53-8661f350d0b4\t\n" +
-                        "454\t1253890363\t8942747579519338504\t0xc2593f82b430328d84a09f29df637e3863eb3740c80f661e9c8afa23e6ca6ca1\t58dfd08e-eb9c-439e-8ec8-2869edec121b\t\n" +
-                        "-300\t2006313928\t-5986859522579472839\t0x5705e75fe328fa9d6afe61bd7c4ae0d84c0094500fbffdfe76fb2001fe5dfb09\t83b91ec9-70b0-4e78-8a50-f7ff7f6ed330\t\n" +
-                        "-194\t68265578\t8325936937764905778\t0x9290f9bc187b0cd2bacd57f41b59057caa237cfb02a208e494cfe42988a633de\ta937c9ce-75e8-4607-a1b5-6c3d802c4735\t\n" +
-                        "-54\t-1162267908\t3705833798044144433\t0x3ad08d6037d3ce8155c06051ee52138b655f87a3a21d575f610f69efe063fe79\t98c2d832-d83d-4993-8a07-05e1136e872b\t\n" +
-                        "-467\t-2034804966\t5536695302686527374\t0x60802a2ca499f211b771e27f939096b9c356f99ae70523b585b80cec619f9178\t9ff97d73-fc0c-42d0-a944-0048957ae053\t\n" +
-                        "-781\t1627393380\t9036423629723776443\t0x954a62eca44acb2d71660a9b0890a2f06a0accd425e948d49a77e857727e751a\t9b27eba5-e9cf-41e2-9660-300cea7db540\t\n" +
-                        "-133\t-1299391311\t7528475600160271422\t0x68653a6cd896f81ed4e0ddcd6eb2cff1c736a8b67656c4f159d574d2ff5fb1e3\t7a902c77-fa1a-489c-9168-6790e59377ca\t\n" +
-                        "669\t-307026682\t5271904137583983788\t0xc009aea26fdde482ba37e200ad5b17cdada00dc8b85c1bc8a5f80be4b45bf437\t6cecb916-a1ad-492b-9979-18f622d62989\t\n" +
-                        "-819\t532665695\t5867661438830308598\t0x3c5d8a6969daa0b37d4f1da8fd48b2c3d364c241dde2cf90a7a8f4e549997e46\t87c4f865-faa4-418e-8fd9-93f0e9bcda59\t\n" +
-                        "-123\t-998315423\t8155981915549526575\t0x84646fead466b67f39d5534da00d272c772c8b7f9505620ebbdfe8ff0cd60c64\taa7dc4ec-cb68-446f-b37f-1ec82752c7d7\t\n" +
-                        "272\t-1723887671\t-6626590012581323602\t0x7c97a2cb4ac4b04722556b928447b58414e2b6a0cb7dddc7781a7e89ba21f328\taa1896d0-ad34-49d2-910a-a7b6d58506dc\t\n" +
-                        "-227\t817130367\t-8408704077728333147\t0x0cb5f439cbc22e9d1f0481ab7acd1f4a77827c4f6b03027bc6dfacdd3f3c52b8\t4b0a72b3-339b-4c7c-9872-e79ea1032246\t\n" +
-                        "37\t-1966408995\t9063592617902736531\t0x8fd449ba32592a2b5beb329042090bb3acb025f759cffbd0de9be4e331fe36e6\tb482cff5-7e9c-4398-ac09-f1b4db297f07\t\n" +
-                        "-188\t544695670\t-7103100524321179064\t0xd25adf928386cdd2d992946a26184664ba453d761efcf9bb7ee6a03f4f930fa3\t5b3ef212-23ee-4849-a500-9e89eacf0aad\t\n" +
-                        "444\t-2111250190\t7035958104135945276\t0x7b9d06dec7caf8a87ee54df55f49e9ac6ea837f54a4154397f3f9fef24a116ed\t5bee3da4-8400-45a6-a827-63e262d6903b\t\n",
-                "select \n" +
-                        "    x,\n" +
-                        "    a,\n" +
-                        "    b,\n" +
-                        "    c,\n" +
-                        "    d,\n" +
-                        "    case x\n" +
-                        "        when -920 then a\n" +
-                        "        when -48 then c\n" +
-                        "        when -405 then 350\n" +
-                        "        when 968 then d\n" +
-                        "    end k\n" +
-                        "from tanc",
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_int() a," +
-                        " rnd_long() b," +
-                        " rnd_long256() c, " +
-                        " rnd_uuid4() d" +
-                        " from long_sequence(20)" +
-                        ")",
-                null,
-                true,
-                true
-        );
+    public void testCastValueToUuid1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table tanc as (" +
+                            "select rnd_int() % 1000 x," +
+                            " rnd_int() a," +
+                            " rnd_long() b," +
+                            " rnd_long256() c, " +
+                            " rnd_uuid4() d" +
+                            " from long_sequence(20)" +
+                            ")"
+            );
+            assertExceptionNoLeakCheck(
+                    "select \n" +
+                            "    x,\n" +
+                            "    a,\n" +
+                            "    b,\n" +
+                            "    c,\n" +
+                            "    d,\n" +
+                            "    case x\n" +
+                            "        when -920 then a\n" +
+                            "        when -405 then 350\n" +
+                            "        when 968 then d\n" +
+                            "    end k\n" +
+                            "from tanc",
+                    128,
+                    "inconvertible types: UUID -> INT [from=UUID, to=INT]"
+            );
+        });
+    }
+
+    @Test
+    public void testCastValueToUuid2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
+            assertSql(
+                    "x\tu\tk\n" +
+                            "1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                            "2\t9f9b2131-d49f-4d1d-ab81-39815c50d341\tb5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
+                            "3\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t\n" +
+                            "4\tb5b2159a-2356-4217-965d-4c984f0ffa8a\t00000000-0000-0000-0000-000000000000\n" +
+                            "5\te8beef38-cd7b-43d8-9b2d-34586f6275fa\t00000000-0000-0000-0000-000000000000\n",
+                    "select \n" +
+                            "    x,\n" +
+                            "    u,\n" +
+                            "    case x\n" +
+                            "        when 1 then u\n" +
+                            "        when 2 then 'b5b2159a-2356-4217-965d-4c984f0ffa8a'\n" +
+                            "        when 3 then null\n" +
+                            "        else '00000000-0000-0000-0000-000000000000'\n" +
+                            "    end k\n" +
+                            "from x"
+            );
+        });
+    }
+
+    @Test
+    public void testCastValueToUuid3() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
+            assertSql(
+                    "x\tu\tk\n" +
+                            "1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t00000000-0000-0000-0000-000000000000\n" +
+                            "2\t9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                            "3\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                            "4\tb5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
+                            "5\te8beef38-cd7b-43d8-9b2d-34586f6275fa\te8beef38-cd7b-43d8-9b2d-34586f6275fa\n",
+                    "select \n" +
+                            "    x,\n" +
+                            "    u,\n" +
+                            "    case x\n" +
+                            "        when 1 then '00000000-0000-0000-0000-000000000000'\n" +
+                            "        else u\n" +
+                            "    end k\n" +
+                            "from x"
+            );
+        });
+    }
+
+    @Test
+    public void testCastValueToUuid4() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
+            assertSql(
+                    "x\tu\tk\n" +
+                            "1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t\n" +
+                            "2\t9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                            "3\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\t7bcd48d8-c77a-4655-b2a2-15ba0462ad15\n" +
+                            "4\tb5b2159a-2356-4217-965d-4c984f0ffa8a\tb5b2159a-2356-4217-965d-4c984f0ffa8a\n" +
+                            "5\te8beef38-cd7b-43d8-9b2d-34586f6275fa\te8beef38-cd7b-43d8-9b2d-34586f6275fa\n",
+                    "select \n" +
+                            "    x,\n" +
+                            "    u,\n" +
+                            "    case x\n" +
+                            "        when 1 then null\n" +
+                            "        else u\n" +
+                            "    end k\n" +
+                            "from x"
+            );
+        });
     }
 
     @Test
@@ -589,22 +690,22 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                 "x\ta\tb\tc\tk\n" +
                         "322.0\t1548800833\t-727724771\t73575701\t1548800833\n" +
                         "-431.0\t592859671\t1868723706\t-847531048\t-847531048\n" +
-                        "302.0\t-1436881714\t-1575378703\t806715481\tNaN\n" +
+                        "302.0\t-1436881714\t-1575378703\t806715481\tnull\n" +
                         "-616.0\t1573662097\t-409854405\t339631474\t350\n" +
-                        "251.0\t-1532328444\t-1458132197\t1125579207\tNaN\n" +
-                        "-156.0\t426455968\t-85170055\t-1792928964\tNaN\n" +
-                        "-522.0\t-1101822104\t-1153445279\t1404198\tNaN\n" +
-                        "419.0\t1631244228\t-1975183723\t-1252906348\tNaN\n" +
-                        "760.0\t-2119387831\t-212807500\t1699553881\tNaN\n" +
-                        "381.0\t-113506296\t-422941535\t-938514914\tNaN\n" +
-                        "243.0\t-303295973\t-342047842\t-2132716300\tNaN\n" +
-                        "-618.0\t-27395319\t264240638\t2085282008\tNaN\n" +
-                        "808.0\t1890602616\t-1272693194\t68265578\tNaN\n" +
-                        "340.0\t44173540\t458818940\t410717394\tNaN\n" +
-                        "-154.0\t-1418341054\t-1162267908\t2031014705\tNaN\n" +
-                        "NaN\t-530317703\t-1575135393\t-296610933\t1\n" +
-                        "Infinity\t936627841\t326010667\t-667031149\t2\n" +
-                        "-Infinity\t-1870444467\t-2034804966\t171200398\t3\n" +
+                        "251.0\t-1532328444\t-1458132197\t1125579207\tnull\n" +
+                        "-156.0\t426455968\t-85170055\t-1792928964\tnull\n" +
+                        "-522.0\t-1101822104\t-1153445279\t1404198\tnull\n" +
+                        "419.0\t1631244228\t-1975183723\t-1252906348\tnull\n" +
+                        "760.0\t-2119387831\t-212807500\t1699553881\tnull\n" +
+                        "381.0\t-113506296\t-422941535\t-938514914\tnull\n" +
+                        "243.0\t-303295973\t-342047842\t-2132716300\tnull\n" +
+                        "-618.0\t-27395319\t264240638\t2085282008\tnull\n" +
+                        "808.0\t1890602616\t-1272693194\t68265578\tnull\n" +
+                        "340.0\t44173540\t458818940\t410717394\tnull\n" +
+                        "-154.0\t-1418341054\t-1162267908\t2031014705\tnull\n" +
+                        "null\t-530317703\t-1575135393\t-296610933\t1\n" +
+                        "null\t936627841\t326010667\t-667031149\t2\n" +
+                        "null\t-1870444467\t-2034804966\t171200398\t3\n" +
                         "0.0\t1637847416\t-419093579\t-1819240775\t4\n" +
                         "-0.0\t-1533414895\t-1787109293\t-66297136\t5\n",
                 "select \n" +
@@ -631,7 +732,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(15)" +
                         "union all " +
                         "select " +
-                        "case x when 1 then NaN::double " +
+                        "case x when 1 then null::double " +
                         "       when 2 then 'Infinity'::double " +
                         "       when 3 then '-Infinity'::double " +
                         "       when 4 then  0.0::double " +
@@ -648,7 +749,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleDuplicateBranch() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -691,9 +793,9 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         "808.0\t1890602616\t-1272693194\t68265578\t-1272693194\n" +
                         "340.0\t44173540\t458818940\t410717394\t458818940\n" +
                         "-154.0\t-1418341054\t-1162267908\t2031014705\t-1162267908\n" +
-                        "NaN\t-530317703\t-1575135393\t-296610933\t1\n" +
-                        "Infinity\t936627841\t326010667\t-667031149\t2\n" +
-                        "-Infinity\t-1870444467\t-2034804966\t171200398\t3\n" +
+                        "null\t-530317703\t-1575135393\t-296610933\t1\n" +
+                        "null\t936627841\t326010667\t-667031149\t2\n" +
+                        "null\t-1870444467\t-2034804966\t171200398\t3\n" +
                         "0.0\t1637847416\t-419093579\t-1819240775\t4\n" +
                         "-0.0\t-1533414895\t-1787109293\t-66297136\t5\n",
                 "select \n" +
@@ -721,7 +823,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(15)" +
                         "union all " +
                         "select " +
-                        "case x when 1 then NaN::double " +
+                        "case x when 1 then null::double " +
                         "       when 2 then 'Infinity'::double " +
                         "       when 3 then '-Infinity'::double " +
                         "       when 4 then  0.0::double " +
@@ -738,7 +840,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDuplicateBranchStringToLongCast() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -768,22 +871,22 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                 "x\ta\tb\tc\tk\n" +
                         "322.0000\t315515118\t1548800833\t-727724771\t315515118\n" +
                         "-830.0000\t-948263339\t1326447242\t592859671\t592859671\n" +
-                        "-591.0000\t-847531048\t-1191262516\t-2041844972\tNaN\n" +
+                        "-591.0000\t-847531048\t-1191262516\t-2041844972\tnull\n" +
                         "685.0000\t-1575378703\t806715481\t1545253512\t350\n" +
-                        "-551.0000\t1573662097\t-409854405\t339631474\tNaN\n" +
-                        "251.0000\t1904508147\t-1532328444\t-1458132197\tNaN\n" +
-                        "49.0000\t-1849627000\t-1432278050\t426455968\tNaN\n" +
-                        "-926.0000\t-1792928964\t-1844391305\t-1520872171\tNaN\n" +
-                        "-155.0000\t-1153445279\t1404198\t-1715058769\tNaN\n" +
-                        "-380.0000\t1631244228\t-1975183723\t-1252906348\tNaN\n" +
-                        "760.0000\t-761275053\t-2119387831\t-212807500\tNaN\n" +
-                        "-342.0000\t1110979454\t1253890363\t-113506296\tNaN\n" +
-                        "954.0000\t-938514914\t-547127752\t-1271909747\tNaN\n" +
-                        "-684.0000\t-342047842\t-2132716300\t2006313928\tNaN\n" +
-                        "-195.0000\t-27395319\t264240638\t2085282008\tNaN\n" +
-                        "NaN\t-483853667\t2137969456\t1890602616\t1\n" +
-                        "Infinity\t-1272693194\t68265578\t1036510002\t2\n" +
-                        "-Infinity\t-2002373666\t44173540\t458818940\t3\n" +
+                        "-551.0000\t1573662097\t-409854405\t339631474\tnull\n" +
+                        "251.0000\t1904508147\t-1532328444\t-1458132197\tnull\n" +
+                        "49.0000\t-1849627000\t-1432278050\t426455968\tnull\n" +
+                        "-926.0000\t-1792928964\t-1844391305\t-1520872171\tnull\n" +
+                        "-155.0000\t-1153445279\t1404198\t-1715058769\tnull\n" +
+                        "-380.0000\t1631244228\t-1975183723\t-1252906348\tnull\n" +
+                        "760.0000\t-761275053\t-2119387831\t-212807500\tnull\n" +
+                        "-342.0000\t1110979454\t1253890363\t-113506296\tnull\n" +
+                        "954.0000\t-938514914\t-547127752\t-1271909747\tnull\n" +
+                        "-684.0000\t-342047842\t-2132716300\t2006313928\tnull\n" +
+                        "-195.0000\t-27395319\t264240638\t2085282008\tnull\n" +
+                        "null\t-483853667\t2137969456\t1890602616\t1\n" +
+                        "null\t-1272693194\t68265578\t1036510002\t2\n" +
+                        "null\t-2002373666\t44173540\t458818940\t3\n" +
                         "0.0000\t410717394\t-2144581835\t1978144263\t4\n" +
                         "-0.0000\t-1418341054\t-1162267908\t2031014705\t5\n",
                 "select \n" +
@@ -810,7 +913,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(15)" +
                         "union all " +
                         "select " +
-                        "case x when 1 then cast(NaN as float) " +
+                        "case x when 1 then cast(null as float) " +
                         "       when 2 then cast('Infinity' as float) " +
                         "       when 3 then cast('-Infinity' as float) " +
                         "       when 4 then 0.0f " +
@@ -827,7 +930,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFloatDuplicateBranch() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -870,9 +974,9 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         "954.0000\t-938514914\t-547127752\t-1271909747\t-547127752\n" +
                         "-684.0000\t-342047842\t-2132716300\t2006313928\t-2132716300\n" +
                         "-195.0000\t-27395319\t264240638\t2085282008\t264240638\n" +
-                        "NaN\t-483853667\t2137969456\t1890602616\t1\n" +
-                        "Infinity\t-1272693194\t68265578\t1036510002\t2\n" +
-                        "-Infinity\t-2002373666\t44173540\t458818940\t3\n" +
+                        "null\t-483853667\t2137969456\t1890602616\t1\n" +
+                        "null\t-1272693194\t68265578\t1036510002\t2\n" +
+                        "null\t-2002373666\t44173540\t458818940\t3\n" +
                         "0.0000\t410717394\t-2144581835\t1978144263\t4\n" +
                         "-0.0000\t-1418341054\t-1162267908\t2031014705\t5\n",
                 "select \n" +
@@ -900,7 +1004,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(15)" +
                         "union all " +
                         "select " +
-                        "case x when 1 then cast(NaN as float) " +
+                        "case x when 1 then cast(null as float) " +
                         "       when 2 then cast('Infinity' as float) " +
                         "       when 3 then cast('-Infinity' as float) " +
                         "       when 4 then 0.0f " +
@@ -921,24 +1025,24 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                 "x\ta\tb\tc\tk\n" +
                         "-920\t315515118\t1548800833\t-727724771\t315515118\n" +
                         "701\t-948263339\t1326447242\t592859671\t592859671\n" +
-                        "706\t-847531048\t-1191262516\t-2041844972\tNaN\n" +
+                        "706\t-847531048\t-1191262516\t-2041844972\tnull\n" +
                         "-714\t-1575378703\t806715481\t1545253512\t350\n" +
-                        "116\t1573662097\t-409854405\t339631474\tNaN\n" +
-                        "67\t1904508147\t-1532328444\t-1458132197\tNaN\n" +
-                        "207\t-1849627000\t-1432278050\t426455968\tNaN\n" +
-                        "-55\t-1792928964\t-1844391305\t-1520872171\tNaN\n" +
-                        "-104\t-1153445279\t1404198\t-1715058769\tNaN\n" +
-                        "-127\t1631244228\t-1975183723\t-1252906348\tNaN\n" +
-                        "790\t-761275053\t-2119387831\t-212807500\tNaN\n" +
-                        "881\t1110979454\t1253890363\t-113506296\tNaN\n" +
-                        "-535\t-938514914\t-547127752\t-1271909747\tNaN\n" +
-                        "-973\t-342047842\t-2132716300\t2006313928\tNaN\n" +
-                        "-463\t-27395319\t264240638\t2085282008\tNaN\n" +
-                        "-667\t2137969456\t1890602616\t-1272693194\tNaN\n" +
-                        "578\t1036510002\t-2002373666\t44173540\tNaN\n" +
-                        "940\t410717394\t-2144581835\t1978144263\tNaN\n" +
-                        "-54\t-1162267908\t2031014705\t-530317703\tNaN\n" +
-                        "-393\t-296610933\t936627841\t326010667\tNaN\n",
+                        "116\t1573662097\t-409854405\t339631474\tnull\n" +
+                        "67\t1904508147\t-1532328444\t-1458132197\tnull\n" +
+                        "207\t-1849627000\t-1432278050\t426455968\tnull\n" +
+                        "-55\t-1792928964\t-1844391305\t-1520872171\tnull\n" +
+                        "-104\t-1153445279\t1404198\t-1715058769\tnull\n" +
+                        "-127\t1631244228\t-1975183723\t-1252906348\tnull\n" +
+                        "790\t-761275053\t-2119387831\t-212807500\tnull\n" +
+                        "881\t1110979454\t1253890363\t-113506296\tnull\n" +
+                        "-535\t-938514914\t-547127752\t-1271909747\tnull\n" +
+                        "-973\t-342047842\t-2132716300\t2006313928\tnull\n" +
+                        "-463\t-27395319\t264240638\t2085282008\tnull\n" +
+                        "-667\t2137969456\t1890602616\t-1272693194\tnull\n" +
+                        "578\t1036510002\t-2002373666\t44173540\tnull\n" +
+                        "940\t410717394\t-2144581835\t1978144263\tnull\n" +
+                        "-54\t-1162267908\t2031014705\t-530317703\tnull\n" +
+                        "-393\t-296610933\t936627841\t326010667\tnull\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
@@ -965,7 +1069,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntDuplicateBranch() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -1172,24 +1277,24 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                 "x\ta\tb\tc\tk\n" +
                         "-920\t4729996258992366\t1548800833\t-727724771\t4729996258992366\n" +
                         "701\t8920866532787660373\t1326447242\t592859671\t592859671\n" +
-                        "706\t-1675638984090602536\t-1191262516\t-2041844972\tNaN\n" +
+                        "706\t-1675638984090602536\t-1191262516\t-2041844972\tnull\n" +
                         "-714\t-7489826605295361807\t806715481\t1545253512\t350\n" +
-                        "116\t8173439391403617681\t-409854405\t339631474\tNaN\n" +
-                        "67\t-8968886490993754893\t-1532328444\t-1458132197\tNaN\n" +
-                        "207\t-8284534269888369016\t-1432278050\t426455968\tNaN\n" +
-                        "-55\t5539350449504785212\t-1844391305\t-1520872171\tNaN\n" +
-                        "-104\t-4100339045953973663\t1404198\t-1715058769\tNaN\n" +
-                        "-127\t2811900023577169860\t-1975183723\t-1252906348\tNaN\n" +
-                        "790\t7700030475747712339\t-2119387831\t-212807500\tNaN\n" +
-                        "881\t9194293009132827518\t1253890363\t-113506296\tNaN\n" +
-                        "-535\t7199909180655756830\t-547127752\t-1271909747\tNaN\n" +
-                        "-973\t6404066507400987550\t-2132716300\t2006313928\tNaN\n" +
-                        "-463\t8573481508564499209\t264240638\t2085282008\tNaN\n" +
-                        "-667\t-8480005421611953360\t1890602616\t-1272693194\tNaN\n" +
-                        "578\t8325936937764905778\t-2002373666\t44173540\tNaN\n" +
-                        "940\t-7885528361265853230\t-2144581835\t1978144263\tNaN\n" +
-                        "-54\t3152466304308949756\t2031014705\t-530317703\tNaN\n" +
-                        "-393\t6179044593759294347\t936627841\t326010667\tNaN\n",
+                        "116\t8173439391403617681\t-409854405\t339631474\tnull\n" +
+                        "67\t-8968886490993754893\t-1532328444\t-1458132197\tnull\n" +
+                        "207\t-8284534269888369016\t-1432278050\t426455968\tnull\n" +
+                        "-55\t5539350449504785212\t-1844391305\t-1520872171\tnull\n" +
+                        "-104\t-4100339045953973663\t1404198\t-1715058769\tnull\n" +
+                        "-127\t2811900023577169860\t-1975183723\t-1252906348\tnull\n" +
+                        "790\t7700030475747712339\t-2119387831\t-212807500\tnull\n" +
+                        "881\t9194293009132827518\t1253890363\t-113506296\tnull\n" +
+                        "-535\t7199909180655756830\t-547127752\t-1271909747\tnull\n" +
+                        "-973\t6404066507400987550\t-2132716300\t2006313928\tnull\n" +
+                        "-463\t8573481508564499209\t264240638\t2085282008\tnull\n" +
+                        "-667\t-8480005421611953360\t1890602616\t-1272693194\tnull\n" +
+                        "578\t8325936937764905778\t-2002373666\t44173540\tnull\n" +
+                        "940\t-7885528361265853230\t-2144581835\t1978144263\tnull\n" +
+                        "-54\t3152466304308949756\t2031014705\t-530317703\tnull\n" +
+                        "-393\t6179044593759294347\t936627841\t326010667\tnull\n",
                 "select \n" +
                         "    x,\n" +
                         "    a,\n" +
@@ -1216,7 +1321,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLong256OrElse() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -1242,7 +1348,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLongDuplicateBranch() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -1317,7 +1424,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLongVariableKeyError() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +
@@ -1582,7 +1690,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testStrToStrOrElseDuplicateBranch() throws Exception {
-        assertException("select \n" +
+        assertException(
+                "select \n" +
                         "    x,\n" +
                         "    a,\n" +
                         "    b,\n" +

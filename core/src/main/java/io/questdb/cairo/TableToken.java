@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ public class TableToken implements Sinkable {
     @NotNull
     private final GcUtf8String dirName;
     private final boolean isProtected;
+    private final boolean isPublic;
     private final boolean isSystem;
     private final boolean isWal;
     private final int tableId;
@@ -41,16 +42,21 @@ public class TableToken implements Sinkable {
     private final String tableName;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
-        this(tableName, new GcUtf8String(dirName), tableId, isWal, isSystem, isProtected);
+        this(tableName, new GcUtf8String(dirName), tableId, isWal, isSystem, isProtected, false);
     }
 
-    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
+    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
+        this(tableName, new GcUtf8String(dirName), tableId, isWal, isSystem, isProtected, isPublic);
+    }
+
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
         this.isWal = isWal;
         this.isSystem = isSystem;
         this.isProtected = isProtected;
+        this.isPublic = isPublic;
     }
 
     @Override
@@ -119,6 +125,10 @@ public class TableToken implements Sinkable {
         return isProtected;
     }
 
+    public boolean isPublic() {
+        return isPublic;
+    }
+
     public boolean isSystem() {
         return isSystem;
     }
@@ -128,12 +138,16 @@ public class TableToken implements Sinkable {
     }
 
     public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, tableId, isWal, isSystem, isProtected);
+        return new TableToken(newName, dirName, tableId, isWal, isSystem, isProtected, isPublic);
     }
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(tableName);
+        sink.put("TableToken{tableName=").put(tableName)
+                .put(", dirName=").put(dirName)
+                .put(", tableId=").put(tableId)
+                .put(", isWal=").put(isWal)
+                .put(", isSystem=").put(isSystem).put('}');
     }
 
     @Override

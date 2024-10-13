@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ public interface MapKey extends RecordSinkSPI {
     MapValue createValue();
 
     // Same as createValue(), but doesn't calculate hash code.
-    MapValue createValue(int hashCode);
+    MapValue createValue(long hashCode);
 
     // Commits implicitly.
     MapValue findValue();
@@ -55,7 +55,7 @@ public interface MapKey extends RecordSinkSPI {
     MapValue findValue3();
 
     // Must be called after commit.
-    int hash();
+    long hash();
 
     default boolean notFound() {
         return findValue() == null;

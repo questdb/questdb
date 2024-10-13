@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -229,6 +229,8 @@ public class DateFormatCompiler {
             int appendHour12PaddedIndex,
             int appendHour121Index,
             int appendHour121PaddedIndex,
+            int appendHour241Index,
+            int appendHour241PaddedIndex,
             int getYearIndex,
             int isLeapYearIndex,
             int getMonthOfYearIndex,
@@ -369,18 +371,13 @@ public class DateFormatCompiler {
                 case DateFormatCompiler.OP_HOUR_24_GREEDY_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
-                    asm.iconst(1);
-                    asm.iadd();
-                    asm.invokeInterface(sinkPutIntIndex, 1);
-                    asm.pop();
+                    asm.invokeStatic(appendHour241Index);
                     break;
 
                 case DateFormatCompiler.OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_HOUR]);
-                    asm.iconst(1);
-                    asm.iadd();
-                    asm.invokeStatic(append0Index);
+                    asm.invokeStatic(appendHour241PaddedIndex);
                     break;
                 // DAY
                 case DateFormatCompiler.OP_DAY_ONE_DIGIT:
@@ -779,95 +776,59 @@ public class DateFormatCompiler {
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_MINUTE);
                     break;
-                // HOUR (0-11)
+
+                // HOUR - 12-hour clock convention
+                // Note: both the 0-11 system and the 1-12 system are parsed exactly the same way.
+                // In the 1-12 system, hour '12' is the same as hour '0' in the 0-11 system.
+                // All other values are the same.
+                // In fact, the 1-12 system should be called the 12-11 system, since it maps 12 to 0.
+                // Comparison table:
+                // 0-11 | 12-11
+                // 0    | 12
+                // 1    | 1
+                // 2    | 2
+                // [...]
+                //
+                // 11   | 11
+                // This means that in both the 0-11 and 1-12 systems, we can use the same parsing logic and later treat 12 as if it were 0.
                 case OP_HOUR_12_ONE_DIGIT:
+                case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);
                     setHourType(stackState);
                     break;
                 case OP_HOUR_12_TWO_DIGITS:
+                case OP_HOUR_12_TWO_DIGITS_ONE_BASED:
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);
                     setHourType(stackState);
                     break;
-
                 case OP_HOUR_12_GREEDY:
-                    stackState &= ~(1 << LOCAL_HOUR);
-                    stackState &= ~(1 << LOCAL_TEMP_LONG);
-                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);
-                    setHourType(stackState);
-                    break;
-                // HOUR (1-12)
-                case OP_HOUR_12_ONE_DIGIT_ONE_BASED:
-                    stackState &= ~(1 << LOCAL_HOUR);
-                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1);
-                    setHourType(stackState);
-                    break;
-
-                case OP_HOUR_12_TWO_DIGITS_ONE_BASED:
-                    stackState &= ~(1 << LOCAL_HOUR);
-                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2);
-                    setHourType(stackState);
-                    break;
-
                 case OP_HOUR_12_GREEDY_ONE_BASED:
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
-
-                    asm.aload(P_INPUT_STR);
-                    asm.iload(LOCAL_POS);
-                    asm.iload(P_HI);
-                    asm.invokeStatic(parseIntSafelyIndex);
-                    asm.lstore(LOCAL_TEMP_LONG);
-                    decodeInt(decodeIntIndex);
-                    asm.iconst(1);
-                    asm.isub();
-                    asm.istore(LOCAL_HOUR);
-                    addTempToPos(decodeLenIndex);
+                    invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);
                     setHourType(stackState);
                     break;
-                // HOUR (0-23)
+
+                // HOUR - 24-hour clock convention
                 case OP_HOUR_24_ONE_DIGIT:
+                case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseDigits(assertRemainingIndex, parseIntIndex, 1, LOCAL_HOUR);
                     break;
-
                 case OP_HOUR_24_TWO_DIGITS:
+                case OP_HOUR_24_TWO_DIGITS_ONE_BASED:
                     stackState &= ~(1 << LOCAL_HOUR);
                     parseTwoDigits(assertRemainingIndex, parseIntIndex, LOCAL_HOUR);
                     break;
-
                 case OP_HOUR_24_GREEDY:
+                case OP_HOUR_24_GREEDY_ONE_BASED:
                     stackState &= ~(1 << LOCAL_HOUR);
                     stackState &= ~(1 << LOCAL_TEMP_LONG);
                     invokeParseIntSafelyAndStore(parseIntSafelyIndex, decodeLenIndex, decodeIntIndex, LOCAL_HOUR);
                     break;
-                // HOUR (1 - 24)
-                case OP_HOUR_24_ONE_DIGIT_ONE_BASED:
-                    stackState &= ~(1 << LOCAL_HOUR);
-                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 1);
-                    break;
 
-                case OP_HOUR_24_TWO_DIGITS_ONE_BASED:
-                    stackState &= ~(1 << LOCAL_HOUR);
-                    parseDigitsSub1(assertRemainingIndex, parseIntIndex, 2);
-                    break;
-
-                case OP_HOUR_24_GREEDY_ONE_BASED:
-                    stackState &= ~(1 << LOCAL_HOUR);
-                    stackState &= ~(1 << LOCAL_TEMP_LONG);
-
-                    asm.aload(P_INPUT_STR);
-                    asm.iload(LOCAL_POS);
-                    asm.iload(P_HI);
-                    asm.invokeStatic(parseIntSafelyIndex);
-                    asm.lstore(LOCAL_TEMP_LONG);
-                    decodeInt(decodeIntIndex);
-                    asm.iconst(1);
-                    asm.isub();
-                    asm.istore(LOCAL_HOUR);
-                    addTempToPos(decodeLenIndex);
-                    break;
                 // DAY
                 case OP_DAY_ONE_DIGIT:
                     stackState &= ~(1 << LOCAL_DAY);
@@ -1297,6 +1258,8 @@ public class DateFormatCompiler {
         int appendHour12PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour12Padded", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121Index = asm.poolMethod(DateFormatUtils.class, "appendHour121", "(Lio/questdb/std/str/CharSink;I)V");
         int appendHour121PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour121Padded", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour241Index = asm.poolMethod(DateFormatUtils.class, "appendHour241", "(Lio/questdb/std/str/CharSink;I)V");
+        int appendHour241PaddedIndex = asm.poolMethod(DateFormatUtils.class, "appendHour241Padded", "(Lio/questdb/std/str/CharSink;I)V");
         int appendYear000Index = asm.poolMethod(TimestampFormatUtils.class, "appendYear000", "(Lio/questdb/std/str/CharSink;I)V");
         int append00Index = asm.poolMethod(DateFormatUtils.class, "append00", "(Lio/questdb/std/str/CharSink;I)V");
         int append0Index = asm.poolMethod(DateFormatUtils.class, "append0", "(Lio/questdb/std/str/CharSink;I)V");
@@ -1395,6 +1358,8 @@ public class DateFormatCompiler {
                 appendHour12PaddedIndex,
                 appendHour121Index,
                 appendHour121PaddedIndex,
+                appendHour241Index,
+                appendHour241PaddedIndex,
                 getYearIndex,
                 isLeapYearIndex,
                 getMonthOfYearIndex,
@@ -1698,25 +1663,6 @@ public class DateFormatCompiler {
         asm.iload(LOCAL_POS);
         asm.invokeStatic(parseIntIndex);
         asm.istore(target);
-    }
-
-    private void parseDigitsSub1(int assertRemainingIndex, int parseIntIndex, int digitCount) {
-        asm.iload(LOCAL_POS);
-        if (digitCount > 1) {
-            asm.iconst(digitCount - 1);
-            asm.iadd();
-        }
-        asm.iload(P_HI);
-        asm.invokeStatic(assertRemainingIndex);
-
-        asm.aload(P_INPUT_STR);
-        asm.iload(LOCAL_POS);
-        asm.iinc(LOCAL_POS, digitCount);
-        asm.iload(LOCAL_POS);
-        asm.invokeStatic(parseIntIndex);
-        asm.iconst(1);
-        asm.isub();
-        asm.istore(DateFormatCompiler.LOCAL_HOUR);
     }
 
     private void parseTwoDigits(int assertRemainingIndex, int parseIntIndex, int target) {

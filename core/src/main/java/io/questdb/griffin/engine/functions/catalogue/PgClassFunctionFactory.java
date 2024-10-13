@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -105,9 +105,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
-                new PgClassCursorFactory(
-                        METADATA
-                )
+                new PgClassCursorFactory(METADATA)
         ) {
             @Override
             public boolean isRuntimeConstant() {
@@ -117,15 +115,20 @@ public class PgClassFunctionFactory implements FunctionFactory {
     }
 
     private static class PgClassCursorFactory extends AbstractRecordCursorFactory {
-
         private final PgClassRecordCursor cursor;
-        private final Path path = new Path();
-        private final long tempMem;
+        private final Path path;
+        private long tempMem;
 
         public PgClassCursorFactory(RecordMetadata metadata) {
             super(metadata);
-            this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
-            this.cursor = new PgClassRecordCursor();
+            try {
+                this.path = new Path();
+                this.tempMem = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+                this.cursor = new PgClassRecordCursor();
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override
@@ -148,7 +151,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
         @Override
         protected void _close() {
             Misc.free(path);
-            Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
+            tempMem = Unsafe.free(tempMem, Integer.BYTES, MemoryTag.NATIVE_FUNC_RSS);
         }
     }
 
@@ -279,7 +282,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
                     return tableName;
@@ -349,7 +352,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public CharSequence getStr(int col) {
+            public CharSequence getStrA(int col) {
                 if (col == INDEX_RELNAME) {
                     // relname
                     return relNames[fixedRelPos];
@@ -359,7 +362,7 @@ public class PgClassFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                return getStr(col);
+                return getStrA(col);
             }
 
             @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
 
@@ -55,7 +56,8 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private final RingQueue<CopyRequestTask> requestQueue;
     private final Sequence requestSubSeq;
     private final TableToken statusTableToken;
-    private final StringSink stringSink = new StringSink();
+    private final StringSink utf16StringSink = new StringSink();
+    private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private ParallelCsvFileImporter parallelImporter;
     private Path path;
     private SerialCsvFileImporter serialImporter;
@@ -65,44 +67,49 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
     private final ParallelCsvFileImporter.PhaseStatusReporter updateStatusRef = this::updateStatus;
 
     public CopyRequestJob(final CairoEngine engine, int workerCount) throws SqlException {
-        this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
-        this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
-        this.parallelImporter = new ParallelCsvFileImporter(engine, workerCount);
-        this.serialImporter = new SerialCsvFileImporter(engine);
+        try {
+            this.requestQueue = engine.getMessageBus().getTextImportRequestQueue();
+            this.requestSubSeq = engine.getMessageBus().getTextImportRequestSubSeq();
+            this.parallelImporter = new ParallelCsvFileImporter(engine, workerCount);
+            this.serialImporter = new SerialCsvFileImporter(engine);
 
-        CairoConfiguration configuration = engine.getConfiguration();
-        this.clock = configuration.getMicrosecondClock();
+            CairoConfiguration configuration = engine.getConfiguration();
+            this.clock = configuration.getMicrosecondClock();
 
-        this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
-        this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
-        final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            this.statusTableToken = compiler.query()
-                    .$("CREATE TABLE IF NOT EXISTS \"")
-                    .$(statusTableName)
-                    .$("\" (" +
-                            "ts timestamp, " + // 0
-                            "id string, " + // 1
-                            "table_name symbol, " + // 2
-                            "file symbol, " + // 3
-                            "phase symbol, " + // 4
-                            "status symbol, " + // 5
-                            "message string," + // 6
-                            "rows_handled long," + // 7
-                            "rows_imported long," + // 8
-                            "errors long" + // 9
-                            ") timestamp(ts) partition by DAY BYPASS WAL"
-                    )
-                    .compile(sqlExecutionContext)
-                    .getTableToken();
+            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            this.sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
+            final String statusTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                this.statusTableToken = compiler.query()
+                        .$("CREATE TABLE IF NOT EXISTS \"")
+                        .$(statusTableName)
+                        .$("\" (" +
+                                "ts timestamp, " + // 0
+                                "id string, " + // 1
+                                "table_name symbol, " + // 2
+                                "file symbol, " + // 3
+                                "phase symbol, " + // 4
+                                "status symbol, " + // 5
+                                "message string," + // 6
+                                "rows_handled long," + // 7
+                                "rows_imported long," + // 8
+                                "errors long" + // 9
+                                ") timestamp(ts) partition by DAY BYPASS WAL"
+                        )
+                        .compile(sqlExecutionContext)
+                        .getTableToken();
+            }
+
+            this.writer = engine.getWriter(statusTableToken, "QuestDB system");
+            this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
+            this.copyContext = engine.getCopyContext();
+            this.path = new Path();
+            this.engine = engine;
+            enforceLogRetention();
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
-
-        this.writer = engine.getWriter(statusTableToken, "QuestDB system");
-        this.logRetentionDays = configuration.getSqlCopyLogRetentionDays();
-        this.copyContext = engine.getCopyContext();
-        this.path = new Path();
-        this.engine = engine;
-        enforceLogRetention();
     }
 
     @Override
@@ -123,16 +130,30 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
             long errors
     ) {
         if (writer != null) {
-            stringSink.clear();
-            Numbers.appendHex(stringSink, task.getCopyID(), true);
             try {
                 TableWriter.Row row = writer.newRow(clock.getTicks());
-                row.putStr(1, stringSink);
+                final int idColumnType = writer.getMetadata().getColumnType(1);
+                if (idColumnType == ColumnType.VARCHAR) {
+                    utf8StringSink.clear();
+                    Numbers.appendHex(utf8StringSink, task.getCopyID(), true);
+                    row.putVarchar(1, utf8StringSink);
+                } else {
+                    utf16StringSink.clear();
+                    Numbers.appendHex(utf16StringSink, task.getCopyID(), true);
+                    row.putStr(1, utf16StringSink);
+                }
                 row.putSym(2, task.getTableName());
                 row.putSym(3, task.getFileName());
                 row.putSym(4, CopyTask.getPhaseName(phase));
                 row.putSym(5, CopyTask.getStatusName(status));
-                row.putStr(6, msg);
+                final int msgColumnType = writer.getMetadata().getColumnType(6);
+                if (msgColumnType == ColumnType.VARCHAR) {
+                    utf8StringSink.clear();
+                    utf8StringSink.put(msg);
+                    row.putVarchar(6, utf8StringSink);
+                } else {
+                    row.putStr(6, msg);
+                }
                 row.putLong(7, rowsHandled);
                 row.putLong(8, rowsImported);
                 row.putLong(9, errors);

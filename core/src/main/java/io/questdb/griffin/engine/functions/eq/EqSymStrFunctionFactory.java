@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,7 +50,13 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         // there are optimisation opportunities
         // 1. when one of args is constant null comparison can boil down to checking
         //    length of non-constant (must be -1)
@@ -67,7 +73,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        CharSequence constValue = constFunc.getStr(null);
+        CharSequence constValue = constFunc.getStrA(null);
         SymbolFunction func = (SymbolFunction) varFunc;
         if (func.getStaticSymbolTable() != null) {
             return new ConstCheckColumnFunc(func, constValue);
@@ -91,13 +97,13 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg().getInt(rec) == valueIndex);
+            return negated != (arg.getInt(rec) == valueIndex);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg().init(symbolTableSource, executionContext);
-            final StaticSymbolTable symbolTable = arg().getStaticSymbolTable();
+            arg.init(symbolTableSource, executionContext);
+            final StaticSymbolTable symbolTable = ((SymbolFunction) arg).getStaticSymbolTable();
             assert symbolTable != null;
             valueIndex = symbolTable.keyOf(constant);
         }
@@ -105,10 +111,6 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean isConstant() {
             return valueIndex == SymbolTable.VALUE_NOT_FOUND;
-        }
-
-        SymbolFunction arg() {
-            return (SymbolFunction) arg;
         }
     }
 
@@ -157,20 +159,16 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (exists && arg().getInt(rec) == valueIndex);
+            return negated != (exists && arg.getInt(rec) == valueIndex);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            arg().init(symbolTableSource, executionContext);
-            StaticSymbolTable staticSymbolTable = arg().getStaticSymbolTable();
+            arg.init(symbolTableSource, executionContext);
+            StaticSymbolTable staticSymbolTable = ((SymbolFunction) arg).getStaticSymbolTable();
             assert staticSymbolTable != null : "Static symbol table is null for func with static isSymbolTableStatic returning true";
             valueIndex = staticSymbolTable.keyOf(constant);
             exists = (valueIndex != SymbolTable.VALUE_NOT_FOUND);
-        }
-
-        SymbolFunction arg() {
-            return (SymbolFunction) arg;
         }
     }
 
@@ -185,17 +183,16 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
             // these are columns of the same record
             // records have re-usable character sequences
             final CharSequence a = left.getSymbol(rec);
-            final CharSequence b = right.getStr(rec);
+            final CharSequence b = right.getStrA(rec);
 
             if (a == null) {
                 return negated != (b == null);
             }
-
             return negated != Chars.equalsNc(a, b);
         }
     }
 
-    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+    public static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
 
         public NullCheckFunc(Function arg) {

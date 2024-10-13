@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,13 +43,13 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         mapValue.putBool(valueIndex, true);
         mapValue.putLong(valueIndex + 1, arg.getLong(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (mapValue.getBool(valueIndex)) {
             long prev = mapValue.getLong(valueIndex + 1);
             long curr = arg.getLong(record);
@@ -82,12 +82,12 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.BOOLEAN);
         columnTypes.add(ColumnType.LONG);
@@ -99,7 +99,7 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+    public boolean supportsParallelism() {
+        return false;
     }
 }

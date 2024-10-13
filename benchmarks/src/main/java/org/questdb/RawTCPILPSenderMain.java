@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ public class RawTCPILPSenderMain {
         long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
         try {
             Utf8s.strCpyAscii(ilp, len, mem);
-            int fd = Net.socketTcp(true);
+            long fd = Net.socketTcp(true);
             if (fd != -1) {
                 if (Net.connect(fd, Net.sockaddr("127.0.0.1", 9009)) == 0) {
                     try {

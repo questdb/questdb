@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,28 +26,21 @@ package io.questdb.test.std.str;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.*;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Random;
-import java.util.function.BiConsumer;
 
 public class CharsTest {
     private static final FileNameExtractorUtf8Sequence extractor = new FileNameExtractorUtf8Sequence();
-    private static char separator;
-
-    @BeforeClass
-    public static void setUp() {
-        separator = System.getProperty("file.separator").charAt(0);
-    }
 
     @Test
     public void testBase64Decode() {
@@ -61,26 +54,6 @@ public class CharsTest {
         for (byte b : decode) {
             Assert.assertEquals(b, buffer.get());
         }
-    }
-
-    @Test
-    public void testBase64DecodeByteSink() {
-        base64DecodeByteSink(Base64.getDecoder(), Chars::base64Decode);
-    }
-
-    @Test
-    public void testBase64DecodeByteSinkInvalidInput() {
-        base64DecodeByteSinkInvalidInput(Chars::base64Decode);
-    }
-
-    @Test
-    public void testBase64DecodeByteSinkMiscLengths() {
-        base64DecodeByteSinkMiscLengths(Base64.getEncoder(), Base64.getDecoder(), Chars::base64Decode);
-    }
-
-    @Test
-    public void testBase64DecodeByteSinkUtf8() {
-        base64DecodeByteSinkUtf8(Base64.getEncoder(), Base64.getDecoder(), Chars::base64Decode);
     }
 
     @Test
@@ -148,14 +121,14 @@ public class CharsTest {
     }
 
     @Test
-    public void testBase64UrlDecode() {
+    public void testBase64UrlDecode_ByteBuffer() {
         String s = "this is a test";
         String encoded = Base64.getUrlEncoder().encodeToString(s.getBytes());
         ByteBuffer buffer = ByteBuffer.allocate(1024);
         Chars.base64UrlDecode(encoded, buffer);
         buffer.flip();
         String s2 = new String(buffer.array(), buffer.position(), buffer.remaining());
-        TestUtils.equals(s, s2);
+        TestUtils.assertEquals(s, s2);
 
         // null is ignored
         buffer.clear();
@@ -224,18 +197,59 @@ public class CharsTest {
     }
 
     @Test
-    public void testBase64UrlDecodeByteSink() {
-        base64DecodeByteSink(Base64.getUrlDecoder(), Chars::base64UrlDecode);
-    }
+    public void testBase64UrlDecode_Utf8Sink() {
+        String s = "this is a test";
+        String encoded = Base64.getUrlEncoder().encodeToString(s.getBytes());
+        Utf8StringSink sink = new Utf8StringSink();
+        Chars.base64UrlDecode(encoded, sink);
+        TestUtils.assertEquals(s, sink);
 
-    @Test
-    public void testBase64UrlDecodeByteSinkInvalidInput() {
-        base64DecodeByteSinkInvalidInput(Chars::base64UrlDecode);
-    }
+        // null is ignored
+        sink.clear();
+        Chars.base64UrlDecode(null, sink);
+        Assert.assertEquals(0, sink.size());
 
-    @Test
-    public void testBase64UrlDecodeByteSinkUtf8() {
-        base64DecodeByteSinkUtf8(Base64.getUrlEncoder(), Base64.getUrlDecoder(), Chars::base64UrlDecode);
+        // single char with no padding
+        sink.clear();
+        Chars.base64UrlDecode(Base64.getUrlEncoder().encodeToString("a".getBytes(StandardCharsets.UTF_8)), sink);
+        Assert.assertEquals(1, sink.size());
+        TestUtils.assertEquals("a", sink);
+
+        // empty string
+        sink.clear();
+        Chars.base64UrlDecode("", sink);
+        Assert.assertEquals(0, sink.size());
+
+        // single char is invalid
+        sink.clear();
+        try {
+            Chars.base64UrlDecode("a", sink);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid base64 encoding");
+        }
+
+        // empty string with padding
+        sink.clear();
+        Chars.base64UrlDecode("===", sink);
+        Assert.assertEquals(0, sink.size());
+
+        // non-ascii in input
+        sink.clear();
+        try {
+            Chars.base64UrlDecode("a\u00A0", sink);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "non-ascii character while decoding base64");
+        }
+
+        // ascii but not base64
+        sink.clear();
+        try {
+            Chars.base64UrlDecode("a\u0001", sink);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid base64 character [ch=\u0001]");
+        }
     }
 
     @Test
@@ -264,11 +278,6 @@ public class CharsTest {
         Chars.base64UrlEncode(testBinarySequence, (int) testBinarySequence.length(), sink);
         byte[] decoded = Base64.getUrlDecoder().decode(sink.toString());
         Assert.assertArrayEquals(bytes, decoded);
-    }
-
-    @Test
-    public void testBaseUrl64DecodeByteSinkMiscLengths() {
-        base64DecodeByteSinkMiscLengths(Base64.getUrlEncoder(), Base64.getUrlDecoder(), Chars::base64UrlDecode);
     }
 
     @Test
@@ -321,6 +330,13 @@ public class CharsTest {
     }
 
     @Test
+    public void testIsAscii() {
+        Assert.assertTrue(Chars.isAscii(""));
+        Assert.assertTrue(Chars.isAscii("foo bar baz"));
+        Assert.assertFalse(Chars.isAscii("фу бар баз"));
+    }
+
+    @Test
     public void testIsBlank() {
         Assert.assertTrue(Chars.isBlank(null));
         Assert.assertTrue(Chars.isBlank(""));
@@ -366,7 +382,7 @@ public class CharsTest {
     @Test
     public void testNameFromPath() {
         StringBuilder name = new StringBuilder();
-        name.append(separator).append("xyz").append(separator).append("dir1").append(separator).append("dir2").append(separator).append("this is my name");
+        name.append(Files.SEPARATOR).append("xyz").append(Files.SEPARATOR).append("dir1").append(Files.SEPARATOR).append("dir2").append(Files.SEPARATOR).append("this is my name");
         TestUtils.assertEquals("this is my name", extractor.of(new Utf8String(name)));
     }
 
@@ -423,65 +439,10 @@ public class CharsTest {
         Assert.assertFalse(Chars.startsWithLowerCase("ABC", "ABC"));
     }
 
-    private static void base64DecodeByteSink(Base64.Decoder jdkDecoder, BiConsumer<CharSequence, DirectUtf8Sink> decoderUnderTest) {
-        String encoded = "QmFzZTY0IGlzIGEgZ3JvdXAgb2Ygc2ltaWxhciBiaW5hcnktdG8tdGV4dA";
-        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
-            decoderUnderTest.accept(encoded, sink);
-
-            byte[] decode = jdkDecoder.decode(encoded);
-            Assert.assertEquals(decode.length, sink.size());
-            for (int i = 0; i < decode.length; i++) {
-                Assert.assertEquals(decode[i], sink.byteAt(i));
-            }
-        }
-    }
-
-    private static void base64DecodeByteSinkInvalidInput(BiConsumer<CharSequence, DirectUtf8Sink> decoder) {
-        String encoded = "a";
-        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
-            decoder.accept(encoded, sink);
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "invalid base64 encoding");
-        }
-    }
-
-    private static void base64DecodeByteSinkMiscLengths(Base64.Encoder jdkEncoder, Base64.Decoder jdkDecoder, BiConsumer<CharSequence, DirectUtf8Sink> decoderUnderTest) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < 100; i++) {
-            sb.setLength(0);
-            for (int j = 0; j < i; j++) {
-                sb.append(j % 10);
-            }
-            String encoded = jdkEncoder.encodeToString(sb.toString().getBytes());
-            try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
-                decoderUnderTest.accept(encoded, sink);
-
-                byte[] decode = jdkDecoder.decode(encoded);
-                Assert.assertEquals(decode.length, sink.size());
-                for (int j = 0; j < decode.length; j++) {
-                    Assert.assertEquals(decode[j], sink.byteAt(j));
-                }
-            }
-        }
-    }
-
     private void assertThat(String expected, ObjList<Path> list) {
         Assert.assertEquals(expected, list.toString());
         for (int i = 0, n = list.size(); i < n; i++) {
             list.getQuick(i).close();
-        }
-    }
-
-    private void base64DecodeByteSinkUtf8(Base64.Encoder jdkEncoder, Base64.Decoder jdkDecoder, BiConsumer<CharSequence, DirectUtf8Sink> decoderUnderTest) {
-        String encoded = jdkEncoder.encodeToString("аз съм грут:गाजर का हलवा".getBytes());
-        try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
-            decoderUnderTest.accept(encoded, sink);
-
-            byte[] decode = jdkDecoder.decode(encoded);
-            Assert.assertEquals(decode.length, sink.size());
-            for (int i = 0; i < decode.length; i++) {
-                Assert.assertEquals(decode[i], sink.byteAt(i));
-            }
         }
     }
 }

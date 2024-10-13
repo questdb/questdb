@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,11 +42,11 @@ public class PositionFunctionFactoryTest extends AbstractCairoTest {
                         "N\tA X X\t0\n" +
                         "X\tTEST\t0\n" +
                         "Z\tA X X\t0\n" +
-                        "X\t\tNaN\n" +
+                        "X\t\tnull\n" +
                         "X\tTEST\t0\n" +
-                        "B\t\tNaN\n" +
+                        "B\t\tnull\n" +
                         "T\tCDE\t0\n" +
-                        "P\t\tNaN\n",
+                        "P\t\tnull\n",
                 "select substr,str,position(str,substr) from x",
                 "create table x as (" +
                         "select rnd_str('TEST','A X X','CDE',NULL) as str\n" +
@@ -96,7 +96,7 @@ public class PositionFunctionFactoryTest extends AbstractCairoTest {
     public void testConstantNull() throws Exception {
         assertQuery(
                 "pos1\tpos2\tpos3\tpos4\n" +
-                        "NaN\tNaN\tNaN\tNaN\n",
+                        "null\tnull\tnull\tnull\n",
                 "select position(null,'a') pos1, position(null,'abc') pos2, position('a',null) pos3, position(null,null) pos4",
                 null,
                 null,
@@ -131,20 +131,20 @@ public class PositionFunctionFactoryTest extends AbstractCairoTest {
         assertQuery(
                 "substr\tstr\tposition\n" +
                         "XYZ\tABC XYZ XYZ\t5\n" +
-                        "\tXYZ\tNaN\n" +
-                        "\tXYZ\tNaN\n" +
+                        "\tXYZ\tnull\n" +
+                        "\tXYZ\tnull\n" +
                         "C\tXYW\t0\n" +
                         "C\tXYW\t0\n" +
-                        "\tABC XYZ XYZ\tNaN\n" +
+                        "\tABC XYZ XYZ\tnull\n" +
                         "C\tXYW\t0\n" +
                         "XYZ\tXYZ\t1\n" +
                         "C\tABC XYZ XYZ\t3\n" +
                         "C\tXYZ\t0\n" +
-                        "XYZ\t\tNaN\n" +
-                        "\tABC XYZ XYZ\tNaN\n" +
-                        "C\t\tNaN\n" +
+                        "XYZ\t\tnull\n" +
+                        "\tABC XYZ XYZ\tnull\n" +
+                        "C\t\tnull\n" +
                         "C\tXYW\t0\n" +
-                        "XYZ\t\tNaN\n",
+                        "XYZ\t\tnull\n",
                 "select substr,str,position(str,substr) from x",
                 "create table x as (" +
                         "select rnd_str('ABC XYZ XYZ','XYZ','XYW',NULL) as str\n" +

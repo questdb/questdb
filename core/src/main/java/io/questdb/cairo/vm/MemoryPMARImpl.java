@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ import org.jetbrains.annotations.TestOnly;
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private final int commitMode;
-    private int fd = -1;
+    private long fd = -1;
     private FilesFacade ff;
     private int madviseOpts = -1;
     private int mappedPage;
@@ -73,7 +73,15 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         close(true);
     }
 
-    public int getFd() {
+    @Override
+    public long detachFdClose() {
+        long fd = this.fd;
+        this.fd = -1;
+        close(false);
+        return fd;
+    }
+
+    public long getFd() {
         return fd;
     }
 
@@ -121,7 +129,9 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void switchTo(int fd, long offset, boolean truncate, byte truncateMode) {
+    public void switchTo(FilesFacade ff, long fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
+        this.ff = ff;
+        setExtendSegmentSize(extendSegmentSize);
         close(truncate, truncateMode);
         this.fd = fd;
         jumpTo(offset);

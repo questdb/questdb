@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,9 +31,18 @@ public interface FrameColumn extends Closeable {
 
     void addTop(long value);
 
-    void append(long offset, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
+    /**
+     * Appends source frame to this frame starting at the specific offset in this frame.
+     *
+     * @param appendOffsetRowCount offset in number of rows after which data is appended
+     * @param sourceColumn         the source frame
+     * @param sourceLo             low index in the source frame
+     * @param sourceHi             high index in the source frame, exclusive
+     * @param commitMode           the commit mode, which drives durability of the change.
+     */
+    void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
 
-    void appendNulls(long offset, long count, int commitMode);
+    void appendNulls(long rowCount, long sourceColumnTop, int commitMode);
 
     void close();
 
@@ -43,9 +52,9 @@ public interface FrameColumn extends Closeable {
 
     int getColumnType();
 
-    int getPrimaryFd();
+    long getPrimaryFd();
 
-    int getSecondaryFd();
+    long getSecondaryFd();
 
     int getStorageType();
 }

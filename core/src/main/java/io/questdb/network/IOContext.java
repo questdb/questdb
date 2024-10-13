@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -85,7 +85,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         return PeerIsSlowToWriteException.INSTANCE;
     }
 
-    public int getFd() {
+    public long getFd() {
         return socket != null ? socket.getFd() : -1;
     }
 
@@ -109,7 +109,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     }
 
     @SuppressWarnings("unchecked")
-    public T of(int fd, @NotNull IODispatcher<T> dispatcher) {
+    public T of(long fd, @NotNull IODispatcher<T> dispatcher) {
         if (fd != -1) {
             connectionCountGauge.inc();
         }

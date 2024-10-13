@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -98,7 +98,7 @@ public class Table2IlpCopier {
     }
 
     private static Sender buildLineTcpSender(Table2Ilp.Table2IlpParams params) {
-        Sender.LineSenderBuilder senderBuilder = Sender.builder();
+        Sender.LineSenderBuilder senderBuilder = Sender.builder(Sender.Transport.TCP);
         senderBuilder.address(params.getDestinationIlpHost() + ":" + params.getDestinationIlpPort());
         if (params.enableDestinationTls()) {
             senderBuilder.enableTls();
@@ -143,7 +143,7 @@ public class Table2IlpCopier {
             }
             return microEpoch;
         }
-        return Numbers.LONG_NaN;
+        return Numbers.LONG_NULL;
     }
 
     private static int getTimestampIndex(String[] columnNames, int[] columnTypes, String sourceTimestampColumnName) {
@@ -209,7 +209,7 @@ public class Table2IlpCopier {
                     case Types.TIMESTAMP:
                         if (i != timestampIndex) {
                             long microEpoch = getMicroEpoch(resultSet, i + 1);
-                            if (microEpoch != Numbers.LONG_NaN && !resultSet.wasNull()) {
+                            if (microEpoch != Numbers.LONG_NULL && !resultSet.wasNull()) {
                                 sender.timestampColumn(columnName, microEpoch, ChronoUnit.MICROS);
                             }
                         }

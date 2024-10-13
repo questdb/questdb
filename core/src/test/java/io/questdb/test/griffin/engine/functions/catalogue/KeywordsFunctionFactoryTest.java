@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,16 +32,19 @@ import java.util.Arrays;
 import static io.questdb.griffin.engine.functions.catalogue.Constants.KEYWORDS;
 
 public class KeywordsFunctionFactoryTest extends AbstractCairoTest {
+
     @Test
     public void testSelectKeywords() throws Exception {
-        CharSequence[] keywords = KEYWORDS.clone();
-        Arrays.sort(keywords);
-        String expected = "keyword\n" + String.join("\n", keywords) + '\n';
-        assertSql(expected, "select keyword from keywords() order by keyword asc");
+        assertMemoryLeak(() -> {
+            CharSequence[] keywords = KEYWORDS.clone();
+            Arrays.sort(keywords);
+            String expected = "keyword\n" + String.join("\n", keywords) + '\n';
+            assertSql(expected, "select keyword from keywords() order by keyword asc");
+        });
     }
 
     @Test
     public void testSelectKeywordsWithFilter() throws Exception {
-        assertSql("keyword\nadd\n", "keywords() where keyword = 'add'");
+        assertMemoryLeak(() -> assertSql("keyword\nadd\n", "keywords() where keyword = 'add'"));
     }
 }

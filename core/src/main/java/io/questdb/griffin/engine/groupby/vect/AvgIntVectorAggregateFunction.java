@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     private final KeyValueFunc keyValueFunc;
     private final DoubleAdder sum = new DoubleAdder();
     private final int workerCount;
-    private long counts;
+    private long countsAddr;
     private int valueOffset;
 
     public AvgIntVectorAggregateFunction(int keyKind, int columnIndex, int workerCount) {
@@ -57,16 +57,16 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
             keyValueFunc = Rosti::keyedIntSumInt;
         }
 
-        counts = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+        countsAddr = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
         this.workerCount = workerCount;
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
+    public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            final double value = Vect.avgIntAcc(address, addressSize / Integer.BYTES, counts + (long) workerId * Misc.CACHE_LINE_SIZE);
+            final double value = Vect.avgIntAcc(address, frameRowCount, countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
             if (value == value) {
-                final long count = Unsafe.getUnsafe().getLong(counts + (long) workerId * Misc.CACHE_LINE_SIZE);
+                final long count = Unsafe.getUnsafe().getLong(countsAddr + (long) workerId * Misc.CACHE_LINE_SIZE);
                 // we have to include "weight" of this avg value in the formula,
                 // which calculates final result
                 sum.add(value * count);
@@ -76,11 +76,11 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     }
 
     @Override
-    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount) {
         if (valueAddress == 0) {
-            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Integer.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, frameRowCount);
         } else {
-            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Integer.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
         }
     }
 
@@ -92,9 +92,8 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
 
     @Override
     public void close() {
-        if (counts != 0) {
-            Unsafe.free(counts, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
-            counts = 0;
+        if (countsAddr != 0) {
+            countsAddr = Unsafe.free(countsAddr, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
         }
         super.close();
     }

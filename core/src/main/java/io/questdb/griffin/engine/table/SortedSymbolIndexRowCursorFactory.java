@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -48,10 +47,12 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     private final IntList symbolKeys = new IntList();
     private int symbolKeyLimit;
 
-    public SortedSymbolIndexRowCursorFactory(int columnIndex,
-                                             boolean columnOrderDirectionAsc,
-                                             int indexDirection,
-                                             @NotNull IntList columnIndexes) {
+    public SortedSymbolIndexRowCursorFactory(
+            int columnIndex,
+            boolean columnOrderDirectionAsc,
+            int indexDirection,
+            @NotNull IntList columnIndexes
+    ) {
         this.columnIndex = columnIndex;
         this.indexDirection = indexDirection;
         this.columnOrderDirectionAsc = columnOrderDirectionAsc;
@@ -59,8 +60,8 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public RowCursor getCursor(DataFrame dataFrame) {
-        cursor.of(dataFrame);
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
+        cursor.of(pageFrame);
         return cursor;
     }
 
@@ -70,10 +71,10 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader) {
+    public void prepareCursor(PageFrameCursor pageFrameCursor) {
         symbolKeys.clear();
 
-        final StaticSymbolTable staticSymbolTable = tableReader.getSymbolMapReader(columnIndexes.get(columnIndex));
+        final StaticSymbolTable staticSymbolTable = pageFrameCursor.getSymbolTable(columnIndex);
         int count = staticSymbolTable.getSymbolCount();
 
         final SortHelper sortHelper = TL_SORT_HELPER.get();
@@ -133,11 +134,17 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         }
 
         private int compareAsc(SymbolTableEntry e1, SymbolTableEntry e2) {
-            return (e1.value == null && e2.value == null) ? 0 : e1.value == null ? -1 : e1.value.compareTo(e2.value);
+            return (e1.value == null && e2.value == null) ? 0
+                    : e1.value == null ? -1
+                    : e2.value == null ? 1
+                    : e1.value.compareTo(e2.value);
         }
 
         private int compareDesc(SymbolTableEntry e1, SymbolTableEntry e2) {
-            return (e1.value == null && e2.value == null) ? 0 : e1.value == null ? 1 : e2.value.compareTo(e1.value);
+            return (e1.value == null && e2.value == null) ? 0
+                    : e1.value == null ? 1
+                    : e2.value == null ? -1
+                    : e2.value.compareTo(e1.value);
         }
     }
 
@@ -149,8 +156,8 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
 
     private class ListBasedSymbolIndexRowCursor implements RowCursor {
         private RowCursor current;
-        private DataFrame dataFrame;
         private int index;
+        private PageFrame pageFrame;
 
         @Override
         public boolean hasNext() {
@@ -164,13 +171,13 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
 
         private boolean fetchNext() {
             while (index < symbolKeyLimit) {
-                current = dataFrame
-                        .getBitmapIndexReader(columnIndexes.get(columnIndex), indexDirection)
+                current = pageFrame
+                        .getBitmapIndexReader(columnIndex, indexDirection)
                         .getCursor(
                                 true,
                                 symbolKeys.getQuick(index++),
-                                dataFrame.getRowLo(),
-                                dataFrame.getRowHi() - 1
+                                pageFrame.getPartitionLo(),
+                                pageFrame.getPartitionHi() - 1
                         );
 
                 if (current.hasNext()) {
@@ -180,8 +187,8 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
             return false;
         }
 
-        private void of(DataFrame dataFrame) {
-            this.dataFrame = dataFrame;
+        private void of(PageFrame pageFrame) {
+            this.pageFrame = pageFrame;
             this.index = 0;
             this.current = EmptyRowCursor.INSTANCE;
         }

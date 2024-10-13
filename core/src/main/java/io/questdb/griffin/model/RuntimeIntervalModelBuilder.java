@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -73,7 +73,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     public void clearBetweenParsing() {
         betweenBoundarySet = false;
         betweenBoundaryFunc = null;
-        betweenBoundary = Numbers.LONG_NaN;
+        betweenBoundary = Numbers.LONG_NULL;
     }
 
     public boolean hasIntervalFilters() {
@@ -108,7 +108,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         if (dynamicRangeList.size() == 0) {
             staticIntervals.add(lo, hi);
             if (intervalApplied) {
-                IntervalUtils.intersectInplace(staticIntervals, staticIntervals.size() - 2);
+                IntervalUtils.intersectInPlace(staticIntervals, staticIntervals.size() - 2);
             }
         } else {
             IntervalUtils.addHiLoInterval(lo, hi, IntervalOperation.INTERSECT, staticIntervals);
@@ -117,28 +117,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
-    public void intersectDynamicInterval(Function intervalStrFunction) {
-        if (isEmptySet()) {
-            return;
-        }
-
-        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(intervalStrFunction);
-        intervalApplied = true;
-    }
-
     public void intersectEmpty() {
         clear();
-        intervalApplied = true;
-    }
-
-    public void intersectEquals(Function function) {
-        if (isEmptySet()) {
-            return;
-        }
-
-        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-        dynamicRangeList.add(function);
         intervalApplied = true;
     }
 
@@ -152,12 +132,32 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         if (dynamicRangeList.size() == 0) {
             IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);
             if (intervalApplied) {
-                IntervalUtils.intersectInplace(staticIntervals, size);
+                IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
             // else - nothing to do, interval already encoded in staticPeriods as 4 longs
             dynamicRangeList.add(null);
         }
+        intervalApplied = true;
+    }
+
+    public void intersectRuntimeIntervals(Function intervalFunction) {
+        if (isEmptySet()) {
+            return;
+        }
+
+        IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+        dynamicRangeList.add(intervalFunction);
+        intervalApplied = true;
+    }
+
+    public void intersectRuntimeTimestamp(Function function) {
+        if (isEmptySet()) {
+            return;
+        }
+
+        IntervalUtils.addHiLoInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
+        dynamicRangeList.add(function);
         intervalApplied = true;
     }
 
@@ -171,7 +171,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         if (dynamicRangeList.size() == 0) {
             IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);
             if (intervalApplied) {
-                IntervalUtils.intersectInplace(staticIntervals, size);
+                IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
             // else - nothing to do, interval already encoded in staticPeriods as 4 longs
@@ -193,7 +193,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                 // Constant interval
                 long lo = Math.min(timestamp, betweenBoundary);
                 long hi = Math.max(timestamp, betweenBoundary);
-                if (hi == Numbers.LONG_NaN || lo == Numbers.LONG_NaN) {
+                if (hi == Numbers.LONG_NULL || lo == Numbers.LONG_NULL) {
                     if (!betweenNegated) {
                         intersectEmpty();
                     }
@@ -254,7 +254,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             staticIntervals.add(lo, hi);
             IntervalUtils.invert(staticIntervals, size);
             if (intervalApplied) {
-                IntervalUtils.intersectInplace(staticIntervals, size);
+                IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
             IntervalUtils.addHiLoInterval(lo, hi, IntervalOperation.SUBTRACT, staticIntervals);
@@ -274,7 +274,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             IntervalUtils.applyLastEncodedIntervalEx(staticIntervals);
             IntervalUtils.invert(staticIntervals, size);
             if (intervalApplied) {
-                IntervalUtils.intersectInplace(staticIntervals, size);
+                IntervalUtils.intersectInPlace(staticIntervals, size);
             }
         } else {
             // else - nothing to do, interval already encoded in staticPeriods as 4 longs
@@ -283,13 +283,13 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
-    public void subtractRuntimeInterval(Function intervalStrFunction) {
+    public void subtractRuntimeIntervals(Function intervalFunction) {
         if (isEmptySet()) {
             return;
         }
 
         IntervalUtils.addHiLoInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
-        dynamicRangeList.add(intervalStrFunction);
+        dynamicRangeList.add(intervalFunction);
         intervalApplied = true;
     }
 
@@ -323,7 +323,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     private void intersectBetweenSemiDynamic(Function funcValue, long constValue) {
-        if (constValue == Numbers.LONG_NaN) {
+        if (constValue == Numbers.LONG_NULL) {
             if (!betweenNegated) {
                 intersectEmpty();
             }

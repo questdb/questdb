@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -78,22 +78,22 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
     @Test
     public void testAlterExpectCapacityKeyword() throws Exception {
-        assertFailure("alter table x alter column y add index a", 39, "'capacity' expected");
+        assertFailure("alter table x alter column c add index a", 39, "'capacity' expected");
     }
 
     @Test
     public void testAlterExpectCapacityValue() throws Exception {
-        assertFailure("alter table x alter column y add index capacity ", 48, "capacity value expected");
+        assertFailure("alter table x alter column c add index capacity ", 48, "capacity value expected");
     }
 
     @Test
     public void testAlterExpectCapacityValueIsInteger() throws Exception {
-        assertFailure("alter table x alter column y add index capacity qwe", 48, "positive integer literal expected as index capacity");
+        assertFailure("alter table x alter column c add index capacity qwe", 48, "positive integer literal expected as index capacity");
     }
 
     @Test
     public void testAlterExpectCapacityValueIsPositiveInteger() throws Exception {
-        assertFailure("alter table x alter column y add index capacity -123", 48, "positive integer literal expected as index capacity");
+        assertFailure("alter table x alter column c add index capacity -123", 48, "positive integer literal expected as index capacity");
     }
 
     @Test
@@ -149,7 +149,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectActionKeyword() throws Exception {
-        assertFailure("alter table x", 13, "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
+        assertFailure("alter table x", 13, AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
 
     @Test
@@ -169,7 +169,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
     @Test
     public void testInvalidColumnName() throws Exception {
-        assertFailure("alter table x alter column y add index", 27, "Invalid column: y");
+        assertFailure("alter table x alter column y add index", 27, "column 'y' does not exists in table 'x'");
     }
 
     @Test

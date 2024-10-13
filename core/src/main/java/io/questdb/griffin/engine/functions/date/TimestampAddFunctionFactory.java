@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,7 +61,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 LongAddIntFunction func = addFunctions.getQuick(periodValue);
                 if (func != null) {
                     if (interval.isConstant()) {
-                        if (interval.getInt(null) != Numbers.INT_NaN) {
+                        if (interval.getInt(null) != Numbers.INT_NULL) {
                             return new AddLongIntVarConstFunction(args.getQuick(2), interval.getInt(null), func, periodValue);
                         }
                         return TimestampConstant.NULL;
@@ -100,8 +100,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         @Override
         public long getTimestamp(Record rec) {
             final long l = arg.getTimestamp(rec);
-            if (l == Numbers.LONG_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL) {
+                return Numbers.LONG_NULL;
             }
             return func.add(l, interval);
         }
@@ -139,8 +139,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             final long l = left.getTimestamp(rec);
             final int r = right.getInt(rec);
-            if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL || r == Numbers.INT_NULL) {
+                return Numbers.LONG_NULL;
             }
             return func.add(l, r);
         }
@@ -187,21 +187,23 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             final long l = left.getTimestamp(rec);
             final char c = center.getChar(rec);
             final int r = right.getInt(rec);
-            if (l == Numbers.LONG_NaN || r == Numbers.INT_NaN) {
-                return Numbers.LONG_NaN;
+            if (l == Numbers.LONG_NULL || r == Numbers.INT_NULL) {
+                return Numbers.LONG_NULL;
             }
             return Timestamps.addPeriod(l, c, r);
         }
     }
 
     static {
+        addFunctions.extendAndSet('u', Timestamps::addMicros);
+        addFunctions.extendAndSet('T', Timestamps::addMillis);
         addFunctions.extendAndSet('s', Timestamps::addSeconds);
         addFunctions.extendAndSet('m', Timestamps::addMinutes);
         addFunctions.extendAndSet('h', Timestamps::addHours);
         addFunctions.extendAndSet('d', Timestamps::addDays);
         addFunctions.extendAndSet('w', Timestamps::addWeeks);
         addFunctions.extendAndSet('M', Timestamps::addMonths);
-        addFunctions.extendAndSet('y', Timestamps::addYear);
+        addFunctions.extendAndSet('y', Timestamps::addYears);
         addFunctionsMax = addFunctions.size();
     }
 }

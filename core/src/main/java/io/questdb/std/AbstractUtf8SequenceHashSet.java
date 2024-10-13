@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,17 +27,19 @@ package io.questdb.std;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
 public abstract class AbstractUtf8SequenceHashSet implements Mutable {
     protected static final int MIN_INITIAL_CAPACITY = 16;
     protected static final Utf8String noEntryKey = null;
+    protected final int initialCapacity;
     protected final double loadFactor;
     protected int capacity;
     protected int free;
     protected int[] hashCodes;
-    protected Utf8String[] keys;
+    protected Utf8Sequence[] keys;
     protected int mask;
 
     public AbstractUtf8SequenceHashSet(int initialCapacity, double loadFactor) {
@@ -45,9 +47,11 @@ public abstract class AbstractUtf8SequenceHashSet implements Mutable {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
 
-        free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
-        int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
+        this.initialCapacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
+        free = capacity = this.initialCapacity;
+
+        final int len = Numbers.ceilPow2((int) (capacity / loadFactor));
         keys = new Utf8String[len];
         hashCodes = new int[len];
         mask = len - 1;
@@ -59,19 +63,19 @@ public abstract class AbstractUtf8SequenceHashSet implements Mutable {
         free = capacity;
     }
 
-    public boolean contains(Utf8Sequence key) {
+    public boolean contains(@NotNull Utf8Sequence key) {
         return keyIndex(key) < 0;
     }
 
-    public boolean excludes(Utf8Sequence key) {
+    public boolean excludes(@NotNull Utf8Sequence key) {
         return keyIndex(key) > -1;
     }
 
-    public Utf8String keyAt(int index) {
+    public Utf8Sequence keyAt(int index) {
         return keys[-index - 1];
     }
 
-    public int keyIndex(Utf8Sequence key) {
+    public int keyIndex(@NotNull Utf8Sequence key) {
         int hashCode = Utf8s.hashCode(key);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == noEntryKey) {
@@ -83,7 +87,7 @@ public abstract class AbstractUtf8SequenceHashSet implements Mutable {
         return probe(key, hashCode, index);
     }
 
-    public int keyIndex(Utf8Sequence key, int lo, int hi) {
+    public int keyIndex(@NotNull Utf8Sequence key, int lo, int hi) {
         int hashCode = Utf8s.hashCode(key, lo, hi);
         int index = Hash.spread(hashCode) & mask;
         if (keys[index] == noEntryKey) {
@@ -96,7 +100,7 @@ public abstract class AbstractUtf8SequenceHashSet implements Mutable {
         return probe(key, hashCode, lo, hi, index);
     }
 
-    public int remove(Utf8Sequence key) {
+    public int remove(@NotNull Utf8Sequence key) {
         int index = keyIndex(key);
         if (index < 0) {
             removeAt(index);

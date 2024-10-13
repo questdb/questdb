@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,8 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StdoutSink;
 
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.std.Files.toOsFd;
 
 public final class Net {
 
@@ -70,10 +72,12 @@ public final class Net {
      * @return 0 when call was successful and -1 otherwise. In case of
      * error errno() would return error code.
      */
-    public static native int abortAccept(int fd);
+    public static int abortAccept(long fd) {
+        return abortAccept(toOsFd(fd));
+    }
 
-    public static int accept(int serverFd) {
-        return Files.bumpFileCount(accept0(serverFd));
+    public static long accept(long serverFd) {
+        return Files.createUniqueFd(accept0(toOsFd(serverFd)));
     }
 
     public static void appendIP4(CharSink<?> sink, long ip) {
@@ -83,43 +87,51 @@ public final class Net {
                 .put(ip & 0xff);
     }
 
-    public native static boolean bindTcp(int fd, int ipv4address, int port);
+    public static boolean bindTcp(long fd, int ipv4address, int port) {
+        return bindTcp(toOsFd(fd), ipv4address, port);
+    }
 
-    public static boolean bindTcp(int fd, CharSequence ipv4address, int port) {
+    public static boolean bindTcp(long fd, CharSequence ipv4address, int port) {
         return bindTcp(fd, parseIPv4(ipv4address), port);
     }
 
-    public native static boolean bindUdp(int fd, int ipv4Address, int port);
-
-    public static void bumpFdCount(int fd) {
-        Files.bumpFileCount(fd);
+    public static boolean bindUdp(long fd, int ipv4Address, int port) {
+        return bindUdp(toOsFd(fd), ipv4Address, port);
     }
 
-    public static int close(int fd) {
+    public static int close(long fd) {
         return Files.close(fd);
     }
 
-    public static void configureKeepAlive(int fd) {
+    public static void configureKeepAlive(long fd) {
         if (TCP_KEEPALIVE_SECONDS < 0 || fd < 0) {
             return;
         }
-        if (setKeepAlive0(fd, TCP_KEEPALIVE_SECONDS) < 0) {
+        if (setKeepAlive0(toOsFd(fd), TCP_KEEPALIVE_SECONDS) < 0) {
             int errno = Os.errno();
             LOG.error().$("could not set tcp keepalive [fd=").$(fd).$(", errno=").$(errno).I$();
         }
     }
 
-    public native static int configureLinger(int fd, int seconds);
-
-    public static int configureNoLinger(int fd) {
-        return configureLinger(fd, 0);
+    public static int configureLinger(long fd, int seconds) {
+        return configureLinger(toOsFd(fd), seconds);
     }
 
-    public static native int configureNonBlocking(int fd);
+    public static int configureNoLinger(long fd) {
+        return configureLinger(toOsFd(fd), 0);
+    }
 
-    public native static int connect(int fd, long sockaddr);
+    public static int configureNonBlocking(long fd) {
+        return configureNonBlocking(toOsFd(fd));
+    }
 
-    public native static int connectAddrInfo(int fd, long lpAddrInfo);
+    public static int connect(long fd, long sockaddr) {
+        return connect(toOsFd(fd), sockaddr);
+    }
+
+    public static int connectAddrInfo(long fd, long lpAddrInfo) {
+        return connectAddrInfo(toOsFd(fd), lpAddrInfo);
+    }
 
     public static void dump(long buffer, int len) {
         if (len > 0) {
@@ -173,8 +185,8 @@ public final class Net {
     }
 
     public static long getAddrInfo(CharSequence host, int port) {
-        try (Path p = new Path().of(host).$()) {
-            return getAddrInfo(p, port);
+        try (Path p = new Path().of(host)) {
+            return getAddrInfo(p.$(), port);
         }
     }
 
@@ -202,15 +214,25 @@ public final class Net {
         return Unsafe.getUnsafe().getInt(msgPtr + MMSGHDR_BUFFER_LENGTH_OFFSET);
     }
 
-    public native static int getPeerIP(int fd);
+    public static int getPeerIP(long fd) {
+        return getPeerIP(toOsFd(fd));
+    }
 
-    public native static int getPeerPort(int fd);
+    public static int getRcvBuf(long fd) {
+        return getRcvBuf(toOsFd(fd));
+    }
 
-    public native static int getRcvBuf(int fd);
+    public static int getSndBuf(long fd) {
+        return getSndBuf(toOsFd(fd));
+    }
 
-    public native static int getSndBuf(int fd);
+    public static int getTcpNoDelay(long fd) {
+        return getTcpNoDelay(toOsFd(fd));
+    }
 
-    public native static int getTcpNoDelay(int fd);
+    public static void init() {
+        // no-op
+    }
 
     /**
      * This method reads 1 byte (or none if the socket is non-blocking and there is no data).
@@ -220,15 +242,21 @@ public final class Net {
      * @param fd network file descriptor
      * @return check the description
      */
-    public static native boolean isDead(int fd);
-
-    public static boolean join(int fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
-        return join(fd, parseIPv4(bindIPv4Address), parseIPv4(groupIPv4Address));
+    public static boolean isDead(long fd) {
+        return isDead(toOsFd(fd));
     }
 
-    public native static boolean join(int fd, int bindIPv4Address, int groupIPv4Address);
+    public static boolean join(long fd, CharSequence bindIPv4Address, CharSequence groupIPv4Address) {
+        return join(toOsFd(fd), parseIPv4(bindIPv4Address), parseIPv4(groupIPv4Address));
+    }
 
-    public native static void listen(int fd, int backlog);
+    public static boolean join(long fd, int bindIPv4Address, int groupIPv4Address) {
+        return join(toOsFd(fd), bindIPv4Address, groupIPv4Address);
+    }
+
+    public static void listen(long fd, int backlog) {
+        listen(toOsFd(fd), backlog);
+    }
 
     public static native long msgHeaders(int blockSize, int count);
 
@@ -255,35 +283,65 @@ public final class Net {
         }
     }
 
-    public static native int peek(int fd, long ptr, int len);
+    public static int peek(long fd, long ptr, int len) {
+        return peek(toOsFd(fd), ptr, len);
+    }
 
-    public static native int recv(int fd, long ptr, int len);
+    public static int recv(long fd, long ptr, int len) {
+        return recv(toOsFd(fd), ptr, len);
+    }
 
-    public static native int recvmmsg(int fd, long msgvec, int vlen);
+    public static int recvmmsg(long fd, long msgvec, int vlen) {
+        return recvmmsg(toOsFd(fd), msgvec, vlen);
+    }
 
-    public native static int resolvePort(int fd);
+    public static int resolvePort(long fd) {
+        return resolvePort(toOsFd(fd));
+    }
 
-    public static native int send(int fd, long ptr, int len);
+    public static int send(long fd, long ptr, int len) {
+        return send(toOsFd(fd), ptr, len);
+    }
 
-    public native static int sendTo(int fd, long ptr, int len, long sockaddr);
+    public static int sendTo(long fd, long ptr, int len, long sockaddr) {
+        return sendTo(toOsFd(fd), ptr, len, sockaddr);
+    }
 
-    public native static int setMulticastInterface(int fd, int ipv4address);
+    public static int setMulticastInterface(long fd, int ipv4address) {
+        return setMulticastInterface(toOsFd(fd), ipv4address);
+    }
 
-    public native static int setMulticastLoop(int fd, boolean loop);
+    public static int setMulticastLoop(long fd, boolean loop) {
+        return setMulticastLoop(toOsFd(fd), loop);
+    }
 
-    public native static int setMulticastTtl(int fd, int ttl);
+    public static int setMulticastTtl(long fd, int ttl) {
+        return setMulticastTtl(toOsFd(fd), ttl);
+    }
 
-    public native static int setRcvBuf(int fd, int size);
+    public static int setRcvBuf(long fd, int size) {
+        return setRcvBuf(toOsFd(fd), size);
+    }
 
-    public native static int setReuseAddress(int fd);
+    public static int setReuseAddress(long fd) {
+        return setReuseAddress(toOsFd(fd));
+    }
 
-    public native static int setReusePort(int fd);
+    public static int setReusePort(long fd) {
+        return setReusePort(toOsFd(fd));
+    }
 
-    public native static int setSndBuf(int fd, int size);
+    public static int setSndBuf(long fd, int size) {
+        return setSndBuf(toOsFd(fd), size);
+    }
 
-    public native static int setTcpNoDelay(int fd, boolean noDelay);
+    public static int setTcpNoDelay(long fd, boolean noDelay) {
+        return setTcpNoDelay(toOsFd(fd), noDelay);
+    }
 
-    public native static int shutdown(int fd, int how);
+    public static int shutdown(long fd, int how) {
+        return shutdown(toOsFd(fd), how);
+    }
 
     public static long sockaddr(CharSequence ipv4address, int port) {
         return sockaddr(parseIPv4(ipv4address), port);
@@ -294,15 +352,29 @@ public final class Net {
         return sockaddr0(ipv4address, port);
     }
 
-    public static int socketTcp(boolean blocking) {
-        return Files.bumpFileCount(socketTcp0(blocking));
+    public static long socketTcp(boolean blocking) {
+        return Files.createUniqueFd(socketTcp0(blocking));
     }
 
-    public static int socketUdp() {
-        return Files.bumpFileCount(socketUdp0());
+    public static long socketUdp() {
+        return Files.createUniqueFd(socketUdp0());
     }
+
+    private static native int abortAccept(int fd);
 
     private native static int accept0(int serverFd);
+
+    private native static boolean bindTcp(int fd, int ipv4address, int port);
+
+    private native static boolean bindUdp(int fd, int ipv4Address, int port);
+
+    private native static int configureLinger(int fd, int seconds);
+
+    private static native int configureNonBlocking(int fd);
+
+    private native static int connect(int fd, long sockaddr);
+
+    private native static int connectAddrInfo(int fd, long lpAddrInfo);
 
     private static native void freeAddrInfo0(long pAddrInfo);
 
@@ -310,7 +382,7 @@ public final class Net {
 
     private static native long getAddrInfo0(long lpszHost, int port);
 
-    private native static int getEwouldblock();
+    private static native int getEwouldblock();
 
     private static native long getMsgHeaderBufferAddressOffset();
 
@@ -318,7 +390,53 @@ public final class Net {
 
     private static native long getMsgHeaderSize();
 
+    private native static int getPeerIP(int fd);
+
+    private native static int getPeerPort(int fd);
+
+    private native static int getRcvBuf(int fd);
+
+    private native static int getSndBuf(int fd);
+
+    private native static int getTcpNoDelay(int fd);
+
+    private static native boolean isDead(int fd);
+
+    private native static boolean join(int fd, int bindIPv4Address, int groupIPv4Address);
+
+    private native static void listen(int fd, int backlog);
+
+    private static native int peek(int fd, long ptr, int len);
+
+    private static native int recv(int fd, long ptr, int len);
+
+    private static native int recvmmsg(int fd, long msgvec, int vlen);
+
+    private native static int resolvePort(int fd);
+
+    private static native int send(int fd, long ptr, int len);
+
+    private native static int sendTo(int fd, long ptr, int len, long sockaddr);
+
     private static native int setKeepAlive0(int fd, int seconds);
+
+    private native static int setMulticastInterface(int fd, int ipv4address);
+
+    private native static int setMulticastLoop(int fd, boolean loop);
+
+    private native static int setMulticastTtl(int fd, int ttl);
+
+    private native static int setRcvBuf(int fd, int size);
+
+    private native static int setReuseAddress(int fd);
+
+    private native static int setReusePort(int fd);
+
+    private native static int setSndBuf(int fd, int size);
+
+    private native static int setTcpNoDelay(int fd, boolean noDelay);
+
+    private native static int shutdown(int fd, int how);
 
     private native static long sockaddr0(int ipv4address, int port);
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,37 +27,12 @@
 #include "simd.h"
 #include "ooo_dispatch.h"
 #include "bit_vector.h"
+#include "column_type.h"
 #include <algorithm>
 #include <cassert>
-
-#pragma pack (push, 1)
-// Should match data structure described in DedupColumnCommitAddresses.java
-struct dedup_column {
-    int32_t column_type;
-    int32_t value_size_bytes;
-    int64_t column_top;
-    void *column_data;
-    void *o3_data;
-    int64_t java_reserved_1;
-    int64_t java_reserved_2;
-    int64_t java_reserved_3;
-    char null_value[32];
-};
-#pragma pack(pop)
-
-struct int256 {
-    __int128 lo;
-    __int128 hi;
-};
-
-inline bool operator>(const int256 &a, const int256 &b) {
-    return a.hi > b.hi || a.lo > b.lo;
-}
-
-inline bool operator<(const int256 &a, const int256 &b) {
-    return a.hi < b.hi || a.lo < b.lo;
-}
-
+#include "dedup.h"
+#include "dedup_comparers.h"
+#define assertm(exp, msg) assert(((void)msg, exp))
 template<typename LambdaDiff>
 inline int64_t branch_free_search(const index_t *array, int64_t count, int64_t value_index, LambdaDiff compare) {
     const index_t *base = array;
@@ -254,7 +229,7 @@ inline void merge_sort_slice(const index_t *src1, const index_t *src2, index_t *
     int64_t i1 = 0, i2 = 0;
 
     while (i1 < src1_len && i2 < src2_len) {
-        if (src1[i1] > src2[i2].ts) {
+        if (src1[i1].ts > src2[i2].ts) {
             *dest++ = src2[i2++];
         } else if (src1[i1].ts < src2[i2].ts) {
             *dest++ = src1[i1++];
@@ -310,40 +285,6 @@ inline index_t *merge_sort(
 
     return dest;
 }
-
-template<typename T>
-class MergeColumnComparer : dedup_column {
-public:
-    inline int operator()(int64_t col_index, int64_t index_index) const {
-        const auto l_val = col_index >= dedup_column::column_top
-                           ? reinterpret_cast<T *>(dedup_column::column_data)[col_index]
-                           : *reinterpret_cast<const T *>(&null_value);
-
-        const auto r_val = reinterpret_cast<T *>(dedup_column::o3_data)[index_index];
-
-        // One of the values can be MIN of the type (null value)
-        // and subtraction can result in type overflow
-        return l_val > r_val ? 1 : (l_val < r_val ? -1 : 0);
-    }
-};
-
-template<typename T>
-class SortColumnComparer : dedup_column {
-public:
-    inline int operator()(int64_t l, int64_t r) const {
-        const auto l_val = l > -1
-                           ? reinterpret_cast<T *>(dedup_column::column_data)[l]
-                           : reinterpret_cast<T *>(dedup_column::o3_data)[l & ~(1ull << 63)];
-
-        const auto r_val = r > -1
-                           ? reinterpret_cast<T *>(dedup_column::column_data)[r]
-                           : reinterpret_cast<T *>(dedup_column::o3_data)[r & ~(1ull << 63)];
-
-        // One of the values can be MIN of the type (null value)
-        // and subtraction can result in type overflow
-        return l_val > r_val ? 1 : (l_val < r_val ? -1 : 0);
-    }
-};
 
 extern "C" {
 JNIEXPORT jlong JNICALL
@@ -479,9 +420,41 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                         *reinterpret_cast<const MergeColumnComparer<int256> *>(src_keys)
                 );
             }
+            case -1: {
+                switch ((ColumnType)(col_key->column_type)) {
+                    case ColumnType::VARCHAR: {
+                        return merge_dedup_long_index_int_keys(
+                                src, data_lo, data_hi,
+                                index, index_lo, index_hi,
+                                index_tmp,
+                                *reinterpret_cast<const MergeVarcharColumnComparer *>(src_keys)
+                        );
+                    }
+                    case ColumnType::STRING: {
+                        return merge_dedup_long_index_int_keys(
+                                src, data_lo, data_hi,
+                                index, index_lo, index_hi,
+                                index_tmp,
+                                *reinterpret_cast<const MergeStrBinColumnComparer<int32_t, 2> *>(src_keys)
+                        );
+                    }
+                    case ColumnType::BINARY: {
+                        return merge_dedup_long_index_int_keys(
+                                src, data_lo, data_hi,
+                                index, index_lo, index_hi,
+                                index_tmp,
+                                *reinterpret_cast<const MergeStrBinColumnComparer<int64_t, 1> *>(src_keys)
+                        );
+                    }
+                    default: {
+                        assertm(false, "unsupported column type");
+                        return 0;
+                    }
+                }
+            }
             default:
-                static_assert(false || "unsupported column value_size_bytes for comparison");
-                return -1;
+                assertm(false, "unsupported column value_size_bytes for comparison");
+                return 0;
         }
     }
 
@@ -521,8 +494,32 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                     diff = comparer(l, r);
                     break;
                 }
+                case -1: {
+                    switch ((ColumnType)(col_key->column_type)) {
+                        case ColumnType::VARCHAR: {
+                            auto comparer{*reinterpret_cast<const MergeVarcharColumnComparer *>(col_key)};
+                            diff = comparer(l, r);
+                            break;
+                        }
+                        case ColumnType::STRING: {
+                            auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int32_t, 2> *>(col_key)};
+                            diff = comparer(l, r);
+                            break;
+                        }
+                        case ColumnType::BINARY: {
+                            auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int64_t, 1> *>(col_key)};
+                            diff = comparer(l, r);
+                            break;
+                        }
+                        default: {
+                            assertm(false, "unsupported column type");
+                            return 0;
+                        }
+                    }
+                    break;
+                }
                 default:
-                    assert(false || "unsupported column value_size_bytes");
+                    assertm(false, "unsupported column value_size_bytes");
                     return 0;
             }
             if (diff != 0) {
@@ -588,8 +585,30 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<int256> *>(src_keys)
                     );
+                case -1:
+                    switch ((ColumnType)(col_key->column_type)) {
+                        case ColumnType::VARCHAR:
+                            return dedup_sorted_timestamp_index_with_keys(
+                                    index_in, index_count, index_out, index_temp,
+                                    *reinterpret_cast<const SortVarcharColumnComparer *>(src_keys)
+                            );
+                        case ColumnType::STRING:
+                            return dedup_sorted_timestamp_index_with_keys(
+                                    index_in, index_count, index_out, index_temp,
+                                    *reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(src_keys)
+                            );
+                        case ColumnType::BINARY:
+                            return dedup_sorted_timestamp_index_with_keys(
+                                    index_in, index_count, index_out, index_temp,
+                                    *reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(src_keys)
+                            );
+                        default:
+                            assertm(false, "unsupported column type");
+                            return -1;
+
+                    }
                 default:
-                    static_assert(false || "unsupported column type");
+                    assertm(false, "unsupported column type");
                     return -1;
             }
         }
@@ -629,8 +648,33 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                         diff = comparer(l, r);
                         break;
                     }
+                    case -1: {
+                        switch ((ColumnType)(col_key->column_type)) {
+                            case ColumnType::VARCHAR: {
+                                auto comparer{*reinterpret_cast<const SortVarcharColumnComparer *>(col_key)};
+                                diff = comparer(l, r);
+                                break;
+                            }
+                            case ColumnType::STRING: {
+                                auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(col_key)};
+                                diff = comparer(l, r);
+                                break;
+                            }
+                            case ColumnType::BINARY: {
+                                auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(col_key)};
+                                diff = comparer(l, r);
+                                break;
+                            }
+                            default: {
+                                assertm(false, "unsupported column type");
+                                return -1;
+                            }
+                        }
+                        break;
+                    }
                     default:
-                        return 0;
+                        assertm(false, "unsupported column type");
+                        return -1;
                 }
                 if (diff != 0) {
                     return diff;
@@ -645,24 +689,52 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
 
 
 JNIEXPORT jlong JNICALL
-Java_io_questdb_std_Vect_dedupMergeVarColumnLen(JNIEnv *env, jclass cl,
-                                               jlong merge_index_addr,
-                                               jlong merge_index_size,
-                                               jlong src_data_fix_addr,
-                                               jlong src_ooo_fix_addr) {
+Java_io_questdb_std_Vect_dedupMergeStrBinColumnSize(JNIEnv *env, jclass cl,
+                                                    jlong merge_index_addr,
+                                                    jlong merge_index_row_count,
+                                                    jlong src_data_fix_addr,
+                                                    jlong src_ooo_fix_addr) {
     auto merge_index = reinterpret_cast<index_t *>(merge_index_addr);
     auto src_ooo_fix = reinterpret_cast<int64_t *>(src_ooo_fix_addr);
     auto src_data_fix = reinterpret_cast<int64_t *>(src_data_fix_addr);
     int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
     int64_t dst_var_offset = 0;
 
-    for (int64_t l = 0; l < merge_index_size; l++) {
+    for (int64_t l = 0; l < merge_index_row_count; l++) {
         MM_PREFETCH_T0(merge_index + l + 64);
         const uint64_t row = merge_index[l].i;
         const uint32_t bit = (row >> 63);
         const uint64_t rr = row & ~(1ull << 63);
-        const int64_t len = src_fix[bit][rr + 1] - src_fix[bit][rr];
-        dst_var_offset += len;
+        const int64_t size = src_fix[bit][rr + 1] - src_fix[bit][rr];
+        dst_var_offset += size;
+    }
+    return dst_var_offset;
+}
+
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_dedupMergeVarcharColumnSize(JNIEnv *env, jclass cl,
+                                                     jlong merge_index_addr,
+                                                     jlong merge_index_row_count,
+                                                     jlong src_data_fix_addr,
+                                                     jlong src_ooo_fix_addr) {
+    auto merge_index = reinterpret_cast<index_t *>(merge_index_addr);
+    auto src_ooo_fix = reinterpret_cast<int64_t *>(src_ooo_fix_addr);
+    auto src_data_fix = reinterpret_cast<int64_t *>(src_data_fix_addr);
+    int64_t *src_fix[] = {src_ooo_fix, src_data_fix};
+    int64_t dst_var_offset = 0;
+
+    for (int64_t l = 0; l < merge_index_row_count; l++) {
+        const uint64_t row = merge_index[l].i;
+        const uint32_t bit = (row >> 63);
+        const uint64_t rr = row & ~(1ull << 63);
+        const int64_t firstWord = src_fix[bit][rr * 2];
+
+        if ((firstWord & 1) == 0 && (firstWord & 4) == 0) {
+            // not inlined and not null
+            auto size = (firstWord >> 4) & 0xffffff;
+            dst_var_offset += size;
+        }
     }
     return dst_var_offset;
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,6 +34,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LongListTest {
+
     @Test
     public void testBinarySearchBlockFuzz() {
         final int N = 997; // prime
@@ -129,6 +130,18 @@ public class LongListTest {
     }
 
     @Test
+    public void testIndexOf() {
+        LongList list = new LongList();
+        for (int i = 100; i > -1; i--) {
+            list.add(i);
+        }
+
+        for (int i = 100; i > -1; i--) {
+            Assert.assertEquals(100 - i, list.indexOf(i));
+        }
+    }
+
+    @Test
     public void testInsertFromSource() {
         LongList src = new LongList();
         src.add(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L);
@@ -178,6 +191,30 @@ public class LongListTest {
     }
 
     @Test
+    public void testMergeSortStructuredSmallList() {
+        LongList list = new LongList();
+        for (int l = 0; l < LongSort.INSERTION_SORT_THRESHOLD - 1; l++) {
+            list.add(l);
+        }
+
+        list.sort();
+
+        assertOrderedAsc(list);
+    }
+
+    @Test
+    public void testMergeSortStructuredSmallListAllEqual() {
+        LongList list = new LongList();
+        for (int l = 0; l < LongSort.INSERTION_SORT_THRESHOLD - 1; l++) {
+            list.add(42);
+        }
+
+        list.sort();
+
+        assertOrderedAsc(list);
+    }
+
+    @Test
     public void testRestoreInitialCapacity() {
         final int N = 1000;
         LongList list = new LongList();
@@ -193,6 +230,26 @@ public class LongListTest {
         list.restoreInitialCapacity();
         Assert.assertEquals(0, list.size());
         Assert.assertEquals(initialCapacity, list.capacity());
+    }
+
+    @Test
+    public void testSmoke() {
+        LongList list = new LongList();
+        for (int i = 0; i < 100; i++) {
+            list.add(i);
+        }
+        Assert.assertEquals(100, list.size());
+        Assert.assertTrue(list.capacity() >= 100);
+
+        for (int i = 0; i < 100; i++) {
+            Assert.assertEquals(i, list.getQuick(i));
+            Assert.assertEquals(i, list.indexOf(i));
+        }
+
+        for (int i = 0; i < 100; i++) {
+            list.remove(i);
+        }
+        Assert.assertEquals(0, list.size());
     }
 
     private void assertOrderedAsc(LongList list) {

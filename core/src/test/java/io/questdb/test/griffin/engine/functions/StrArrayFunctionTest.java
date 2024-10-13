@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
-import io.questdb.std.str.Utf16Sink;
 import org.junit.Test;
 
 public class StrArrayFunctionTest {
@@ -39,70 +38,40 @@ public class StrArrayFunctionTest {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return "{hello}";
         }
 
         @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
+        public CharSequence getStrA(Record rec, int arrayIndex) {
             return "hello";
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            sink.put(getStr(rec));
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
-            sink.put(getStr(rec, arrayIndex));
-        }
-
-        @Override
         public CharSequence getStrB(Record rec) {
-            return getStr(rec);
+            return getStrA(rec);
         }
 
         @Override
         public CharSequence getStrB(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex);
+            return getStrA(rec, arrayIndex);
         }
 
         @Override
         public int getStrLen(Record rec) {
-            return getStr(rec).length();
+            return getStrA(rec).length();
         }
 
         @Override
         public int getStrLen(Record rec, int arrayIndex) {
-            return getStr(rec, arrayIndex).length();
+            return getStrA(rec, arrayIndex).length();
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
     };
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoLong() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGeoShort() {
-        function.getGeoShort(null);
-    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
@@ -135,8 +104,53 @@ public class StrArrayFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoShort() {
+        function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetIPv4() {
         function.getIPv4(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
+        function.getLong256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256A() {
+        function.getLong256A(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256B() {
+        function.getLong256B(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -150,17 +164,12 @@ public class StrArrayFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256() {
-        function.getLong256(null, null);
+    public void testGetVarcharA() {
+        function.getVarcharA(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testLong256A() {
-        function.getLong256A(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testLong256B() {
-        function.getLong256B(null);
+    public void testGetVarcharB() {
+        function.getVarcharB(null);
     }
 }

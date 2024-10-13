@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -148,7 +149,7 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
             insert("insert into test values (null), (null), (null)");
             assertSql(
                     "approx_percentile\n" +
-                            "NaN\n",
+                            "null\n",
                     "select approx_percentile(x, 0.5) from test"
             );
         });
@@ -171,7 +172,7 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
             compile("create table test (x long)");
             assertSql(
                     "approx_percentile\n" +
-                            "NaN\n",
+                            "null\n",
                     "select approx_percentile(x, 0.5) from test"
             );
         });
@@ -184,7 +185,7 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
             insert("insert into test values (null), (null), (null)");
             assertSql(
                     "approx_percentile\n" +
-                            "NaN\n",
+                            "null\n",
                     "select approx_percentile(x, 0.5, 5) from test"
             );
         });
@@ -196,7 +197,7 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
             compile("create table test (x long)");
             assertSql(
                     "approx_percentile\n" +
-                            "NaN\n",
+                            "null\n",
                     "select approx_percentile(x, 0.5, 5) from test"
             );
         });
@@ -311,29 +312,37 @@ public class ApproxPercentileLongGroupByFunctionFactoryTest extends AbstractCair
         );
     }
 
-    @Test(expected = CairoException.class)
+    @Test
     public void testThrowsOnNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (x long)");
             insert("insert into test values (1), (-1)");
-            assertSql(
-                    "approx_percentile\n" +
-                            "1.0\n",
-                    "select approx_percentile(x, 0.5) from test"
-            );
+            try {
+                assertSql(
+                        "approx_percentile\n" +
+                                "1.0\n",
+                        "select approx_percentile(x, 0.5) from test"
+                );
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
         });
     }
 
-    @Test(expected = CairoException.class)
+    @Test
     public void testThrowsOnNegativeValuesPacked() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table test (x long)");
             insert("insert into test values (1), (-1)");
-            assertSql(
-                    "approx_percentile\n" +
-                            "1.0\n",
-                    "select approx_percentile(x, 0.5, 5) from test"
-            );
+            try {
+                assertSql(
+                        "approx_percentile\n" +
+                                "1.0\n",
+                        "select approx_percentile(x, 0.5, 5) from test"
+                );
+                Assert.fail();
+            } catch (CairoException ignore) {
+            }
         });
     }
 }

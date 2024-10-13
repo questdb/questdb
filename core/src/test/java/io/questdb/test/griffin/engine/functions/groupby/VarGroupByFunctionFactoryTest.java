@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVarAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "variance\nNaN\n", "select variance(x) from (select cast(null as double) x from long_sequence(100))"
+                "variance\nnull\n", "select variance(x) from (select cast(null as double) x from long_sequence(100))"
         ));
     }
 
@@ -103,7 +103,7 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x int)");
             assertSql(
-                    "variance\nNaN\n", "select variance(x) from tbl1"
+                    "variance\nnull\n", "select variance(x) from tbl1"
             );
         });
     }
@@ -115,7 +115,7 @@ public class VarGroupByFunctionFactoryTest extends AbstractCairoTest {
             insert("insert into 'tbl1' VALUES " +
                     "(17.2151920)");
             assertSql(
-                    "variance\nNaN\n", "select variance(x) from tbl1"
+                    "variance\nnull\n", "select variance(x) from tbl1"
             );
         });
     }

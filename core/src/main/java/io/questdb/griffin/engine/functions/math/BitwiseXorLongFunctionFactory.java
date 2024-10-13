@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -71,7 +71,7 @@ public class BitwiseXorLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             final long l = left.getLong(rec);
             final long r = right.getLong(rec);
-            return l != Numbers.LONG_NaN && r != Numbers.LONG_NaN ? l ^ r : Numbers.LONG_NaN;
+            return l != Numbers.LONG_NULL && r != Numbers.LONG_NULL ? l ^ r : Numbers.LONG_NULL;
         }
 
         @Override

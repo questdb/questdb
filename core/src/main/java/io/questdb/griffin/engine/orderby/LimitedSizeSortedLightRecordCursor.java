@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     private final long limit; // <0 - limit disabled; =0 means don't fetch any rows; >0 - apply limit
     private final long skipFirst; // skip first N rows
     private final long skipLast;  // skip last N rows
-    private RecordCursor base;
+    private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isChainBuilt;
@@ -67,8 +67,8 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     @Override
     public void close() {
         if (isOpen) {
+            baseCursor = Misc.free(baseCursor);
             Misc.free(chain);
-            Misc.free(base);
             isOpen = false;
         }
     }
@@ -80,12 +80,12 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
 
     @Override
     public Record getRecordB() {
-        return base.getRecordB();
+        return baseCursor.getRecordB();
     }
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(columnIndex);
+        return baseCursor.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -95,7 +95,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
             isChainBuilt = true;
         }
         if (rowsLeft-- > 0 && chainCursor.hasNext()) {
-            base.recordAt(baseRecord, chainCursor.next());
+            baseCursor.recordAt(baseRecord, chainCursor.next());
             return true;
         }
         return false;
@@ -103,18 +103,17 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return base.newSymbolTable(columnIndex);
+        return baseCursor.newSymbolTable(columnIndex);
     }
 
     @Override
-    public void of(RecordCursor base, SqlExecutionContext executionContext) {
+    public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
+        this.baseCursor = baseCursor;
+        baseRecord = baseCursor.getRecord();
         if (!isOpen) {
-            chain.reopen();
             isOpen = true;
+            chain.reopen();
         }
-
-        this.base = base;
-        baseRecord = base.getRecord();
         circuitBreaker = executionContext.getCircuitBreaker();
         isChainBuilt = false;
         chain.clear();
@@ -122,7 +121,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        base.recordAt(record, atRowId);
+        baseCursor.recordAt(record, atRowId);
     }
 
     @Override
@@ -143,9 +142,9 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
     }
 
     private void buildChain() {
-        final Record placeHolderRecord = base.getRecordB();
+        final Record placeHolderRecord = baseCursor.getRecordB();
         if (limit != 0) {
-            while (base.hasNext()) {
+            while (baseCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
                 // Tree chain is liable to re-position record to
                 // other rows to do record comparison. We must use our
@@ -153,7 +152,7 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
                 // state in the record it returns.
                 chain.put(
                         baseRecord,
-                        base,
+                        baseCursor,
                         placeHolderRecord,
                         comparator
                 );
@@ -162,4 +161,3 @@ public class LimitedSizeSortedLightRecordCursor implements DelegatingRecordCurso
         toTop();
     }
 }
-

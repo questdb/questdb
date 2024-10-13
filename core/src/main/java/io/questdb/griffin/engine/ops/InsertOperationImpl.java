@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ import io.questdb.std.ReadOnlyObjList;
 
 public class InsertOperationImpl implements InsertOperation {
 
-    //type inference fails on java 8 if <CharSequence> is removed 
+    // type inference fails on java 8 if <CharSequence> is removed
     private static final ObjList<CharSequence> EMPTY_COLUMN_LIST = new ObjList<CharSequence>() {
         @Override
         public void addAll(ReadOnlyObjList<? extends CharSequence> that) {

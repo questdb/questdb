@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,10 +34,7 @@ import io.questdb.cutlass.text.types.TimestampAdapter;
 import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.str.DirectUtf16Sink;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -146,7 +143,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
             }
 
             @Override
-            public int mkdir(Path path, int mode) {
+            public int mkdir(LPSZ path, int mode) {
                 if (Utf8s.endsWithAscii(path, partition)) {
                     return -1;
                 }
@@ -194,7 +191,9 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
             };
 
             try (CsvFileIndexer indexer = new CsvFileIndexer(conf);
-                 DirectUtf16Sink sink = new DirectUtf16Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize())) {
+                 DirectUtf16Sink utf16sink = new DirectUtf16Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize());
+                 DirectUtf8Sink utf8sink = new DirectUtf8Sink(engine.getConfiguration().getTextConfiguration().getUtf8SinkSize())
+            ) {
 
                 long length = ff.length(Path.getThreadLocal(inputRoot).concat(fileName).$());
 
@@ -205,7 +204,7 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
                         PartitionBy.DAY,
                         (byte) ',',
                         timestampIndex,
-                        getAdapter(sink),
+                        getAdapter(utf16sink, utf8sink),
                         true, Atomicity.SKIP_COL,
                         null
                 );
@@ -229,9 +228,9 @@ public class CsvFileIndexerTest extends AbstractCairoTest {
         });
     }
 
-    private TimestampAdapter getAdapter(DirectUtf16Sink sink) {
+    private TimestampAdapter getAdapter(DirectUtf16Sink utf16Sink, DirectUtf8Sink utf8Sink) {
         TextConfiguration textConfiguration = engine.getConfiguration().getTextConfiguration();
-        TypeManager typeManager = new TypeManager(textConfiguration, sink);
+        TypeManager typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
         DateFormat dateFormat = typeManager.getInputFormatConfiguration().getTimestampFormatFactory().get("yyyy-MM-ddTHH:mm:ss.SSSZ");
         return (TimestampAdapter) typeManager.nextTimestampAdapter(false, dateFormat,
                 configuration.getTextConfiguration().getDefaultDateLocale()

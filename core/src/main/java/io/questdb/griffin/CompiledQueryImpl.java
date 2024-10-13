@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -79,7 +80,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     @Override
     public void clear() {
-        this.type = 0;
+        this.type = NONE;
         this.recordCursorFactory = null;
         this.tableToken = null;
         this.affectedRowsCount = -1;
@@ -189,6 +190,14 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(CANCEL_QUERY);
     }
 
+    public void ofCheckpointCreate() {
+        of(CHECKPOINT_CREATE);
+    }
+
+    public void ofCheckpointRelease() {
+        of(CHECKPOINT_RELEASE);
+    }
+
     public void ofCommit() {
         of(COMMIT);
     }
@@ -217,6 +226,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofDrop() {
         of(DROP);
+    }
+
+    public void ofEmpty() {
+        of(EMPTY, new EmptyTableRecordCursorFactory(EmptyRecordMetadata.INSTANCE), null);
     }
 
     public void ofExplain(RecordCursorFactory recordCursorFactory) {
@@ -262,20 +275,16 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(SET);
     }
 
-    public void ofSnapshotComplete() {
-        of(SNAPSHOT_DB_COMPLETE);
-    }
-
-    public void ofSnapshotPrepare() {
-        of(SNAPSHOT_DB_PREPARE);
-    }
-
     public void ofTableResume() {
         type = TABLE_RESUME;
     }
 
     public void ofTableSetType() {
         type = TABLE_SET_TYPE;
+    }
+
+    public void ofTableSuspend() {
+        type = TABLE_SUSPEND;
     }
 
     public void ofTruncate() {

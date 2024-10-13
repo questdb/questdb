@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.*;
 import io.questdb.griffin.model.ExplainModel;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.Misc;
 
 /**
  * Simple stub for returning query execution plan text as result set with one column and one row .
@@ -85,18 +85,13 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             return planSink.getLine(cursor.row);
         }
 
         @Override
-        public void getStr(int col, Utf16Sink sink) {
-            sink.put(planSink.getLine(cursor.row));
-        }
-
-        @Override
         public CharSequence getStrB(int col) {
-            return getStr(col);
+            return getStrA(col);
         }
 
         @Override
@@ -139,12 +134,16 @@ public class ExplainPlanFactory extends AbstractRecordCursorFactory {
             return row++ < rowCount;
         }
 
-        public void of(RecordCursorFactory base, SqlExecutionContext executionContext) {
+        public void of(RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
             //we can't use getCursor() because that could take a lot of time and execute e.g. table hashing
             //on the other hand until we run it factories may be incomplete
             if (!isBaseClosed) {
-                planSink.of(base, executionContext);
-                base.close();//close base factory and associated cursors, otherwise it may keep holding eagerly allocated memory
+                // open the cursor to ensure bind variable types are initialized
+                try (RecordCursor ignored = base.getCursor(executionContext)) {
+                    planSink.of(base, executionContext);
+                } finally {
+                    Misc.free(base);
+                }
                 isBaseClosed = true;
             }
             rowCount = planSink.getLineCount();

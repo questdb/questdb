@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -132,10 +132,6 @@ public class Overrides {
         changed = true;
     }
 
-    public void resetStatic() {
-        reset();
-    }
-
     public void setCurrentMicros(long currentMicros) {
         this.currentMicros = currentMicros;
     }
@@ -219,7 +215,7 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY.getPropertyPath(), "10");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY.getPropertyPath(), "64");
         properties.setProperty(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY.getPropertyPath(), "16");
-        properties.setProperty(PropertyKey.CAIRO_SQL_CREATE_TABEL_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE.getPropertyPath(), "2097152");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE.getPropertyPath(), "16384");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE.getPropertyPath(), "1048576");
@@ -228,8 +224,8 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE.getPropertyPath(), "19");
         properties.setProperty(PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE.getPropertyPath(), "16384");
         properties.setProperty(PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE.getPropertyPath(), "1073741824");
-        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_MERGE_QUEUE_CAPACITY.getPropertyPath(), "32");
-        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_SHARDING_THRESHOLD.getPropertyPath(), "1000");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD.getPropertyPath(), "1000");
         properties.setProperty(PropertyKey.CAIRO_IDLE_CHECK_INTERVAL.getPropertyPath(), "100");
         properties.setProperty(PropertyKey.CAIRO_INACTIVE_READER_TTL.getPropertyPath(), "-10000");
         properties.setProperty(PropertyKey.CAIRO_INACTIVE_WRITER_TTL.getPropertyPath(), "-10000");
@@ -294,8 +290,9 @@ public class Overrides {
         properties.setProperty(PropertyKey.DEBUG_ENABLE_TEST_FACTORIES.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_O3_MAX_LAG.getPropertyPath(), "300000");
         properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED.getPropertyPath(), "true");
-        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUP_BY_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT.getPropertyPath(), "false");
     }
 
     private CairoConfiguration getDefaultConfiguration(String root) {

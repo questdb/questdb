@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,8 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
-            int columnSplit) {
+            int columnSplit
+    ) {
         super(metadata, null, masterFactory, slaveFactory);
         this.cursor = new LtJoinNoKeyJoinRecordCursor(
                 columnSplit,
@@ -46,6 +47,11 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
                 masterFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampIndex()
         );
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -82,9 +88,9 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
     }
 
     private static class LtJoinNoKeyJoinRecordCursor extends AbstractJoinCursor {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -296,7 +296,7 @@ public class LogRecordUtf8SinkTest {
             final long msgPtr = Unsafe.malloc(utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
             try {
                 LogRecordUtf8Sink logRecord = new LogRecordUtf8Sink(msgPtr, sinkMaxLen + EOL_LENGTH);
-                logRecord.putUtf8(utf8.lo(), utf8.hi());
+                logRecord.putNonAscii(utf8.lo(), utf8.hi());
                 Assert.assertEquals(expectedLen, logRecord.size());
             } finally {
                 Unsafe.free(msgPtr, utf8ByteLen + EOL_LENGTH, MemoryTag.NATIVE_DEFAULT);
@@ -358,7 +358,7 @@ public class LogRecordUtf8SinkTest {
         @Override
         public String toString() {
             final StringSink sink = new StringSink();
-            sink.putUtf8(lo, hi);
+            sink.putNonAscii(lo, hi);
             return sink.toString();
         }
     }

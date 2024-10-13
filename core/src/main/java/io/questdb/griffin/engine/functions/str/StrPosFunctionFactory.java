@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -56,7 +56,7 @@ public class StrPosFunctionFactory implements FunctionFactory {
     ) {
         final Function substrFunc = args.getQuick(1);
         if (substrFunc.isConstant()) {
-            CharSequence substr = substrFunc.getStr(null);
+            CharSequence substr = substrFunc.getStrA(null);
             if (substr == null) {
                 return IntConstant.NULL;
             }
@@ -107,9 +107,9 @@ public class StrPosFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence str = this.strFunc.getStr(rec);
+            final CharSequence str = this.strFunc.getStrA(rec);
             if (str == null) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return strpos(str, substr);
         }
@@ -132,13 +132,13 @@ public class StrPosFunctionFactory implements FunctionFactory {
 
         @Override
         public int getInt(Record rec) {
-            final CharSequence str = this.strFunc.getStr(rec);
+            final CharSequence str = this.strFunc.getStrA(rec);
             if (str == null) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
-            final CharSequence substr = this.substrFunc.getStr(rec);
+            final CharSequence substr = this.substrFunc.getStrA(rec);
             if (substr == null) {
-                return Numbers.INT_NaN;
+                return Numbers.INT_NULL;
             }
             return strpos(str, substr);
         }

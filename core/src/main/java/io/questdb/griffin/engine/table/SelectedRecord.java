@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,9 +27,10 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
 
 class SelectedRecord implements Record {
     private final IntList columnCrossIndex;
@@ -110,6 +111,11 @@ class SelectedRecord implements Record {
     }
 
     @Override
+    public Interval getInterval(int col) {
+        return base.getInterval(getColumnIndex(col));
+    }
+
+    @Override
     public long getLong(int col) {
         return base.getLong(getColumnIndex(col));
     }
@@ -155,13 +161,8 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public CharSequence getStr(int col) {
-        return base.getStr(getColumnIndex(col));
-    }
-
-    @Override
-    public void getStr(int col, Utf16Sink sink) {
-        base.getStr(getColumnIndex(col), sink);
+    public CharSequence getStrA(int col) {
+        return base.getStrA(getColumnIndex(col));
     }
 
     @Override
@@ -175,8 +176,8 @@ class SelectedRecord implements Record {
     }
 
     @Override
-    public CharSequence getSym(int col) {
-        return base.getSym(getColumnIndex(col));
+    public CharSequence getSymA(int col) {
+        return base.getSymA(getColumnIndex(col));
     }
 
     @Override
@@ -192,6 +193,21 @@ class SelectedRecord implements Record {
     @Override
     public long getUpdateRowId() {
         return base.getUpdateRowId();
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(int col) {
+        return base.getVarcharA(getColumnIndex(col));
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int col) {
+        return base.getVarcharB(getColumnIndex(col));
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        return base.getVarcharSize(getColumnIndex(col));
     }
 
     private int getColumnIndex(int columnIndex) {

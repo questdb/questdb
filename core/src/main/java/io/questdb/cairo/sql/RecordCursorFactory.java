@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,14 +26,18 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -69,7 +73,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void close() {
     }
 
-    default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
+    default SingleSymbolFilter convertToSampleByIndexPageFrameCursorFactory() {
         return null;
     }
 
@@ -90,12 +94,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
-    // Factories, such as union all do not conform to the assumption
-    // that key read from symbol column map to symbol values unambiguously.
-    // In that if you read key 1 at row 10, it might map to 'AAA' and if you read
-    // key 1 at row 100 it might map to 'BBB'.
-    // Such factories cannot be used in multi-threaded execution and cannot be tested
-    // via `testSymbolAPI()` call.
+    /**
+     * Factories, such as union all do not conform to the assumption
+     * that key read from symbol column map to symbol values unambiguously.
+     * In that if you read key 1 at row 10, it might map to 'AAA' and if you read
+     * key 1 at row 100 it might map to 'BBB'.
+     * Such factories cannot be used in multi-threaded execution and cannot be tested
+     * via `testSymbolAPI()` call.
+     *
+     * @return true if the factory uses fragmented symbol tables and can't be used
+     * in multi-threaded execution
+     */
     default boolean fragmentedSymbolTables() {
         return false;
     }
@@ -104,17 +113,24 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return getBaseFactory().getMetadata().getColumnName(idx);
     }
 
-    /**
-     * Method is necessary for cases where row cursor uses index from table reader while record cursor can reorder columns (e.g. DataFrameRecordCursorFactory)
-     *
-     * @param idx idx of column
-     * @return name of base column (no remapping)
-     */
-    default String getBaseColumnNameNoRemap(int idx) {
-        return getBaseColumnName(idx);
+    default RecordCursorFactory getBaseFactory() {
+        return null;
     }
 
-    default RecordCursorFactory getBaseFactory() {
+    // to be used in combination with compiled filter
+    @Nullable
+    default ObjList<Function> getBindVarFunctions() {
+        return null;
+    }
+
+    // to be used in combination with compiled filter
+    @Nullable
+    default MemoryCARW getBindVarMemory() {
+        return null;
+    }
+
+    @Nullable
+    default CompiledFilter getCompiledFilter() {
         return null;
     }
 
@@ -131,6 +147,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         throw new UnsupportedOperationException();
+    }
+
+    @Nullable
+    default Function getFilter() {
+        return null;
     }
 
     /**
@@ -159,6 +180,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     /**
      * If factory operates on table directly returns table's token, null otherwise.
+     * When this method returns a table token, it also means that the factory doesn't
+     * remap column names via aliases.
      *
      * @return table token of table used by this factory
      */
@@ -166,9 +189,21 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return null;
     }
 
+    default TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
+        return null;
+    }
+
+    /**
+     * Closes everything but base factory and filter.
+     */
+    default void halfClose() {
+
+    }
+
     /**
      * Returns true if this factory handles limit M , N clause already and false otherwise .
-     * If true then separate limit cursor factory is not needed (and could actually cause problem by re-applying limit logic).
+     * If true then separate limit cursor factory is not needed (and could actually cause problem
+     * by re-applying limit logic).
      */
     default boolean implementsLimit() {
         return false;
@@ -176,10 +211,28 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     boolean recordCursorSupportsRandomAccess();
 
-    default void revertFromSampleByIndexDataFrameCursorFactory() {
+    default void revertFromSampleByIndexPageFrameCursorFactory() {
     }
 
-    default boolean supportPageFrameCursor() {
+    /**
+     * Returns true if the factory stands for nothing more but a filter, so that
+     * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
+     */
+    default boolean supportsFilterStealing() {
+        return false;
+    }
+
+    default boolean supportsPageFrameCursor() {
+        return false;
+    }
+
+    /**
+     * Time frames are supported only for full table scan cursors, i.e. "x" queries.
+     *
+     * @return true if the factory supports time frames
+     * and {@link #getTimeFrameCursor(SqlExecutionContext)} can be safely called.
+     */
+    default boolean supportsTimeFrameCursor() {
         return false;
     }
 
@@ -200,7 +253,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
-     * Returns true if the factory uses a {@link io.questdb.jit.CompiledFilter}.
+     * @return true if the factory uses a {@link io.questdb.jit.CompiledFilter}.
      */
     default boolean usesCompiledFilter() {
         return false;

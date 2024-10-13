@@ -45,7 +45,7 @@ void initAndParseConfig(int argc, char **argv, CONFIG *config);
 
 int makeDir(const char *dir);
 
-FILE *redirectStdout(CONFIG *config);
+FILE *createStdoutLog(CONFIG *config);
 
 BOOL svcInstall(CONFIG *config);
 

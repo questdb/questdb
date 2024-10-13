@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,9 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.FlyweightDirectUtf16Sink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 
 import static io.questdb.cutlass.line.tcp.LineTcpParser.ENTITY_TYPE_NULL;
 
@@ -40,6 +38,7 @@ public class LineTcpEventBuffer {
     private final long bufSize;
     private final FlyweightDirectUtf16Sink tempSink = new FlyweightDirectUtf16Sink();
     private final FlyweightDirectUtf16Sink tempSinkB = new FlyweightDirectUtf16Sink();
+    private final DirectUtf8String utf8Sequence = new DirectUtf8String();
 
     public LineTcpEventBuffer(long bufLo, long bufSize) {
         this.bufLo = bufLo;
@@ -125,7 +124,7 @@ public class LineTcpEventBuffer {
     public long addGeoHash(long address, DirectUtf8Sequence value, int colTypeMeta) {
         long geohash;
         try {
-            geohash = GeoHashes.fromStringTruncatingNl(value.lo(), value.hi(), Numbers.decodeLowShort(colTypeMeta));
+            geohash = GeoHashes.fromAsciiTruncatingNl(value.lo(), value.hi(), Numbers.decodeLowShort(colTypeMeta));
         } catch (NumericException e) {
             geohash = GeoHashes.NULL;
         }
@@ -167,8 +166,8 @@ public class LineTcpEventBuffer {
         return address + Long.BYTES + Byte.BYTES;
     }
 
-    public long addLong256(long address, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
-        return addString(address, value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_LONG256);
+    public long addLong256(long address, DirectUtf8Sequence value) {
+        return addString(address, value, LineTcpParser.ENTITY_TYPE_LONG256);
     }
 
     public long addNull(long address) {
@@ -189,8 +188,8 @@ public class LineTcpEventBuffer {
         return address + Short.BYTES + Byte.BYTES;
     }
 
-    public long addString(long address, DirectUtf8Sequence value, boolean hasNonAsciiChars) {
-        return addString(address, value, hasNonAsciiChars, LineTcpParser.ENTITY_TYPE_STRING);
+    public long addString(long address, DirectUtf8Sequence value) {
+        return addString(address, value, LineTcpParser.ENTITY_TYPE_STRING);
     }
 
     public void addStructureVersion(long address, long structureVersion) {
@@ -198,7 +197,7 @@ public class LineTcpEventBuffer {
         Unsafe.getUnsafe().putLong(address, structureVersion);
     }
 
-    public long addSymbol(long address, DirectUtf8Sequence value, boolean hasNonAsciiChars, DirectUtf8SymbolLookup symbolLookup) {
+    public long addSymbol(long address, DirectUtf8Sequence value, DirectUtf8SymbolLookup symbolLookup) {
         final int maxLen = 2 * value.size();
         checkCapacity(address, Byte.BYTES + Integer.BYTES + maxLen);
         final long strPos = address + Byte.BYTES + Integer.BYTES; // skip field type and string length
@@ -216,10 +215,10 @@ public class LineTcpEventBuffer {
         } else {
             // Symbol value cannot be resolved at this point
             // Encode whole string value into the message
-            if (!hasNonAsciiChars) {
+            if (value.isAscii()) {
                 tempSink.put(value);
             } else {
-                Utf8s.utf8ToUtf16(value, tempSink, true);
+                Utf8s.utf8ToUtf16(value, tempSink);
             }
             final int length = tempSink.length();
             Unsafe.getUnsafe().putByte(address, LineTcpParser.ENTITY_TYPE_TAG);
@@ -258,6 +257,18 @@ public class LineTcpEventBuffer {
         offset += Long.BYTES;
         Unsafe.getUnsafe().putLong(offset, hi);
         return offset + Long.BYTES;
+    }
+
+    public long addVarchar(long address, DirectUtf8Sequence value) {
+        final int valueSize = value.size();
+        final int totalSize = Byte.BYTES + Byte.BYTES + Integer.BYTES + valueSize;
+        checkCapacity(address, totalSize);
+        Unsafe.getUnsafe().putByte(address++, LineTcpParser.ENTITY_TYPE_VARCHAR);
+        Unsafe.getUnsafe().putByte(address++, (byte) (value.isAscii() ? 0 : 1));
+        Unsafe.getUnsafe().putInt(address, valueSize);
+        address += Integer.BYTES;
+        value.writeTo(address, 0, valueSize);
+        return address + totalSize;
     }
 
     public long columnValueLength(byte entityType, long offset) {
@@ -349,15 +360,20 @@ public class LineTcpEventBuffer {
         return tempSinkB.asCharSequence(address, address + length * 2L);
     }
 
-    private long addString(long address, DirectUtf8Sequence value, boolean hasNonAsciiChars, byte entityTypeString) {
+    public Utf8Sequence readVarchar(long address, boolean ascii) {
+        int size = readInt(address);
+        return utf8Sequence.of(address + Integer.BYTES, address + Integer.BYTES + size, ascii);
+    }
+
+    private long addString(long address, DirectUtf8Sequence value, byte entityTypeString) {
         int maxLen = 2 * value.size();
         checkCapacity(address, Byte.BYTES + Integer.BYTES + maxLen);
         long strPos = address + Byte.BYTES + Integer.BYTES; // skip field type and string length
         tempSink.of(strPos, strPos + maxLen);
-        if (hasNonAsciiChars) {
-            Utf8s.utf8ToUtf16Unchecked(value, tempSink);
-        } else {
+        if (value.isAscii()) {
             tempSink.put(value);
+        } else {
+            Utf8s.utf8ToUtf16Unchecked(value, tempSink);
         }
         final int length = tempSink.length();
         Unsafe.getUnsafe().putByte(address, entityTypeString);

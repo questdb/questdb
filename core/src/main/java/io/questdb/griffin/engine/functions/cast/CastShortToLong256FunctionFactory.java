@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,13 +58,13 @@ public class CastShortToLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public Long256 getLong256A(Record rec) {
-            long256a.setAll(arg.getShort(rec), 0, 0, 0);
+            long256a.setLow(arg.getShort(rec));
             return long256a;
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
-            long256b.setAll(arg.getShort(rec), 0, 0, 0);
+            long256b.setLow(arg.getShort(rec));
             return long256b;
         }
     }

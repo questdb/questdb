@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 public final class Rows {
+    public static final int MAX_SAFE_PARTITION_INDEX = (1 << 19) - 1;
 
     private Rows() {
     }
@@ -38,6 +39,6 @@ public final class Rows {
     }
 
     public static long toRowID(int partitionIndex, long localRowID) {
-        return (((long) partitionIndex) << 44L) + localRowID;
+        return (((long) partitionIndex) << 44) + localRowID;
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -77,12 +77,12 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             assert cursor.owner() == this;
         }
 
-        if (key == 0 && unIndexedNullCount > 0 && minValue < unIndexedNullCount) {
+        if (key == 0 && unindexedNullCount > 0 && minValue < unindexedNullCount) {
             // we need to return some nulls and the whole set of actual index values
             if (cursor == null) {
                 cursor = new Cursor();
             }
-            cursor.of(key, 0, maxValue, keyCount, minValue, unIndexedNullCount);
+            cursor.of(key, minValue, maxValue, keyCount, minValue, unindexedNullCount);
             return cursor;
         }
 
@@ -102,6 +102,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
         protected long position;
         protected long valueCount;
         private long maxValue;
+        private long minValue;
         private long nullCount;
         private long nullPos;
         private long valueBlockOffset;
@@ -139,7 +140,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
 
         @Override
         public long next() {
-            return next;
+            return next - minValue;
         }
 
         private long getValueCellIndex(long absoluteValueIndex) {
@@ -208,6 +209,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
                     seekValue(valueCount, valueBlockOffset);
                 }
 
+                this.minValue = minValue;
                 this.maxValue = maxValue;
             }
         }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,13 +27,12 @@ package org.questdb;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import org.openjdk.jmh.annotations.*;
@@ -51,12 +50,13 @@ public class TableReaderReloadBenchmark {
 
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
     private static final long ts;
+    private static CairoEngine cairoEngine;
     private static TableReader reader;
-    private static long sum = 0;
     private static TableWriter writer;
 
     public static void main(String[] args) throws RunnerException {
         try (CairoEngine engine = new CairoEngine(configuration)) {
+            cairoEngine = engine;
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
                             configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
@@ -95,8 +95,9 @@ public class TableReaderReloadBenchmark {
                 DefaultLifecycleManager.INSTANCE,
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
-                () -> false,
-                Metrics.disabled()
+                () -> Numbers.LONG_NULL,
+                Metrics.disabled(),
+                cairoEngine
         );
         writer.truncate();
         // create 10 partitions
@@ -114,10 +115,8 @@ public class TableReaderReloadBenchmark {
         reader = new TableReader(configuration, tableToken);
 
         // ensure reader opens all partitions and maps all data
-        RecordCursor cursor = reader.getCursor();
-        Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            sum += record.getTimestamp(0);
+        for (int i = 0; i < reader.getPartitionCount(); i++) {
+            reader.openPartition(i);
         }
     }
 

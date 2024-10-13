@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -122,11 +122,11 @@ public class RetryIODispatcherTest extends AbstractTest {
             "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
             "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                              Dispatching_base_num  |                   STRING  |           0  |\r\n" +
+            "|              0  |                              Dispatching_base_num  |                  VARCHAR  |           0  |\r\n" +
             "|              1  |                                   Pickup_DateTime  |                     DATE  |           0  |\r\n" +
-            "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
-            "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
-            "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
+            "|              2  |                                  DropOff_datetime  |                  VARCHAR  |           0  |\r\n" +
+            "|              3  |                                      PUlocationID  |                  VARCHAR  |           0  |\r\n" +
+            "|              4  |                                      DOlocationID  |                  VARCHAR  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
@@ -552,7 +552,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                     final int validRequestRecordCount = 24;
                     final int insertCount = 1;
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-                    int[] fds = new int[parallelCount * insertCount];
+                    long[] fds = new long[parallelCount * insertCount];
                     Arrays.fill(fds, -1);
                     for (int i = 0; i < parallelCount; i++) {
                         final int threadI = i;
@@ -561,7 +561,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                                 for (int r = 0; r < insertCount; r++) {
                                     // insert one record
                                     try {
-                                        int fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(ValidImportRequest);
+                                        long fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(ValidImportRequest);
                                         fds[threadI * insertCount + r] = fd;
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
@@ -576,7 +576,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                     countDownLatch.await();
                     assertNRowsInserted(validRequestRecordCount);
 
-                    for (int fd : fds) {
+                    for (long fd : fds) {
                         Assert.assertNotEquals(fd, -1);
                         NetworkFacadeImpl.INSTANCE.close(fd);
                     }
@@ -632,7 +632,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                                                 .withClientLinger(60)
                                                 .executeWithStandardHeaders(
                                                         "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                                                        IODispatcherTest.JSON_DDL_RESPONSE
+                                                        IODispatcherTest.INSERT_QUERY_RESPONSE
                                                 );
                                     } catch (AssertionError ase) {
                                         fails.incrementAndGet();
@@ -695,7 +695,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                                                 .withClientLinger(60)
                                                 .executeWithStandardHeaders(
                                                         "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(1%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n",
-                                                        IODispatcherTest.JSON_DDL_RESPONSE
+                                                        IODispatcherTest.INSERT_QUERY_RESPONSE
                                                 );
                                     } catch (Exception e) {
                                         LOG.error().$("Failed execute insert http request. Server error ").$(e).$();
@@ -749,7 +749,7 @@ public class RetryIODispatcherTest extends AbstractTest {
 
                     TableWriter writer = lockWriter(engine, "balances_x");
                     CountDownLatch countDownLatch = new CountDownLatch(parallelCount);
-                    int[] fds = new int[parallelCount];
+                    long[] fds = new long[parallelCount];
                     Arrays.fill(fds, -1);
                     Thread[] threads = new Thread[parallelCount];
                     for (int i = 0; i < parallelCount; i++) {
@@ -762,7 +762,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                                     Os.sleep(threadI * 5);
                                     String request = "GET /query?query=%0A%0Ainsert+into+balances_x+(cust_id%2C+balance_ccy%2C+balance%2C+timestamp)+values+(" + threadI +
                                             "%2C+%27USD%27%2C+1500.00%2C+6000000001)&limit=0%2C1000&count=true HTTP/1.1\r\n" + SendAndReceiveRequestBuilder.RequestHeaders;
-                                    int fd = new SendAndReceiveRequestBuilder()
+                                    long fd = new SendAndReceiveRequestBuilder()
                                             .withClientLinger(60)
                                             .connectAndSendRequest(request);
                                     fds[threadI] = fd;

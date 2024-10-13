@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,9 +27,7 @@ package io.questdb.test.griffin.engine.functions.bind;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class RegexpReplaceStrBindVariableTest extends AbstractCairoTest {
@@ -43,7 +41,7 @@ public class RegexpReplaceStrBindVariableTest extends AbstractCairoTest {
                 bindVariableService.setStr(0, "foo");
                 bindVariableService.setStr(1, "bar");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
                 TestUtils.assertEquals("regexp_replace\n" +
@@ -54,33 +52,46 @@ public class RegexpReplaceStrBindVariableTest extends AbstractCairoTest {
                 bindVariableService.setStr(0, "def");
                 bindVariableService.setStr(1, "abc");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, TestUtils.printer);
+                    println(factory, cursor);
                 }
 
-                TestUtils.assertEquals("regexp_replace\n" +
-                        "foobar\n" +
-                        "foobar\n" +
-                        "barbaz\n", sink);
+                TestUtils.assertEquals(
+                        "regexp_replace\n" +
+                                "foobar\n" +
+                                "foobar\n" +
+                                "barbaz\n",
+                        sink
+                );
 
                 bindVariableService.setStr(0, null);
                 bindVariableService.setStr(1, "abc");
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(25, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
+
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
                 }
+
+                TestUtils.assertEquals(
+                        "regexp_replace\n" +
+                                "\n" +
+                                "\n" +
+                                "\n",
+                        sink
+                );
 
                 bindVariableService.setStr(0, "abc");
                 bindVariableService.setStr(1, null);
-                try {
-                    factory.getCursor(sqlExecutionContext);
-                    Assert.fail();
-                } catch (SqlException e) {
-                    Assert.assertEquals(29, e.getPosition());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "NULL replacement");
+
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    println(factory, cursor);
                 }
+
+                TestUtils.assertEquals(
+                        "regexp_replace\n" +
+                                "\n" +
+                                "\n" +
+                                "\n",
+                        sink
+                );
             }
         });
     }

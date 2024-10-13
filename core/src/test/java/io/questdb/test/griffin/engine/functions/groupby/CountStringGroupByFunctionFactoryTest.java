@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -46,21 +46,23 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testExpression() throws Exception {
-        final String expected = "a\tcount_distinct\n" +
-                "a\t3\n" +
-                "b\t3\n" +
-                "c\t3\n";
-        assertQuery(
-                expected,
-                "select a, count_distinct(concat(s, s)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
-        // self-concatenation shouldn't affect the number of distinct values,
-        // so the result should stay the same
-        assertSql(expected, "select a, count_distinct(s) from x order by a");
+        assertMemoryLeak(() -> {
+            final String expected = "a\tcount_distinct\n" +
+                    "a\t3\n" +
+                    "b\t3\n" +
+                    "c\t3\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select a, count_distinct(concat(s, s)) from x order by a",
+                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
+                    null,
+                    true,
+                    true
+            );
+            // self-concatenation shouldn't affect the number of distinct values,
+            // so the result should stay the same
+            assertSql(expected, "select a, count_distinct(s) from x order by a");
+        });
     }
 
     @Test
@@ -187,7 +189,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select ts, count_distinct(s) from x sample by 1s fill(99)",
                 "create table x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
-                false
+                true
         );
     }
 
@@ -247,7 +249,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "e\t1\t1970-01-01T00:00:09.000000Z\n" +
                         "a\t1\t1970-01-01T00:00:09.000000Z\n" +
                         "f\t1\t1970-01-01T00:00:09.000000Z\n",
-                "select a, count_distinct(s), ts from x sample by 1s",
+                "select a, count_distinct(s), ts from x sample by 1s ALIGN TO FIRST OBSERVATION",
                 "create table x as (select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
                 false

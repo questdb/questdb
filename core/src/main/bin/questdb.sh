@@ -8,7 +8,7 @@
 #    \__\_\\__,_|\___||___/\__|____/|____/
 #
 #  Copyright (c) 2014-2019 Appsicle
-#  Copyright (c) 2019-2023 QuestDB
+#  Copyright (c) 2019-2024 QuestDB
 #
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #  you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ export QDB_PROCESS_LABEL="QuestDB-Runtime-66535"
 export QDB_MAX_STOP_ATTEMPTS=60;
 export QDB_OS=`uname`
 
-case `uname` in
+case $QDB_OS in
    Darwin|FreeBSD)
        export PS_CMD="ps aux"
        if [ -d "/usr/local/var/questdb" ] || [ "$(id -u)" = "0" ]; then
@@ -70,7 +70,7 @@ case `uname` in
 esac
 
 function usage {
-    echo "Usage: $0 start|status|stop [-f] [-d path] [-t tag]"
+    echo "Usage: $0 start|status|stop [-f] [-n] [-d path] [-t tag]"
     echo
     exit 55
 }
@@ -107,6 +107,20 @@ function export_java {
     fi
 
     echo "JAVA: $JAVA"
+}
+
+function export_jemalloc() {
+    if [[ "$QDB_JEMALLOC" = "true" ]]; then
+      jemalloc_so=$(ls $BASE/libjemalloc*)
+      if [[ "$QDB_OS" != "FreeBSD" && -r "${jemalloc_so}" ]]; then
+          if [[ "$QDB_OS" == "Darwin" ]]; then
+              export DYLD_INSERT_LIBRARIES=${jemalloc_so}
+          else
+              export LD_PRELOAD=${jemalloc_so}
+          fi
+          echo "Using jemalloc"
+      fi
+    fi
 }
 
 function export_args {
@@ -164,6 +178,7 @@ function start {
     fi
 
     export_java
+    export_jemalloc
 
     # create root directory if it does not exist
     if [ ! -d "$QDB_ROOT" ]; then
@@ -175,9 +190,10 @@ function start {
     mkdir -p ${QDB_LOG}
 
     JAVA_LIB="$BASE/questdb.jar"
-    
+
     JAVA_OPTS="
     -D$QDB_PROCESS_LABEL
+    -Dcontainerized=$([ "${QDB_CONTAINER_MODE}" != '' ] && echo "true" || echo "false" )
     -ea -Dnoebug
     -XX:ErrorFile=${QDB_ROOT}/db/hs_err_pid+%p.log
     -XX:+UnlockExperimentalVMOptions
@@ -186,7 +202,7 @@ function start {
     ${JVM_PREPEND}
     "
 
-    if [ "$(uname)" == "Darwin" ]; then
+    if [ "$QDB_OS" == "Darwin" ]; then
         # JVM on MacOS has its own max open files limit, set to 10240
         # This limit can be removed by passing the -XX:-MaxFDLimit option
         # However, if this built-in limit is removed, the JVM starts to use the soft limit as if it was the hard limit,
@@ -198,14 +214,16 @@ function start {
     fi
 
     DATE=`date +%Y-%m-%dT%H-%M-%S`
-
+    HELLO_FILE=${QDB_ROOT}/hello.txt
+    rm ${HELLO_FILE} 2> /dev/null
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > ${QDB_LOG}/stdout-${DATE}.txt &
-        sleep 0.5
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1 &
+        $BASE/print-hello.sh ${HELLO_FILE}
     else
-        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > ${QDB_LOG}/stdout-${DATE}.txt
+        $BASE/print-hello.sh ${HELLO_FILE} &
+        ${JAVA} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
     fi
 }
 
@@ -250,19 +268,6 @@ function stop {
         echo "Stopped ${OUR_PID}"
     fi
 }
-
-function banner {
-    echo ''
-    echo '  ___                  _   ____  ____'
-    echo ' / _ \ _   _  ___  ___| |_|  _ \| __ )'
-    echo '| | | | | | |/ _ \/ __| __| | | |  _ \'
-    echo '| |_| | |_| |  __/\__ \ |_| |_| | |_) |'
-    echo ' \__\_\\__,_|\___||___/\__|____/|____/'
-    echo -e "$QUESTDB_BANNER"
-    echo
-}
-
-banner
 
 if [[ $# -gt 0 ]]; then
     command=$1

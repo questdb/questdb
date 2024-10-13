@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ public class TxnScoreboard implements Closeable, Mutable {
     private final FilesFacade ff;
     private final int pow2EntryCount;
     private final long size;
-    private int fd = -1;
+    private long fd = -1;
     private long mem;
 
     public TxnScoreboard(FilesFacade ff, int entryCount) {
@@ -112,8 +112,8 @@ public class TxnScoreboard implements Closeable, Mutable {
     public TxnScoreboard ofRO(@Transient Path root) {
         clear();
         int rootLen = root.size();
-        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        this.fd = openCleanRW(ff, root, this.size);
+        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME);
+        this.fd = openCleanRW(ff, root.$(), this.size);
         try {
             this.mem = TableUtils.mapRO(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
@@ -127,8 +127,8 @@ public class TxnScoreboard implements Closeable, Mutable {
 
     public TxnScoreboard ofRW(@Transient Path root) {
         clear();
-        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME).$();
-        this.fd = openCleanRW(ff, root, this.size);
+        root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME);
+        this.fd = openCleanRW(ff, root.$(), this.size);
 
         // truncate is required to give file a size
         // allocate above does not seem to update file system's size entry
@@ -191,8 +191,8 @@ public class TxnScoreboard implements Closeable, Mutable {
         return txn + 1;
     }
 
-    static int openCleanRW(FilesFacade ff, LPSZ path, long size) {
-        final int fd = ff.openCleanRW(path, size);
+    static long openCleanRW(FilesFacade ff, LPSZ path, long size) {
+        final long fd = ff.openCleanRW(path, size);
         if (fd > -1) {
             LOG.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
             return fd;

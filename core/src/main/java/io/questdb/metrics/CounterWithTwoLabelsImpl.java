@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,9 +39,13 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
     private final CharSequence name;
     private final int shl;
 
-    CounterWithTwoLabelsImpl(CharSequence name,
-                             CharSequence labelName0, CharSequence[] labelValues0,
-                             CharSequence labelName1, CharSequence[] labelValues1) {
+    CounterWithTwoLabelsImpl(
+            CharSequence name,
+            CharSequence labelName0,
+            CharSequence[] labelValues0,
+            CharSequence labelName1,
+            CharSequence[] labelValues1
+    ) {
         this.name = name;
         this.labelName0 = labelName0;
         this.labelName1 = labelName1;

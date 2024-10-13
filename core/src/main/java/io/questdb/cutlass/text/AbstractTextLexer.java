@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,9 +34,15 @@ import java.io.Closeable;
 
 public abstract class AbstractTextLexer implements Closeable, Mutable {
     private final static Log LOG = LogFactory.getLog(AbstractTextLexer.class);
+    private static final long MASK_CR = SwarUtils.broadcast((byte) '\r');
+    private static final long MASK_NEW_LINE = SwarUtils.broadcast((byte) '\n');
+    private static final long MASK_QUOTE = SwarUtils.broadcast((byte) '"');
+    private static final long NON_ASCII_MASK_FULL = SwarUtils.broadcast((byte) 0x80);
+
     private final ObjectPool<DirectUtf8String> csPool;
     private final ObjList<DirectUtf8String> fields = new ObjList<>();
     private final int lineRollBufLimit;
+    private boolean ascii;
     private boolean delayedOutQuote;
     private boolean eol;
     private long errorCount = 0;
@@ -102,24 +108,6 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         parse0(lo, hi);
     }
 
-    public void parseExactLines(long lo, long hi) {
-        this.fieldHi = this.fieldLo = lo;
-        long ptr = lo;
-
-        try {
-            while (ptr < hi) {
-                final byte c = Unsafe.getUnsafe().getByte(ptr++);
-                this.fieldHi++;
-                if (delayedOutQuote && c != '"') {
-                    inQuote = delayedOutQuote = false;
-                }
-                doSwitch(lo, hi, c);
-            }
-        } catch (LineLimitException ignore) {
-            // loop exit
-        }
-    }
-
     public void parseLast() {
         if (useLineRollBuf) {
             if (inQuote && lastQuotePos < fieldHi) {
@@ -134,7 +122,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     }
 
     public final void restart(boolean header) {
-        this.fieldLo = 0;
+        nextField(0);
         this.eol = false;
         this.fieldIndex = 0;
         this.fieldMax = -1;
@@ -200,7 +188,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     private void clearRollBuffer(long ptr) {
         useLineRollBuf = false;
         lineRollBufCur = lineRollBufPtr;
-        this.fieldLo = this.fieldHi = ptr;
+        nextField(ptr);
     }
 
     private void eol(long ptr, byte c) {
@@ -237,7 +225,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
             if (lastQuotePos > -1) {
                 lastQuotePos = -1;
             }
-            this.fieldLo = this.fieldHi;
+            nextField();
         }
     }
 
@@ -283,6 +271,16 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         ignoreEolOnce = false;
     }
 
+    private void nextField() {
+        this.ascii = true;
+        this.fieldLo = this.fieldHi;
+    }
+
+    private void nextField(long ptr) {
+        this.ascii = true;
+        this.fieldLo = this.fieldHi = ptr;
+    }
+
     private void onColumnDelimiterSlow(long lo) {
         checkEol(lo);
 
@@ -297,10 +295,37 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
         try {
             while (ptr < hi) {
-                final byte c = Unsafe.getUnsafe().getByte(ptr++);
+                if (!eol && !rollBufferUnusable && !useLineRollBuf && !delayedOutQuote && ptr < hi - 7) {
+                    long word = Unsafe.getUnsafe().getLong(ptr);
+                    long zeroBytesWord = SwarUtils.markZeroBytes(word ^ MASK_NEW_LINE)
+                            | SwarUtils.markZeroBytes(word ^ MASK_CR)
+                            | SwarUtils.markZeroBytes(word ^ MASK_QUOTE)
+                            | SwarUtils.markZeroBytes(word ^ getDelimiterMask());
+                    if (zeroBytesWord == 0) {
+                        ptr += 7;
+                        this.fieldHi += 7;
+                        this.ascii &= (word & NON_ASCII_MASK_FULL) == 0;
+                        continue;
+                    } else {
+                        int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                        if (firstIndex > 0) {
+                            // The firstIndex returns the byte count we have to "trust"
+                            // the assumption is that these bytes will become a part of the existing fields
+                            // These bytes come on LOW bits of the "word". To check that these bytes are
+                            // positive, we need to isolate them. We do that by masking out the entire
+                            // word, save for the bytes we intend to keep.
+                            this.ascii &= ((word & (0xffffffffffffffffL >>> (64 - firstIndex * 8))) & NON_ASCII_MASK_FULL) == 0;
+                            ptr += firstIndex;
+                        }
+                        this.fieldHi += firstIndex;
+                    }
+                }
 
-                if (checkState(ptr, c)) {
-                    doSwitch(lo, ptr, c);
+                final byte b = Unsafe.getUnsafe().getByte(ptr++);
+                this.ascii &= b > 0;
+
+                if (checkState(ptr, b)) {
+                    doSwitch(lo, ptr, b);
                 }
             }
         } catch (LineLimitException ignore) {
@@ -312,7 +337,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
 
         if (eol) {
-            this.fieldLo = 0;
+            nextField(0);
         } else {
             rollLine(lo, hi);
             useLineRollBuf = true;
@@ -352,8 +377,8 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
 
     private void stashField(int fieldIndex) {
         if (lineCount > 0 && fieldIndex <= fieldMax && lastQuotePos < 0) {
-            fields.getQuick(fieldIndex).of(this.fieldLo, this.fieldHi - 1);
-            this.fieldLo = this.fieldHi;
+            fields.getQuick(fieldIndex).of(this.fieldLo, this.fieldHi - 1, ascii);
+            nextField();
         } else {
             stashFieldSlow(fieldIndex);
         }
@@ -370,13 +395,12 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
 
         if (lastQuotePos > -1) {
-            fields.getQuick(fieldIndex).of(this.fieldLo, lastQuotePos - 1);
+            fields.getQuick(fieldIndex).of(this.fieldLo, lastQuotePos - 1, ascii);
             lastQuotePos = -1;
         } else {
-            fields.getQuick(fieldIndex).of(this.fieldLo, this.fieldHi - 1);
+            fields.getQuick(fieldIndex).of(this.fieldLo, this.fieldHi - 1, ascii);
         }
-
-        this.fieldLo = this.fieldHi;
+        nextField();
     }
 
     private void triggerLine(long ptr) {
@@ -405,12 +429,14 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
     }
 
-    protected abstract void doSwitch(long lo, long hi, byte c) throws LineLimitException;
+    protected abstract void doSwitch(long lo, long hi, byte b) throws LineLimitException;
+
+    protected abstract long getDelimiterMask();
 
     protected void onColumnDelimiter(long lo) {
         if (!eol && !inQuote && !ignoreEolOnce && lineCount > 0 && fieldIndex < fieldMax && lastQuotePos < 0) {
-            fields.getQuick(fieldIndex++).of(this.fieldLo, this.fieldHi - 1);
-            this.fieldLo = this.fieldHi;
+            fields.getQuick(fieldIndex++).of(fieldLo, fieldHi - 1, ascii);
+            nextField();
         } else {
             onColumnDelimiterSlow(lo);
         }
@@ -422,7 +448,7 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
         }
 
         if (eol) {
-            this.fieldLo = this.fieldHi;
+            nextField();
             return;
         }
 
@@ -443,10 +469,10 @@ public abstract class AbstractTextLexer implements Closeable, Mutable {
     protected void onQuote() {
         if (inQuote) {
             delayedOutQuote = !delayedOutQuote;
-            lastQuotePos = this.fieldHi;
+            lastQuotePos = fieldHi;
         } else if (fieldHi - fieldLo == 1) {
             inQuote = true;
-            this.fieldLo = this.fieldHi;
+            nextField();
         }
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 public class FirstCharGroupByFunction extends CharFunction implements GroupByFunction, UnaryFunction {
@@ -43,12 +44,13 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putChar(valueIndex, arg.getChar(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putChar(valueIndex + 1, arg.getChar(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         // empty
     }
 
@@ -59,7 +61,7 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
 
     @Override
     public char getChar(Record rec) {
-        return rec.getChar(valueIndex);
+        return rec.getChar(valueIndex + 1);
     }
 
     @Override
@@ -73,27 +75,40 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.SHORT);
+        columnTypes.add(ColumnType.LONG);  // row id
+        columnTypes.add(ColumnType.SHORT); // value
     }
 
-    public void setChar(MapValue mapValue, char value) {
-        mapValue.putChar(valueIndex, value);
+    @Override
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putChar(valueIndex + 1, srcValue.getChar(valueIndex + 1));
+        }
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        setChar(mapValue, (char) 0);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putChar(valueIndex + 1, (char) 0);
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

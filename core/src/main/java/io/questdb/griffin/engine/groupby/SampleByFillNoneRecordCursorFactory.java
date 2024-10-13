@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -59,39 +59,47 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         super(base, groupByMetadata, recordFunctions);
-        // sink will be storing record columns to map key
-        final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
-        // this is the map itself, which we must not forget to free when factory closes
-        final Map map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
-        final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-        cursor = new SampleByFillNoneRecordCursor(
-                configuration,
-                map,
-                mapSink,
-                groupByFunctions,
-                groupByFunctionsUpdater,
-                this.recordFunctions,
-                timestampIndex,
-                timestampSampler,
-                timezoneNameFunc,
-                timezoneNameFuncPos,
-                offsetFunc,
-                offsetFuncPos
-        );
+        try {
+            // sink will be storing record columns to map key
+            final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter);
+            // this is the map itself, which we must not forget to free when factory closes
+            final Map map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+            final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            cursor = new SampleByFillNoneRecordCursor(
+                    configuration,
+                    map,
+                    mapSink,
+                    groupByFunctions,
+                    groupByFunctionsUpdater,
+                    this.recordFunctions,
+                    timestampIndex,
+                    timestampSampler,
+                    timezoneNameFunc,
+                    timezoneNameFuncPos,
+                    offsetFunc,
+                    offsetFuncPos,
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
+            );
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        try {
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        } catch (Throwable ex) {
-            Misc.free(cursor);
-            throw ex;
-        }
+        return initFunctionsAndCursor(executionContext, baseCursor);
     }
 
     @Override
@@ -101,7 +109,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleBy");
+        sink.type("Sample By");
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", cursor.groupByFunctions, true);
         sink.child(base);
@@ -109,7 +117,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
 
     @Override
     protected void _close() {
-        cursor.close();
+        Misc.free(cursor);
         super._close();
     }
 }

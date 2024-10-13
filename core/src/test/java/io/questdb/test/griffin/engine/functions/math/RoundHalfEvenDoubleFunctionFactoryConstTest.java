@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,17 +25,15 @@
 package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.griffin.SqlException;
 import org.junit.Test;
 
 public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTest {
 
-
     @Test
-    public void testLargeNegScale() throws SqlException {
+    public void testLargeNegScale() throws Exception {
         assertQuery(
                 "round_half_even\n" +
-                        "NaN\n",
+                        "null\n",
                 "select round_half_even(14.7778, -18) from long_sequence(1)",
                 null,
                 true,
@@ -44,10 +42,10 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testLargePosScale() throws SqlException {
+    public void testLargePosScale() throws Exception {
         assertQuery(
                 "round_half_even\n" +
-                        "NaN\n",
+                        "null\n",
                 "select round_half_even(14.7778, 18) from long_sequence(1)",
                 null,
                 true,
@@ -56,7 +54,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testNegScaleHigherThanNumber() throws SqlException {
+    public void testNegScaleHigherThanNumber() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "0.0\n",
@@ -68,7 +66,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testNegScaleNegValueRoundsDown() throws SqlException {
+    public void testNegScaleNegValueRoundsDown() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "-140.0\n",
@@ -80,7 +78,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testNegScaleNegValueRoundsUp() throws SqlException {
+    public void testNegScaleNegValueRoundsUp() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "-140.0\n",
@@ -92,7 +90,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testNegScalePosValueRoundsDown() throws SqlException {
+    public void testNegScalePosValueRoundsDown() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "140.0\n",
@@ -107,7 +105,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     /*Negative Scale*/
 
     @Test
-    public void testNegScalePosValueRoundsUp() throws SqlException {
+    public void testNegScalePosValueRoundsUp() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "140.0\n",
@@ -119,7 +117,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testOKNegScale() throws SqlException {
+    public void testOKNegScale() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "0.0\n",
@@ -131,7 +129,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testOKPosScale() throws SqlException {
+    public void testOKPosScale() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "14.7778\n",
@@ -143,7 +141,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testOKPosScale17() throws SqlException {
+    public void testOKPosScale17() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "14.777800000000001\n",
@@ -154,11 +152,10 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
         );
     }
 
-
     /*Positive Scale*/
 
     @Test
-    public void testPosScaleNegValueRoundsDown() throws SqlException {
+    public void testPosScaleNegValueRoundsDown() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "-23.400000000000002\n",
@@ -170,7 +167,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testPosScaleNegValueRoundsUp() throws SqlException {
+    public void testPosScaleNegValueRoundsUp() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "-23.400000000000002\n",
@@ -182,7 +179,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testPosScalePosValueRoundsDown() throws SqlException {
+    public void testPosScalePosValueRoundsDown() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "23.400000000000002\n",
@@ -194,7 +191,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testPosScalePosValueRoundsUp() throws SqlException {
+    public void testPosScalePosValueRoundsUp() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "23.400000000000002\n",
@@ -208,7 +205,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     /*Zero Scale*/
 
     @Test
-    public void testZeroScalePosValueRoundsDown() throws SqlException {
+    public void testZeroScalePosValueRoundsDown() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "24.0" +
@@ -221,7 +218,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testZeroScalePosValueRoundsUp() throws SqlException {
+    public void testZeroScalePosValueRoundsUp() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "24.0\n",
@@ -233,7 +230,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testZeroScaleScaleNegValueRoundsDown() throws SqlException {
+    public void testZeroScaleScaleNegValueRoundsDown() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "-24.0\n",
@@ -245,7 +242,7 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
     }
 
     @Test
-    public void testZeroScaleScaleNegValueRoundsUp() throws SqlException {
+    public void testZeroScaleScaleNegValueRoundsUp() throws Exception {
         assertQuery(
                 "round_half_even\n" +
                         "-24.0\n",
@@ -255,6 +252,4 @@ public class RoundHalfEvenDoubleFunctionFactoryConstTest extends AbstractCairoTe
                 true
         );
     }
-
-
 }

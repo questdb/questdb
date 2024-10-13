@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.maxDayOfMonth;
@@ -38,7 +38,7 @@ public class WeekOfYearFunctionFactoryTest extends AbstractCairoTest {
     public void testNull() throws Exception {
         assertQuery(
                 "week_of_year\n" +
-                        "NaN\n",
+                        "null\n",
                 "select week_of_year(null)",
                 null,
                 null,

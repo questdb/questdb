@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.line.tcp;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -62,9 +63,12 @@ public class LineTcpConnectionContextInvalidSymbolTest extends BaseLineTcpContex
                 // The very last measurement should be included if we tolerate invalid measurements.
                 expected += "192.168.0.1\t42.0\t2016-06-13T17:43:50.100500Z\n";
             }
-            try (TableReader reader = newOffPoolReader(configuration, table)) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, table);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 TableReaderMetadata meta = reader.getMetadata();
-                assertCursorTwoPass(expected, reader.getCursor(), meta);
+                assertCursorTwoPass(expected, cursor, meta);
                 Assert.assertEquals(3, meta.getColumnCount());
                 Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("ip_address"));
                 Assert.assertEquals(ColumnType.DOUBLE, meta.getColumnType("cpu"));

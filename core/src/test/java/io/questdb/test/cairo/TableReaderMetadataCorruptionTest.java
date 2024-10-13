@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -189,7 +189,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 types,
                 names.length,
                 timestampIndex,
-                "STRING"
+                ColumnType.nameOf(ColumnType.STRING)
         );
     }
 
@@ -248,7 +248,7 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 String tableName = "x";
                 path.of(root).concat(tableName);
                 final int rootLen = path.size();
-                if (TestFilesFacadeImpl.INSTANCE.mkdirs(path.slash$(), configuration.getMkDirMode()) == -1) {
+                if (TestFilesFacadeImpl.INSTANCE.mkdirs(path.slash(), configuration.getMkDirMode()) == -1) {
                     throw CairoException.critical(TestFilesFacadeImpl.INSTANCE.errno()).put("Cannot create dir: ").put(path);
                 }
 
@@ -281,14 +281,14 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 if (trimSize > -1) {
                     FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
                     path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$();
-                    int fd = ff.openRW(path, configuration.getWriterFileOpenOpts());
+                    long fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
                     assert fd > -1;
                     ff.truncate(fd, trimSize);
                     ff.close(fd);
                 }
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(configuration)) {
-                    metadata.load(path);
+                    metadata.load(path.$());
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), contains);
@@ -307,19 +307,19 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(tableName);
                 path.of(root).concat(tableToken).concat(TableUtils.META_FILE_NAME).$();
 
-                long len = TestFilesFacadeImpl.INSTANCE.length(path);
+                long len = TestFilesFacadeImpl.INSTANCE.length(path.$());
 
                 try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken)) {
                     metadata.load();
                     try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                        mem.smallFile(TestFilesFacadeImpl.INSTANCE, path, MemoryTag.MMAP_DEFAULT);
+                        mem.smallFile(TestFilesFacadeImpl.INSTANCE, path.$(), MemoryTag.MMAP_DEFAULT);
                         mem.jumpTo(0);
                         mem.putInt(columnCount);
                         mem.skip(len - 4);
                     }
 
                     try {
-                        metadata.createTransitionIndex(0);
+                        metadata.prepareTransition(0);
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "Invalid metadata at ");

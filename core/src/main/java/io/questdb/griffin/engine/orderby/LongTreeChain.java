@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,33 +27,54 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.engine.AbstractRedBlackTree;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
 
+/**
+ * Values are stored on a heap. Value chain addresses are 4-byte aligned.
+ */
 public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
+    private static final long CHAIN_VALUE_SIZE = 12;
+    private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
     private final TreeCursor cursor = new TreeCursor();
-    private final MemoryARW valueChain;
+    private final long initialValueHeapSize;
+    private final long maxValueHeapSize;
+    private long valueHeapLimit;
+    private long valueHeapPos;
+    private long valueHeapSize;
+    private long valueHeapStart;
 
     public LongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages) {
         super(keyPageSize, keyMaxPages);
-        this.valueChain = Vm.getARWInstance(valuePageSize, valueMaxPages, MemoryTag.NATIVE_TREE_CHAIN);
+        try {
+            valueHeapSize = initialValueHeapSize = valuePageSize;
+            valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            valueHeapLimit = valueHeapStart + valueHeapSize;
+            maxValueHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_VALUE_HEAP_SIZE_LIMIT);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
     public void clear() {
         super.clear();
-        this.valueChain.jumpTo(0);
+        valueHeapPos = valueHeapStart;
     }
 
     @Override
     public void close() {
         super.close();
-        Misc.free(valueChain);
         cursor.clear();
+        if (valueHeapStart != 0) {
+            valueHeapStart = Unsafe.free(valueHeapStart, valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            valueHeapLimit = valueHeapPos = 0;
+            valueHeapSize = 0;
+        }
     }
 
     public TreeCursor getCursor() {
@@ -74,66 +95,109 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
 
         comparator.setLeft(leftRecord);
 
-        long ptr = root;
-        long parent;
+        int offset = root;
+        int parent;
         int cmp;
         do {
-            parent = ptr;
-            final long ref = refOf(ptr);
-            sourceCursor.recordAt(rightRecord, valueChain.getLong(ref));
+            parent = offset;
+            final int ref = refOf(offset);
+            sourceCursor.recordAt(rightRecord, rowId(ref));
             cmp = comparator.compare(rightRecord);
             if (cmp < 0) {
-                ptr = leftOf(ptr);
+                offset = leftOf(offset);
             } else if (cmp > 0) {
-                ptr = rightOf(ptr);
+                offset = rightOf(offset);
             } else {
-                long oldChainEnd = lastRefOf(ptr);
-                long newChainEnd = appendValue(leftRecord.getRowId(), -1);
-                valueChain.putLong(oldChainEnd + Long.BYTES, newChainEnd);
-                setLastRef(ptr, newChainEnd);
+                final int oldChainEnd = lastRefOf(offset);
+                final int newChainEnd = appendNewValue(leftRecord.getRowId());
+                setNextValueOffset(oldChainEnd, newChainEnd);
+                setLastRef(offset, newChainEnd);
                 return;
             }
-        } while (ptr > -1);
+        } while (offset > -1);
 
-        ptr = allocateBlock();
-        setParent(ptr, parent);
+        offset = allocateBlock();
+        setParent(offset, parent);
 
-        long chainStart = appendValue(leftRecord.getRowId(), -1L);
-        setRef(ptr, chainStart);
-        setLastRef(ptr, chainStart);
+        final int chainStart = appendNewValue(leftRecord.getRowId());
+        setRef(offset, chainStart);
+        setLastRef(offset, chainStart);
 
         if (cmp < 0) {
-            setLeft(parent, ptr);
+            setLeft(parent, offset);
         } else {
-            setRight(parent, ptr);
+            setRight(parent, offset);
         }
-        fixInsert(ptr);
+        fixInsert(offset);
     }
 
     @Override
     public void reopen() {
-        //nothing to do here
+        super.reopen();
+        if (valueHeapStart == 0) {
+            valueHeapSize = initialValueHeapSize;
+            valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            valueHeapLimit = valueHeapStart + valueHeapSize;
+        }
     }
 
-    private long appendValue(long value, long nextValueOffset) {
-        final long offset = valueChain.getAppendOffset();
-        valueChain.putLong128(value, nextValueOffset);
+    private static int compressValueOffset(long rawOffset) {
+        return (int) (rawOffset >> 2);
+    }
+
+    private static long uncompressValueOffset(int offset) {
+        return ((long) offset) << 2;
+    }
+
+    private int appendNewValue(long rowId) {
+        checkValueCapacity();
+        final int offset = compressValueOffset(valueHeapPos - valueHeapStart);
+        Unsafe.getUnsafe().putLong(valueHeapPos, rowId);
+        Unsafe.getUnsafe().putInt(valueHeapPos + 8, -1);
+        valueHeapPos += CHAIN_VALUE_SIZE;
         return offset;
     }
 
-    @Override
-    protected void putParent(long value) {
+    private void checkValueCapacity() {
+        if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
+            final long newHeapSize = valueHeapSize << 1;
+            if (newHeapSize > maxValueHeapSize) {
+                throw LimitOverflowException.instance().put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LongTreeChain");
+            }
+            long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+
+            valueHeapSize = newHeapSize;
+            long delta = newHeapPos - valueHeapStart;
+            valueHeapPos += delta;
+
+            this.valueHeapStart = newHeapPos;
+            this.valueHeapLimit = newHeapPos + newHeapSize;
+        }
+    }
+
+    private int nextValueOffset(int valueOffset) {
+        return Unsafe.getUnsafe().getInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8);
+    }
+
+    private void putParent(long rowId) {
         root = allocateBlock();
-        long chainStart = appendValue(value, -1L);
+        final int chainStart = appendNewValue(rowId);
         setRef(root, chainStart);
         setLastRef(root, chainStart);
         setParent(root, -1);
     }
 
-    public class TreeCursor {
+    private long rowId(int valueOffset) {
+        return Unsafe.getUnsafe().getLong(valueHeapStart + uncompressValueOffset(valueOffset));
+    }
 
-        private long chainCurrent;
-        private long treeCurrent;
+    private void setNextValueOffset(int valueOffset, int nextValueOffset) {
+        Unsafe.getUnsafe().putInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8, nextValueOffset);
+    }
+
+    public class TreeCursor {
+        private int chainCurrent;
+        private int treeCurrent;
 
         public void clear() {
             treeCurrent = -1;
@@ -155,9 +219,9 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         }
 
         public long next() {
-            long result = chainCurrent;
-            chainCurrent = valueChain.getLong(chainCurrent + Long.BYTES);
-            return valueChain.getLong(result);
+            int result = chainCurrent;
+            chainCurrent = nextValueOffset(chainCurrent);
+            return rowId(result);
         }
 
         public void toTop() {
@@ -165,7 +229,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         }
 
         private void setup() {
-            long p = root;
+            int p = root;
             if (p != -1) {
                 while (leftOf(p) != -1) {
                     p = leftOf(p);

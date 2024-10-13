@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -195,11 +195,12 @@ public class LogFactoryTest {
     }
 
     @Test
-    public void testGuaranteedLoggingForClasses() {
+    public void testGuaranteedLoggingForClasses() throws Exception {
+        final File x = temp.newFile();
         try (LogFactory factory = new LogFactory()) {
             factory.add(new LogWriterConfig(LogLevel.ERROR, (ring, seq, level) -> {
                 LogFileWriter w = new LogFileWriter(ring, seq, level);
-                w.setLocation("io");
+                w.setLocation(x.getAbsolutePath());
                 return w;
             }));
 
@@ -213,11 +214,6 @@ public class LogFactoryTest {
 
             LogFactory.disableGuaranteedLogging(SqlCompilerImpl.class);
             Assert.assertEquals(Logger.class, getLogger(SqlCompilerImpl.class).getClass());
-        } finally {
-            final Path ioPath = Path.getThreadLocal("io");
-            if (Files.exists(ioPath)) {
-                Files.remove(ioPath);
-            }
         }
     }
 
@@ -1055,13 +1051,13 @@ public class LogFactoryTest {
                 try (Path path = new Path()) {
                     for (int i = 0; i < extraFiles; i++) {
                         path.of(base + extraFilePrefix).put(i).put(".log").$();
-                        int fd = Files.openRW(path);
+                        long fd = Files.openRW(path.$());
                         try {
                             Files.allocate(fd, nSizeLimit + 1);
                         } finally {
                             Files.close(fd);
                         }
-                        Files.setLastModified(path, clock.getTicks() / 1000 - (i + 1) * 24 * Timestamps.HOUR_MICROS / 1000);
+                        Files.setLastModified(path.$(), clock.getTicks() / 1000 - (i + 1) * 24 * Timestamps.HOUR_MICROS / 1000);
                     }
                 }
             }
@@ -1071,8 +1067,8 @@ public class LogFactoryTest {
                 try (Path path = new Path()) {
                     for (int i = 0; i < extraFiles; i++) {
                         path.of(base + extraFilePrefix).put(i).put(".log").$();
-                        Files.touch(path);
-                        Files.setLastModified(path, clock.getTicks() / 1000 - (i + 1) * Numbers.parseLongDuration(lifeDuration) / 1000);
+                        Files.touch(path.$());
+                        Files.setLastModified(path.$(), clock.getTicks() / 1000 - (i + 1) * Numbers.parseLongDuration(lifeDuration) / 1000);
                     }
                 }
             }
@@ -1093,7 +1089,7 @@ public class LogFactoryTest {
         try (Path path = new Path()) {
             StringSink fileNameSink = new StringSink();
             path.of(base).$();
-            long pFind = Files.findFirst(path);
+            long pFind = Files.findFirst(path.$());
             try {
                 Assert.assertNotEquals(0, pFind);
                 do {
@@ -1177,7 +1173,7 @@ public class LogFactoryTest {
         try (Path path = new Path()) {
             StringSink fileNameSink = new StringSink();
             path.of(base).$();
-            long pFind = Files.findFirst(path);
+            long pFind = Files.findFirst(path.$());
             try {
                 Assert.assertNotEquals(0, pFind);
                 do {

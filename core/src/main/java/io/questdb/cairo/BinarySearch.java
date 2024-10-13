@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -61,10 +61,10 @@ public class BinarySearch {
                     }
                     return high;
                 }
-            } else if (midVal > value)
+            } else if (midVal > value) {
                 high = mid;
-            else {
-                // In case of multiple equal values, find the first
+            } else {
+                // In case of multiple equal values, find the first/last (UP/DOWN)
                 mid += scanDirection;
                 while (mid > 0 && mid <= high && midVal == column.getLong(mid * Long.BYTES)) {
                     mid += scanDirection;

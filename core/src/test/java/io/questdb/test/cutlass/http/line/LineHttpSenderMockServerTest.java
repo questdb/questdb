@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,6 +32,7 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.mp.TestWorkerPool;
@@ -47,10 +48,25 @@ import java.util.function.Function;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class LineHttpSenderMockServerTest extends AbstractTest {
-    public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY = port -> Sender.builder().address("localhost:" + port).http();
+    public static final Function<Integer, Sender.LineSenderBuilder> DEFAULT_FACTORY = port -> Sender.builder(Sender.Transport.HTTP).address("localhost:" + port);
 
     private static final CharSequence QUESTDB_VERSION = new BuildInformationHolder().getSwVersion();
     private static final Metrics metrics = Metrics.enabled();
+
+    @Test
+    public void testAutoFlushInterval() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor().keepReplyingWithStatus(204);
+
+        testWithMock(mockHttpProcessor, sender -> {
+            for (int i = 0; i < 20; i++) {
+                sender.table("test")
+                        .symbol("sym", "bol")
+                        .doubleColumn("x", 1.0)
+                        .atNow();
+                Os.sleep(1);
+            }
+        }, DEFAULT_FACTORY.andThen(b -> b.autoFlushRows(Integer.MAX_VALUE).autoFlushIntervalMillis(1)), true);
+    }
 
     @Test
     public void testAutoFlushRows() throws Exception {
@@ -103,12 +119,60 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("User-Agent", "QuestDB/java/" + QUESTDB_VERSION)
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjpPcGVuU2VzYW1l")
                 .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow(), DEFAULT_FACTORY.andThen(b -> b.httpUsernamePassword("Aladdin", "OpenSesame")));
+    }
+
+    @Test
+    public void testDisableIntervalBasedAutoFlush() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .replyWithStatus(204);
         testWithMock(mockHttpProcessor, sender -> {
-            sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow();
-        }, DEFAULT_FACTORY.andThen(b -> b.httpUsernamePassword("Aladdin", "OpenSesame")));
+                    for (int i = 0; i < 200; i++) {
+                        sender.table("test")
+                                .symbol("sym", "bol")
+                                .doubleColumn("x", 1.0)
+                                .atNow();
+                        Os.sleep(10);
+                    }
+                },
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;"));
+    }
+
+    @Test
+    public void testDisableIntervalBasedAutoFlush_rowBasedFlushesStillWorks() throws Exception {
+        int rows = 10;
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor();
+        for (int i = 0; i < rows; i++) {
+            mockHttpProcessor.withExpectedContent("test,sym=bol x=1.0\n").replyWithStatus(204);
+        }
+
+        testWithMock(mockHttpProcessor, sender -> {
+                    for (int i = 0; i < 10; i++) {
+                        sender.table("test")
+                                .symbol("sym", "bol")
+                                .doubleColumn("x", 1.0)
+                                .atNow();
+                    }
+                },
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_interval=off;auto_flush_rows=1;"));
+    }
+
+    @Test
+    public void testDisableRowBasedAutoFlush() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> {
+                    for (int i = 0; i < 80000; i++) {
+                        sender.table("test")
+                                .symbol("sym", "bol")
+                                .doubleColumn("x", 1.0)
+                                .atNow();
+                    }
+                },
+                port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush_rows=off;auto_flush_interval=100000;"));
     }
 
     @Test
@@ -117,12 +181,22 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedContent("test,sym=bol x=1.0\n")
                 .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
                 .replyWithStatus(204);
-        testWithMock(mockHttpProcessor, sender -> {
-            sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow();
-        }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";username=Aladdin;password=;;Open;;Sesame;;;;;")); // escaped semicolons in password
+    }
+
+    @Test
+    public void testConnectWithConfigString_deprecatedAuth() throws Exception {
+        MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
+                .withExpectedContent("test,sym=bol x=1.0\n")
+                .withExpectedHeader("Authorization", "Basic QWxhZGRpbjo7T3BlbjtTZXNhbWU7Ow==")
+                .replyWithStatus(204);
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow(), port -> Sender.builder("http::addr=localhost:" + port + ";user=Aladdin;pass=;;Open;;Sesame;;;;;")); // escaped semicolons in password
     }
 
     @Test
@@ -135,7 +209,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                         .doubleColumn("x", 1.0)
                         .atNow();
             }
-        }, port -> Sender.builder().fromConfig("http::addr=localhost:" + port + ";auto_flush=off;"));
+        }, port -> Sender.builder("http::addr=localhost:" + port + ";auto_flush=off;"));
     }
 
     @Test
@@ -154,8 +228,7 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
 
     @Test
     public void testMaxRequestBufferSizeExceeded() {
-        try (Sender sender = Sender.builder().address("localhost:1")
-                .http()
+        try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:1")
                 .maxBufferCapacity(65536)
                 .autoFlushRows(Integer.MAX_VALUE)
                 .build()
@@ -173,10 +246,41 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
+    public void testMinRequestThroughput() throws Exception {
+        MockHttpProcessor mock = new MockHttpProcessor()
+                .delayedReplyWithStatus(204, 1000);
+
+        testWithMock(mock, sender -> {
+                    sender.table("test")
+                            .symbol("sym", "bol")
+                            .doubleColumn("x", 1.0)
+                            .atNow();
+
+                    sender.flush();
+                }, DEFAULT_FACTORY.andThen(b -> b.httpTimeoutMillis(1).minRequestThroughput(1).retryTimeoutMillis(0)) // 1ms base timeout and 1 byte per second to extend the timeout
+        );
+    }
+
+    @Test
+    public void testMinRequestThroughputWithConfigString() throws Exception {
+        MockHttpProcessor mock = new MockHttpProcessor()
+                .delayedReplyWithStatus(204, 1000);
+
+        testWithMock(mock, sender -> {
+                    sender.table("test")
+                            .symbol("sym", "bol")
+                            .doubleColumn("x", 1.0)
+                            .atNow();
+
+                    sender.flush();
+                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=1;request_min_throughput=1;retry_timeout=0;") // 1ms base timeout and 1 byte per second to extend the timeout
+        );
+    }
+
+    @Test
     public void testNoConnection() {
-        try (Sender sender = Sender.builder()
+        try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                 .address("127.0.0.1:1")
-                .http()
                 .retryTimeoutMillis(1000)
                 .build()) {
             sender.table("test")
@@ -207,12 +311,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("Host", "localhost:9001")
                 .replyWithStatus(204);
 
-        testWithMock(mockHttpProcessor, sender -> {
-            sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow();
-        });
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow());
     }
 
     @Test
@@ -299,6 +401,32 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     @Test
+    public void testTimeoutConfString() throws Exception {
+        CountDownLatch delayLatch = new CountDownLatch(1);
+        MockHttpProcessor mock = new MockHttpProcessor()
+                .delayedReplyWithStatus(204, delayLatch);
+
+        testWithMock(mock, sender -> {
+                    sender.table("test")
+                            .symbol("sym", "bol")
+                            .doubleColumn("x", 1.0)
+                            .atNow();
+                    try {
+                        sender.flush();
+                        Assert.fail("Exception expected");
+                    } catch (LineSenderException e) {
+                        TestUtils.assertContains(
+                                e.getMessage(),
+                                "Could not flush buffer: http://localhost:9001/write?precision=n Connection Failed: timed out [errno="  //errno depends on OS
+                        );
+                    } finally {
+                        delayLatch.countDown();
+                    }
+                }, port -> Sender.builder("http::addr=localhost:" + port + ";request_timeout=100;retry_timeout=0;")
+        );
+    }
+
+    @Test
     public void testTokenAuth() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
                 .withExpectedContent("test,sym=bol x=1.0\n")
@@ -306,12 +434,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                 .withExpectedHeader("Authorization", "Bearer 0123456789")
                 .replyWithStatus(204);
 
-        testWithMock(mockHttpProcessor, sender -> {
-            sender.table("test")
-                    .symbol("sym", "bol")
-                    .doubleColumn("x", 1.0)
-                    .atNow();
-        }, DEFAULT_FACTORY.andThen(b -> b.httpToken("0123456789")));
+        testWithMock(mockHttpProcessor, sender -> sender.table("test")
+                .symbol("sym", "bol")
+                .doubleColumn("x", 1.0)
+                .atNow(), DEFAULT_FACTORY.andThen(b -> b.httpToken("0123456789")));
     }
 
     @Test
@@ -344,8 +470,8 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     @Test
     public void testUnauthenticated_403() throws Exception {
         MockHttpProcessor mockHttpProcessor = new MockHttpProcessor()
-                .replyWithContent(403, "Unauthorized", "text/plain");
-        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error: Unauthorized [http-status=403]"));
+                .replyWithContent(403, "Forbidden", "text/plain");
+        testWithMock(mockHttpProcessor, errorVerifier("Could not flush buffer: HTTP endpoint authentication error: Forbidden [http-status=403]"));
     }
 
     @Test
@@ -389,6 +515,10 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
     }
 
     private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory) throws Exception {
+        testWithMock(mockHttpProcessor, senderConsumer, senderBuilderFactory, false);
+    }
+
+    private void testWithMock(MockHttpProcessor mockHttpProcessor, Consumer<Sender> senderConsumer, Function<Integer, Sender.LineSenderBuilder> senderBuilderFactory, boolean verifyBeforeClose) throws Exception {
         assertMemoryLeak(() -> {
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration();
 
@@ -410,8 +540,13 @@ public class LineHttpSenderMockServerTest extends AbstractTest {
                     int port = httpConfiguration.getDispatcherConfiguration().getBindPort();
                     try (Sender sender = senderBuilderFactory.apply(port).build()) {
                         senderConsumer.accept(sender);
+                        if (verifyBeforeClose) {
+                            mockHttpProcessor.verify();
+                        }
                     }
-                    mockHttpProcessor.verify();
+                    if (!verifyBeforeClose) {
+                        mockHttpProcessor.verify();
+                    }
                 } finally {
                     workerPool.halt();
                 }

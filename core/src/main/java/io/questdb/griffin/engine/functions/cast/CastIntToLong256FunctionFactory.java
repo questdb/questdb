@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ public class CastIntToLong256FunctionFactory implements FunctionFactory {
         @Override
         public void getLong256(Record rec, CharSink<?> sink) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return;
             }
             Numbers.appendLong256(value, 0, 0, 0, sink);
@@ -63,20 +63,20 @@ public class CastIntToLong256FunctionFactory implements FunctionFactory {
         @Override
         public Long256 getLong256A(Record rec) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256a.setAll(value, 0, 0, 0);
+            long256a.setLow(value);
             return long256a;
         }
 
         @Override
         public Long256 getLong256B(Record rec) {
             final int value = arg.getInt(rec);
-            if (value == Numbers.INT_NaN) {
+            if (value == Numbers.INT_NULL) {
                 return Long256Impl.NULL_LONG256;
             }
-            long256b.setAll(value, 0, 0, 0);
+            long256b.setLow(value);
             return long256b;
         }
     }

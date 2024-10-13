@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -52,12 +52,17 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             @Transient @NotNull BytecodeAssembler asm
     ) {
         super(base.getMetadata());
-        final RecordMetadata metadata = base.getMetadata();
-        // sink will be storing record columns to map key
-        columnFilter.of(metadata.getColumnCount());
-        mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
         this.base = base;
-        cursor = new DistinctRecordCursor(configuration, metadata);
+        try {
+            final RecordMetadata metadata = base.getMetadata();
+            // sink will be storing record columns to map key
+            columnFilter.of(metadata.getColumnCount());
+            mapSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter);
+            cursor = new DistinctRecordCursor(configuration, metadata);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -72,7 +77,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.of(baseCursor, mapSink, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
-            baseCursor.close();
+            cursor.close();
             throw e;
         }
     }
@@ -101,8 +106,8 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        Misc.free(base);
+        Misc.free(cursor);
     }
 
     private static class DistinctRecordCursor implements RecordCursor {
@@ -114,8 +119,8 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         private RecordSink recordSink;
 
         public DistinctRecordCursor(CairoConfiguration configuration, RecordMetadata metadata) {
-            this.dataMap = MapFactory.createOrderedMap(configuration, metadata);
             this.isOpen = true;
+            this.dataMap = MapFactory.createOrderedMap(configuration, metadata);
         }
 
         @Override
@@ -161,13 +166,13 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         public void of(RecordCursor baseCursor, RecordSink recordSink, SqlExecutionCircuitBreaker circuitBreaker) {
+            this.baseCursor = baseCursor;
+            record = baseCursor.getRecord();
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
             }
-            this.baseCursor = baseCursor;
             this.recordSink = recordSink;
-            record = baseCursor.getRecord();
             this.circuitBreaker = circuitBreaker;
         }
 

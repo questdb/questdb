@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,11 +55,13 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position,
-                                ObjList<Function> args,
-                                IntList argPositions,
-                                CairoConfiguration configuration,
-                                SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         Function geohash1 = args.getQuick(0);
         Function geohash2 = args.getQuick(1);
         int type1p = geohash1.getType();
@@ -103,13 +105,13 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         }
 
         if (type1p == type2p) {
-            return crateBinaryFunc(geohash1, geohash2, type1p);
+            return createBinaryFunc(geohash1, geohash2, type1p);
         }
 
         return BooleanConstant.of(false);
     }
 
-    private Function crateBinaryFunc(Function geohash1, Function geohash2, int valType) {
+    private static Function createBinaryFunc(Function geohash1, Function geohash2, int valType) {
         switch (ColumnType.tagOf(valType)) {
             case ColumnType.GEOBYTE:
                 return new GeoEqFunc(geohash1, geohash2) {
@@ -142,7 +144,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         }
     }
 
-    private Function createConstCheckFunc(Function function, long value, int valType) {
+    private static Function createConstCheckFunc(Function function, long value, int valType) {
         switch (ColumnType.tagOf(valType)) {
             case ColumnType.GEOBYTE:
                 return new ConstCheckFuncByte(function, (byte) value);

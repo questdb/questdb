@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,16 +41,16 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 public class MinLongVectorAggregateFunction extends LongFunction implements VectorAggregateFunction {
 
     public static final LongBinaryOperator MIN = (long l1, long l2) -> {
-        if (l1 == Numbers.LONG_NaN) {
+        if (l1 == Numbers.LONG_NULL) {
             return l2;
         }
-        if (l2 == Numbers.LONG_NaN) {
+        if (l2 == Numbers.LONG_NULL) {
             return l1;
         }
         return Math.min(l1, l2);
     };
     private final LongAccumulator accumulator = new LongAccumulator(
-            MIN, Numbers.LONG_NaN
+            MIN, Numbers.LONG_NULL
     );
     private final int columnIndex;
     private final DistinctFunc distinctFunc;
@@ -69,21 +69,21 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
+    public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            final long value = Vect.minLong(address, addressSize / Long.BYTES);
-            if (value != Numbers.LONG_NaN) {
+            final long value = Vect.minLong(address, frameRowCount);
+            if (value != Numbers.LONG_NULL) {
                 accumulator.accumulate(value);
             }
         }
     }
 
     @Override
-    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount) {
         if (valueAddress == 0) {
-            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Long.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, frameRowCount);
         } else {
-            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Long.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
         }
     }
 
@@ -114,7 +114,7 @@ public class MinLongVectorAggregateFunction extends LongFunction implements Vect
 
     @Override
     public void initRosti(long pRosti) {
-        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NaN);
+        Unsafe.getUnsafe().putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NULL);
     }
 
     @Override

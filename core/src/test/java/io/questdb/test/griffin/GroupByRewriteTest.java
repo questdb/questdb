@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,9 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Test;
 
 public class GroupByRewriteTest extends AbstractCairoTest {
@@ -39,7 +37,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             compile("CREATE TABLE tabb ( bx int, bid int );");
             insert("INSERT INTO tabb values (3,1), (4,2)");
 
-            assertQuery("sum\tsum1\tsum2\tsum3\n" +
+            assertQueryNoLeakCheck("sum\tsum1\tsum2\tsum3\n" +
                             "3\t7\t23\t27\n",
                     "SELECT sum(ax), sum(bx), sum(ax+10), sum(bx+10) " +
                             "FROM taba " +
@@ -83,19 +81,14 @@ public class GroupByRewriteTest extends AbstractCairoTest {
 
     @Test
     public void testRewriteAggregateOnOrderBySumBadQuery() throws Exception {
-        try {
-            assertMemoryLeak(() -> {
-                compile("CREATE TABLE telemetry (created timestamp)");
-
-                assertQuery("sum\tsum1\tsum2\tsum3\n" +
-                                "3\t7\t23\t27\n",
-                        "SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);", null, false, false, true);
-            });
-            throw new RuntimeException("query above should have thrown");
-        } catch (SqlException e) {
-            String expected = "[49] unexpected argument for function: SUM. expected args: (DOUBLE). actual args: (INT constant,BOOLEAN,INT constant)";
-            Assert.assertEquals(expected, e.getMessage());
-        }
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE telemetry (created timestamp)");
+            assertExceptionNoLeakCheck(
+                    "SELECT telemetry.created FROM telemetry ORDER BY SUM(1, 1 IN (telemetry.created), 1);",
+                    49,
+                    "there is no matching function `SUM` with the argument types: (INT, BOOLEAN, INT)"
+            );
+        });
     }
 
     @Test
@@ -136,7 +129,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         );
     }
 
-    @Test // all values except first are NaN and thus ignored
+    @Test // all values except first are null and thus ignored
     public void testSumOfAdditionOfDouble3() throws Exception {
         assertAggQuery(
                 "r\n" +
@@ -180,14 +173,14 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     public void testSumOfAdditionWithNull() throws Exception {
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(x+null) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
 
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(null+x) r from y",
                 null
         );
@@ -234,7 +227,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         );
     }
 
-    @Test // all values except first are NaN and thus ignored
+    @Test // all values except first are null and thus ignored
     public void testSumOfMultiplicationOfDouble3() throws Exception {
         assertAggQuery(
                 "r\n" +
@@ -268,14 +261,14 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     public void testSumOfMultiplicationWithNull() throws Exception {
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(x*null) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
 
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(null*x) r from y",
                 null
         );
@@ -322,7 +315,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
         );
     }
 
-    @Test // all values except first are NaN and thus ignored
+    @Test // all values except first are null and thus ignored
     public void testSumOfSubtractionOfDouble3() throws Exception {
         assertAggQuery(
                 "r\n" +
@@ -366,14 +359,14 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     public void testSumOfSubtractionWithNull() throws Exception {
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(x-null) r from y",
                 "create table y as ( select x from long_sequence(10) )"
         );
 
         assertAggQuery(
                 "r\n" +
-                        "NaN\n",
+                        "null\n",
                 "select sum(null-x) r from y",
                 null
         );

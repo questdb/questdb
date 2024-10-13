@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -54,8 +54,8 @@ public class LPadFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testNaNLength() throws SqlException {
-        call("abc", Numbers.INT_NaN).andAssert(null);
-        call("pqrs", Numbers.INT_NaN).andAssert(null);
+        call("abc", Numbers.INT_NULL).andAssert(null);
+        call("pqrs", Numbers.INT_NULL).andAssert(null);
     }
 
     @Test
@@ -80,6 +80,16 @@ public class LPadFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testZeroLength() throws SqlException {
         call("abc", 0).andAssert("");
         call("pqrs", 0).andAssert("");
+    }
+
+    @Test
+    public void testABProtocol() throws SqlException {
+        ddl("create table x as (select rnd_str(1, 40, 0) s from long_sequence(100))");
+        assertSql(
+                "count\n" +
+                        "100\n",
+                "select count (*) from x where lpad(s, 20) = lpad(s, 20)"
+        );
     }
 
     @Override

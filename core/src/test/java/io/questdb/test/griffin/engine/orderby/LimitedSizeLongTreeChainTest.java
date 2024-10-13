@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,11 +38,10 @@ import org.junit.Before;
 import org.junit.Test;
 
 /**
- * Test RBTree removal cases asserting final tree structure .
+ * Test RBTree removal cases asserting final tree structure.
  */
 public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
-
-    //used in all tests to hide api complexity
+    // used in all tests to hide api complexity
     LimitedSizeLongTreeChain chain;
     RecordComparator comparator;
     TestRecordCursor cursor;
@@ -67,8 +66,9 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_create_ordered_tree() {
-        assertTree("[Black,2]\n" +
+    public void testCreateOrderedTree() {
+        assertTree(
+                "[Black,2]\n" +
                         " L-[Black,1]\n" +
                         " R-[Black,4]\n" +
                         "   L-[Red,3]\n" +
@@ -78,7 +78,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_create_ordered_tree_with_duplicates() {
+    public void testCreateOrderedTreeWithDuplicates() {
         assertTree(
                 "[Black,2]\n" +
                         " L-[Black,1(2)]\n" +
@@ -90,7 +90,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_create_ordered_tree_with_input_in_descending_order() {
+    public void testCreateOrderedTreeWithInputInDescendingOrder() {
         assertTree(
                 "[Black,4]\n" +
                         " L-[Black,2]\n" +
@@ -102,20 +102,20 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_create_ordered_tree_with_input_in_no_order() {
+    public void testCreateOrderedTreeWithInputInNoOrder() {
         assertTree(
                 "[Black,3]\n" +
                         " L-[Black,2]\n" +
                         "   L-[Red,1]\n" +
                         " R-[Black,5]\n" +
-                        "   L-[Red,4]\n"
-                , 3, 2, 5, 1, 4
+                        "   L-[Red,4]\n",
+                3, 2, 5, 1, 4
         );
     }
 
-    //sibling is black and its both children are black (?)
+    // sibling is black and its both children are black (?)
     @Test
-    public void test_remove_black_node_with_black_sibling_with_both_children_black() {
+    public void testRemoveBlackNodeWithBlackSiblingWithBothChildrenBlack() {
         assertTree(
                 "[Black,30]\n" +
                         " L-[Black,20]\n" +
@@ -131,9 +131,9 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         );
     }
 
-    //right left case
+    // right left case
     @Test
-    public void test_remove_black_node_with_black_sibling_with_red_left_child() {
+    public void testRemoveBlackNodeWithBlackSiblingWithRedLeftChild() {
         assertTree(
                 "[Black,30]\n" +
                         " L-[Black,20]\n" +
@@ -149,11 +149,11 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
         );
     }
 
-    //new test cases
-    //current node is double black and not the root; sibling is black and at least one of its children is red
-    //right right case
+    // new test cases
+    // current node is double black and not the root; sibling is black and at least one of its children is red
+    // right-right case
     @Test
-    public void test_remove_black_node_with_black_sibling_with_red_right_child() {
+    public void testRemoveBlackNodeWithBlackSiblingWithRedRightChild() {
         assertTree(
                 "[Black,30]\n" +
                         " L-[Black,20]\n" +
@@ -172,7 +172,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_both_children_and_right_is_not_successor() {
+    public void testRemoveBlackNodeWithBothChildrenAndRightIsNotSuccessor() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -194,7 +194,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_both_children_and_right_is_not_successor_but_doesnt_require_rotation() {
+    public void testRemoveBlackNodeWithBothChildrenAndRightIsNotSuccessorButDoesNotRequireRotation() {
         assertTree(
                 "[Black,3]\n" +
                         " L-[Red,1]\n" +
@@ -221,7 +221,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_both_children_and_right_is_not_successor_requires_rotation_todo() {
+    public void testRemoveBlackNodeWithBothChildrenAndRightIsNotSuccessorRequiresRotationTodo() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -244,7 +244,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_both_children_and_right_is_successor() {
+    public void testRemoveBlackNodeWithBothChildrenAndRightIsSuccessor() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -253,9 +253,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
                         "   R-[Red,4]\n",
                 0, 1, 2, 3, 4
         );
-
         removeRowWithValue(3);
-
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -265,7 +263,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_left_child_only() {
+    public void testRemoveBlackNodeWithLeftChildOnly() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -284,7 +282,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_no_children() {
+    public void testRemoveBlackNodeWithNoChildren() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Red,0]\n" +
@@ -299,7 +297,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_right_child_only() {
+    public void testRemoveBlackNodeWithRightChildOnly() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -316,7 +314,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_red_node_with_both_children_and_right_is_black_successor() {
+    public void testRemoveRedNodeWithBothChildrenAndRightIsBlackSuccessor() {
         assertTree(
                 "[Black,3]\n" +
                         " L-[Red,1]\n" +
@@ -362,7 +360,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     private void removeRowWithValue(long value) {
         cursor.recordAtValue(left, value);
-        long node = chain.find(left, cursor, placeholder, comparator);
+        int node = chain.find(left, cursor, placeholder, comparator);
         chain.removeAndCache(node);
     }
 
@@ -407,9 +405,9 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     static class TestRecordCursor implements RecordCursor {
         final Record left = new TestRecord();
-        int position = -1;
         final Record right = new TestRecord();
         final LongList values = new LongList();
+        int position = -1;
 
         TestRecordCursor(long... newValues) {
             for (int i = 0; i < newValues.length; i++) {
@@ -419,7 +417,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
         @Override
         public void close() {
-            //nothing to do here
+            // nothing to do here
         }
 
         @Override

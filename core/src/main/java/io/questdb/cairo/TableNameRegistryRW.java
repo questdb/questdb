@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,12 +29,10 @@ import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.function.Predicate;
-
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
-    public TableNameRegistryRW(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
-        super(configuration, protectedTableResolver);
+    public TableNameRegistryRW(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
+        super(configuration, tableFlagResolver);
         if (!nameStore.lock()) {
             if (!configuration.getAllowTableRegistrySharedWrite()) {
                 throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
@@ -70,9 +68,10 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
         final TableToken registeredRecord = tableNameToTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
-            boolean isProtected = protectedTableResolver.test(tableName);
-            boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
-            return new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected);
+            boolean isProtected = tableFlagResolver.isProtected(tableName);
+            boolean isSystem = tableFlagResolver.isSystem(tableName);
+            boolean isPublic = tableFlagResolver.isPublic(tableName);
+            return new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected, isPublic);
         } else {
             return null;
         }

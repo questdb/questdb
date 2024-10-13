@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,8 +31,8 @@ import io.questdb.std.str.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3OpenColumnTask {
-    private int activeFixFd;
-    private int activeVarFd;
+    private long activeFixFd;
+    private long activeVarFd;
     private AtomicInteger columnCounter;
     private int columnIndex;
     private CharSequence columnName;
@@ -66,7 +66,7 @@ public class O3OpenColumnTask {
     private long srcOooMax;
     private long srcOooVarAddr;
     private long srcTimestampAddr;
-    private int srcTimestampFd;
+    private long srcTimestampFd;
     private long srcTimestampSize;
     private long suffixHi;
     private long suffixLo;
@@ -77,11 +77,11 @@ public class O3OpenColumnTask {
     private long timestampMin;
     private long txn;
 
-    public int getActiveFixFd() {
+    public long getActiveFixFd() {
         return activeFixFd;
     }
 
-    public int getActiveVarFd() {
+    public long getActiveVarFd() {
         return activeVarFd;
     }
 
@@ -217,7 +217,7 @@ public class O3OpenColumnTask {
         return srcTimestampAddr;
     }
 
-    public int getSrcTimestampFd() {
+    public long getSrcTimestampFd() {
         return srcTimestampFd;
     }
 
@@ -289,12 +289,12 @@ public class O3OpenColumnTask {
             int suffixType,
             long suffixLo,
             long suffixHi,
-            int srcTimestampFd,
+            long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             int indexBlockCapacity,
-            int activeFixFd,
-            int activeVarFd,
+            long activeFixFd,
+            long activeVarFd,
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3NewPartitionSize,

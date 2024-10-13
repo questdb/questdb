@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,8 +35,8 @@ public class MaxDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
         assertQuery("avg\n" +
-                        "0.511848387\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_double(2) f from long_sequence(131))", null, "alter table tab add column b double", "avg\n" +
-                        "0.511848387\n", false, true, false);
+                "0.511848387\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_double(2) f from long_sequence(131))", null, "alter table tab add column b double", "avg\n" +
+                "0.511848387\n", false, true, false);
 
         assertQuery(
                 "avg\tmax\n" +
@@ -52,8 +52,8 @@ public class MaxDoubleVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery("max\n" +
-                        "NaN\n", "select max(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 99092.008234 from long_sequence(1)", "max\n" +
-                        "99092.008234\n", false, true, false);
+                "null\n", "select max(f) from tab", "create table tab as (select cast(null as double) f from long_sequence(33))", null, "insert into tab select 99092.008234 from long_sequence(1)", "max\n" +
+                "99092.008234\n", false, true, false);
     }
 
     @Test

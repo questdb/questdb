@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,13 +48,19 @@ public class SubStringFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(final int position, final ObjList<Function> args, IntList argPositions, final CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         final Function strFunc = args.getQuick(0);
         final Function startFunc = args.getQuick(1);
         final Function lenFunc = args.getQuick(2);
         if (strFunc.isNullConstant()
-                || startFunc.isConstant() && startFunc.getInt(null) == Numbers.INT_NaN
-                || lenFunc.isConstant() && lenFunc.getInt(null) == Numbers.INT_NaN) {
+                || startFunc.isConstant() && startFunc.getInt(null) == Numbers.INT_NULL
+                || lenFunc.isConstant() && lenFunc.getInt(null) == Numbers.INT_NULL) {
             return StrConstant.NULL;
         }
         if (lenFunc.isConstant()) {
@@ -69,7 +75,6 @@ public class SubStringFunctionFactory implements FunctionFactory {
     }
 
     private static class SubStringFunc extends StrFunction implements TernaryFunction {
-
         private final boolean isSimplifiable;
         private final Function lenFunc;
         private final StringSink sinkA = new StringSink();
@@ -107,7 +112,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return getStr0(rec, sinkA);
         }
 
@@ -122,8 +127,8 @@ public class SubStringFunctionFactory implements FunctionFactory {
             int rawStart = startFunc.getInt(rec);
             int len = lenFunc.getInt(rec);
             if (strLen == TableUtils.NULL_LEN
-                    || rawStart == Numbers.INT_NaN
-                    || len == Numbers.INT_NaN) {
+                    || rawStart == Numbers.INT_NULL
+                    || len == Numbers.INT_NULL) {
                 return TableUtils.NULL_LEN;
             }
 
@@ -137,15 +142,20 @@ public class SubStringFunctionFactory implements FunctionFactory {
             return Math.max(0, end - start);
         }
 
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
         @Nullable
         private StringSink getStr0(Record rec, StringSink sink) {
-            CharSequence str = strFunc.getStr(rec);
+            CharSequence str = strFunc.getStrA(rec);
             if (str == null || isSimplifiable) {
                 return null;
             }
             int rawStart = startFunc.getInt(rec);
             int len = lenFunc.getInt(rec);
-            if (rawStart == Numbers.INT_NaN || len == Numbers.INT_NaN) {
+            if (rawStart == Numbers.INT_NULL || len == Numbers.INT_NULL) {
                 return null;
             }
             if (len < 0) {

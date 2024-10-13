@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,7 +44,6 @@ public class O3PartitionTask {
     private O3Basket o3Basket;
     private ReadOnlyObjList<? extends MemoryCR> o3Columns;
     private long oldPartitionSize;
-    private long oooTimestampMax;
     private long oooTimestampMin;
     private int partitionBy;
     private long partitionTimestamp;
@@ -58,6 +57,7 @@ public class O3PartitionTask {
     private long srcOooMax;
     private TableWriter tableWriter;
     private long txn;
+    private boolean isParquet;
 
     public AtomicInteger getColumnCounter() {
         return columnCounter;
@@ -89,10 +89,6 @@ public class O3PartitionTask {
 
     public long getOldPartitionSize() {
         return oldPartitionSize;
-    }
-
-    public long getOooTimestampMax() {
-        return oooTimestampMax;
     }
 
     public long getOooTimestampMin() {
@@ -151,6 +147,10 @@ public class O3PartitionTask {
         return last;
     }
 
+    public boolean isParquet() {
+        return isParquet;
+    }
+
     public void of(
             Path path,
             int partitionBy,
@@ -160,7 +160,6 @@ public class O3PartitionTask {
             long srcOooHi,
             long srcOooMax,
             long oooTimestampMin,
-            long oooTimestampMax,
             long partitionTimestamp,
             long maxTimestamp,
             long srcDataMax,
@@ -174,7 +173,8 @@ public class O3PartitionTask {
             long newPartitionSize,
             long oldPartitionSize,
             long partitionUpdateSinkAddr,
-            long dedupColSinkAddr
+            long dedupColSinkAddr,
+            boolean isParquet
     ) {
         this.pathToTable = path;
         this.txn = txn;
@@ -182,7 +182,6 @@ public class O3PartitionTask {
         this.srcOooHi = srcOooHi;
         this.srcOooMax = srcOooMax;
         this.oooTimestampMin = oooTimestampMin;
-        this.oooTimestampMax = oooTimestampMax;
         this.partitionTimestamp = partitionTimestamp;
         this.maxTimestamp = maxTimestamp;
         this.srcDataMax = srcDataMax;
@@ -199,5 +198,6 @@ public class O3PartitionTask {
         this.oldPartitionSize = oldPartitionSize;
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
         this.dedupColSinkAddr = dedupColSinkAddr;
+        this.isParquet = isParquet;
     }
 }

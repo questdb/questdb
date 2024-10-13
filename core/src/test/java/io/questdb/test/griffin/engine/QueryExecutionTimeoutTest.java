@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,11 +33,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.*;
-import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
-import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
-import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.MemoryTag;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -46,7 +44,6 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.BeforeClass;
-import org.junit.Ignore;
 import org.junit.Test;
 
 
@@ -72,7 +69,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(config, MemoryTag.NATIVE_CB5) {
             @Override
-            protected boolean testConnection(int fd) {
+            protected boolean testConnection(long fd) {
                 return false;
             }
 
@@ -119,88 +116,18 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         );
     }
 
-    @Ignore // create table as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInCreateTableAsSelectFromRealTable() throws Exception {
-        unsetTimeout();
-        try {
-            assertTimeout(
-                    "create table instest as (select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000))",
-                    "create table instest2 as (select * from instest);"
-            );
-        } finally {
-            resetTimeout();
-        }
-
-        try {
-            compile("select * from instest2");
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "table does not exist");
-        }
-    }
-
-    @Ignore // create table as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInCreateTableAsSelectFromVirtualTable() throws Exception {
-        assertTimeout("create table instest as (select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000))");
-
-        try {
-            compile("select * from instest");
-            Assert.fail();
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getMessage(), "table does not exist");
-        }
-    }
-
-    @Ignore // insert as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInInsertAsSelect() throws Exception {
-        assertTimeout(
-                "create table instest ( i int, l long, d double ) ",
-                "insert into instest select rnd_int(), rnd_long(), rnd_double() from long_sequence(10000000)"
-        );
-    }
-
-    @Ignore // insert as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInInsertAsSelectBatchedAndOrderedByTs() throws Exception {
-        assertTimeout(
-                "create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)"
-        );
-    }
-
-    @Ignore // insert as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInInsertAsSelectBatchedAndOrderedByTsAsString() throws Exception {
-        assertTimeout(
-                "create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert batch 100 into instest select rnd_int(), rnd_long(), rnd_double(), cast(cast(x as timestamp) as string) from long_sequence(10000000)"
-        );
-    }
-
-    @Ignore // insert as select doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInInsertAsSelectOrderedByTs() throws Exception {
-        assertTimeout(
-                "create table instest ( i int, l long, d double, ts timestamp ) timestamp(ts) ",
-                "insert into instest select rnd_int(), rnd_long(), rnd_double(), cast(x as timestamp) from long_sequence(10000000)"
-        );
-    }
-
     @Test
     public void testTimeoutInLatestByAll() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table xx(value long256, ts timestamp) timestamp(ts)",
                 "insert into xx values(null, 0)",
                 "select * from xx latest on ts partition by value"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByAllFiltered() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table x as " +
                         "(select  rnd_double(0)*100 a, " +
                         "rnd_str(2,4,4) b, " +
@@ -208,19 +135,21 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "from long_sequence(20)) " +
                         "timestamp(k) partition by DAY",
                 "select * from x latest by b where b = 'HNR'"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByAllIndexed() throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
-        }
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                testTimeoutInLatestByAllIndexed(compiler, sqlExecutionContext);
+            }
+        });
     }
 
     @Test
     public void testTimeoutInLatestByValue() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table x as " +
                         "(select  rnd_double(0)*100 a, " +
                         "rnd_symbol(5,4,4,1) b, " +
@@ -228,12 +157,12 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "from long_sequence(20)) " +
                         "timestamp(k) partition by DAY",
                 "select * from x where b = 'RXGZ' latest on k partition by b"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByValueFiltered() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table trades(symbol symbol, side symbol, ts timestamp) timestamp(ts)",
                 "insert into trades " +
                         "select 'BTC' || x, 'buy' || x, dateadd( 's', x::int, now() ) " +
@@ -243,12 +172,12 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "AND side in 'buy1' " +
                         "LATEST ON ts " +
                         "PARTITION BY symbol;"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByValueIndexed() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table x as " +
                         "(select rnd_double(0)*100 a, " +
                         "rnd_symbol(5,4,4,1) b, " +
@@ -256,12 +185,12 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "from long_sequence(200)), " +
                         "index(b) timestamp(k) partition by DAY",
                 "select * from x where b = 'PEHN' and a < 22 and test_match() latest on k partition by b"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByValueList() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table t as (" +
                         "select " +
                         "x, " +
@@ -270,12 +199,12 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "from long_sequence(49)" +
                         ") timestamp(ts) Partition by DAY",
                 "select ts, x, s from t latest on ts partition by s"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByValueListWithFindAllDistinctSymbolsAndFilter() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table t as (" +
                         "select " +
                         "x, " +
@@ -284,12 +213,12 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "from long_sequence(49)" +
                         ") timestamp(ts) Partition by DAY",
                 "selecT * from t where x%2 = 1 latest on ts partition by s"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByValueListWithFindAllDistinctSymbolsAndNoFilter() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table t as (" +
                         "select " +
                         "x, " +
@@ -298,12 +227,12 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "from long_sequence(49)" +
                         ") timestamp(ts) Partition by DAY",
                 "select ts, x, s from t latest on ts partition by s"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByValueListWithFindSelectedSymbolsAndFilter() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table t as (" +
                         "select " +
                         "x, " +
@@ -314,12 +243,12 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 "select * from t " +
                         "where s in ('a', 'b') and x%2 = 0 " +
                         "latest on ts partition by s"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByValueListWithFindSelectedSymbolsAndNoFilter() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table t as (" +
                         "select " +
                         "x, " +
@@ -328,12 +257,12 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "from long_sequence(49)" +
                         ") timestamp(ts) Partition by DAY",
                 "select * from t where s in ('a', null) latest on ts partition by s"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByValues() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table x as " +
                         "(select rnd_double(0)*100 a, " +
                         "rnd_symbol(5,4,4,1) b, " +
@@ -341,12 +270,12 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "from long_sequence(20)) " +
                         "timestamp(k) partition by DAY",
                 "select * from x where b in (select list('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) latest on k partition by b"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByValuesFiltered() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table x as " +
                         "(select rnd_double(0)*100 a, " +
                         "rnd_symbol(5,4,4,1) b, " +
@@ -354,12 +283,12 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "from long_sequence(20)) " +
                         "timestamp(k) partition by DAY",
                 "select * from x where b in (select rnd_symbol('RXGZ', 'HYRX', null, 'UCLA') a from long_sequence(10)) and a > 12 and a < 50 and test_match() latest on k partition by b"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInLatestByValuesIndexed() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table x as " +
                         "(select rnd_double(0)*100 a, " +
                         "rnd_symbol(5,4,4,1) b, " +
@@ -367,61 +296,65 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                         "from long_sequence(300)), " +
                         "index(b) timestamp(k) partition by DAY",
                 "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInMultiHashJoin() throws Exception {
         circuitBreaker.setTimeout(1);
-        try {
-            assertTimeout(
-                    "create table grouptest as " +
-                            "(select cast(x%1000000 as int) as i, x as l from long_sequence(100000) );\n",
-                    "select * from \n" +
-                            "(\n" +
-                            "  select * \n" +
-                            "  from grouptest gt1\n" +
-                            "  join grouptest gt2 on i\n" +
-                            ")\n" +
-                            "join grouptest gt3 on i"
-            );
-        } finally {
-            resetTimeout();
-        }
+        assertMemoryLeak(() -> {
+            try {
+                assertTimeout(
+                        "create table grouptest as " +
+                                "(select cast(x%1000000 as int) as i, x as l from long_sequence(100000) );\n",
+                        "select * from \n" +
+                                "(\n" +
+                                "  select * \n" +
+                                "  from grouptest gt1\n" +
+                                "  join grouptest gt2 on i\n" +
+                                ")\n" +
+                                "join grouptest gt3 on i"
+                );
+            } finally {
+                resetTimeout();
+            }
+        });
     }
 
     @Test
     public void testTimeoutInNonVectorizedKeyedGroupBy() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table grouptest as (select x as i, x as l from long_sequence(10000) );",
                 "select i, avg(l), max(l) \n" +
                         "from grouptest \n" +
                         "group by i"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInNonVectorizedNonKeyedGroupBy() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table grouptest as (select x as i, x as l from long_sequence(10000) );",
                 "select avg(cast(l as int)), max(l) from grouptest"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInOrderedRowNumber() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table rntest as (select x as key from long_sequence(1000));\n",
                 "select row_number() over (partition by key%1000 order by key ), key  \n" +
                         "from rntest"
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInParallelKeyedGroupBy() throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            testTimeoutInParallelKeyedGroupBy(compiler, sqlExecutionContext);
-        }
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                testTimeoutInParallelKeyedGroupBy(compiler, sqlExecutionContext);
+            }
+        });
     }
 
     @Test
@@ -466,9 +399,11 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInParallelNonKeyedGroupBy() throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            testTimeoutInParallelNonKeyedGroupBy(compiler, sqlExecutionContext);
-        }
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                testTimeoutInParallelNonKeyedGroupBy(compiler, sqlExecutionContext);
+            }
+        });
     }
 
     @Test
@@ -500,27 +435,19 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInRowNumber() throws Exception {
-        assertTimeout(
+        assertMemoryLeak(() -> assertTimeout(
                 "create table rntest as (select x as key from long_sequence(1000));\n",
                 "select row_number() over (partition by key%1000 ), key from rntest"
-        );
-    }
-
-    @Ignore// update table doesn't time out anymore but can be cancelled manually
-    @Test
-    public void testTimeoutInUpdateTable() throws Exception {
-        assertTimeout(
-                "create table updtest as (select rnd_int() i, rnd_long() l, rnd_double() d from long_sequence(10000))",
-                "update updtest  set i = rnd_int(), l = i * l, d = d/7 *31",
-                null
-        );
+        ));
     }
 
     @Test
     public void testTimeoutInVectorizedKeyedGroupBy() throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
-        }
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                testTimeoutInVectorizedKeyedGroupBy(compiler, sqlExecutionContext);
+            }
+        });
     }
 
     @Test
@@ -565,9 +492,11 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     @Test
     public void testTimeoutInVectorizedNonKeyedGroupBy() throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
-        }
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                testTimeoutInVectorizedNonKeyedGroupBy(compiler, sqlExecutionContext);
+            }
+        });
     }
 
     @Test // triggers timeout when processing task in main thread because queue is too small
@@ -597,11 +526,6 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         );
     }
 
-    @SuppressWarnings("SameParameterValue")
-    private void assertTimeout(String ddl) throws Exception {
-        assertTimeout(ddl, null, null);
-    }
-
     private void assertTimeout(String ddl, String query) throws Exception {
         assertTimeout(ddl, null, query);
     }
@@ -618,32 +542,30 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
     private void assertTimeout(String ddl, String dml, String query, SqlCompiler compiler, SqlExecutionContext context) throws Exception {
         try {
-            assertMemoryLeak(() -> {
-                if (dml != null || query != null) {
-                    unsetTimeout();
-                }
-                ddl(compiler, ddl, context);
-                if (dml != null) {
-                    if (query == null) {
-                        resetTimeout();
-                    }
-
-                    compile(compiler, dml, context);
-                }
-
-                if (query != null) {
+            if (dml != null || query != null) {
+                unsetTimeout();
+            }
+            ddl(compiler, ddl, context);
+            if (dml != null) {
+                if (query == null) {
                     resetTimeout();
-                    snapshotMemoryUsage();
-                    CompiledQuery cc = compiler.compile(query, context);
-                    try (
-                            RecordCursorFactory factory = cc.getRecordCursorFactory();
-                            RecordCursor cursor = factory.getCursor(context)
-                    ) {
-                        cursor.hasNext();
-                    }
-                    assertFactoryMemoryUsage();
                 }
-            });
+
+                compile(compiler, dml, context);
+            }
+
+            if (query != null) {
+                resetTimeout();
+                snapshotMemoryUsage();
+                CompiledQuery cc = compiler.compile(query, context);
+                try (
+                        RecordCursorFactory factory = cc.getRecordCursorFactory();
+                        RecordCursor cursor = factory.getCursor(context)
+                ) {
+                    cursor.hasNext();
+                }
+                assertFactoryMemoryUsage();
+            }
 
             Assert.fail("Cairo timeout exception expected!");
         } catch (SqlException se) {
@@ -779,16 +701,13 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
             CairoConfiguration configuration
     ) throws Exception {
         final int workerCount = pool == null ? 1 : pool.getWorkerCount() + 1;
-
         try (
                 final CairoEngine engine = new CairoEngine(configuration);
                 final SqlExecutionContextImpl sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
         ) {
             sqlExecutionContext.with(circuitBreaker);
             if (pool != null) {
-                pool.assign(new GroupByVectorAggregateJob(engine.getMessageBus()));
-                pool.assign(new GroupByMergeShardJob(engine.getMessageBus()));
-                pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
+                WorkerPoolUtils.setupQueryJobs(pool, engine, null);
                 pool.start(LOG);
             }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -58,7 +58,7 @@ public class ExtendedOnePageMemoryTest extends AbstractTest {
     public static void beforeClass() {
         ff = new TestFilesFacadeImpl() {
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (FILE_MAP_FAIL.compareAndSet(true, false)) {
                     return FilesFacade.MAP_FAILED;
                 }
@@ -66,7 +66,7 @@ public class ExtendedOnePageMemoryTest extends AbstractTest {
             }
 
             @Override
-            public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                 if (FILE_MAP_FAIL.compareAndSet(true, false)) {
                     return FilesFacade.MAP_FAILED;
                 }
@@ -80,7 +80,7 @@ public class ExtendedOnePageMemoryTest extends AbstractTest {
         createFile();
         try (MemoryMR mem = new MemoryCMRImpl()) {
             int sz = FILE_SIZE / 2;
-            mem.of(ff, path, sz, sz, MemoryTag.MMAP_DEFAULT);
+            mem.of(ff, path.$(), sz, sz, MemoryTag.MMAP_DEFAULT);
             FILE_MAP_FAIL.set(true);
             sz *= 2;
             try {
@@ -98,7 +98,7 @@ public class ExtendedOnePageMemoryTest extends AbstractTest {
         try (MemoryMR mem = new MemoryCMRImpl()) {
             FILE_MAP_FAIL.set(true);
             try {
-                mem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not mmap");

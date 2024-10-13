@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
 
 public class InSymbolCursorFunctionFactory implements FunctionFactory {
     @Override
@@ -69,14 +70,24 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 return new SymbolInNullCursorFunction(symbolFunction);
             }
             return new StrInNullCursorFunction(symbolFunction);
-        } else if (!ColumnType.isSymbolOrString(zeroColumnType)) {
-            throw SqlException.position(position).put("supported column types are STRING and SYMBOL, found: ").put(ColumnType.nameOf(zeroColumnType));
         }
 
         // use first column to create list of values (over multiple records)
-        // supported column types are STRING and SYMBOL
-
-        final Record.CharSequenceFunction func = ColumnType.isString(zeroColumnType) ? Record.GET_STR : Record.GET_SYM;
+        // supported column types are VARCHAR, STRING and SYMBOL
+        final Record.CharSequenceFunction func;
+        switch (zeroColumnType) {
+            case ColumnType.STRING:
+                func = Record.GET_STR;
+                break;
+            case ColumnType.SYMBOL:
+                func = Record.GET_SYM;
+                break;
+            case ColumnType.VARCHAR:
+                func = Record.GET_VARCHAR;
+                break;
+            default:
+                throw SqlException.position(position).put("supported column types are VARCHAR, SYMBOL and STRING, found: ").put(ColumnType.nameOf(zeroColumnType));
+        }
 
         if (valueFunction.isNullConstant()) {
             return new StrInCursorFunction(NullConstant.NULL, cursorFunction, func);
@@ -160,7 +171,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 
@@ -171,19 +182,15 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
 
         private void buildValueSet() {
             final Record record = cursor.getRecord();
+            StringSink sink = Misc.getThreadLocalSink();
             while (cursor.hasNext()) {
-                CharSequence value = func.get(record, 0);
+                CharSequence value = func.get(record, 0, sink);
                 if (value == null) {
                     valueSet.addNull();
                 } else {
                     int toIndex = valueSet.keyIndex(value);
                     if (toIndex > -1) {
-                        int index = this.valueSet.keyIndex(value);
-                        if (index < 0) {
-                            valueSet.addAt(toIndex, this.valueSet.keyAt(index));
-                        } else {
-                            valueSet.addAt(toIndex, Chars.toString(value));
-                        }
+                        valueSet.addAt(toIndex, Chars.toString(value));
                     }
                 }
             }
@@ -191,16 +198,10 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     }
 
     private static class StrInNullCursorFunction extends BooleanFunction implements UnaryFunction {
-
         private final Function valueArg;
 
         public StrInNullCursorFunction(Function valueArg) {
             this.valueArg = valueArg;
-        }
-
-        @Override
-        public void close() {
-            UnaryFunction.super.close();
         }
 
         @Override
@@ -214,23 +215,12 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            valueArg.init(symbolTableSource, executionContext);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return valueArg.isReadThreadSafe();
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(valueArg).val(" in null");
         }
     }
 
     private static class SymbolInCursorFunction extends BooleanFunction implements BinaryFunction {
-
         private final Function cursorArg;
         private final Record.CharSequenceFunction func;
         private final IntHashSet symbolKeys = new IntHashSet();
@@ -289,7 +279,7 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 
@@ -303,8 +293,9 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             assert symbolTable != null;
 
             final Record record = cursor.getRecord();
+            StringSink sink = Misc.getThreadLocalSink();
             while (cursor.hasNext()) {
-                int key = symbolTable.keyOf(func.get(record, 0));
+                int key = symbolTable.keyOf(func.get(record, 0, sink));
                 if (key != SymbolTable.VALUE_NOT_FOUND) {
                     symbolKeys.add(key + 1);
                 }
@@ -313,16 +304,10 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
     }
 
     private static class SymbolInNullCursorFunction extends BooleanFunction implements UnaryFunction {
-
         private final Function valueArg;
 
         public SymbolInNullCursorFunction(Function valueArg) {
             this.valueArg = valueArg;
-        }
-
-        @Override
-        public void close() {
-            UnaryFunction.super.close();
         }
 
         @Override
@@ -333,16 +318,6 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return valueArg.getInt(rec) == SymbolTable.VALUE_IS_NULL;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            valueArg.init(symbolTableSource, executionContext);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return valueArg.isReadThreadSafe();
         }
 
         @Override

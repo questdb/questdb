@@ -1,12 +1,35 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.*;
-import io.questdb.cutlass.pgwire.CleartextPasswordPgWireAuthenticator;
-import io.questdb.cutlass.pgwire.CustomCloseActionPasswordMatcherDelegate;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
-import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
+import io.questdb.network.Socket;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.BootstrapTest;
 import io.questdb.test.tools.TestUtils;
@@ -46,8 +69,8 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                 bootstrap.getBuildInformation(),
                                 new FilesFacadeImpl() {
                                     @Override
-                                    public int openRW(LPSZ name, long opts) {
-                                        if (counter.incrementAndGet() > 28) {
+                                    public long openRW(LPSZ name, long opts) {
+                                        if (counter.incrementAndGet() > 69) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);
@@ -92,30 +115,40 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
                                     @Override
                                     public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
-                                        return (pgWireConfiguration, circuitBreaker, registry, optionsListener) -> {
-                                            DirectUtf8Sink defaultUserPasswordSink = new DirectUtf8Sink(4);
-                                            DirectUtf8Sink readOnlyUserPasswordSink = new DirectUtf8Sink(4);
-                                            UsernamePasswordMatcher matcher = new CustomCloseActionPasswordMatcherDelegate(
-                                                    ServerMain.newPgWireUsernamePasswordMatcher(pgWireConfiguration, defaultUserPasswordSink, readOnlyUserPasswordSink),
-                                                    () -> {
-                                                        defaultUserPasswordSink.close();
-                                                        readOnlyUserPasswordSink.close();
-                                                    }
-                                            );
+                                        return (pgWireConfiguration, circuitBreaker, registry, optionsListener) -> new SocketAuthenticator() {
+                                            @Override
+                                            public void close() {
+                                                Misc.free(circuitBreaker);
+                                            }
 
-                                            return new CleartextPasswordPgWireAuthenticator(
-                                                    pgWireConfiguration,
-                                                    circuitBreaker,
-                                                    registry,
-                                                    optionsListener,
-                                                    matcher,
-                                                    true
-                                            ) {
-                                                @Override
-                                                public boolean isAuthenticated() {
-                                                    throw new RuntimeException("Test error");
-                                                }
-                                            };
+                                            @Override
+                                            public CharSequence getPrincipal() {
+                                                return null;
+                                            }
+
+                                            @Override
+                                            public long getRecvBufPos() {
+                                                return 0;
+                                            }
+
+                                            @Override
+                                            public long getRecvBufPseudoStart() {
+                                                return 0;
+                                            }
+
+                                            @Override
+                                            public int handleIO() {
+                                                return 0;
+                                            }
+
+                                            @Override
+                                            public void init(@NotNull Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit) {
+                                            }
+
+                                            @Override
+                                            public boolean isAuthenticated() {
+                                                throw new RuntimeException("Test error");
+                                            }
                                         };
                                     }
                                 }

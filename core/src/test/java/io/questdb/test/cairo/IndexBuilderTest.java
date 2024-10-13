@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -83,7 +83,8 @@ public class IndexBuilderTest extends AbstractCairoTest {
                         createTableSql,
                         tablePath -> {
                         },
-                        indexBuilder -> indexBuilder.reindexColumn(ff, "sym2"));
+                        indexBuilder -> indexBuilder.reindexColumn(ff, "sym2")
+                );
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "could not remove index file");
@@ -135,7 +136,8 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 ff,
                 createAlterInsertSql,
                 tablePath -> removeFileAtPartition("sym2.k.1", PartitionBy.NONE, tablePath, 0, -1L),
-                indexBuilder -> indexBuilder.reindexColumn("sym2"));
+                indexBuilder -> indexBuilder.reindexColumn("sym2")
+        );
     }
 
     @Test
@@ -186,7 +188,8 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     removeFileAtPartition("sym1.v", PartitionBy.NONE, tablePath, 0, -1L);
                     removeFileAtPartition("sym1.k", PartitionBy.NONE, tablePath, 0, -1L);
                 },
-                indexBuilder -> indexBuilder.reindexColumn("sym1"));
+                indexBuilder -> indexBuilder.reindexColumn("sym1")
+        );
     }
 
     @Test
@@ -273,7 +276,8 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0, -1L);
                     removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0, -1L);
                 },
-                indexBuilder -> indexBuilder.reindexColumn("sym1"));
+                indexBuilder -> indexBuilder.reindexColumn("sym1")
+        );
     }
 
     @Test
@@ -294,7 +298,8 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0, -1L);
                     removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0, -1L);
                 },
-                indexBuilder -> indexBuilder.reindex("1970-01-01", "sym1"));
+                indexBuilder -> indexBuilder.reindex("1970-01-01", "sym1")
+        );
     }
 
     @Test
@@ -315,7 +320,8 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     removeFileAtPartition("sym1.v", PartitionBy.DAY, tablePath, 0, -1L);
                     removeFileAtPartition("sym1.k", PartitionBy.DAY, tablePath, 0, -1L);
                 },
-                indexBuilder -> runReindexSql("REINDEX TABLE xxx COLUMN sym1 PARTITION '1970-01-01' LOCK EXCLUSIVE"));
+                indexBuilder -> runReindexSql("REINDEX TABLE xxx COLUMN sym1 PARTITION '1970-01-01' LOCK EXCLUSIVE")
+        );
     }
 
     @Test
@@ -342,7 +348,8 @@ public class IndexBuilderTest extends AbstractCairoTest {
                 ff,
                 createAlterInsertSql,
                 tablePath -> removeFileAtPartition("sym2.k.1", PartitionBy.DAY, tablePath, Timestamps.DAY_MICROS * 11, 1L),
-                indexBuilder -> indexBuilder.reindexColumn("sym2"));
+                indexBuilder -> indexBuilder.reindexColumn("sym2")
+        );
     }
 
     @Test
@@ -373,7 +380,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
                         });
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot lock table");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot lock table");
             }
         });
     }
@@ -396,7 +403,8 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     createTableSql,
                     tablePath -> {
                     },
-                    indexBuilder -> indexBuilder.reindexColumn("sym4"));
+                    indexBuilder -> indexBuilder.reindexColumn("sym4")
+            );
             Assert.fail();
         } catch (InvalidColumnException ignore) {
         }
@@ -407,7 +415,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
         AtomicInteger count = new AtomicInteger();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "sym2.k")) {
                     if (count.incrementAndGet() == 29) {
                         return -1;

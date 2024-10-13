@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -34,7 +33,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
@@ -45,9 +43,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 
 class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
-
     private static final Log LOG = LogFactory.getLog(AsyncGroupByNotKeyedRecordCursor.class);
-    private final GroupByAllocator allocator;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final VirtualRecord recordA;
     private int frameLimit;
@@ -56,13 +52,8 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     private boolean isValueBuilt;
     private int recordsRemaining = 1;
 
-    public AsyncGroupByNotKeyedRecordCursor(
-            CairoConfiguration configuration,
-            ObjList<GroupByFunction> groupByFunctions
-    ) {
-        this.allocator = new GroupByAllocator(configuration);
+    public AsyncGroupByNotKeyedRecordCursor(ObjList<GroupByFunction> groupByFunctions) {
         this.groupByFunctions = groupByFunctions;
-        GroupByUtils.setAllocator(groupByFunctions, allocator);
         this.recordA = new VirtualRecord(groupByFunctions);
         this.isOpen = true;
     }
@@ -79,7 +70,6 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(allocator);
             Misc.clearObjList(groupByFunctions);
 
             if (frameSequence != null) {
@@ -154,7 +144,9 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
                             .$(", cursor=").$(cursor)
                             .I$();
                     if (task.hasError()) {
-                        throw CairoException.nonCritical().put(task.getErrorMsg());
+                        throw CairoException.nonCritical()
+                                .position(task.getErrorMessagePosition())
+                                .put(task.getErrorMsg());
                     }
 
                     allFramesActive &= frameSequence.isActive();
@@ -198,8 +190,8 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
                 destValue.copy(srcValue);
             } else {
                 functionUpdater.merge(destValue, srcValue);
-                destValue.setNew(false);
             }
+            destValue.setNew(false);
         }
 
         isValueBuilt = true;
@@ -220,7 +212,6 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         this.frameSequence = frameSequence;
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         recordA.of(atom.getOwnerMapValue());
-        atom.setAllocator(allocator);
         Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext);
         isValueBuilt = false;
         frameLimit = -1;

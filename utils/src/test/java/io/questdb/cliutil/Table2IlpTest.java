@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@ package io.questdb.cliutil;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
-import io.questdb.cairo.O3Utils;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
@@ -40,6 +39,7 @@ import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.Chars;
@@ -86,17 +86,17 @@ public class Table2IlpTest {
     }
 
     public static void createTestPath(CharSequence root) {
-        try (Path path = new Path().of(root).$()) {
-            if (Files.exists(path)) {
+        try (Path path = new Path().of(root)) {
+            if (Files.exists(path.$())) {
                 return;
             }
-            Files.mkdirs(path.of(root).slash$(), 509);
+            Files.mkdirs(path.of(root).slash(), 509);
         }
     }
 
     public static void removeTestPath(CharSequence root) {
         Path path = Path.getThreadLocal(root);
-        Files.rmdir(path.slash$(), true);
+        Files.rmdir(path.slash(), true);
     }
 
     public static void setCairoStatic() {
@@ -144,13 +144,8 @@ public class Table2IlpTest {
                 conf,
                 engine,
                 workerPool,
-                new PGWireServer.PGConnectionContextFactory(
-                        engine,
-                        conf,
-                        registry,
-                        () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
-                ),
-                registry
+                registry,
+                () -> new SqlExecutionContextImpl(engine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
         );
 
         final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
@@ -175,7 +170,7 @@ public class Table2IlpTest {
                 return 500;
             }
         }, engine, workerPool, workerPool);
-        O3Utils.setupWorkerPool(workerPool, engine, null);
+        WorkerPoolUtils.setupWriterJobs(workerPool, engine);
         workerPool.start(LOG);
     }
 

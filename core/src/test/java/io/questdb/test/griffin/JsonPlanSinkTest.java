@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,6 +45,7 @@ public class JsonPlanSinkTest {
                 "        \"long256\": \"0x04000000000000000300000000000000020000000000000001\",\n" +
                 "        \"plan\": \"null\",\n" +
                 "        \"uuid\": \"00000000-0000-0002-0000-000000000001\",\n" +
+                "        \"ipv4\": \"0.0.0.1\",\n" +
                 "        \"uuid_null\": \"null\"\n" +
                 "    }\n" +
                 "  }\n" +
@@ -75,34 +76,6 @@ public class JsonPlanSinkTest {
         Assert.assertEquals(expected, sink.getSink().toString());
     }
 
-    static class TestFactory implements RecordCursorFactory {
-
-        @Override
-        public RecordMetadata getMetadata() {
-            return null;
-        }
-
-        @Override
-        public boolean recordCursorSupportsRandomAccess() {
-            return false;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.type("test");
-            sink.attr("geohash");
-            sink.val(101010L, 32);
-            sink.attr("long256");
-            sink.val(1L, 2L, 3L, 4L);
-            sink.attr("plan");
-            sink.val((Plannable) null);
-            sink.attr("uuid");
-            sink.valUuid(1L, 2L);
-            sink.attr("uuid_null");
-            sink.valUuid(Numbers.LONG_NaN, Numbers.LONG_NaN);
-        }
-    }
-
     static class NumericalTestFactory implements RecordCursorFactory {
 
         @Override
@@ -128,6 +101,36 @@ public class JsonPlanSinkTest {
             sink.val(2);
             sink.attr("long");
             sink.val(100L);
+        }
+    }
+
+    static class TestFactory implements RecordCursorFactory {
+
+        @Override
+        public RecordMetadata getMetadata() {
+            return null;
+        }
+
+        @Override
+        public boolean recordCursorSupportsRandomAccess() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.type("test");
+            sink.attr("geohash");
+            sink.val(101010L, 32);
+            sink.attr("long256");
+            sink.valLong256(1L, 2L, 3L, 4L);
+            sink.attr("plan");
+            sink.val((Plannable) null);
+            sink.attr("uuid");
+            sink.valUuid(1L, 2L);
+            sink.attr("ipv4");
+            sink.valIPv4(1);
+            sink.attr("uuid_null");
+            sink.valUuid(Numbers.LONG_NULL, Numbers.LONG_NULL);
         }
     }
 }

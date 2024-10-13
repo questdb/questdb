@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -102,12 +102,13 @@ public class TxSerializer {
         }
 
         try (
-                Path path = new Path().of(targetPath).$();
-                MemoryCMARW rwTxMem = Vm.getSmallCMARWInstance(ff, path, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)
+                Path path = new Path().of(targetPath);
+                MemoryCMARW rwTxMem = Vm.getSmallCMARWInstance(ff, path.$(), MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE)
         ) {
             final int symbolsSize = tx.TX_OFFSET_MAP_WRITER_COUNT * Long.BYTES;
             final int partitionSegmentSize = tx.ATTACHED_PARTITIONS_COUNT * LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES;
             final long fileSize = calculateTxRecordSize(symbolsSize, partitionSegmentSize);
+            rwTxMem.jumpTo(fileSize);
             Vect.memset(rwTxMem.addressOf(0), fileSize, 0);
             rwTxMem.setTruncateSize(fileSize);
 
@@ -165,12 +166,12 @@ public class TxSerializer {
     public String toJson(String srcTxFilePath) {
         TxFileStruct tx = new TxFileStruct();
 
-        try (Path path = new Path().put(srcTxFilePath).$()) {
-            if (!ff.exists(path)) {
+        try (Path path = new Path().put(srcTxFilePath)) {
+            if (!ff.exists(path.$())) {
                 System.err.printf("file does not exist: %s%n", srcTxFilePath);
                 return null;
             }
-            try (MemoryMR roTxMem = Vm.getMRInstance(ff, path, ff.length(path), MemoryTag.MMAP_DEFAULT)) {
+            try (MemoryMR roTxMem = Vm.getCMRInstance(ff, path.$(), ff.length(path.$()), MemoryTag.MMAP_DEFAULT)) {
                 roTxMem.growToFileSize();
                 final long version = roTxMem.getLong(TX_BASE_OFFSET_VERSION_64);
                 final boolean isA = (version & 1L) == 0L;

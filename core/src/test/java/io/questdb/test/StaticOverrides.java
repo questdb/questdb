@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,10 +25,8 @@
 package io.questdb.test;
 
 import io.questdb.FactoryProvider;
-import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.cairo.Overrides;
 
@@ -68,6 +66,7 @@ public class StaticOverrides extends Overrides {
 
         AbstractCairoTest.currentMicros = -1;
         AbstractCairoTest.testMicrosClock = AbstractCairoTest.defaultMicrosecondClock;
+        AbstractCairoTest.sqlExecutionContext.initNow();
         AbstractCairoTest.ff = null;
         AbstractCairoTest.factoryProvider = null;
     }
@@ -95,5 +94,4 @@ public class StaticOverrides extends Overrides {
     public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
         AbstractCairoTest.testMicrosClock = testMicrosClock;
     }
-
 }

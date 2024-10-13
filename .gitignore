@@ -16,6 +16,8 @@ deploy*.bat
 win64svc/cmake-build-debug
 win64svc/build
 win64svc/CMakeCache.txt
+win64svc/cmake-build-release
+core/src/main/resources/io/questdb/bin/linux/libasm.a
 core/cmake-build-debug
 core/cmake-build-debug-coverage
 core/cmake-build-release
@@ -28,3 +30,4 @@ core/CMakeCache.txt
 **/CMakeFiles
 .envrc
 .vscode
+core/rust/qdbr/target

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -34,10 +35,14 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.tasks.WalTxnNotificationTask;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.AbstractMultiNodeTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -52,7 +57,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Before
     public void setUp() {
         super.setUp();
-        currentMicros = 0L;
+        setCurrentMicros(0);
     }
 
     @Test
@@ -98,41 +103,38 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     public void testOutOfOrderDuplicateTimestamps() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
-            try (
-                    TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                            .col("i", ColumnType.INT)
-                            .timestamp("ts")
-                            .wal()
-            ) {
-                TableToken tt = createTable(model);
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                    .col("i", ColumnType.INT)
+                    .timestamp("ts")
+                    .wal();
+            TableToken tt = createTable(model);
 
-                try (WalWriter walWriter = engine.getWalWriter(tt)) {
-                    TableWriter.Row row = walWriter.newRow(1000);
-                    row.putInt(0, 1);
-                    row.append();
-                    // second row is out-of-order
-                    row = walWriter.newRow(500);
-                    row.putInt(0, 2);
-                    row.append();
-                    // third row is in-order
-                    row = walWriter.newRow(1500);
-                    row.putInt(0, 3);
-                    row.append();
-                    // forth row is in-order with duplicate timestamp
-                    row = walWriter.newRow(1500);
-                    row.putInt(0, 4);
-                    row.append();
-                    walWriter.commit();
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                TableWriter.Row row = walWriter.newRow(1000);
+                row.putInt(0, 1);
+                row.append();
+                // second row is out-of-order
+                row = walWriter.newRow(500);
+                row.putInt(0, 2);
+                row.append();
+                // third row is in-order
+                row = walWriter.newRow(1500);
+                row.putInt(0, 3);
+                row.append();
+                // forth row is in-order with duplicate timestamp
+                row = walWriter.newRow(1500);
+                row.putInt(0, 4);
+                row.append();
+                walWriter.commit();
 
-                    drainWalQueue();
-                }
-
-                assertSql("i\tts\n" +
-                        "2\t1970-01-01T00:00:00.000500Z\n" +
-                        "1\t1970-01-01T00:00:00.001000Z\n" +
-                        "3\t1970-01-01T00:00:00.001500Z\n" +
-                        "4\t1970-01-01T00:00:00.001500Z\n", tableName);
+                drainWalQueue();
             }
+
+            assertSql("i\tts\n" +
+                    "2\t1970-01-01T00:00:00.000500Z\n" +
+                    "1\t1970-01-01T00:00:00.001000Z\n" +
+                    "3\t1970-01-01T00:00:00.001500Z\n" +
+                    "4\t1970-01-01T00:00:00.001500Z\n", tableName);
         });
     }
 
@@ -181,7 +183,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     SqlCompiler compiler = engine.getSqlCompiler();
                     WalWriter walWriter = engine.getWalWriter(tt)
             ) {
-
                 long start = ts;
                 addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, start, rnd, walWriter, true);
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
@@ -211,7 +212,6 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     WalWriter walWriter2 = engine.getWalWriter(tt);
                     WalWriter walWriter3 = engine.getWalWriter(tt)
             ) {
-
                 long start = now;
                 WalWriter[] writers = new WalWriter[]{walWriter1, walWriter2, walWriter3};
 
@@ -393,32 +393,30 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     public void testUpdateViaWal_CopyIntoDeletedColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.INT)
                     .timestamp("ts")
-                    .wal()
-            ) {
-                TableToken tableToken = createTable(model);
+                    .wal();
+            TableToken tableToken = createTable(model);
 
-                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putInt(0, 10);
-                    row.append();
-                    row = walWriter.newRow(0);
-                    row.putInt(0, 11);
-                    row.append();
-                    row = walWriter.newRow(0);
-                    row.putInt(0, 12);
-                    row.append();
-                    walWriter.commit();
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putInt(0, 10);
+                row.append();
+                row = walWriter.newRow(0);
+                row.putInt(0, 11);
+                row.append();
+                row = walWriter.newRow(0);
+                row.putInt(0, 12);
+                row.append();
+                walWriter.commit();
 
-                    WalWriterTest.removeColumn(walWriter, "b");
+                WalWriterTest.removeColumn(walWriter, "b");
 
-                    assertException("UPDATE " + tableName + " SET b = a");
-                } catch (Exception e) {
-                    assertTrue(e.getMessage().endsWith("Invalid column: b"));
-                }
+                assertExceptionNoLeakCheck("UPDATE " + tableName + " SET b = a");
+            } catch (Exception e) {
+                assertTrue(e.getMessage().endsWith("Invalid column: b"));
             }
         });
     }
@@ -427,39 +425,37 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     public void testUpdateViaWal_CopyIntoNewColumn() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
-            try (TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     .col("a", ColumnType.INT)
                     .col("b", ColumnType.INT)
                     .timestamp("ts")
-                    .wal()
-            ) {
-                TableToken tableToken = createTable(model);
+                    .wal();
+            TableToken tableToken = createTable(model);
 
-                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
-                    TableWriter.Row row = walWriter.newRow(0);
-                    row.putInt(0, 10);
-                    row.append();
-                    row = walWriter.newRow(0);
-                    row.putInt(0, 11);
-                    row.append();
-                    row = walWriter.newRow(0);
-                    row.putInt(0, 12);
-                    row.append();
-                    walWriter.commit();
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putInt(0, 10);
+                row.append();
+                row = walWriter.newRow(0);
+                row.putInt(0, 11);
+                row.append();
+                row = walWriter.newRow(0);
+                row.putInt(0, 12);
+                row.append();
+                walWriter.commit();
 
-                    addColumn(walWriter, "c", ColumnType.INT);
-                    drainWalQueue();
+                addColumn(walWriter, "c", ColumnType.INT);
+                drainWalQueue();
 
-                    update("UPDATE " + tableName + " SET b = a");
-                    update("UPDATE " + tableName + " SET c = a");
-                    drainWalQueue();
-                }
-
-                assertSql("a\tb\tts\tc\n" +
-                        "10\t10\t1970-01-01T00:00:00.000000Z\t10\n" +
-                        "11\t11\t1970-01-01T00:00:00.000000Z\t11\n" +
-                        "12\t12\t1970-01-01T00:00:00.000000Z\t12\n", tableName);
+                update("UPDATE " + tableName + " SET b = a");
+                update("UPDATE " + tableName + " SET c = a");
+                drainWalQueue();
             }
+
+            assertSql("a\tb\tts\tc\n" +
+                    "10\t10\t1970-01-01T00:00:00.000000Z\t10\n" +
+                    "11\t11\t1970-01-01T00:00:00.000000Z\t11\n" +
+                    "12\t12\t1970-01-01T00:00:00.000000Z\t12\n", tableName);
         });
     }
 
@@ -477,82 +473,89 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             final int binarySize = 64;
-            final long pointer = Unsafe.getUnsafe().allocateMemory(binarySize);
-            final DirectBinarySequence binSeq = new DirectBinarySequence();
-            WalWriterTest.prepareBinPayload(pointer, binarySize);
+            final long pointer = Unsafe.malloc(binarySize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final DirectBinarySequence binSeq = new DirectBinarySequence();
+                WalWriterTest.prepareBinPayload(pointer, binarySize);
+                final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
+                try (
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        WalWriter walWriter = engine.getWalWriter(tableToken)
+                ) {
+                    addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    WalWriter walWriter = engine.getWalWriter(tableToken)
-            ) {
-                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                    sqlExecutionContext.getBindVariableService().setInt(0, 567890);
+                    sqlExecutionContext.getBindVariableService().setByte(1, (byte) 122);
+                    sqlExecutionContext.getBindVariableService().setShort(2, (short) 42567);
+                    sqlExecutionContext.getBindVariableService().setLong(3, 33342567L);
+                    sqlExecutionContext.getBindVariableService().setFloat(4, (float) 34.34);
+                    sqlExecutionContext.getBindVariableService().setDouble(5, 357.35);
+                    sqlExecutionContext.getBindVariableService().setTimestamp(6, 100_000L);
+                    sqlExecutionContext.getBindVariableService().setDate(7, 100_000L);
+                    sqlExecutionContext.getBindVariableService().setChar(8, 'Q');
+                    sqlExecutionContext.getBindVariableService().setBoolean(9, true);
+                    sqlExecutionContext.getBindVariableService().setStr(10, "updated");
+                    sqlExecutionContext.getBindVariableService().setStr(11, "labelUpdate");
+                    sqlExecutionContext.getBindVariableService().setBin(12, binSeq.of(pointer, binarySize));
+                    sqlExecutionContext.getBindVariableService().setGeoHash(13, rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
+                    sqlExecutionContext.getBindVariableService().setGeoHash(14, rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
+                    sqlExecutionContext.getBindVariableService().setGeoHash(15, rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
+                    sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
+                    sqlExecutionContext.getBindVariableService().setVarchar(17, varChar);
 
-                sqlExecutionContext.getBindVariableService().setInt(0, 567890);
-                sqlExecutionContext.getBindVariableService().setByte(1, (byte) 122);
-                sqlExecutionContext.getBindVariableService().setShort(2, (short) 42567);
-                sqlExecutionContext.getBindVariableService().setLong(3, 33342567L);
-                sqlExecutionContext.getBindVariableService().setFloat(4, (float) 34.34);
-                sqlExecutionContext.getBindVariableService().setDouble(5, 357.35);
-                sqlExecutionContext.getBindVariableService().setTimestamp(6, 100_000L);
-                sqlExecutionContext.getBindVariableService().setDate(7, 100_000L);
-                sqlExecutionContext.getBindVariableService().setChar(8, 'Q');
-                sqlExecutionContext.getBindVariableService().setBoolean(9, true);
-                sqlExecutionContext.getBindVariableService().setStr(10, "updated");
-                sqlExecutionContext.getBindVariableService().setStr(11, "labelUpdate");
-                sqlExecutionContext.getBindVariableService().setBin(12, binSeq.of(pointer, binarySize));
-                sqlExecutionContext.getBindVariableService().setGeoHash(13, rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
-                sqlExecutionContext.getBindVariableService().setGeoHash(14, rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
-                sqlExecutionContext.getBindVariableService().setGeoHash(15, rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
-                sqlExecutionContext.getBindVariableService().setGeoHash(16, rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
+                    update(
+                            "UPDATE " + tableName + " SET " +
+                                    "INT=$1, " +
+                                    "BYTE=$2, " +
+                                    "SHORT=$3, " +
+                                    "LONG=$4, " +
+                                    "FLOAT=$5, " +
+                                    "DOUBLE=$6, " +
+                                    "TIMESTAMP=$7, " +
+                                    "DATE=$8, " +
+                                    "CHAR=$9, " +
+                                    "BOOLEAN=$10, " +
+                                    "STRING=$11, " +
+                                    "LABEL=$12, " +
+                                    "BIN=$13, " +
+                                    "GEOBYTE=$14, " +
+                                    "GEOSHORT=$15, " +
+                                    "GEOINT=$16, " +
+                                    "GEOLONG=$17, " +
+                                    "VARCHAR=$18 " +
+                                    "WHERE INT > 5"
+                    );
 
-                update(
-                        "UPDATE " + tableName + " SET " +
-                                "INT=$1, " +
-                                "BYTE=$2, " +
-                                "SHORT=$3, " +
-                                "LONG=$4, " +
-                                "FLOAT=$5, " +
-                                "DOUBLE=$6, " +
-                                "TIMESTAMP=$7, " +
-                                "DATE=$8, " +
-                                "CHAR=$9, " +
-                                "BOOLEAN=$10, " +
-                                "STRING=$11, " +
-                                "LABEL=$12, " +
-                                "BIN=$13, " +
-                                "GEOBYTE=$14, " +
-                                "GEOSHORT=$15, " +
-                                "GEOINT=$16, " +
-                                "GEOLONG=$17 " +
-                                "WHERE INT > 5"
-                );
+                    drainWalQueue();
 
-                drainWalQueue();
+                    update(
+                            "UPDATE " + tableCopyName + " SET " +
+                                    "INT=$1, " +
+                                    "BYTE=$2, " +
+                                    "SHORT=$3, " +
+                                    "LONG=$4, " +
+                                    "FLOAT=$5, " +
+                                    "DOUBLE=$6, " +
+                                    "TIMESTAMP=$7, " +
+                                    "DATE=$8, " +
+                                    "CHAR=$9, " +
+                                    "BOOLEAN=$10, " +
+                                    "STRING=$11, " +
+                                    "LABEL=$12, " +
+                                    "BIN=$13, " +
+                                    "GEOBYTE=$14, " +
+                                    "GEOSHORT=$15, " +
+                                    "GEOINT=$16, " +
+                                    "GEOLONG=$17, " +
+                                    "VARCHAR=$18 " +
+                                    "WHERE INT > 5"
+                    );
 
-                update(
-                        "UPDATE " + tableCopyName + " SET " +
-                                "INT=$1, " +
-                                "BYTE=$2, " +
-                                "SHORT=$3, " +
-                                "LONG=$4, " +
-                                "FLOAT=$5, " +
-                                "DOUBLE=$6, " +
-                                "TIMESTAMP=$7, " +
-                                "DATE=$8, " +
-                                "CHAR=$9, " +
-                                "BOOLEAN=$10, " +
-                                "STRING=$11, " +
-                                "LABEL=$12, " +
-                                "BIN=$13, " +
-                                "GEOBYTE=$14, " +
-                                "GEOSHORT=$15, " +
-                                "GEOINT=$16, " +
-                                "GEOLONG=$17 " +
-                                "WHERE INT > 5"
-                );
-
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                }
+            } finally {
+                Unsafe.free(pointer, binarySize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -579,7 +582,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
 
                 update("UPDATE " + tableCopyName + " SET INT=12345678");
                 try {
-                    assertException("UPDATE " + tableName + " t SET INT=12345678 FROM " + tableCopyName + " c WHERE t.INT=c.INT");
+                    assertExceptionNoLeakCheck("UPDATE " + tableName + " t SET INT=12345678 FROM " + tableCopyName + " c WHERE t.INT=c.INT");
                 } catch (Exception e) {
                     assertTrue(e.getMessage().endsWith("UPDATE statements with join are not supported yet for WAL tables"));
                 }
@@ -601,83 +604,91 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             Rnd rnd = TestUtils.generateRandom(LOG);
 
             final int binarySize = 64;
-            final long pointer = Unsafe.getUnsafe().allocateMemory(binarySize);
-            final DirectBinarySequence binSeq = new DirectBinarySequence();
-            WalWriterTest.prepareBinPayload(pointer, binarySize);
+            final long pointer = Unsafe.malloc(binarySize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final DirectBinarySequence binSeq = new DirectBinarySequence();
+                WalWriterTest.prepareBinPayload(pointer, binarySize);
 
-            try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    WalWriter walWriter = engine.getWalWriter(tableToken)
-            ) {
-                addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                final Utf8String varChar = new Utf8String("₴ п'ять доллярів");
+                try (
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        WalWriter walWriter = engine.getWalWriter(tableToken)
+                ) {
+                    addRowsToWalAndApplyToTable(0, tableName, tableCopyName, rowCount, tsIncrement, ts, rnd, walWriter, true);
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
 
-                sqlExecutionContext.getBindVariableService().setInt("INTVAL", 567890);
-                sqlExecutionContext.getBindVariableService().setByte("BYTEVAL", (byte) 122);
-                sqlExecutionContext.getBindVariableService().setShort("SHORTVAL", (short) 42567);
-                sqlExecutionContext.getBindVariableService().setLong("LONGVAL", 33342567L);
-                sqlExecutionContext.getBindVariableService().setFloat("FLOATVAL", (float) 34.34);
-                sqlExecutionContext.getBindVariableService().setDouble("DOUBLEVAL", 357.35);
-                sqlExecutionContext.getBindVariableService().setTimestamp("TIMESTAMPVAL", 100_000L);
-                sqlExecutionContext.getBindVariableService().setDate("DATEVAL", 100_000L);
-                sqlExecutionContext.getBindVariableService().setChar("CHARVAL", 'Q');
-                sqlExecutionContext.getBindVariableService().setBoolean("BOOLVAL", true);
-                sqlExecutionContext.getBindVariableService().setStr("STRVAL", "updated");
-                sqlExecutionContext.getBindVariableService().setStr("SYMVAL", "labelUpdate");
-                sqlExecutionContext.getBindVariableService().setBin("BINVAL", binSeq.of(pointer, binarySize));
-                sqlExecutionContext.getBindVariableService().setGeoHash("GEOBYTEVAL", rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
-                sqlExecutionContext.getBindVariableService().setGeoHash("GEOSHORTVAL", rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
-                sqlExecutionContext.getBindVariableService().setGeoHash("GEOINTVAL", rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
-                sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
-                sqlExecutionContext.getBindVariableService().setUuid("UUIDVAL", rnd.nextLong(), rnd.nextLong());
+                    sqlExecutionContext.getBindVariableService().setInt("INTVAL", 567890);
+                    sqlExecutionContext.getBindVariableService().setByte("BYTEVAL", (byte) 122);
+                    sqlExecutionContext.getBindVariableService().setShort("SHORTVAL", (short) 42567);
+                    sqlExecutionContext.getBindVariableService().setLong("LONGVAL", 33342567L);
+                    sqlExecutionContext.getBindVariableService().setFloat("FLOATVAL", (float) 34.34);
+                    sqlExecutionContext.getBindVariableService().setDouble("DOUBLEVAL", 357.35);
+                    sqlExecutionContext.getBindVariableService().setTimestamp("TIMESTAMPVAL", 100_000L);
+                    sqlExecutionContext.getBindVariableService().setDate("DATEVAL", 100_000L);
+                    sqlExecutionContext.getBindVariableService().setChar("CHARVAL", 'Q');
+                    sqlExecutionContext.getBindVariableService().setBoolean("BOOLVAL", true);
+                    sqlExecutionContext.getBindVariableService().setStr("STRVAL", "updated");
+                    sqlExecutionContext.getBindVariableService().setStr("SYMVAL", "labelUpdate");
+                    sqlExecutionContext.getBindVariableService().setBin("BINVAL", binSeq.of(pointer, binarySize));
+                    sqlExecutionContext.getBindVariableService().setGeoHash("GEOBYTEVAL", rnd.nextGeoHashByte(5), ColumnType.getGeoHashTypeWithBits(5));
+                    sqlExecutionContext.getBindVariableService().setGeoHash("GEOSHORTVAL", rnd.nextGeoHashShort(10), ColumnType.getGeoHashTypeWithBits(10));
+                    sqlExecutionContext.getBindVariableService().setGeoHash("GEOINTVAL", rnd.nextGeoHashInt(20), ColumnType.getGeoHashTypeWithBits(20));
+                    sqlExecutionContext.getBindVariableService().setGeoHash("GEOLONGVAL", rnd.nextGeoHashLong(35), ColumnType.getGeoHashTypeWithBits(35));
+                    sqlExecutionContext.getBindVariableService().setUuid("UUIDVAL", rnd.nextLong(), rnd.nextLong());
+                    sqlExecutionContext.getBindVariableService().setVarchar("VARCHARVAL", varChar);
 
-                update(
-                        "UPDATE " + tableName + " SET " +
-                                "INT=:INTVAL, " +
-                                "BYTE=:BYTEVAL, " +
-                                "SHORT=:SHORTVAL, " +
-                                "LONG=:LONGVAL, " +
-                                "FLOAT=:FLOATVAL, " +
-                                "DOUBLE=:DOUBLEVAL, " +
-                                "TIMESTAMP=:TIMESTAMPVAL, " +
-                                "DATE=:DATEVAL, " +
-                                "CHAR=:CHARVAL, " +
-                                "BOOLEAN=:BOOLVAL, " +
-                                "STRING=:STRVAL, " +
-                                "LABEL=:SYMVAL, " +
-                                "BIN=:BINVAL, " +
-                                "GEOBYTE=:GEOBYTEVAL, " +
-                                "GEOSHORT=:GEOSHORTVAL, " +
-                                "GEOINT=:GEOINTVAL, " +
-                                "GEOLONG=:GEOLONGVAL, " +
-                                "UUID=:UUIDVAL " +
-                                "WHERE INT > 5"
-                );
-                drainWalQueue();
+                    update(
+                            "UPDATE " + tableName + " SET " +
+                                    "INT=:INTVAL, " +
+                                    "BYTE=:BYTEVAL, " +
+                                    "SHORT=:SHORTVAL, " +
+                                    "LONG=:LONGVAL, " +
+                                    "FLOAT=:FLOATVAL, " +
+                                    "DOUBLE=:DOUBLEVAL, " +
+                                    "TIMESTAMP=:TIMESTAMPVAL, " +
+                                    "DATE=:DATEVAL, " +
+                                    "CHAR=:CHARVAL, " +
+                                    "BOOLEAN=:BOOLVAL, " +
+                                    "STRING=:STRVAL, " +
+                                    "LABEL=:SYMVAL, " +
+                                    "BIN=:BINVAL, " +
+                                    "GEOBYTE=:GEOBYTEVAL, " +
+                                    "GEOSHORT=:GEOSHORTVAL, " +
+                                    "GEOINT=:GEOINTVAL, " +
+                                    "GEOLONG=:GEOLONGVAL, " +
+                                    "UUID=:UUIDVAL," +
+                                    "VARCHAR=:VARCHARVAL " +
+                                    "WHERE INT > 5"
+                    );
+                    drainWalQueue();
 
-                update(
-                        "UPDATE " + tableCopyName + " SET " +
-                                "INT=:INTVAL, " +
-                                "BYTE=:BYTEVAL, " +
-                                "SHORT=:SHORTVAL, " +
-                                "LONG=:LONGVAL, " +
-                                "FLOAT=:FLOATVAL, " +
-                                "DOUBLE=:DOUBLEVAL, " +
-                                "TIMESTAMP=:TIMESTAMPVAL, " +
-                                "DATE=:DATEVAL, " +
-                                "CHAR=:CHARVAL, " +
-                                "BOOLEAN=:BOOLVAL, " +
-                                "STRING=:STRVAL, " +
-                                "LABEL=:SYMVAL, " +
-                                "BIN=:BINVAL, " +
-                                "GEOBYTE=:GEOBYTEVAL, " +
-                                "GEOSHORT=:GEOSHORTVAL, " +
-                                "GEOINT=:GEOINTVAL, " +
-                                "GEOLONG=:GEOLONGVAL, " +
-                                "UUID=:UUIDVAL " +
-                                "WHERE INT > 5"
-                );
-                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                    update(
+                            "UPDATE " + tableCopyName + " SET " +
+                                    "INT=:INTVAL, " +
+                                    "BYTE=:BYTEVAL, " +
+                                    "SHORT=:SHORTVAL, " +
+                                    "LONG=:LONGVAL, " +
+                                    "FLOAT=:FLOATVAL, " +
+                                    "DOUBLE=:DOUBLEVAL, " +
+                                    "TIMESTAMP=:TIMESTAMPVAL, " +
+                                    "DATE=:DATEVAL, " +
+                                    "CHAR=:CHARVAL, " +
+                                    "BOOLEAN=:BOOLVAL, " +
+                                    "STRING=:STRVAL, " +
+                                    "LABEL=:SYMVAL, " +
+                                    "BIN=:BINVAL, " +
+                                    "GEOBYTE=:GEOBYTEVAL, " +
+                                    "GEOSHORT=:GEOSHORTVAL, " +
+                                    "GEOINT=:GEOINTVAL, " +
+                                    "GEOLONG=:GEOLONGVAL, " +
+                                    "UUID=:UUIDVAL, " +
+                                    "VARCHAR=:VARCHARVAL " +
+                                    "WHERE INT > 5"
+                    );
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableCopyName, tableName, LOG);
+                }
+            } finally {
+                Unsafe.free(pointer, binarySize, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -690,7 +701,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_Random() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        currentMicros = rnd.nextLong();
+        setCurrentMicros(rnd.nextLong());
         sqlExecutionContext.getRandom().reset(currentMicros * 1000, currentMicros);
 
         assertMemoryLeak(() -> {
@@ -817,6 +828,39 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     }
 
     @Test
+    public void testWalTxnAutoRepublishing() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_WAL_SEQUENCER_CHECK_INTERVAL, 1);
+        assertMemoryLeak(() -> {
+            final String tableName = testName.getMethodName();
+            final String tableCopyName = tableName + "_copy";
+            TableToken tableToken = createTable(createTableModel(tableName).wal());
+            TableToken tableCopyToken = createTable(createTableModel(tableCopyName).wal());
+
+            insert("INSERT INTO " + tableName + " (ts) VALUES ('2014')");
+            insert("INSERT INTO " + tableCopyName + " (ts) VALUES ('2015')");
+
+            CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
+            checkWalTransactionsJob.runSerially();
+
+            // Artificially notify transactions up to fill the queue
+            boolean full;
+            do {
+                engine.notifyWalTxnCommitted(tableToken);
+                full = !engine.notifyWalTxnCommitted(tableCopyToken);
+            } while (!full);
+
+            // This supposed to republish the transactions
+            long currentRepublishCounter = engine.getUnpublishedWalTxnCount();
+            for (int i = 0; i < 10; i++) {
+                setCurrentMicros(currentMicros + 200000);
+                Assert.assertFalse(checkWalTransactionsJob.runSerially());
+                // Check that only 1 attempt is made to publish notification and then the job backs off
+                Assert.assertEquals(currentRepublishCounter + i + 1, engine.getUnpublishedWalTxnCount());
+            }
+        });
+    }
+
+    @Test
     public void testWalTxnRepublishing() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
@@ -888,7 +932,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         });
     }
 
-    private void addRowRwAllTypes(int iteration, TableWriter.Row row, int i, CharSequence symbol, String rndStr) {
+    private void addRowRwAllTypes(int iteration, TableWriter.Row row, int i, CharSequence symbol, String rndStr, Utf8Sequence rndVarchar) {
         int col = 0;
         row.putInt(col++, i);
         row.putByte(col++, (byte) i);
@@ -908,7 +952,9 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         row.putGeoHash(col++, i); // geo long
         row.putStr(col++, (char) (65 + i % 26));
         row.putSym(col++, symbol);
-        row.putLong128(col, Hash.hashLong(i), Hash.hashLong(i + 1)); // UUID
+        row.putLong128(col++, Hash.hashLong64(i), Hash.hashLong64(i + 1)); // UUID
+        col++; // binary ('bin') column is not set
+        row.putVarchar(col, rndVarchar);
         row.append();
     }
 
@@ -925,9 +971,16 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 tsIncrement = -tsIncrement;
             }
 
+            Utf8StringSink utf8Sink = new Utf8StringSink();
             for (int i = 0; i < rowsToInsertTotal; i++) {
                 String symbol = rnd.nextInt(10) == 5 ? null : rnd.nextString(rnd.nextInt(9) + 1);
                 String rndStr = rnd.nextInt(10) == 5 ? null : rnd.nextString(20);
+                Utf8Sequence rndUtf8Seq = null;
+                if (rnd.nextInt(10) != 5) {
+                    utf8Sink.clear();
+                    rnd.nextUtf8Str(20, utf8Sink);
+                    rndUtf8Seq = utf8Sink;
+                }
 
                 long rowTs = startTs;
                 if (!inOrder && i > 3 && i < rowsToInsertTotal - 3) {
@@ -935,8 +988,8 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                     rowTs += rnd.nextLong(2 * tsIncrement);
                 }
 
-                addRowRwAllTypes(iteration, walWriter.newRow(rowTs), i, symbol, rndStr);
-                addRowRwAllTypes(iteration, copyWriter.newRow(rowTs), i, symbol, rndStr);
+                addRowRwAllTypes(iteration, walWriter.newRow(rowTs), i, symbol, rndStr, rndUtf8Seq);
+                addRowRwAllTypes(iteration, copyWriter.newRow(rowTs), i, symbol, rndStr, rndUtf8Seq);
                 startTs += tsIncrement;
             }
 
@@ -965,20 +1018,16 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     private TableToken createTableAndCopy(String tableName, String tableCopyName) {
         AtomicReference<TableToken> tableToken = new AtomicReference<>();
         // tableName is WAL enabled
-        try (TableModel model = createTableModel(tableName).wal()) {
-            forEachNode(node -> tableToken.set(TestUtils.create(model, node.getEngine()))
-            );
-        }
+        final TableModel model = createTableModel(tableName).wal();
+        forEachNode(node -> tableToken.set(TestUtils.create(model, node.getEngine()))
+        );
 
         // tableCopyName is not WAL enabled
-        try (TableModel model = createTableModel(tableCopyName).noWal()) {
-            createTable(model);
-        }
+        createTable(createTableModel(tableCopyName).noWal());
         return tableToken.get();
     }
 
     private TableModel createTableModel(String tableName) {
-        //noinspection resource
         return new TableModel(configuration, tableName, PartitionBy.HOUR)
                 .col("int", ColumnType.INT)
                 .col("byte", ColumnType.BYTE)
@@ -1000,6 +1049,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
                 .col("label", ColumnType.SYMBOL)
                 .col("uuid", ColumnType.UUID)
                 .col("bin", ColumnType.BINARY)
+                .col("varchar", ColumnType.VARCHAR)
                 .timestamp("ts");
     }
 

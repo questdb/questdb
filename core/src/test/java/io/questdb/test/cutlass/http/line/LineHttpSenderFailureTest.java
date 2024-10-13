@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.client.Sender;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -115,9 +114,8 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
 
         public Sender newSender() {
             String address = "localhost:" + HTTP_PORT;
-            return Sender.builder()
+            return Sender.builder(Sender.Transport.HTTP)
                     .address(address)
-                    .http()
                     .autoFlushRows(5000)
                     .retryTimeoutMillis(15_000)
                     .build();
@@ -133,7 +131,7 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
             serverMain.start();
         }
 
-        public void startAndExecute(String sqlText) throws SqlException {
+        public void startAndExecute(String sqlText) {
             start();
             serverMain.compile(sqlText);
         }

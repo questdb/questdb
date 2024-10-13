@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,14 +48,14 @@ public class RndDateCCCFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final long lo = args.getQuick(0).getDate(null);
         final long hi = args.getQuick(1).getDate(null);
-        final int nanRate = args.getQuick(2).getInt(null);
+        final int nullRate = args.getQuick(2).getInt(null);
 
-        if (nanRate < 0) {
+        if (nullRate < 0) {
             throw SqlException.$(argPositions.getQuick(2), "invalid NaN rate");
         }
 
         if (lo < hi) {
-            return new Func(lo, hi, nanRate);
+            return new Func(lo, hi, nullRate);
         }
 
         throw SqlException.$(position, "invalid range");
@@ -76,7 +76,7 @@ public class RndDateCCCFunctionFactory implements FunctionFactory {
         @Override
         public long getDate(Record rec) {
             if ((rnd.nextInt() % nanRate) == 1) {
-                return Numbers.LONG_NaN;
+                return Numbers.LONG_NULL;
             }
             return lo + rnd.nextPositiveLong() % range;
         }

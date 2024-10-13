@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,6 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class Long256Impl implements Long256, Sinkable {
-
     public static final Long256Impl NULL_LONG256 = new Long256Impl();
     public static final Long256Impl ZERO_LONG256 = new Long256Impl();
 
@@ -53,7 +52,7 @@ public class Long256Impl implements Long256, Sinkable {
     }
 
     public static boolean isNull(long l0, long l1, long l2, long l3) {
-        return l0 == Numbers.LONG_NaN && l1 == Numbers.LONG_NaN && l2 == Numbers.LONG_NaN && l3 == Numbers.LONG_NaN;
+        return l0 == Numbers.LONG_NULL && l1 == Numbers.LONG_NULL && l2 == Numbers.LONG_NULL && l3 == Numbers.LONG_NULL;
     }
 
     public static void putNull(long appendPointer) {
@@ -83,15 +82,6 @@ public class Long256Impl implements Long256, Sinkable {
                 rnd.nextLong(),
                 rnd.nextLong(),
                 rnd.nextLong()
-        );
-    }
-
-    public void fromRnd(Rnd rnd, long N) {
-        setAll(
-                rnd.nextLong(N),
-                rnd.nextLong(N),
-                rnd.nextLong(N),
-                rnd.nextLong(N)
         );
     }
 
@@ -137,10 +127,10 @@ public class Long256Impl implements Long256, Sinkable {
 
     static {
         NULL_LONG256.setAll(
-                Numbers.LONG_NaN,
-                Numbers.LONG_NaN,
-                Numbers.LONG_NaN,
-                Numbers.LONG_NaN
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL,
+                Numbers.LONG_NULL
         );
         ZERO_LONG256.setAll(0, 0, 0, 0);
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -112,7 +112,7 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor {
      * State for processing a single request across multiple response chunks.
      * Each object is used for the lifetime of one request, then returned the pool.
      */
-    private static class RequestState implements QuietCloseable, Mutable {
+    public static class RequestState implements QuietCloseable, Mutable {
         /**
          * Metrics serialization destination, sent into one or more chunks later.
          */

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,8 +26,13 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.std.Misc;
+import io.questdb.std.Pool;
+import io.questdb.std.Utf8StringObjHashMap;
+import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -56,13 +61,18 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
             IODispatcher<LineTcpConnectionContext> dispatcher,
             int workerId
     ) {
-        this.millisecondClock = configuration.getMillisecondClock();
-        this.maintenanceInterval = configuration.getMaintenanceInterval();
-        this.scheduler = scheduler;
-        this.maintenanceJobDeadline = millisecondClock.getTicks() + maintenanceInterval;
-        this.dispatcher = dispatcher;
-        this.workerId = workerId;
-        this.unusedSymbolCaches = new WeakClosableObjectPool<>(() -> new SymbolCache(configuration), 10, true);
+        try {
+            this.millisecondClock = configuration.getMillisecondClock();
+            this.maintenanceInterval = configuration.getMaintenanceInterval();
+            this.scheduler = scheduler;
+            this.maintenanceJobDeadline = millisecondClock.getTicks() + maintenanceInterval;
+            this.dispatcher = dispatcher;
+            this.workerId = workerId;
+            this.unusedSymbolCaches = new WeakClosableObjectPool<>(() -> new SymbolCache(configuration), 10, true);
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override
@@ -129,7 +139,7 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
         return busy;
     }
 
-    private boolean handleIO(LineTcpConnectionContext context, IODispatcher<LineTcpConnectionContext> dispatcher)  {
+    private boolean handleIO(LineTcpConnectionContext context, IODispatcher<LineTcpConnectionContext> dispatcher) {
         if (!context.invalid()) {
             switch (context.handleIO(this)) {
                 case NEEDS_READ:

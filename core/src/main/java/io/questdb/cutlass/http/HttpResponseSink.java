@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,7 +35,6 @@ import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.ex.ZLibException;
 import io.questdb.std.str.*;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -44,7 +43,7 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.std.Chars.isBlank;
 
 public class HttpResponseSink implements Closeable, Mutable {
-    private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
+    private static final Log LOG = LogFactory.getLog(HttpResponseSink.class);
     private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
     private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
     private final ChunkUtf8Sink buffer;
@@ -77,7 +76,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.nf = configuration.getNetworkFacade();
         this.buffer = new ChunkUtf8Sink(responseBufferSize);
         this.compressOutBuffer = new ChunkUtf8Sink(responseBufferSize);
-        this.headerImpl = new HttpResponseHeaderImpl(configuration.getClock());
+        this.headerImpl = new HttpResponseHeaderImpl(configuration.getMillisecondClock());
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
         this.httpVersion = configuration.getHttpVersion();
         this.connectionCloseHeader = !configuration.getServerKeepAlive();
@@ -91,6 +90,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         totalBytesSent = 0;
         headersSent = false;
         chunkedRequestDone = false;
+        simple.clear();
         resetZip();
     }
 
@@ -233,7 +233,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         sendBuffer(buffer);
     }
 
-    private int getFd() {
+    private long getFd() {
         return socket != null ? socket.getFd() : -1;
     }
 
@@ -304,6 +304,10 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
+    void open() {
+        this.buffer.reopen();
+    }
+
     private class ChunkUtf8Sink implements Utf8Sink, Closeable, Mutable, Reopenable {
         private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
         private static final int MAX_CHUNK_HEADER_SIZE = 12;
@@ -348,7 +352,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
+        public Utf8Sink putNonAscii(long lo, long hi) {
             final int size = Bytes.checkedLoHiSize(lo, hi, 0);
             final long dest = getWriteAddress(size);
             Vect.memcpy(dest, lo, size);
@@ -492,7 +496,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         public int writeBytes(long srcAddr, int len) {
             assert len > 0;
             len = (int) Math.min(len, buffer.getWriteNAvailable());
-            putUtf8(srcAddr, srcAddr + len);
+            putNonAscii(srcAddr, srcAddr + len);
             return len;
         }
     }
@@ -560,8 +564,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
-            buffer.putUtf8(lo, hi);
+        public Utf8Sink putNonAscii(long lo, long hi) {
+            buffer.putNonAscii(lo, hi);
             return this;
         }
 
@@ -631,7 +635,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(float value, int scale) {
-            if (Float.isNaN(value) || Float.isInfinite(value)) {
+            if (Numbers.isNull(value)) {
                 putAscii("null");
                 return this;
             }
@@ -640,7 +644,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(double value, int scale) {
-            if (Double.isNaN(value) || Double.isInfinite(value)) {
+            if (Numbers.isNull(value)) {
                 putAscii("null");
                 return this;
             }
@@ -648,58 +652,8 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         @Override
-        public Utf8Sink put(@NotNull CharSequence cs, int lo, int hi) {
-            int i = lo;
-            while (i < hi) {
-                char c = cs.charAt(i++);
-                if (c < 32) {
-                    escapeSpace(c);
-                } else if (c < 128) {
-                    switch (c) {
-                        case '\"':
-                        case '\\':
-                            putAscii('\\');
-                            // intentional fall through
-                        default:
-                            putAscii(c);
-                            break;
-                    }
-                } else {
-                    i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
-                }
-            }
-            return this;
-        }
-
-        @Override
-        public Utf8Sink put(@Nullable CharSequence cs) {
-            if (cs != null) {
-                put(cs, 0, cs.length());
-            }
-            return this;
-        }
-
-        @Override
-        public Utf8Sink put(char c) {
-            if (c < 32) {
-                escapeSpace(c);
-            } else {
-                switch (c) {
-                    case '\"':
-                    case '\\':
-                        putAscii('\\');
-                        // intentional fall through
-                    default:
-                        Utf8Sink.super.put(c);
-                        break;
-                }
-            }
-            return this;
-        }
-
-        @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
-            buffer.putUtf8(lo, hi);
+        public Utf8Sink putNonAscii(long lo, long hi) {
+            buffer.putNonAscii(lo, hi);
             return this;
         }
 
@@ -707,47 +661,17 @@ public class HttpResponseSink implements Closeable, Mutable {
             buffer.clearAndPrepareToWriteToBuffer();
             headerImpl.status("HTTP/1.1 ", status, contentType, -1);
         }
-
-        private void escapeSpace(char c) {
-            switch (c) {
-                case '\b':
-                    putAsciiInternal("\\b");
-                    break;
-                case '\f':
-                    putAsciiInternal("\\f");
-                    break;
-                case '\n':
-                    putAsciiInternal("\\n");
-                    break;
-                case '\r':
-                    putAsciiInternal("\\r");
-                    break;
-                case '\t':
-                    putAsciiInternal("\\t");
-                    break;
-                default:
-                    putAsciiInternal("\\u00");
-                    put(c >> 4);
-                    putAsciiInternal(Numbers.hexDigits[c & 15]);
-                    break;
-            }
-        }
-
-        private void putAsciiInternal(char c) {
-            Utf8Sink.super.putAscii(c);
-        }
-
-        private void putAsciiInternal(@Nullable CharSequence cs) {
-            if (cs != null) {
-                int l = cs.length();
-                for (int i = 0; i < l; i++) {
-                    putAsciiInternal(cs.charAt(i));
-                }
-            }
-        }
     }
 
     public class SimpleResponseImpl {
+        private boolean contentSent = false;
+        private boolean headerSent = false;
+
+        public void clear() {
+            contentSent = false;
+            headerSent = false;
+        }
+
         public void sendStatusJsonContent(
                 int code
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -772,12 +696,15 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            buffer.clearAndPrepareToWriteToBuffer();
-            headerImpl.status(httpVersion, code, null, -2L);
-            if (header != null) {
-                headerImpl.put(header).put(Misc.EOL);
+            if (!headerSent) {
+                buffer.clearAndPrepareToWriteToBuffer();
+                headerImpl.status(httpVersion, code, null, -2L);
+                if (header != null) {
+                    headerImpl.put(header).put(Misc.EOL);
+                }
+                prepareHeaderSink();
+                headerSent = true;
             }
-            prepareHeaderSink();
             flushSingle();
         }
 
@@ -836,28 +763,35 @@ public class HttpResponseSink implements Closeable, Mutable {
                 @Nullable CharSequence cookieValue,
                 long contentLength
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            buffer.clearAndPrepareToWriteToBuffer();
-            final String std = headerImpl.status(httpVersion, code, contentType, contentLength);
-            if (header != null) {
-                headerImpl.put(header).put(Misc.EOL);
+            if (!headerSent) {
+                buffer.clearAndPrepareToWriteToBuffer();
+                headerImpl.status(httpVersion, code, contentType, contentLength);
+                if (header != null) {
+                    headerImpl.put(header).put(Misc.EOL);
+                }
+                if (cookieName != null) {
+                    setCookie(cookieName, cookieValue);
+                }
+                prepareHeaderSink();
+                headerSent = true;
             }
-            if (cookieName != null) {
-                setCookie(cookieName, cookieValue);
+
+            if (!contentSent) {
+                flushSingle();
+                buffer.clearAndPrepareToWriteToBuffer();
+                if (message == null) {
+                    sink.put(httpStatusMap.get(code)).putEOL();
+                } else {
+                    // this is ugly, add a putUtf16() method to the response sink?
+                    final Utf8StringSink utf8Sink = tlSink.get();
+                    utf8Sink.clear();
+                    utf8Sink.put(message);
+                    sink.put(utf8Sink).putEOL();
+                }
+                final boolean chunked = headerImpl.isChunked();
+                buffer.prepareToReadFromBuffer(chunked, chunked);
+                contentSent = true;
             }
-            prepareHeaderSink();
-            flushSingle();
-            buffer.clearAndPrepareToWriteToBuffer();
-            if (message == null) {
-                sink.put(std).putEOL();
-            } else {
-                // this is ugly, add a putUtf16() method to the response sink?
-                final Utf8StringSink utf8Sink = tlSink.get();
-                utf8Sink.clear();
-                utf8Sink.put(message);
-                sink.put(utf8Sink).putEOL();
-            }
-            final boolean chunked = headerImpl.isChunked();
-            buffer.prepareToReadFromBuffer(chunked, chunked);
             resumeSend();
         }
 
@@ -872,11 +806,13 @@ public class HttpResponseSink implements Closeable, Mutable {
         httpStatusMap.put(200, "OK");
         httpStatusMap.put(204, "OK");
         httpStatusMap.put(206, "Partial content");
+        httpStatusMap.put(302, "Temporarily Moved");
         httpStatusMap.put(304, "Not Modified");
         httpStatusMap.put(400, "Bad request");
         httpStatusMap.put(401, "Unauthorized");
         httpStatusMap.put(403, "Forbidden");
         httpStatusMap.put(404, "Not Found");
+        httpStatusMap.put(408, "Request Timeout");
         httpStatusMap.put(411, "Length Required");
         httpStatusMap.put(413, "Content Too Large");
         httpStatusMap.put(415, "Bad request");

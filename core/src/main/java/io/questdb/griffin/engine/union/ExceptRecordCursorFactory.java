@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -51,13 +51,22 @@ public class ExceptRecordCursorFactory extends AbstractSetRecordCursorFactory {
             @Transient @NotNull ColumnTypes mapValueTypes
     ) {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
-        Map mapA = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
-        Map mapB = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
-        if (castFunctionsA == null && castFunctionsB == null) {
-            cursor = new ExceptRecordCursor(mapA, mapB, recordSink);
-        } else {
-            assert castFunctionsA != null && castFunctionsB != null;
-            cursor = new ExceptCastRecordCursor(mapA, mapB, recordSink, castFunctionsA, castFunctionsB);
+        Map mapA = null;
+        Map mapB = null;
+        try {
+            mapA = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
+            mapB = MapFactory.createOrderedMap(configuration, mapKeyTypes, mapValueTypes);
+            if (castFunctionsA == null && castFunctionsB == null) {
+                cursor = new ExceptRecordCursor(mapA, mapB, recordSink);
+            } else {
+                assert castFunctionsA != null && castFunctionsB != null;
+                cursor = new ExceptCastRecordCursor(mapA, mapB, recordSink, castFunctionsA, castFunctionsB);
+            }
+        } catch (Throwable th) {
+            Misc.free(mapA);
+            Misc.free(mapB);
+            close();
+            throw th;
         }
     }
 

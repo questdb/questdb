@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -202,28 +202,28 @@ public interface RecordMetadata extends ColumnTypes, Plannable, TableDescriptor 
      */
     default void toJson(Utf16Sink sink) {
         sink.put('{');
-        sink.putQuoted("columnCount").put(':').put(getColumnCount());
+        sink.putAsciiQuoted("columnCount").put(':').put(getColumnCount());
         sink.put(',');
-        sink.putQuoted("columns").put(':');
+        sink.putAsciiQuoted("columns").put(':');
         sink.put('[');
         for (int i = 0, n = getColumnCount(); i < n; i++) {
             final int type = getColumnType(i);
             if (i > 0) {
-                sink.put(',');
+                sink.putAscii(',');
             }
             sink.put('{');
-            sink.putQuoted("index").put(':').put(i).put(',');
-            sink.putQuoted("name").put(':').putQuoted(getColumnName(i)).put(',');
-            sink.putQuoted("type").put(':').putQuoted(ColumnType.nameOf(type));
+            sink.putAsciiQuoted("index").putAscii(':').put(i).putAscii(',');
+            sink.putAsciiQuoted("name").putAscii(':').putQuoted(getColumnName(i)).putAscii(',');
+            sink.putAsciiQuoted("type").putAscii(':').putQuoted(ColumnType.nameOf(type));
             if (isColumnIndexed(i)) {
-                sink.put(',').putQuoted("indexed").put(":true");
-                sink.put(',').putQuoted("indexValueBlockCapacity").put(':').put(getIndexValueBlockCapacity(i));
+                sink.putAscii(',').putAsciiQuoted("indexed").putAscii(":true");
+                sink.putAscii(',').putAsciiQuoted("indexValueBlockCapacity").putAscii(':').put(getIndexValueBlockCapacity(i));
             }
-            sink.put('}');
+            sink.putAscii('}');
         }
-        sink.put(']');
-        sink.put(',').putQuoted("timestampIndex").put(':').put(getTimestampIndex());
-        sink.put('}');
+        sink.putAscii(']');
+        sink.putAscii(',').putAsciiQuoted("timestampIndex").putAscii(':').put(getTimestampIndex());
+        sink.putAscii('}');
     }
 
     @Override

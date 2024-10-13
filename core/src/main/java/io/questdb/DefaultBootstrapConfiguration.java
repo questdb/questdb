@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,8 @@ public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
                     "    / _ \\ _   _  ___  ___| |_|  _ \\| __ )\n" +
                     "   | | | | | | |/ _ \\/ __| __| | | |  _ \\\n" +
                     "   | |_| | |_| |  __/\\__ \\ |_| |_| | |_) |\n" +
-                    "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n\n";
+                    "    \\__\\_\\\\__,_|\\___||___/\\__|____/|____/\n" +
+                    "                        www.questdb.io\n\n";
 
     @Override
     public String getBanner() {
@@ -59,7 +60,7 @@ public class DefaultBootstrapConfiguration implements BootstrapConfiguration {
     }
 
     @Override
-    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception{
+    public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) throws Exception {
         return null;
     }
 

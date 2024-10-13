@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -40,8 +40,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
-
-    protected final RecordCursorFactory base;
+    private final RecordCursorFactory base;
     private final GroupByNotKeyedRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final SimpleMapValue simpleMapValue;
@@ -64,10 +63,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             this.virtualRecordA.of(simpleMapValue);
 
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            boolean earlyExitSupported = true;
-            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                earlyExitSupported &= groupByFunctions.getQuick(0).isEarlyExitSupported();
-            }
+            boolean earlyExitSupported = GroupByUtils.isEarlyExitSupported(groupByFunctions);
 
             if (earlyExitSupported) {
                 this.cursor = new EarlyExitGroupByNotKeyedRecordCursor(configuration, groupByFunctions, updater);
@@ -158,6 +154,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int initState;
         private int recordsRemaining = 1;
+        private long rowId;
 
         public GroupByNotKeyedRecordCursor(
                 CairoConfiguration configuration,
@@ -165,7 +162,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 GroupByFunctionsUpdater groupByFunctionsUpdater
         ) {
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.allocator = new GroupByAllocator(configuration);
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
         }
 
@@ -204,7 +201,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 final Record baseRecord = baseCursor.getRecord();
                 if (initState != INIT_FIRST_RECORD_DONE) {
                     if (baseCursor.hasNext()) {
-                        groupByFunctionsUpdater.updateNew(simpleMapValue, baseRecord);
+                        groupByFunctionsUpdater.updateNew(simpleMapValue, baseRecord, rowId++);
                     } else {
                         groupByFunctionsUpdater.updateEmpty(simpleMapValue);
                     }
@@ -212,7 +209,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 }
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
-                    groupByFunctionsUpdater.updateExisting(simpleMapValue, baseRecord);
+                    groupByFunctionsUpdater.updateExisting(simpleMapValue, baseRecord, rowId++);
                     if (earlyExit()) {
                         break;
                     }
@@ -244,6 +241,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public void toTop() {
+            rowId = 0;
             recordsRemaining = 1;
             GroupByUtils.toTop(groupByFunctions);
         }

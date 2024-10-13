@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,6 +37,41 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class TimestampSamplerFactoryTest {
+    private static final long[] micros = {1, Timestamps.SECOND_MICROS, Timestamps.MINUTE_MICROS, Timestamps.HOUR_MICROS, Timestamps.DAY_MICROS};
+    private static final char[] units = {'U', 's', 'm', 'h', 'd'};
+
+    @Test
+    public void testBucketIndex() throws SqlException {
+        final Rnd rand = new Rnd();
+        final StringSink sink = new StringSink();
+        for (int i = 0; i < 1000; i++) {
+            sink.clear();
+            final int unitIndex = rand.nextInt(units.length);
+            final char unit = units[unitIndex];
+            final int amount = rand.nextInt(1000) + 1;
+            sink.put(amount);
+            sink.put(unit);
+            final TimestampSampler sampler = TimestampSamplerFactory.getInstance(sink, 0);
+            long startTimestamp = 0;
+            long currentTimestamp = startTimestamp;
+            sampler.setStart(startTimestamp);
+            for (int j = 0; j < 100; j++) {
+                currentTimestamp = sampler.nextTimestamp(currentTimestamp);
+                Assert.assertEquals(j + 1, sampler.bucketIndex(currentTimestamp));
+            }
+        }
+    }
+
+    @Test
+    public void testFindIntervalEndIndex() throws SqlException {
+        assertFindIntervalEndIndexFailure(1, "missing interval", null, 1);
+        assertFindIntervalEndIndexFailure(1_002, "expected interval qualifier", "45", 1000);
+        assertFindIntervalEndIndexFailure(42, "expected interval qualifier", "", 42);
+        assertFindIntervalEndIndexFailure(50, "expected single letter qualifier", "1bar", 49);
+        assertFindIntervalEndIndexFailure(100, "negative interval is not allowed", "-", 100);
+
+        Assert.assertEquals(0, TimestampSamplerFactory.findIntervalEndIndex("m", 11));
+    }
 
     @Test
     public void testLongQualifier() {
@@ -117,8 +152,32 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
+    public void testNegativeInterval() {
+        assertFailure(110, "negative interval is not allowed", "-1m", 110);
+    }
+
+    @Test
     public void testNoQualifier() {
         assertFailure(100, "expected interval qualifier", "45", 98);
+    }
+
+    @Test
+    public void testParseInterval() throws SqlException {
+        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0));
+
+        try {
+            TimestampSamplerFactory.parseInterval("0m", 1, 0);
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "zero is not a valid sample value");
+        }
+
+        try {
+            TimestampSamplerFactory.parseInterval("fm", 1, 0);
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid sample value");
+        }
     }
 
     @Test
@@ -154,6 +213,16 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testUnsupportedQualifier2() {
         assertFailure(132, "unsupported interval qualifier", "21K", 130);
+    }
+
+    private static void assertFindIntervalEndIndexFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
+        try {
+            TimestampSamplerFactory.findIntervalEndIndex(sampleBy, position);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(expectedPosition, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
     }
 
     private static TimestampSampler createTimestampSampler(int bucketSize, char units, StringSink sink) throws SqlException {

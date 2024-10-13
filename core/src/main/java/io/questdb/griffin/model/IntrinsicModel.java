@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
-/*
+/**
  * Part of implicit rule optimizer.
  * Extracts important timestamp and indexed symbol parts from the query filter.
  */
@@ -80,38 +80,50 @@ public class IntrinsicModel implements Mutable {
         intrinsicValue = FALSE;
     }
 
-    public void intersectEquals(Function function) {
-        runtimeIntervalBuilder.intersectEquals(function);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
-    }
-
     public void intersectIntervals(long lo, long hi) {
         runtimeIntervalBuilder.intersect(lo, hi);
     }
 
     public void intersectIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         runtimeIntervalBuilder.intersectIntervals(seq, lo, lim, position);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void intersectIntervals(long lo, Function function, short funcAdjust) {
         runtimeIntervalBuilder.intersect(lo, function, funcAdjust);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void intersectIntervals(Function function, long hi, short funcAdjust) {
         runtimeIntervalBuilder.intersect(function, hi, funcAdjust);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
-    public void intersectRuntimeIntervals(Function intervalStrFunction) {
-        runtimeIntervalBuilder.intersectDynamicInterval(intervalStrFunction);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+    public void intersectRuntimeIntervals(Function intervalFunction) {
+        runtimeIntervalBuilder.intersectRuntimeIntervals(intervalFunction);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
+    }
+
+    public void intersectRuntimeTimestamp(Function function) {
+        runtimeIntervalBuilder.intersectRuntimeTimestamp(function);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void intersectTimestamp(CharSequence seq, int lo, int lim, int position) throws SqlException {
         runtimeIntervalBuilder.intersectTimestamp(seq, lo, lim, position);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void setBetweenBoundary(long timestamp) {
@@ -128,22 +140,30 @@ public class IntrinsicModel implements Mutable {
 
     public void subtractEquals(Function function) {
         runtimeIntervalBuilder.subtractEquals(function);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void subtractIntervals(long lo, long hi) {
         runtimeIntervalBuilder.subtractInterval(lo, hi);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void subtractIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         runtimeIntervalBuilder.subtractIntervals(seq, lo, lim, position);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
-    public void subtractRuntimeIntervals(Function intervalStrFunction) {
-        runtimeIntervalBuilder.subtractRuntimeInterval(intervalStrFunction);
-        if (runtimeIntervalBuilder.isEmptySet()) intrinsicValue = FALSE;
+    public void subtractRuntimeIntervals(Function intervalFunction) {
+        runtimeIntervalBuilder.subtractRuntimeIntervals(intervalFunction);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     @Override

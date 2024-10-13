@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,7 +30,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import org.jetbrains.annotations.NotNull;
@@ -41,7 +42,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testColumnKeysAllSupportedTypes() {
-        testColumnKeysAllSupportedTypes(false);
+        testColumnKeysAllSupportedTypes(null);
     }
 
     @Test
@@ -61,12 +62,12 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             columnFilter.add(i + 1);
         }
 
-        prepareExpectedIndexesAndTypes(columnTypes, expectedGetIndexes, expectedGetTypes, expectedPutTypes, skew, false);
+        prepareExpectedIndexesAndTypes(columnTypes, expectedGetIndexes, expectedGetTypes, expectedPutTypes, skew, null);
 
         TestRecord testRecord = new TestRecord();
         TestRecordSink testRecordSink = new TestRecordSink();
 
-        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, null, false, skewIndex);
+        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, null, skewIndex, null, null);
         sink.copy(testRecord, testRecordSink);
 
         Assert.assertEquals(expectedGetIndexes, testRecord.recordedIndexes);
@@ -76,26 +77,31 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testColumnKeysSymAsString() {
-        testColumnKeysAllSupportedTypes(false);
+        BitSet writeSymbolAsString = new BitSet();
+        testColumnKeysAllSupportedTypes(writeSymbolAsString);
     }
 
     @Test
     public void testFunctionKeysAllSupportedTypes() {
         ArrayColumnTypes columnTypes = new ArrayColumnTypes();
         ListColumnFilter columnFilter = new ListColumnFilter();
+        BitSet writeSymbolAsString = new BitSet();
 
         ObjList<Function> keyFunctions = allKeyFunctionTypes();
 
         IntList expectedPutTypes = new IntList();
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
             TestFunction func = (TestFunction) keyFunctions.getQuick(i);
-            prepareExpectedPutType(func.type, expectedPutTypes, true);
+            if (func.type == ColumnType.SYMBOL) {
+                writeSymbolAsString.set(i);
+            }
+            prepareExpectedPutType(i, func.type, expectedPutTypes, writeSymbolAsString);
         }
 
         TestRecord testRecord = new TestRecord();
         TestRecordSink testRecordSink = new TestRecordSink();
 
-        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, keyFunctions, false);
+        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, keyFunctions, null);
         sink.copy(testRecord, testRecordSink);
 
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
@@ -126,6 +132,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         columnTypes.add(ColumnType.FLOAT);
         columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.STRING);
+        columnTypes.add(ColumnType.VARCHAR);
         columnTypes.add(ColumnType.BINARY);
         columnTypes.add(ColumnType.LONG256);
         columnTypes.add(ColumnType.GEOBYTE);
@@ -134,6 +141,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         columnTypes.add(ColumnType.GEOLONG);
         columnTypes.add(ColumnType.LONG128);
         columnTypes.add(ColumnType.UUID);
+        columnTypes.add(ColumnType.INTERVAL);
         return columnTypes;
     }
 
@@ -153,6 +161,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         keyFunctions.add(new TestFunction(ColumnType.FLOAT));
         keyFunctions.add(new TestFunction(ColumnType.DOUBLE));
         keyFunctions.add(new TestFunction(ColumnType.STRING));
+        keyFunctions.add(new TestFunction(ColumnType.VARCHAR));
         keyFunctions.add(new TestFunction(ColumnType.BINARY));
         keyFunctions.add(new TestFunction(ColumnType.LONG256));
         keyFunctions.add(new TestFunction(ColumnType.GEOBYTE));
@@ -161,6 +170,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         keyFunctions.add(new TestFunction(ColumnType.GEOLONG));
         keyFunctions.add(new TestFunction(ColumnType.LONG128));
         keyFunctions.add(new TestFunction(ColumnType.UUID));
+        keyFunctions.add(new TestFunction(ColumnType.INTERVAL));
         return keyFunctions;
     }
 
@@ -170,11 +180,12 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             IntList expectedGetTypes,
             IntList expectedPutTypes,
             int indexSkew,
-            boolean symAsString
+            BitSet writeSymbolAsString
     ) {
         for (int i = 0, n = columnTypes.getColumnCount(); i < n; i++) {
             int type = columnTypes.getColumnType(i);
-            prepareExpectedPutType(type, expectedPutTypes, symAsString);
+            prepareExpectedPutType(i, type, expectedPutTypes, writeSymbolAsString);
+            boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(i);
             switch (ColumnType.tagOf(type)) {
                 case ColumnType.LONG128:
                 case ColumnType.UUID:
@@ -186,7 +197,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                     break;
                 case ColumnType.SYMBOL:
                     expectedGetIndexes.add(i + indexSkew);
-                    expectedGetTypes.add(ColumnType.INT);
+                    expectedGetTypes.add(symAsString ? ColumnType.SYMBOL : ColumnType.INT);
                     break;
                 case ColumnType.IPv4:
                     expectedGetIndexes.add(i + indexSkew);
@@ -215,7 +226,8 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
     }
 
-    private static void prepareExpectedPutType(int type, IntList expectedPutTypes, boolean symAsString) {
+    private static void prepareExpectedPutType(int index, int type, IntList expectedPutTypes, BitSet writeSymbolAsString) {
+        boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
         switch (ColumnType.tagOf(type)) {
             case ColumnType.LONG128:
             case ColumnType.UUID:
@@ -230,6 +242,8 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                 }
                 break;
             case ColumnType.IPv4:
+                expectedPutTypes.add(ColumnType.IPv4);
+                break;
             case ColumnType.GEOINT:
                 expectedPutTypes.add(ColumnType.INT);
                 break;
@@ -247,7 +261,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
     }
 
-    private static void testColumnKeysAllSupportedTypes(boolean symAsString) {
+    private static void testColumnKeysAllSupportedTypes(BitSet writeSymbolAsString) {
         ArrayColumnTypes columnTypes = allArrayColumnTypes();
 
         IntList expectedGetIndexes = new IntList();
@@ -258,12 +272,12 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             columnFilter.add(i + 1);
         }
 
-        prepareExpectedIndexesAndTypes(columnTypes, expectedGetIndexes, expectedGetTypes, expectedPutTypes, 0, symAsString);
+        prepareExpectedIndexesAndTypes(columnTypes, expectedGetIndexes, expectedGetTypes, expectedPutTypes, 0, writeSymbolAsString);
 
         TestRecord testRecord = new TestRecord();
         TestRecordSink testRecordSink = new TestRecordSink();
 
-        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, null, symAsString);
+        RecordSink sink = RecordSinkFactory.getInstance(new BytecodeAssembler(), columnTypes, columnFilter, writeSymbolAsString, null);
         sink.copy(testRecord, testRecordSink);
 
         Assert.assertEquals(expectedGetIndexes, testRecord.recordedIndexes);
@@ -381,6 +395,13 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public @NotNull Interval getInterval(Record rec) {
+            Assert.assertEquals(ColumnType.INTERVAL, type);
+            callCount++;
+            return Interval.NULL;
+        }
+
+        @Override
         public long getLong(Record rec) {
             Assert.assertEquals(ColumnType.LONG, type);
             callCount++;
@@ -442,24 +463,14 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             Assert.assertEquals(ColumnType.STRING, type);
             callCount++;
             return "abc";
         }
 
         @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
+        public CharSequence getStrA(Record rec, int arrayIndex) {
             throw new UnsupportedOperationException();
         }
 
@@ -505,6 +516,25 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            Assert.assertEquals(ColumnType.VARCHAR, type);
+            callCount++;
+            return new Utf8String("abc");
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            Assert.assertEquals(ColumnType.VARCHAR, type);
+            callCount++;
+            return new Utf8String("abc");
+        }
+
+        @Override
+        public int getVarcharSize(Record rec) {
+            throw new UnsupportedOperationException();
         }
     }
 
@@ -604,6 +634,13 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public Interval getInterval(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.INTERVAL);
+            return Interval.NULL;
+        }
+
+        @Override
         public long getLong(int col) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.LONG);
@@ -641,14 +678,14 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public CharSequence getStr(int col) {
+        public CharSequence getStrA(int col) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.STRING);
             return "abc";
         }
 
         @Override
-        public CharSequence getSym(int col) {
+        public CharSequence getSymA(int col) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.SYMBOL);
             return "abc";
@@ -659,6 +696,13 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.TIMESTAMP);
             return 1;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.VARCHAR);
+            return new Utf8String("abc");
         }
     }
 
@@ -701,8 +745,18 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public void putIPv4(int value) {
+            recordedTypes.add(ColumnType.IPv4);
+        }
+
+        @Override
         public void putInt(int value) {
             recordedTypes.add(ColumnType.INT);
+        }
+
+        @Override
+        public void putInterval(Interval interval) {
+            recordedTypes.add(ColumnType.INTERVAL);
         }
 
         @Override
@@ -748,6 +802,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         @Override
         public void putTimestamp(long value) {
             recordedTypes.add(ColumnType.TIMESTAMP);
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
+            recordedTypes.add(ColumnType.VARCHAR);
         }
 
         @Override

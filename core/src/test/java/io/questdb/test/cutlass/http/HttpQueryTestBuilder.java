@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,9 +44,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -70,6 +68,7 @@ public class HttpQueryTestBuilder {
     private long maxWriterWaitTimeout = 30_000L;
     private Metrics metrics;
     private MicrosecondClock microsecondClock;
+    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private long queryTimeout = -1;
     private HttpServerConfigurationBuilder serverConfigBuilder;
@@ -100,6 +99,7 @@ public class HttpQueryTestBuilder {
                     .withFactoryProvider(factoryProvider)
                     .withStaticContentAuthRequired(httpStaticContentAuthType)
                     .withHealthCheckAuthRequired(httpHealthCheckAuthType)
+                    .withNanosClock(nanosecondClock)
                     .build();
             if (metrics == null) {
                 metrics = Metrics.enabled();
@@ -134,11 +134,6 @@ public class HttpQueryTestBuilder {
                     @Override
                     public @NotNull MicrosecondClock getMicrosecondClock() {
                         return microsecondClock != null ? microsecondClock : super.getMicrosecondClock();
-                    }
-
-                    @Override
-                    public boolean getSimulateCrashEnabled() {
-                        return true;
                     }
 
                     @Override
@@ -356,6 +351,11 @@ public class HttpQueryTestBuilder {
 
     public HttpQueryTestBuilder withMicrosecondClock(MicrosecondClock clock) {
         this.microsecondClock = clock;
+        return this;
+    }
+
+    public HttpQueryTestBuilder withNanosClock(NanosecondClock nanosecondClock) {
+        this.nanosecondClock = nanosecondClock;
         return this;
     }
 

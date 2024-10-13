@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -75,59 +76,64 @@ public class Unordered2Map implements Map, Reopenable {
             @Nullable @Transient ColumnTypes valueTypes,
             int memoryTag
     ) {
-        this.memoryTag = memoryTag;
+        try {
+            this.memoryTag = memoryTag;
 
-        final int keyColumnCount = keyTypes.getColumnCount();
-        long keySize = 0;
-        for (int i = 0; i < keyColumnCount; i++) {
-            final int columnType = keyTypes.getColumnType(i);
-            final int size = ColumnType.sizeOf(columnType);
-            if (size > 0) {
-                keySize += size;
-            } else {
-                keySize = -1;
-                break;
-            }
-        }
-        if (keySize <= 0 || keySize > KEY_SIZE) {
-            throw CairoException.nonCritical().put("unexpected key size: ").put(keySize);
-        }
-
-        long valueOffset = 0;
-        long[] valueOffsets = null;
-        long valueSize = 0;
-        if (valueTypes != null) {
-            int valueColumnCount = valueTypes.getColumnCount();
-            valueOffsets = new long[valueColumnCount];
-
-            for (int i = 0; i < valueColumnCount; i++) {
-                valueOffsets[i] = valueOffset;
-                final int columnType = valueTypes.getColumnType(i);
+            final int keyColumnCount = keyTypes.getColumnCount();
+            long keySize = 0;
+            for (int i = 0; i < keyColumnCount; i++) {
+                final int columnType = keyTypes.getColumnType(i);
                 final int size = ColumnType.sizeOf(columnType);
-                if (size <= 0) {
-                    throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                if (size > 0) {
+                    keySize += size;
+                } else {
+                    keySize = -1;
+                    break;
                 }
-                valueOffset += size;
-                valueSize += size;
             }
+            if (keySize <= 0 || keySize > KEY_SIZE) {
+                throw CairoException.nonCritical().put("unexpected key size: ").put(keySize);
+            }
+
+            long valueOffset = 0;
+            long[] valueOffsets = null;
+            long valueSize = 0;
+            if (valueTypes != null) {
+                int valueColumnCount = valueTypes.getColumnCount();
+                valueOffsets = new long[valueColumnCount];
+
+                for (int i = 0; i < valueColumnCount; i++) {
+                    valueOffsets[i] = valueOffset;
+                    final int columnType = valueTypes.getColumnType(i);
+                    final int size = ColumnType.sizeOf(columnType);
+                    if (size <= 0) {
+                        throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                    }
+                    valueOffset += size;
+                    valueSize += size;
+                }
+            }
+
+            this.entrySize = Bytes.align2b(KEY_SIZE + valueSize);
+
+            final long sizeBytes = entrySize * TABLE_SIZE;
+            memStart = Unsafe.malloc(sizeBytes, memoryTag);
+            Vect.memset(memStart, sizeBytes, 0);
+            memLimit = memStart + sizeBytes;
+            keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
+            Unsafe.getUnsafe().putShort(keyMemStart, (short) 0);
+
+            value = new Unordered2MapValue(valueSize, valueOffsets);
+            value2 = new Unordered2MapValue(valueSize, valueOffsets);
+            value3 = new Unordered2MapValue(valueSize, valueOffsets);
+
+            record = new Unordered2MapRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
+            cursor = new Unordered2MapCursor(record, this);
+            key = new Key();
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-
-        this.entrySize = Bytes.align2b(KEY_SIZE + valueSize);
-
-        final long sizeBytes = entrySize * TABLE_SIZE;
-        memStart = Unsafe.malloc(sizeBytes, memoryTag);
-        Vect.memset(memStart, sizeBytes, 0);
-        memLimit = memStart + sizeBytes;
-        keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
-        Unsafe.getUnsafe().putShort(keyMemStart, (short) 0);
-
-        value = new Unordered2MapValue(valueSize, valueOffsets);
-        value2 = new Unordered2MapValue(valueSize, valueOffsets);
-        value3 = new Unordered2MapValue(valueSize, valueOffsets);
-
-        record = new Unordered2MapRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
-        cursor = new Unordered2MapCursor(record, this);
-        key = new Key();
     }
 
     @Override
@@ -139,7 +145,7 @@ public class Unordered2Map implements Map, Reopenable {
     }
 
     @Override
-    public final void close() {
+    public void close() {
         if (memStart != 0) {
             memStart = memLimit = Unsafe.free(memStart, entrySize * TABLE_SIZE, memoryTag);
             keyMemStart = Unsafe.free(keyMemStart, KEY_SIZE, memoryTag);
@@ -161,6 +167,11 @@ public class Unordered2Map implements Map, Reopenable {
     @Override
     public MapRecord getRecord() {
         return record;
+    }
+
+    @Override
+    public boolean isOpen() {
+        return memStart != 0;
     }
 
     @Override
@@ -215,7 +226,7 @@ public class Unordered2Map implements Map, Reopenable {
     }
 
     @Override
-    public void reopen(int keyCapacity, int pageSize) {
+    public void reopen(int keyCapacity, long heapSize) {
         reopen();
     }
 
@@ -287,8 +298,8 @@ public class Unordered2Map implements Map, Reopenable {
 
         @Override
         public void copyFrom(MapKey srcKey) {
-            Key srcFastKey = (Key) srcKey;
-            copyFromRawKey(srcFastKey.startAddress());
+            Key src2Key = (Key) srcKey;
+            copyFromRawKey(src2Key.startAddress());
         }
 
         @Override
@@ -311,7 +322,7 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
-        public MapValue createValue(int hashCode) {
+        public MapValue createValue(long hashCode) {
             return createValue();
         }
 
@@ -331,7 +342,7 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
-        public int hash() {
+        public long hash() {
             return 0; // no-op
         }
 
@@ -384,7 +395,17 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
+        public void putIPv4(int value) {
+            putInt(value);
+        }
+
+        @Override
         public void putInt(int value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putInterval(Interval interval) {
             throw new UnsupportedOperationException();
         }
 
@@ -431,6 +452,11 @@ public class Unordered2Map implements Map, Reopenable {
 
         @Override
         public void putTimestamp(long value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
             throw new UnsupportedOperationException();
         }
 

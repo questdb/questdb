@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,35 +32,50 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
-
     public static final FilesFacade INSTANCE = new FilesFacadeImpl();
     public static final int _16M = 16 * 1024 * 1024;
+    private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
 
     @Override
-    public boolean allocate(int fd, long size) {
+    public boolean allocate(long fd, long size) {
         return Files.allocate(fd, size);
     }
 
+    /**
+     * Returns a flag whether it's ok to mix concurrent mmap-based writes with pwrite().
+     * <p>
+     * In particular, returns false for ZFS as there is a <a href="https://github.com/openzfs/zfs/issues/14548">known issue</a>.
+     */
     @Override
     public boolean allowMixedIO(CharSequence root) {
-        return !Os.isWindows();
+        if (root == null || Os.isWindows()) {
+            return false;
+        }
+        try (Path path = new Path()) {
+            path.of(root);
+            // path will contain file system name
+            long fsStatus = Files.getFileSystemStatus(path.$());
+            path.seekZ(); // useful for debugging
+            // allow mixed I/O for all supported FSes except ZFS
+            return fsStatus < 0 && Math.abs(fsStatus) != ZFS_MAGIC_NUMBER;
+        }
     }
 
     @Override
-    public long append(int fd, long buf, int len) {
+    public long append(long fd, long buf, int len) {
         return Files.append(fd, buf, len);
     }
 
     @Override
-    public boolean close(int fd) {
+    public boolean close(long fd) {
         return Files.close(fd) == 0;
     }
 
     @Override
-    public boolean closeRemove(int fd, LPSZ path) {
+    public boolean closeRemove(long fd, LPSZ path) {
         // On Windows we cannot remove file that is open, close it first
         if (isRestrictedFileSystem() && fd > -1) {
             Files.close(fd);
@@ -81,12 +96,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long copyData(int srcFd, int destFd, long offsetSrc, long length) {
+    public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
         return Files.copyData(srcFd, destFd, offsetSrc, length);
     }
 
     @Override
-    public long copyData(int srcFd, int destFd, long offsetSrc, long destOffset, long length) {
+    public long copyData(long srcFd, long destFd, long offsetSrc, long destOffset, long length) {
         return Files.copyDataToOffset(srcFd, destFd, offsetSrc, destOffset, length);
     }
 
@@ -106,12 +121,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean exists(int fd) {
+    public boolean exists(long fd) {
         return Files.exists(fd);
     }
 
     @Override
-    public void fadvise(int fd, long offset, long len, int advise) {
+    public void fadvise(long fd, long offset, long len, int advise) {
         if (advise > -1) {
             Files.fadvise(fd, offset, len, advise);
         }
@@ -154,7 +169,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public void fsync(int fd) {
+    public void fsync(long fd) {
         int res = Files.fsync(fd);
         if (res == 0) {
             return;
@@ -163,7 +178,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public void fsyncAndClose(int fd) {
+    public void fsyncAndClose(long fd) {
         int res = Files.fsync(fd);
         if (res == 0) {
             close(fd);
@@ -184,8 +199,23 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long getFileLimit() {
+        return Files.getFileLimit();
+    }
+
+    @Override
+    public int getFileSystemStatus(LPSZ lpszName) {
+        return Files.getFileSystemStatus(lpszName);
+    }
+
+    @Override
     public long getLastModified(LPSZ path) {
         return Files.getLastModified(path);
+    }
+
+    @Override
+    public long getMapCountLimit() {
+        return Files.getMapCountLimit();
     }
 
     @Override
@@ -261,7 +291,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long length(int fd) {
+    public long length(long fd) {
         long r = Files.length(fd);
         if (r < 0) {
             throw CairoException.critical(Os.errno()).put("Checking file size failed");
@@ -275,7 +305,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int lock(int fd) {
+    public int lock(long fd) {
         return Files.lock(fd);
     }
 
@@ -287,7 +317,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int mkdir(Path path, int mode) {
+    public int mkdir(LPSZ path, int mode) {
         return Files.mkdir(path, mode);
     }
 
@@ -297,12 +327,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+    public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
         return Files.mmap(fd, len, offset, flags, memoryTag);
     }
 
     @Override
-    public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+    public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
         return Files.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
     }
 
@@ -321,12 +351,12 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int openAppend(LPSZ name) {
+    public long openAppend(LPSZ name) {
         return Files.openAppend(name);
     }
 
     @Override
-    public int openCleanRW(LPSZ name, long size) {
+    public long openCleanRW(LPSZ name, long size) {
         // Open files and if file exists, try exclusively lock it
         // If exclusive lock worked the file will be cleaned and allocated to the given size
         // Shared lock will be left on the file which will be removed when file descriptor is closed
@@ -335,18 +365,23 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public int openRO(LPSZ name) {
+    public long openRO(LPSZ name) {
         return Files.openRO(name);
     }
 
     @Override
-    public int openRW(LPSZ name, long opts) {
+    public long openRW(LPSZ name, long opts) {
         return Files.openRW(name, opts);
     }
 
     @Override
-    public long read(int fd, long buf, long len, long offset) {
+    public long read(long fd, long buf, long len, long offset) {
         return Files.read(fd, buf, len, offset);
+    }
+
+    @Override
+    public long readIntAsUnsignedLong(long fd, long offset) {
+        return Files.readIntAsUnsignedLong(fd, offset);
     }
 
     @Override
@@ -355,17 +390,17 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public byte readNonNegativeByte(int fd, long offset) {
+    public byte readNonNegativeByte(long fd, long offset) {
         return Files.readNonNegativeByte(fd, offset);
     }
 
     @Override
-    public int readNonNegativeInt(int fd, long offset) {
+    public int readNonNegativeInt(long fd, long offset) {
         return Files.readNonNegativeInt(fd, offset);
     }
 
     @Override
-    public long readNonNegativeLong(int fd, long offset) {
+    public long readNonNegativeLong(long fd, long offset) {
         return Files.readNonNegativeLong(fd, offset);
     }
 
@@ -402,8 +437,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean rmdir(Path name, boolean lazy) {
-        return Files.rmdir(name, lazy);
+    public boolean rmdir(Path name, boolean haltOnError) {
+        return Files.rmdir(name, haltOnError);
     }
 
     @Override
@@ -422,7 +457,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean truncate(int fd, long size) {
+    public boolean truncate(long fd, long size) {
         return Files.truncate(fd, size);
     }
 
@@ -438,7 +473,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public boolean unlinkOrRemove(Path path, Log LOG) {
-        int checkedType = isSoftLink(path) ? Files.DT_LNK : Files.DT_UNKNOWN;
+        int checkedType = isSoftLink(path.$()) ? Files.DT_LNK : Files.DT_UNKNOWN;
         return unlinkOrRemove(path, checkedType, LOG);
     }
 
@@ -449,7 +484,7 @@ public class FilesFacadeImpl implements FilesFacade {
             // is to delete the link, not the contents of the target. in *nix
             // systems we can simply unlink, which deletes the link and leaves
             // the contents of the target intact
-            if (unlink(path) == 0) {
+            if (unlink(path.$()) == 0) {
                 LOG.debug().$("removed by unlink [path=").$(path).I$();
                 return true;
             } else {
@@ -470,7 +505,7 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public long write(int fd, long address, long len, long offset) {
+    public long write(long fd, long address, long len, long offset) {
         return Files.write(fd, address, len, offset);
     }
 
@@ -493,7 +528,8 @@ public class FilesFacadeImpl implements FilesFacade {
         int len = src.size();
         long p = findFirst(src.$());
 
-        if (!exists(dst.$()) && -1 == mkdir(dst, dirMode)) {
+        LPSZ lpsz = dst.$();
+        if (!exists(lpsz) && -1 == mkdir(lpsz, dirMode)) {
             return -1;
         }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,9 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
 public class CastStrToIPv4FunctionFactory implements FunctionFactory {
@@ -41,21 +44,38 @@ public class CastStrToIPv4FunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastStrToIPv4Function(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            final CharSequence value = arg.getStrA(null);
+            if (value == null || value.length() == 0) {
+                return IPv4Constant.NULL;
+            }
+            try {
+                final int ip = Numbers.parseIPv4(value);
+                return IPv4Constant.newInstance(ip);
+            } catch (NumericException e) {
+                throw SqlException.$(argPositions.getQuick(0), "invalid IPv4 constant");
+            }
+        }
+        return new Func(arg);
     }
 
-    private static class CastStrToIPv4Function extends AbstractCastToIPv4Function {
-        public CastStrToIPv4Function(Function arg) {
+    private static class Func extends AbstractCastToIPv4Function {
+
+        public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public int getIPv4(Record rec) {
-            if (arg.getStr(rec) == null) {
-                return Numbers.IPv4_NULL;
-            }
-            return Numbers.parseIPv4Quiet(arg.getStr(rec));
+            return Numbers.parseIPv4Quiet(arg.getStrA(rec));
         }
     }
 }

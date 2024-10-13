@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -73,7 +73,7 @@ public class IPv4MinusIPv4FunctionFactory implements FunctionFactory {
             final long l = Numbers.ipv4ToLong(left.getIPv4(rec));
             final long r = Numbers.ipv4ToLong(right.getIPv4(rec));
 
-            return l != Numbers.IPv4_NULL && r != Numbers.IPv4_NULL ? (l - r) : Numbers.LONG_NaN;
+            return l != Numbers.IPv4_NULL && r != Numbers.IPv4_NULL ? (l - r) : Numbers.LONG_NULL;
         }
 
         @Override

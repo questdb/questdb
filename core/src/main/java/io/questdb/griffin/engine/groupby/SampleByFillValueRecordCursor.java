@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -48,6 +48,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     private boolean isMapBuildPending;
     private boolean isMapInitialized;
     private boolean isOpen;
+    private long rowId;
 
     public SampleByFillValueRecordCursor(
             CairoConfiguration configuration,
@@ -62,7 +63,11 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         super(
                 configuration,
@@ -75,7 +80,11 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
                 timezoneNameFunc,
                 timezoneNameFuncPos,
                 offsetFunc,
-                offsetFuncPos
+                offsetFuncPos,
+                sampleFromFunc,
+                sampleFromFuncPos,
+                sampleToFunc,
+                sampleToFuncPos
         );
         this.map = map;
         this.keyMapSink = keyMapSink;
@@ -117,6 +126,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         super.of(baseCursor, executionContext);
+        rowId = 0;
         isHasNextPending = false;
         isMapBuildPending = true;
         isMapInitialized = false;
@@ -125,8 +135,8 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     @Override
     public void reopen() {
         if (!isOpen) {
-            map.reopen();
             isOpen = true;
+            map.reopen();
         }
     }
 
@@ -134,6 +144,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
     public void toTop() {
         super.toTop();
         map.clear();
+        rowId = 0;
         isHasNextPending = false;
         isMapBuildPending = true;
         isMapInitialized = false;
@@ -176,9 +187,9 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
 
                     if (value.getLong(0) != localEpoch) {
                         value.putLong(0, localEpoch);
-                        groupByFunctionsUpdater.updateNew(value, baseRecord);
+                        groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
                     } else {
-                        groupByFunctionsUpdater.updateExisting(value, baseRecord);
+                        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                     }
                 }
 
@@ -227,7 +238,7 @@ class SampleByFillValueRecordCursor extends AbstractSplitVirtualRecordSampleByCu
             MapValue value = key.createValue();
             if (value.isNew()) {
                 // timestamp is always stored in value field 0
-                value.putLong(0, Numbers.LONG_NaN);
+                value.putLong(0, Numbers.LONG_NULL);
                 // have functions reset their columns to "zero" state
                 // this would set values for when keys are not found right away
                 for (int i = 0; i < n; i++) {

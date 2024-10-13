@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,19 +25,18 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
-import io.questdb.std.IntList;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-class LatestByValuesIndexedFilteredRecordCursor extends AbstractDataFrameRecordCursor {
-
+class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
     private final IntHashSet deferredSymbolKeys;
     private final Function filter;
@@ -51,14 +50,15 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractDataFrameRecordC
     private long lim;
 
     public LatestByValuesIndexedFilteredRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
             int columnIndex,
             DirectLongList rows,
             @NotNull IntHashSet symbolKeys,
             @Nullable IntHashSet deferredSymbolKeys,
-            Function filter,
-            @NotNull IntList columnIndexes
+            Function filter
     ) {
-        super(columnIndexes);
+        super(configuration, metadata);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.symbolKeys = symbolKeys;
@@ -73,24 +73,29 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractDataFrameRecordC
             isTreeMapBuilt = true;
         }
         if (index < lim) {
-            long row = rows.get(index++);
-            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            long rowId = rows.get(index++);
+            // We inverted frame indexes when posting tasks.
+            final int frameIndex = Rows.MAX_SAFE_PARTITION_INDEX - Rows.toPartitionIndex(rowId);
+            frameMemoryPool.navigateTo(frameIndex, recordA);
+            recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
         return false;
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
-        filter.init(this, executionContext);
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.frameCursor = pageFrameCursor;
+        recordA.of(pageFrameCursor);
+        recordB.of(pageFrameCursor);
+        filter.init(pageFrameCursor, executionContext);
         circuitBreaker = executionContext.getCircuitBreaker();
         rows.clear();
         found.clear();
         keyCount = -1;
         isTreeMapBuilt = false;
+        // prepare for page frame iteration
+        super.init();
     }
 
     @Override
@@ -110,15 +115,15 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractDataFrameRecordC
         filter.toTop();
     }
 
-    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int partitionIndex, long rowLo, long rowHi) {
+    private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
         int index = found.keyIndex(symbolKey);
         if (index > -1) {
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, rowLo, rowHi);
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
             while (cursor.hasNext()) {
                 final long row = cursor.next();
-                recordA.setRecordIndex(row);
+                recordA.setRowIndex(row - partitionLo);
                 if (filter.getBool(recordA)) {
-                    rows.add(Rows.toRowID(partitionIndex, row));
+                    rows.add(Rows.toRowID(frameIndex, row - partitionLo));
                     found.addAt(index, symbolKey);
                     break;
                 }
@@ -134,27 +139,29 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractDataFrameRecordC
             }
         }
 
-        DataFrame frame;
-        // frame metadata is based on TableReader, which is "full" metadata
-        // this cursor works with subset of columns, which warrants column index remap
-        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-        while ((frame = dataFrameCursor.next()) != null && found.size() < keyCount) {
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null && found.size() < keyCount) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            final int partitionIndex = frame.getPartitionIndex();
-            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
-            final long rowLo = frame.getRowLo();
-            final long rowHi = frame.getRowHi() - 1;
-            this.recordA.jumpTo(partitionIndex, 0);
+            final int frameIndex = frameCount;
+            final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+            final long partitionLo = frame.getPartitionLo();
+            final long partitionHi = frame.getPartitionHi() - 1;
 
+            frameAddressCache.add(frameCount, frame);
+            frameMemoryPool.navigateTo(frameCount++, recordA);
+
+            // Invert page frame indexes, so that they grow asc in time order.
+            // That's to be able to do post-processing (sorting) of the result set.
+            final int invertedFrameIndex = Rows.MAX_SAFE_PARTITION_INDEX - frameIndex;
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);
-                addFoundKey(symbolKey, indexReader, partitionIndex, rowLo, rowHi);
+                addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
             }
             if (deferredSymbolKeys != null) {
                 for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
                     int symbolKey = deferredSymbolKeys.get(i);
                     if (!symbolKeys.contains(symbolKey)) {
-                        addFoundKey(symbolKey, indexReader, partitionIndex, rowLo, rowHi);
+                        addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
                     }
                 }
             }

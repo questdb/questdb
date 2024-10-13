@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,9 +45,9 @@ final class Mig609 {
         final Path path = migrationContext.getTablePath();
         final int plen = path.size();
 
-        path.trimTo(plen).concat(META_FILE_NAME).$();
+        path.trimTo(plen).concat(META_FILE_NAME);
         try (MemoryMARW metaMem = migrationContext.getRwMemory()) {
-            metaMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_MIG_MMAP);
+            metaMem.of(ff, path.$(), ff.getPageSize(), ff.length(path.$()), MemoryTag.NATIVE_MIG_MMAP);
 
             // we require partition by value to avoid processing non-partitioned tables
             final int partitionBy = metaMem.getInt(4);
@@ -56,7 +56,7 @@ final class Mig609 {
                     ff,
                     path.trimTo(plen).concat(TXN_FILE_NAME).$(),
                     ff.getPageSize(),
-                    ff.length(path),
+                    ff.length(path.$()),
                     MemoryTag.NATIVE_MIG_MMAP,
                     migrationContext.getConfiguration().getWriterFileOpenOpts()
             )

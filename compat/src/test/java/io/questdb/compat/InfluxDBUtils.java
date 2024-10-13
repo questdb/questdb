@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,8 +25,7 @@
 package io.questdb.compat;
 
 import io.questdb.ServerMain;
-import io.questdb.test.cutlass.http.line.LineHttpUtils;
-import io.questdb.test.tools.TestUtils;
+import io.questdb.std.Chars;
 import org.influxdb.InfluxDB;
 import org.influxdb.InfluxDBException;
 import org.influxdb.InfluxDBFactory;
@@ -38,13 +37,16 @@ import java.util.List;
 public class InfluxDBUtils {
 
     public static void assertRequestErrorContains(InfluxDB influxDB, List<String> points, String line, String... errors) {
+        assert errors.length > 0;
         points.add(line);
         try {
             influxDB.write(points);
             Assert.fail();
         } catch (InfluxDBException e) {
             for (String error : errors) {
-                TestUtils.assertContains(e.getMessage(), error);
+                if (!Chars.contains(e.getMessage(), error)) {
+                    Assert.fail("Expected error message to contain [" + error + "] but got [" + e.getMessage() + "]");
+                }
             }
         }
         points.clear();
@@ -58,7 +60,7 @@ public class InfluxDBUtils {
 
     @NotNull
     public static InfluxDB getConnection(ServerMain serverMain) {
-        int httpPort = LineHttpUtils.getHttpPort(serverMain);
+        int httpPort = serverMain.getHttpServerPort();
         final String serverURL = "http://127.0.0.1:" + httpPort, username = "root", password = "root";
         return InfluxDBFactory.connect(serverURL, username, password);
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,7 +24,9 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.DefaultServerConfiguration;
 import io.questdb.Metrics;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -56,6 +58,7 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.cutlass.suspend.TestCase;
 import io.questdb.test.cutlass.suspend.TestCases;
@@ -76,10 +79,16 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
+import static io.questdb.test.cutlass.http.HttpUtils.urlEncodeQuery;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static io.questdb.test.tools.TestUtils.drainWalQueue;
+import static org.junit.Assert.assertTrue;
 
 public class IODispatcherTest extends AbstractTest {
+    public static final String INSERT_QUERY_RESPONSE = "0c\r\n" +
+            "{\"dml\":\"OK\"}\r\n" +
+            "00\r\n" +
+            "\r\n";
     public static final String JSON_DDL_RESPONSE = "0c\r\n" +
             "{\"ddl\":\"OK\"}\r\n" +
             "00\r\n" +
@@ -106,11 +115,11 @@ public class IODispatcherTest extends AbstractTest {
             "|   Rows handled  |                                                24  |                 |         |              |\r\n" +
             "|  Rows imported  |                                                24  |                 |         |              |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-            "|              0  |                              Dispatching_base_num  |                   STRING  |           0  |\r\n" +
+            "|              0  |                              Dispatching_base_num  |                  VARCHAR  |           0  |\r\n" +
             "|              1  |                                   Pickup_DateTime  |                     DATE  |           0  |\r\n" +
-            "|              2  |                                  DropOff_datetime  |                   STRING  |           0  |\r\n" +
-            "|              3  |                                      PUlocationID  |                   STRING  |           0  |\r\n" +
-            "|              4  |                                      DOlocationID  |                   STRING  |           0  |\r\n" +
+            "|              2  |                                  DropOff_datetime  |                  VARCHAR  |           0  |\r\n" +
+            "|              3  |                                      PUlocationID  |                  VARCHAR  |           0  |\r\n" +
+            "|              4  |                                      DOlocationID  |                  VARCHAR  |           0  |\r\n" +
             "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
             "\r\n" +
             "00\r\n" +
@@ -121,10 +130,13 @@ public class IODispatcherTest extends AbstractTest {
             .withLookingForStuckThread(true)
             .build();
     private long configuredMaxQueryResponseRowLimit = Long.MAX_VALUE;
+    private NanosecondClock nanosecondClock = NanosecondClockImpl.INSTANCE;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractTest.setUpStatic();
+        // this method could be called for multiple iterations within single test
+        // we have some synthetic re-runs
         testHttpClient = Misc.free(testHttpClient);
         testHttpClient = new TestHttpClient();
     }
@@ -152,7 +164,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testBadImplicitStrToLongCast() throws Exception {
         getSimpleTester().run(engine -> {
             testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table tab (value int, when long, ts timestamp) timestamp(ts) partition by day bypass wal;");
-            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "insert into tab values(1, now(), now());"); // it should not be DDL:OK. change me when https://github.com/questdb/questdb/issues/3858 is fixed
+            testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into tab values(1, now(), now());");
             testHttpClient.assertGet(
                     "{\"query\":\"select * from tab where when = '2023-10-17';\",\"error\":\"inconvertible value: `2023-10-17` [STRING -> LONG]\",\"position\":0}",
                     "select * from tab where when = '2023-10-17';"
@@ -202,7 +214,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }).start();
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -271,17 +283,17 @@ public class IODispatcherTest extends AbstractTest {
         assertMemoryLeak(() -> {
             final HttpServerConfiguration serverConfiguration = new DefaultHttpServerConfiguration();
             final NetworkFacade nf = new NetworkFacadeImpl() {
-                int theFd;
+                long theFd;
 
                 @Override
-                public int accept(int serverFd) {
-                    int fd = super.accept(serverFd);
+                public long accept(long serverFd) {
+                    long fd = super.accept(serverFd);
                     theFd = fd;
                     return fd;
                 }
 
                 @Override
-                public int configureNonBlocking(int fd) {
+                public int configureNonBlocking(long fd) {
                     if (fd == theFd) {
                         return -1;
                     }
@@ -314,7 +326,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 try {
                     long socketAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), 9001);
-                    int fd = Net.socketTcp(true);
+                    long fd = Net.socketTcp(true);
                     try {
                         TestUtils.assertConnect(fd, socketAddr);
 
@@ -352,7 +364,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testConnectDisconnect() throws Exception {
-
         LOG.info().$("started testConnectDisconnect").$();
 
         assertMemoryLeak(() -> {
@@ -366,7 +377,7 @@ public class IODispatcherTest extends AbstractTest {
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -416,7 +427,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }).start();
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -712,16 +723,16 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0274\r\n" +
+                        "01ed\r\n" +
                         "\"QUERY PLAN\"\r\n" +
-                        "\"Limit lo: 1\"\r\n" +
-                        "\"&nbsp;&nbsp;&nbsp;&nbsp;VirtualRecord\"\r\n" +
-                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;functions: [1]\"\r\n" +
-                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2\"\r\n" +
-                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"\r\n" +
-                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DataFrame\"\r\n" +
-                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"\r\n" +
-                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"\r\n" +
+                        "\"VirtualRecord\"\r\n" +
+                        "\"&nbsp;&nbsp;functions: [1]\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
@@ -826,17 +837,17 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "030f\r\n" +
+                        "0288\r\n" +
                         "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}]," +
                         "\"timestamp\":-1,\"dataset\":" +
-                        "[[\"Limit lo: 1\"]," +
-                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;VirtualRecord\"]," +
-                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;functions: [1]\"]," +
-                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2\"]," +
-                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"]," +
-                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DataFrame\"]," +
-                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"]," +
-                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]]," +
+                        "[[\"VirtualRecord\"]," +
+                        "[\"&nbsp;&nbsp;functions: [1]\"]," +
+                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2\"]," +
+                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1\"]," +
+                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"]," +
+                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame\"]," +
+                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"]," +
+                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]]," +
                         "\"count\":8}\r\n" +
                         "00\r\n" +
                         "\r\n",
@@ -944,6 +955,14 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testHttpEscapesErrorMessage() throws Exception {
+        getSimpleTester().run(engine -> testHttpClient.assertGet(
+                "{\"query\":\"into into testlike2 select ('foo', 'bar') from long_sequence(1);\",\"error\":\"table and column names that are SQL keywords have to be enclosed in double quotes, such as \\\"into\\\"\",\"position\":0}",
+                "into into testlike2 select ('foo', 'bar') from long_sequence(1);"
+        ));
+    }
+
+    @Test
     public void testHttpLong256AndCharImport() {
         // this script uploads text file:
         // 0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060,a
@@ -960,20 +979,31 @@ public class IODispatcherTest extends AbstractTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = root;
-        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
+        final HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
+            @Override
+            public MillisecondClock getMillisecondClock() {
+                return StationaryMillisClock.INSTANCE;
+            }
+
+            @Override
+            public NanosecondClock getNanosecondClock() {
+                return StationaryNanosClock.INSTANCE;
+            }
+        });
+
+        final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(baseDir) {
+            @Override
+            public HttpServerConfiguration getHttpServerConfiguration() {
+                return httpServerConfiguration;
+            }
+        };
+
+        final CairoConfiguration cairoConfiguration = serverConfiguration.getCairoConfiguration();
         final TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
-                HttpServer ignored = createHttpServer(
-                        new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
-                            @Override
-                            public MillisecondClock getClock() {
-                                return StationaryMillisClock.INSTANCE;
-                            }
-                        }),
-                        cairoEngine,
-                        workerPool
-                )) {
+                CairoEngine cairoEngine = new CairoEngine(cairoConfiguration, metrics);
+                HttpServer ignored = createHttpServer(serverConfiguration, cairoEngine, workerPool)
+        ) {
 
             workerPool.start(LOG);
             try {
@@ -1029,20 +1059,29 @@ public class IODispatcherTest extends AbstractTest {
         final String expectedTableMetadata = "{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"f0\",\"type\":\"LONG256\"},{\"index\":1,\"name\":\"f1\",\"type\":\"CHAR\"}],\"timestampIndex\":-1}";
 
         final String baseDir = root;
-        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
+        final HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
+            @Override
+            public MillisecondClock getMillisecondClock() {
+                return StationaryMillisClock.INSTANCE;
+            }
+
+            @Override
+            public NanosecondClock getNanosecondClock() {
+                return StationaryNanosClock.INSTANCE;
+            }
+        });
+        final ServerConfiguration serverConfiguration = new DefaultServerConfiguration(baseDir) {
+            @Override
+            public HttpServerConfiguration getHttpServerConfiguration() {
+                return httpServerConfiguration;
+            }
+        };
+        final CairoConfiguration cairoConfiguration = serverConfiguration.getCairoConfiguration();
         TestWorkerPool workerPool = new TestWorkerPool(2, metrics);
         try (
-                CairoEngine cairoEngine = new CairoEngine(configuration, metrics);
-                HttpServer ignored = createHttpServer(
-                        new DefaultHttpServerConfiguration(new DefaultHttpContextConfiguration() {
-                            @Override
-                            public MillisecondClock getClock() {
-                                return StationaryMillisClock.INSTANCE;
-                            }
-                        }),
-                        cairoEngine,
-                        workerPool
-                )) {
+                CairoEngine cairoEngine = new CairoEngine(cairoConfiguration, metrics);
+                HttpServer ignored = createHttpServer(serverConfiguration, cairoEngine, workerPool)
+        ) {
 
             workerPool.start(LOG);
             try {
@@ -1136,7 +1175,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -1449,14 +1488,14 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testImportBadRequestGet() throws Exception {
         testImport(
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 404 Not Found\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
-                        "27\r\n" +
-                        "Bad request. Multipart POST expected.\r\n" +
+                        "1a\r\n" +
+                        "Method GET not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
@@ -2220,7 +2259,7 @@ public class IODispatcherTest extends AbstractTest {
                         "--------------------------27d997ca93d2689d--",
                 new NetworkFacadeImpl() {
                     @Override
-                    public int sendRaw(int fd, long buffer, int bufferLen) {
+                    public int sendRaw(long fd, long buffer, int bufferLen) {
                         // ensure we do not send more than one byte at a time
                         if (bufferLen > 0) {
                             return super.sendRaw(fd, buffer, 1);
@@ -2231,6 +2270,118 @@ public class IODispatcherTest extends AbstractTest {
                 false,
                 10
         );
+    }
+
+    @Test
+    public void testImportMultipleOnSameConnectionInvalidTrailingBoundary() throws Exception {
+        // notice, that the last '-' is missing from the trailing boundary
+        // i.e. "--------------------------27d997ca93d2689d-" instead of "--------------------------27d997ca93d2689d--"
+        final String request = "POST /upload HTTP/1.1\r\n" +
+                "Host: localhost:9001\r\n" +
+                "User-Agent: curl/7.64.0\r\n" +
+                "Accept: */*\r\n" +
+                "Content-Length: 437760673\r\n" +
+                "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                "Expect: 100-continue\r\n" +
+                "\r\n" +
+                "--------------------------27d997ca93d2689d\r\n" +
+                "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                "Content-Type: application/octet-stream\r\n" +
+                "\r\n" +
+                "[\r\n" +
+                "  {\r\n" +
+                "    \"name\": \"date\",\r\n" +
+                "    \"type\": \"DATE\",\r\n" +
+                "    \"pattern\": \"d MMMM y.\",\r\n" +
+                "    \"locale\": \"ru-RU\"\r\n" +
+                "  }\r\n" +
+                "]\r\n" +
+                "\r\n" +
+                "--------------------------27d997ca93d2689d\r\n" +
+                "Content-Disposition: form-data; name=\"data\"; filename=\"fhv_tripdata_2017-02.csv\"\r\n" +
+                "Content-Type: application/octet-stream\r\n" +
+                "\r\n" +
+                "Dispatching_base_num,Pickup_DateTime,DropOff_datetime,PUlocationID,DOlocationID\r\n" +
+                "B00008,2017-02-01 00:30:00,,,\r\n" +
+                "B00008,2017-02-01 00:40:00,,,\r\n" +
+                "B00009,2017-02-01 00:30:00,,,\r\n" +
+                "B00013,2017-02-01 00:11:00,,,\r\n" +
+                "B00013,2017-02-01 00:41:00,,,\r\n" +
+                "B00013,2017-02-01 00:00:00,,,\r\n" +
+                "B00013,2017-02-01 00:53:00,,,\r\n" +
+                "B00013,2017-02-01 00:44:00,,,\r\n" +
+                "B00013,2017-02-01 00:05:00,,,\r\n" +
+                "B00013,2017-02-01 00:54:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "B00014,2017-02-01 00:46:00,,,\r\n" +
+                "B00014,2017-02-01 00:54:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "B00014,2017-02-01 00:26:00,,,\r\n" +
+                "B00014,2017-02-01 00:55:00,,,\r\n" +
+                "B00014,2017-02-01 00:47:00,,,\r\n" +
+                "B00014,2017-02-01 00:05:00,,,\r\n" +
+                "B00014,2017-02-01 00:58:00,,,\r\n" +
+                "B00014,2017-02-01 00:33:00,,,\r\n" +
+                "B00014,2017-02-01 00:45:00,,,\r\n" +
+                "\r\n" +
+                "--------------------------27d997ca93d2689d-";
+
+        // ensure we do not send more than one byte at a time
+        final NetworkFacade nf = new NetworkFacadeImpl() {
+            @Override
+            public int sendRaw(long fd, long buffer, int bufferLen) {
+                // ensure we do not send more than one byte at a time
+                if (bufferLen > 0) {
+                    return super.sendRaw(fd, buffer, 1);
+                }
+                return 0;
+            }
+        };
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(
+                        new HttpServerConfigurationBuilder()
+                                .withNetwork(nf)
+                                .withDumpingTraffic(false)
+                                .withAllowDeflateBeforeSend(false)
+                                .withHttpProtocolVersion("HTTP/1.1 ")
+                                .withServerKeepAlive(true)
+                )
+                .withTelemetry(false)
+                .withQueryTimeout(100)
+                .run(engine -> {
+                    final long fd = nf.socketTcp(true);
+                    try {
+                        final long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
+                        assert sockAddrInfo != -1;
+                        try {
+                            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
+                            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
+                            nf.configureNonBlocking(fd);
+
+                            final long bufLen = request.length();
+                            final long ptr = Unsafe.malloc(bufLen, MemoryTag.NATIVE_DEFAULT);
+                            try {
+                                new SendAndReceiveRequestBuilder()
+                                        .withNetworkFacade(nf)
+                                        .withPauseBetweenSendAndReceive(0)
+                                        .withRequestCount(1)
+                                        .executeUntilTimeoutExpires(request, 300);
+                            } finally {
+                                Unsafe.free(ptr, bufLen, MemoryTag.NATIVE_DEFAULT);
+                            }
+                        } finally {
+                            nf.freeAddrInfo(sockAddrInfo);
+                        }
+                    } finally {
+                        nf.close(fd);
+                    }
+                });
     }
 
     @Test
@@ -2327,7 +2478,7 @@ public class IODispatcherTest extends AbstractTest {
                     int totalSent = 0;
 
                     @Override
-                    public int sendRaw(int fd, long buffer, int bufferLen) {
+                    public int sendRaw(long fd, long buffer, int bufferLen) {
                         if (bufferLen > 0) {
                             int result = super.sendRaw(fd, buffer, 1);
                             totalSent += result;
@@ -2369,8 +2520,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "052d\r\n" +
-                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":0,\"rowsImported\":59,\"header\":true,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"VendorID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"DATE\",\"size\":8,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"DATE\",\"size\":8,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"CHAR\",\"size\":2,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Extra\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"INT\",\"size\":4,\"errors\":0}]}\r\n" +
+                        "052e\r\n" +
+                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":0,\"rowsImported\":59,\"header\":true,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"VendorID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"DATE\",\"size\":8,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"DATE\",\"size\":8,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"CHAR\",\"size\":2,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Extra\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"DOUBLE\",\"size\":8,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"INT\",\"size\":4,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"INT\",\"size\":4,\"errors\":0}]}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload?fmt=json&overwrite=true&forceHeader=true&name=clipboard-157200856 HTTP/1.1\r\n" +
@@ -2525,9 +2676,9 @@ public class IODispatcherTest extends AbstractTest {
                         "|   Rows handled  |                                                 1  |                 |         |              |\r\n" +
                         "|  Rows imported  |                                                 1  |                 |         |              |\r\n" +
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
-                        "|              0  |                                                f0  |                   STRING  |           0  |\r\n" +
-                        "|              1  |                                                f1  |                   STRING  |           0  |\r\n" +
-                        "|              2  |                                                f2  |                   STRING  |           0  |\r\n" +
+                        "|              0  |                                                f0  |                  VARCHAR  |           0  |\r\n" +
+                        "|              1  |                                                f1  |                  VARCHAR  |           0  |\r\n" +
+                        "|              2  |                                                f2  |                  VARCHAR  |           0  |\r\n" +
                         "|              3  |                                                f3  |                   DOUBLE  |           0  |\r\n" +
                         "|              4  |                                                f4  |                TIMESTAMP  |           0  |\r\n" +
                         "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
@@ -2564,8 +2715,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Transfer-Encoding: chunked\r\n" +
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "\r\n" +
-                        "0543\r\n" +
-                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":59,\"rowsImported\":59,\"header\":true,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"VendorID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Extra\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"STRING\",\"size\":0,\"errors\":0}]}\r\n" +
+                        "0557\r\n" +
+                        "{\"status\":\"OK\",\"location\":\"clipboard-157200856\",\"rowsRejected\":59,\"rowsImported\":59,\"header\":true,\"partitionBy\":\"NONE\",\"columns\":[{\"name\":\"VendorID\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"lpep_pickup_datetime\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Lpep_dropoff_datetime\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Store_and_fwd_flag\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"RateCodeID\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_longitude\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Pickup_latitude\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_longitude\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Dropoff_latitude\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Passenger_count\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Trip_distance\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Fare_amount\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Extra\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"MTA_tax\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Tip_amount\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Tolls_amount\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Ehail_fee\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Total_amount\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Payment_type\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0},{\"name\":\"Trip_type\",\"type\":\"VARCHAR\",\"size\":0,\"errors\":0}]}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 "POST /upload?fmt=json&overwrite=true&forceHeader=true&skipLev=true&name=clipboard-157200856 HTTP/1.1\r\n" +
@@ -2698,6 +2849,68 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testInterval() throws Exception {
+        testJsonQuery(
+                0,
+                "GET /query?query=" + urlEncodeQuery("select interval(x*10000,(x+1)*10000) from long_sequence(3)") + " HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0154\r\n" +
+                        "{\"query\":\"select interval(x*10000,(x+1)*10000) from long_sequence(3)\",\"columns\":[{\"name\":\"interval\",\"type\":\"INTERVAL\"}],\"timestamp\":-1,\"dataset\":[[\"('1970-01-01T00:00:00.010Z', '1970-01-01T00:00:00.020Z')\"],[\"('1970-01-01T00:00:00.020Z', '1970-01-01T00:00:00.030Z')\"],[\"('1970-01-01T00:00:00.030Z', '1970-01-01T00:00:00.040Z')\"]],\"count\":3}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testInvalidRequestIsHandled() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    final String request = " /query?query=drop%20table%20x HTTP/1.1\r\n" +
+                            "Host: localhost:9001\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Cache-Control: max-age=0\r\n" +
+                            "Upgrade-Insecure-Requests: 1\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                            "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n";
+                    new SendAndReceiveRequestBuilder().execute(
+                            request,
+                            "HTTP/1.1 400 Bad request\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/plain; charset=utf-8\r\n" +
+                                    "\r\n" +
+                                    "16\r\n" +
+                                    "Method not supported\r\n" +
+                                    "\r\n" +
+                                    "00\r\n"
+                    );
+                });
+    }
+
+    @Test
     public void testJsonImplicitCastException() throws Exception {
         testJsonQuery(
                 0,
@@ -2723,7 +2936,8 @@ public class IODispatcherTest extends AbstractTest {
                 1
         );
 
-        testJsonQuery(0,
+        testJsonQuery(
+                0,
                 "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query=insert%20into%20op%20values%20(%27abc%27) HTTP/1.1\r\n" +
                         "Accept: */*\r\n" +
                         "Accept-Encoding: gzip, deflate, br\n" +
@@ -2742,14 +2956,15 @@ public class IODispatcherTest extends AbstractTest {
                         "6b\r\n" +
                         "{\"query\":\"insert into op values ('abc')\",\"error\":\"inconvertible value: `abc` [STRING -> INT]\",\"position\":0}\r\n" +
                         "00\r\n" +
-                        "\r\n"
-                , 1
+                        "\r\n",
+                1
         );
     }
 
     @Test
     public void testJsonNullColumnType() throws Exception {
-        testJsonQuery(0,
+        testJsonQuery(
+                0,
                 "GET /query?limit=0%2C1000&explain=true&count=true&src=con&query=%0D%0A%0D%0A%0D%0ASELECT%20*%20FROM%20(%0D%0A%20%20SELECT%20%0D%0A%20%20%20%20n.nspname%0D%0A%20%20%20%20%2Cc.relname%0D%0A%20%20%20%20%2Ca.attname%0D%0A%20%20%20%20%2Ca.atttypid%0D%0A%20%20%20%20%2Ca.attnotnull%20OR%20(t.typtype%20%3D%20%27d%27%20AND%20t.typnotnull)%20AS%20attnotnull%0D%0A%20%20%20%20%2Ca.atttypmod%0D%0A%20%20%20%20%2Ca.attlen%0D%0A%20%20%20%20%2Ct.typtypmod%0D%0A%20%20%20%20%2Crow_number()%20OVER%20(PARTITION%20BY%20a.attrelid%20ORDER%20BY%20a.attnum)%20AS%20attnum%0D%0A%20%20%20%20%2C%20nullif(a.attidentity%2C%20%27%27)%20as%20attidentity%0D%0A%20%20%20%20%2Cnull%20as%20attgenerated%0D%0A%20%20%20%20%2Cpg_catalog.pg_get_expr(def.adbin%2C%20def.adrelid)%20AS%20adsrc%0D%0A%20%20%20%20%2Cdsc.description%0D%0A%20%20%20%20%2Ct.typbasetype%0D%0A%20%20%20%20%2Ct.typtype%20%20%0D%0A%20%20FROM%20pg_catalog.pg_namespace%20n%0D%0A%20%20JOIN%20pg_catalog.pg_class%20c%20ON%20(c.relnamespace%20%3D%20n.oid)%0D%0A%20%20JOIN%20pg_catalog.pg_attribute%20a%20ON%20(a.attrelid%3Dc.oid)%0D%0A%20%20JOIN%20pg_catalog.pg_type%20t%20ON%20(a.atttypid%20%3D%20t.oid)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_attrdef%20def%20ON%20(a.attrelid%3Ddef.adrelid%20AND%20a.attnum%20%3D%20def.adnum)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_description%20dsc%20ON%20(c.oid%3Ddsc.objoid%20AND%20a.attnum%20%3D%20dsc.objsubid)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_class%20dc%20ON%20(dc.oid%3Ddsc.classoid%20AND%20dc.relname%3D%27pg_class%27)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_namespace%20dn%20ON%20(dc.relnamespace%3Ddn.oid%20AND%20dn.nspname%3D%27pg_catalog%27)%0D%0A%20%20WHERE%20%0D%0A%20%20%20%20c.relkind%20in%20(%27r%27%2C%27p%27%2C%27v%27%2C%27f%27%2C%27m%27)%0D%0A%20%20%20%20and%20a.attnum%20%3E%200%20%0D%0A%20%20%20%20AND%20NOT%20a.attisdropped%0D%0A%20%20%20%20AND%20c.relname%20LIKE%20E%27x%27%0D%0A%20%20)%20c%20WHERE%20true%0D%0A%20%20ORDER%20BY%20nspname%2Cc.relname%2Cattnum HTTP/1.1\r\n" +
                         "Accept: */*\r\n" +
                         "Accept-Encoding: gzip, deflate, br\r\n" +
@@ -2773,18 +2988,17 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0acd\r\n" +
-                        "{\"query\":\"\\r\\n\\r\\n\\r\\nSELECT * FROM (\\r\\n  SELECT \\r\\n    n.nspname\\r\\n    ,c.relname\\r\\n    ,a.attname\\r\\n    ,a.atttypid\\r\\n    ,a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull\\r\\n    ,a.atttypmod\\r\\n    ,a.attlen\\r\\n    ,t.typtypmod\\r\\n    ,row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum\\r\\n    , nullif(a.attidentity, '') as attidentity\\r\\n    ,null as attgenerated\\r\\n    ,pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc\\r\\n    ,dsc.description\\r\\n    ,t.typbasetype\\r\\n    ,t.typtype  \\r\\n  FROM pg_catalog.pg_namespace n\\r\\n  JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)\\r\\n  JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)\\r\\n  JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)\\r\\n  LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)\\r\\n  LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)\\r\\n  LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')\\r\\n  LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')\\r\\n  WHERE \\r\\n    c.relkind in ('r','p','v','f','m')\\r\\n    and a.attnum > 0 \\r\\n    AND NOT a.attisdropped\\r\\n    AND c.relname LIKE E'x'\\r\\n  ) c WHERE true\\r\\n  ORDER BY nspname,c.relname,attnum\",\"columns\":[{\"name\":\"nspname\",\"type\":\"STRING\"},{\"name\":\"relname\",\"type\":\"STRING\"},{\"name\":\"attname\",\"type\":\"STRING\"},{\"name\":\"atttypid\",\"type\":\"INT\"},{\"name\":\"attnotnull\",\"type\":\"BOOLEAN\"},{\"name\":\"atttypmod\",\"type\":\"INT\"},{\"name\":\"attlen\",\"type\":\"SHORT\"},{\"name\":\"typtypmod\",\"type\":\"INT\"},{\"name\":\"attnum\",\"type\":\"LONG\"},{\"name\":\"attidentity\",\"type\":\"CHAR\"},{\"name\":\"attgenerated\",\"type\":\"STRING\"},{\"name\":\"adsrc\",\"type\":\"STRING\"},{\"name\":\"description\",\"type\":\"STRING\"},{\"name\":\"typbasetype\",\"type\":\"INT\"},{\"name\":\"typtype\",\"type\":\"CHAR\"}],\"timestamp\":-1,\"dataset\":[[\"public\",\"x\",\"a\",21,false,0,2,0,\"1\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"b\",21,false,0,2,0,\"2\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"c\",23,false,0,4,0,\"3\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"d\",20,false,0,8,0,\"4\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"e\",1114,false,0,-1,0,\"5\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"f\",1114,false,0,-1,0,\"6\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"g\",700,false,0,4,0,\"7\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"h\",701,false,0,8,0,\"8\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"i\",1043,false,0,-1,0,\"9\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"j\",1043,false,0,-1,0,\"10\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"k\",16,false,0,1,0,\"11\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"l\",17,false,0,-1,0,\"12\",\"\",null,null,null,0,\"b\"],[\"public\",\"x\",\"m\",2950,false,0,16,0,\"13\",\"\",null,null,null,0,\"b\"]],\"count\":13,\"explain\":{\"jitCompiled\":false}}\r\n" +
+                        "0b2d\r\n" +
+                        "{\"query\":\"\\r\\n\\r\\n\\r\\nSELECT * FROM (\\r\\n  SELECT \\r\\n    n.nspname\\r\\n    ,c.relname\\r\\n    ,a.attname\\r\\n    ,a.atttypid\\r\\n    ,a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull\\r\\n    ,a.atttypmod\\r\\n    ,a.attlen\\r\\n    ,t.typtypmod\\r\\n    ,row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum\\r\\n    , nullif(a.attidentity, '') as attidentity\\r\\n    ,null as attgenerated\\r\\n    ,pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc\\r\\n    ,dsc.description\\r\\n    ,t.typbasetype\\r\\n    ,t.typtype  \\r\\n  FROM pg_catalog.pg_namespace n\\r\\n  JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)\\r\\n  JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)\\r\\n  JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)\\r\\n  LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)\\r\\n  LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)\\r\\n  LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')\\r\\n  LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')\\r\\n  WHERE \\r\\n    c.relkind in ('r','p','v','f','m')\\r\\n    and a.attnum > 0 \\r\\n    AND NOT a.attisdropped\\r\\n    AND c.relname LIKE E'x'\\r\\n  ) c WHERE true\\r\\n  ORDER BY nspname,c.relname,attnum\",\"columns\":[{\"name\":\"nspname\",\"type\":\"STRING\"},{\"name\":\"relname\",\"type\":\"STRING\"},{\"name\":\"attname\",\"type\":\"STRING\"},{\"name\":\"atttypid\",\"type\":\"INT\"},{\"name\":\"attnotnull\",\"type\":\"BOOLEAN\"},{\"name\":\"atttypmod\",\"type\":\"INT\"},{\"name\":\"attlen\",\"type\":\"SHORT\"},{\"name\":\"typtypmod\",\"type\":\"INT\"},{\"name\":\"attnum\",\"type\":\"LONG\"},{\"name\":\"attidentity\",\"type\":\"STRING\"},{\"name\":\"attgenerated\",\"type\":\"STRING\"},{\"name\":\"adsrc\",\"type\":\"STRING\"},{\"name\":\"description\",\"type\":\"STRING\"},{\"name\":\"typbasetype\",\"type\":\"INT\"},{\"name\":\"typtype\",\"type\":\"CHAR\"}],\"timestamp\":-1,\"dataset\":[[\"public\",\"x\",\"a\",21,false,0,2,0,\"1\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"b\",21,false,0,2,0,\"2\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"c\",23,false,0,4,0,\"3\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"d\",20,false,0,8,0,\"4\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"e\",1114,false,0,-1,0,\"5\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"f\",1114,false,0,-1,0,\"6\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"g\",700,false,0,4,0,\"7\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"h\",701,false,0,8,0,\"8\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"i\",1043,false,0,-1,0,\"9\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"j\",1043,false,0,-1,0,\"10\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"k\",16,false,0,1,0,\"11\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"l\",17,false,0,-1,0,\"12\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"m\",2950,false,0,16,0,\"13\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"n\",1043,false,0,-1,0,\"14\",null,null,null,null,0,\"b\"]],\"count\":14,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
-                        "\r\n"
-                , 10
+                        "\r\n",
+                10
         );
     }
 
     @Test
     public void testJsonQueryAndDisconnectWithoutWaitingForResult() throws Exception {
         assertMemoryLeak(() -> {
-
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
@@ -2825,12 +3039,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 try {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            30,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, 30);
 
                     // send multipart request to server
                     final String request = "GET /query?query=x HTTP/1.1\r\n" +
@@ -2853,49 +3062,56 @@ public class IODispatcherTest extends AbstractTest {
                             "\r\n" +
                             "f7\r\n" +
                             "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"}\r\n" +
-                            "f5\r\n" +
-                            ",{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\"\r\n" +
-                            "e4\r\n" +
-                            ",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[]\r\n" +
-                            "f5\r\n" +
-                            ",\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null\r\n" +
-                            "fc\r\n" +
-                            ",\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578\r\n" +
-                            "f7\r\n" +
-                            ",null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\"\r\n" +
+                            "f2\r\n" +
+                            ",{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373\r\n" +
+                            "e1\r\n" +
+                            ",\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\",\"}龘и\uDA89\uDFA4~\"],[53,5639,-1162267908,6993925225312419449,\"195808098-05-09T04:14:54.347Z\"\r\n" +
+                            "f4\r\n" +
+                            ",\"171005-04-19T09:31:35.433003Z\",0.24593449,0.29313719347837397,\"BVTMH\",null,false,[],\"d364c241-dde2-cf90-a7a8-f4e549997e46\",\"\uE961-\\\\篸{\"],[40,-8761,null,-7995393784734742820,\"275774022-08-09T21:28:04.485Z\",\"-264492-10-11T03:17:51.666853Z\",null\r\n" +
                             "ff\r\n" +
-                            ",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109\r\n" +
-                            "ef\r\n" +
-                            ",-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\"\r\n" +
+                            ",0.5065228336156442,\"LNVTI\",null,false,[],\"a011214b-ad88-8a69-9502-128cda0887fe\",null],[-31,4215,1362833895,null,\"-49144476-01-15T02:33:12.980Z\",null,0.26369333,0.7632615004324503,\"LHMLL\",\"OYP\",false,[],\"b92d0771-d782-63eb-5479-ae0482582ad0\",\"! Yc0\"],[-80\r\n" +
+                            "e9\r\n" +
+                            ",-23575,null,5552835357100545895,\"-229044588-12-31T09:43:18.056Z\",null,null,null,\"GLUOH\",\"ZHZ\",false,[],\"8b1134e2-9413-4389-a2cb-c77b1cdd7786\",\"1\uD97C\uDD2B珣zx\"],[119,-2044,-2043541236,-4547802916868961458,\"-281648402-09-21T10:33:06.955Z\"\r\n" +
                             "0100\r\n" +
-                            ",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[\r\n" +
-                            "f9\r\n" +
-                            "5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066\r\n" +
-                            "fe\r\n" +
-                            ",0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"],[-85,-1298,980916820\r\n" +
-                            "fd\r\n" +
-                            ",1979259865811371792,\"243489516-08-10T11:01:43.116Z\",\"-256868-02-13T02:53:08.892559Z\",0.011099219,0.5629104624260136,\"XYPOV\",\"DBZ\",true,[],\"9465e10f-93d3-ecdc-42d5-b398330f32df\"],[114,4567,1786866891,-3384541225473840596,\"-263374628-03-10T06:12:04.293Z\"\r\n" +
-                            "fe\r\n" +
-                            ",\"154186-11-06T19:12:56.221046Z\",null,0.11286092606280262,\"ETTTK\",\"IVO\",true,[],\"8bb0645a-f60f-7a1f-b166-288cc3685d60\"],[-33,19521,null,null,null,null,null,0.0846754178136283,null,null,true,[],\"8055ebf2-c14f-6170-5f3f-358f3f41ca27\"],[-56,-19967,null,null\r\n" +
-                            "fe\r\n" +
-                            ",\"-261173464-07-23T05:03:03.226Z\",\"202010-04-20T01:47:44.821886Z\",0.5221781,0.2103287968720018,\"KDWOM\",\"XCB\",true,[],\"2e28a1ac-2237-a3f5-22eb-d09bed4bb888\"],[82,17661,88088322,null,\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null\r\n" +
-                            "ff\r\n" +
-                            ",\"JJILL\",\"YMI\",true,[],\"9f527485-c4aa-c4a2-826f-47baacd58b28\"],[60,12240,-958065826,-6269840107323772779,\"219763469-12-11T15:11:49.322Z\",\"239562-09-15T01:56:19.789254Z\",null,0.6884149023727977,\"WMDNZ\",\"BBU\",false,[],\"a195c293-cd15-d1c1-5d40-0142c9511e5c\"]\r\n" +
-                            "f9\r\n" +
-                            ",[93,-2003,null,-8860384259469374208,\"115927183-10-15T14:56:11.204Z\",\"-137810-12-06T07:57:52.096929Z\",null,null,null,null,false,[],\"910f25c6-b91d-7385-c6da-4122702c217d\"],[-7,27449,1504953154,5073710790258732664,\"-164692215-02-25T03:02:32.883Z\",null\r\n" +
-                            "ec\r\n" +
-                            ",0.5785645,null,\"BUYZV\",null,true,[],\"721304ff-e1c9-3438-6466-208d506905af\"],[113,-16097,116214500,-5017298038362675587,\"-221078362-02-19T13:55:15.677Z\",\"269944-01-09T17:56:58.554474Z\",0.4793073,0.22156975706915538,\"SGQFY\",\"PZG\",true,[]\r\n" +
-                            "e6\r\n" +
-                            ",\"bac4484b-deec-40e8-87ec-84d015101766\"],[50,20074,-1091984691,-7927248081898211794,null,\"263660-07-19T21:05:32.383556Z\",null,0.837738444021418,\"UIGEN\",null,true,[],\"138a6faa-5024-d18e-6536-0e5c86f6bf00\"],[-109,2237,751340866,null\r\n" +
-                            "fd\r\n" +
-                            ",\"-217803053-04-13T02:03:57.866Z\",\"216273-12-29T15:33:38.416497Z\",0.1410504,null,\"DNZNL\",\"NGZ\",true,[],\"77962e84-5080-f343-5437-7431fb8f0a1d\"],[-116,-13698,1403475204,5370749737588151923,null,\"258443-08-20T05:13:38.208574Z\",0.47014922,0.4573258867972624\r\n" +
+                            ",\"221810-02-23T20:19:19.020303Z\",0.56910527,null,\"WIFFL\",\"BRO\",false,[],\"09359765-2ae7-2c5c-14ef-c23546571bdc\",\"\uDA02\uDE66\uDA29\uDE0E⋜\uD9DC\uDEB3\uD90B\uDDC5\"],[16,30964,-1520181263,-7212878484370155026,null,\"280770-04-22T16:59:28.938593Z\",0.34608507,0.5780819331422455,\"UQDYO\",null\r\n" +
+                            "ea\r\n" +
+                            ",false,[],\"a579cf90-ccdf-133e-86be-020b55a15fd1\",null],[72,27348,-647653731,8737613628813682249,null,null,0.0024457574,0.19736767249829557,\"CBDMI\",\"QZV\",true,[],null,\"\uDB4F\uDC7Dl⤃堝ᢣ\"],[36,22350,null,null,\"77319557-11-14T08:22:42.686Z\"\r\n" +
                             "fb\r\n" +
-                            ",\"LITWG\",\"FCY\",false,[],\"8d15f9be-35f5-123b-89f1-b8c36671315a\"],[43,23344,null,6597192149501050504,\"145534057-07-16T10:01:51.726Z\",\"293570-08-02T02:25:16.408939Z\",0.50894374,0.6699251221933199,\"QGKNP\",\"KOW\",true,[],null],[87,22301,1565399410,null,null\r\n" +
+                            ",\"104977-04-08T13:34:21.431788Z\",0.112962544,0.9934423708117267,\"FNWGR\",\"DGG\",false,[],\"899850f1-14ad-249d-97af-847507d07b51\",\"d<J1n\"],[59,-13676,-1529726228,4092568845903588572,null,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\"\r\n" +
+                            "db\r\n" +
+                            ",\"ZQS\",true,[],\"c48ad6b8-f696-2219-b27b-0ac7fbdee201\",\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"],[100,-22306,1604613885,null,\"192651811-02-20T17:11:20.516Z\",\"-102298-11-25T12:53:13.351961Z\",0.21047932,0.8796413468565342,\"UTZOD\",\"KOC\",false,[]\r\n" +
+                            "f5\r\n" +
+                            ",\"79ec07ef-72dc-a7a1-a27b-49491adab237\",null],[-8,5698,1926049591,-5591900440341014879,null,\"-188627-11-22T03:41:41.053028Z\",0.001653254,null,\"SBEGM\",\"TIN\",true,[],\"7a404335-fb0c-03a1-b722-c5d1c4541bf8\",\"\uDA4D\uDEE3u\uDA83\uDD58ߡ˪\"],[1,-22839,1579145140,null\r\n" +
                             "fc\r\n" +
-                            ",\"-282656-02-10T11:02:17.927938Z\",0.3436802,0.6830693823696385,\"ZEOCV\",\"FKM\",true,[],\"4099211c-7746-712f-1eaf-c5dd81b883a7\"],[-97,8534,223584565,null,\"-83792057-10-06T05:58:07.503Z\",\"-123988-08-29T16:43:11.395940Z\",0.8645536,null,\"YLMSR\",\"GKR\",false,[]\r\n" +
-                            "b7\r\n" +
-                            ",null],[113,207,1152958351,-8935746544559020794,\"-247476685-05-02T16:21:08.287Z\",\"80951-09-27T18:56:24.702529Z\",0.47329992,0.5458550805896514,\"KSNGI\",\"RPF\",false,[],null]],\"count\":30}\r\n" +
-                            "00\r\n\r\n";
+                            ",\"-179476546-07-29T11:31:49.216Z\",\"277796-03-22T01:05:12.468447Z\",0.5700419,null,null,null,true,[],null,\"@p\uD981\uDF09۾芊\"],[11,-3298,null,5040581546737547170,\"217663545-06-24T17:53:59.219Z\",\"-188590-01-28T12:21:46.923000Z\",0.4755193,0.7617663592833062,null\r\n" +
+                            "f9\r\n" +
+                            ",\"ZSF\",true,[],\"41457ebc-5a02-a2b5-42cb-d49414e022a0\",null],[108,8860,-1849825758,7001278939159424665,\"-179968926-04-15T02:07:40.791Z\",\"153077-08-01T18:41:42.471066Z\",0.56758314,0.21224614178286005,\"LFORG\",\"IEV\",true,[],null,\"\uDA65\uDE071(rո\"],[-83,-21070\r\n" +
+                            "f5\r\n" +
+                            ",421740366,-7994129278119873659,\"247843724-01-25T23:44:08.505Z\",\"154471-01-21T09:24:15.152962Z\",0.4417268,0.6713174919725877,\"PIQBU\",\"ZVQ\",true,[],\"721304ff-e1c9-3438-6466-208d506905af\",\"\uDA47\uDE9AخF\uD9DC\uDE05\uD8F0\uDF66\"],[-24,20018,172654235,3941299526844453307\r\n" +
+                            "ff\r\n" +
+                            ",\"-94778819-04-19T21:15:26.452Z\",\"263660-07-19T21:05:32.383556Z\",null,0.837738444021418,\"UIGEN\",null,true,[],\"138a6faa-5024-d18e-6536-0e5c86f6bf00\",\"5ŪD꘥\u061C\"],[-42,28924,-692944212,null,\"-288207102-10-16T11:59:11.774Z\",null,0.45388764,0.6728521416263535\r\n" +
+                            "0100\r\n" +
+                            ",\"FPVRQ\",\"GYD\",true,[],\"b9adab80-3662-ea78-7789-11f953eae95f\",\">\uD9F3\uDFD5a~=\"],[4,-8777,-1073362485,-5062925852203035101,\"-243518060-10-14T07:21:35.668Z\",\"180225-11-18T07:14:57.722116Z\",0.47486305,0.15464367746097551,\"KMEKP\",\"OYM\",false,[],null,\"䭣^寻&L\"],[-9\r\n" +
+                            "fa\r\n" +
+                            ",-21964,-1854980244,8551330700532522833,\"-283077346-06-27T16:03:38.091Z\",\"127497-03-02T22:08:20.151047Z\",0.8395367,0.8967196946317529,\"NMURE\",\"JUH\",false,[],\"697ed4cb-072a-e571-7181-091980558b1c\",\"2 \u0381駊:\"],[96,-29490,-1217047780,8745632928088770525\r\n" +
+                            "f5\r\n" +
+                            ",\"170114543-10-02T00:21:50.302Z\",\"74728-08-25T07:58:00.180183Z\",0.04653406,0.028814588598028656,\"CLLER\",\"MKR\",false,[],\"3e171d71-4227-24b8-7a33-ebfdd20508cc\",\"㦞螼\uD8F7\uDCFBŕ\uD904\uDFA0\"],[-2,27393,null,-5141364984576774747,\"138594586-12-07T16:52:39.139Z\"\r\n" +
+                            "fc\r\n" +
+                            ",\"-38259-04-30T08:04:24.727346Z\",0.9529176,null,\"UTOMF\",null,false,[],\"7429f999-bffc-9548-aa3d-f14bfed42969\",\"nOF*h\"],[79,11546,null,8762413735379842328,\"237540564-05-16T15:14:29.786Z\",\"93639-05-03T03:30:14.462955Z\",null,0.654226248740447,\"EQXIL\",\"WZS\"\r\n" +
+                            "f8\r\n" +
+                            ",false,[],\"658deb69-3577-2906-5fc8-46c046b0c4a1\",\"LGީF\uDA53\uDC78\"],[103,29797,null,3528693992946584568,\"-278074628-05-05T15:27:35.680Z\",\"200436-10-09T21:50:29.081004Z\",null,0.39942578826922215,\"HWUDV\",\"KRP\",true,[],\"18ab4633-b7e7-57eb-5fb8-0bbe4ebceada\"\r\n" +
+                            "fd\r\n" +
+                            ",\";\uDA18\uDD86ʶÇ;\"],[-100,-12716,-154411617,-6186254618668432073,null,null,0.059869826,0.015700171393594697,\"QBORD\",\"QHV\",false,[],null,null],[125,11764,1871556077,5549035152445628202,\"185451379-07-29T06:07:03.825Z\",\"205522-08-08T04:51:51.022308Z\",0.40537632\r\n" +
+                            "0100\r\n" +
+                            ",0.4472458525819868,\"ZVDJI\",null,true,[],\"6e4aef03-9480-1c40-941d-89f24081f64d\",\"\uD95D\uDF03\uDB07\uDEEEW߇\uD930\uDD3A\"],[-72,22435,1938229434,null,\"168744810-08-11T08:23:54.308Z\",null,0.8277437,0.7848127252854841,null,\"BPH\",false,[],\"6c1491e1-65c8-7264-a792-3c9ec146118b\",null]\r\n" +
+                            "f5\r\n" +
+                            ",[72,2320,null,6634408780786552626,\"218692167-12-11T08:36:28.706Z\",null,null,0.2232959099494619,\"RBIDS\",\"DTF\",false,[],\"8c25e1c1-5e25-26fc-a4f3-2f968f3c3a93\",\"G&ُܵ9\"],[119,-21634,1692077613,-9182593931032077058,\"-284565007-07-30T04:19:48.813Z\"\r\n" +
+                            "fa\r\n" +
+                            ",\"111008-12-21T07:20:50.292998Z\",0.78913426,0.28256286706363265,null,\"MUM\",true,[],\"2b7ae17e-3c4e-6c97-335e-3a2a33564ac7\",\"䯖߯Ւљ\uDAC8\uDE3B\"],[-25,-19308,-264999630,-7730996391418574454,\"-117381380-04-15T00:53:02.603Z\",null,0.27529263,0.4922628637697192\r\n" +
+                            "50\r\n" +
+                            ",\"VYQNF\",\"GSQ\",true,[],\"6c87ca83-9f7f-8533-6695-f15390d20b0f\",null]],\"count\":30}\r\n" +
+                            "00\r\n" +
+                            "\r\n";
 
                     sendAndReceive(nf, request, expectedResponse, 10, 100L, false);
                 } finally {
@@ -2954,21 +3170,18 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "08e6\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"],[-85,-1298,980916820,1979259865811371792,\"243489516-08-10T11:01:43.116Z\",\"-256868-02-13T02:53:08.892559Z\",0.011099219,0.5629104624260136,\"XYPOV\",\"DBZ\",true,[],\"9465e10f-93d3-ecdc-42d5-b398330f32df\"],[114,4567,1786866891,-3384541225473840596,\"-263374628-03-10T06:12:04.293Z\",\"154186-11-06T19:12:56.221046Z\",null,0.11286092606280262,\"ETTTK\",\"IVO\",true,[],\"8bb0645a-f60f-7a1f-b166-288cc3685d60\"],[-33,19521,null,null,null,null,null,0.0846754178136283,null,null,true,[],\"8055ebf2-c14f-6170-5f3f-358f3f41ca27\"],[-56,-19967,null,null,\"-261173464-07-23T05:03:03.226Z\",\"202010-04-20T01:47:44.821886Z\",0.5221781,0.2103287968720018,\"KDWOM\",\"XCB\",true,[],\"2e28a1ac-2237-a3f5-22eb-d09bed4bb888\"],[82,17661,88088322,null,\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[],\"9f527485-c4aa-c4a2-826f-47baacd58b28\"],[60,12240,-958065826,-6269840107323772779,\"219763469-12-11T15:11:49.322Z\",\"239562-09-15T01:56:19.789254Z\",null,0.6884149023727977,\"WMDNZ\",\"BBU\",false,[],\"a195c293-cd15-d1c1-5d40-0142c9511e5c\"]],\"count\":20}\r\n" +
+                        "09ca\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[59,-13676,-1529726228,4092568845903588572,null,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,[],\"c48ad6b8-f696-2219-b27b-0ac7fbdee201\",\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"],[100,-22306,1604613885,null,\"192651811-02-20T17:11:20.516Z\",\"-102298-11-25T12:53:13.351961Z\",0.21047932,0.8796413468565342,\"UTZOD\",\"KOC\",false,[],\"79ec07ef-72dc-a7a1-a27b-49491adab237\",null],[-8,5698,1926049591,-5591900440341014879,null,\"-188627-11-22T03:41:41.053028Z\",0.001653254,null,\"SBEGM\",\"TIN\",true,[],\"7a404335-fb0c-03a1-b722-c5d1c4541bf8\",\"\uDA4D\uDEE3u\uDA83\uDD58ߡ˪\"],[1,-22839,1579145140,null,\"-179476546-07-29T11:31:49.216Z\",\"277796-03-22T01:05:12.468447Z\",0.5700419,null,null,null,true,[],null,\"@p\uD981\uDF09۾芊\"],[11,-3298,null,5040581546737547170,\"217663545-06-24T17:53:59.219Z\",\"-188590-01-28T12:21:46.923000Z\",0.4755193,0.7617663592833062,null,\"ZSF\",true,[],\"41457ebc-5a02-a2b5-42cb-d49414e022a0\",null],[108,8860,-1849825758,7001278939159424665,\"-179968926-04-15T02:07:40.791Z\",\"153077-08-01T18:41:42.471066Z\",0.56758314,0.21224614178286005,\"LFORG\",\"IEV\",true,[],null,\"\uDA65\uDE071(rո\"],[-83,-21070,421740366,-7994129278119873659,\"247843724-01-25T23:44:08.505Z\",\"154471-01-21T09:24:15.152962Z\",0.4417268,0.6713174919725877,\"PIQBU\",\"ZVQ\",true,[],\"721304ff-e1c9-3438-6466-208d506905af\",\"\uDA47\uDE9AخF\uD9DC\uDE05\uD8F0\uDF66\"],[-24,20018,172654235,3941299526844453307,\"-94778819-04-19T21:15:26.452Z\",\"263660-07-19T21:05:32.383556Z\",null,0.837738444021418,\"UIGEN\",null,true,[],\"138a6faa-5024-d18e-6536-0e5c86f6bf00\",\"5ŪD꘥\u061C\"],[-42,28924,-692944212,null,\"-288207102-10-16T11:59:11.774Z\",null,0.45388764,0.6728521416263535,\"FPVRQ\",\"GYD\",true,[],\"b9adab80-3662-ea78-7789-11f953eae95f\",\">\uD9F3\uDFD5a~=\"],[4,-8777,-1073362485,-5062925852203035101,\"-243518060-10-14T07:21:35.668Z\",\"180225-11-18T07:14:57.722116Z\",0.47486305,0.15464367746097551,\"KMEKP\",\"OYM\",false,[],null,\"䭣^寻&L\"],[-9,-21964,-1854980244,8551330700532522833,\"-283077346-06-27T16:03:38.091Z\",\"127497-03-02T22:08:20.151047Z\",0.8395367,0.8967196946317529,\"NMURE\",\"JUH\",false,[],\"697ed4cb-072a-e571-7181-091980558b1c\",\"2 \u0381駊:\"]],\"count\":20}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
     }
 
     @Test
-    public void testJsonQueryCompilationStatsForJitCompiledFilter() throws Exception {
-        // Disable the test on ARM64.
-        Assume.assumeTrue(JitUtil.isJitSupported());
-
+    public void testJsonQueryCommentOnly() throws Exception {
         testJsonQuery(
-                10,
-                "GET /query?query=x%20where%20d%20%3D%200&limit=1&explain=true HTTP/1.1\r\n" +
+                20,
+                "GET /query?query=--comment HTTP/1.1\r\n" +
                         "Host: localhost:9001\r\n" +
                         "Connection: keep-alive\r\n" +
                         "Cache-Control: max-age=0\r\n" +
@@ -2985,11 +3198,28 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01da\r\n" +
-                        "{\"query\":\"x where d = 0\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0,\"explain\":{\"jitCompiled\":true}}\r\n" +
+                        "3a\r\n" +
+                        "{\"error\":\"empty query\",\"query\":\"--comment\",\"position\":\"0\"}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
+    }
+
+    @Test
+    public void testJsonQueryCompilationStatsForJitCompiledFilter() throws Exception {
+        // Disable the test on ARM64.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+
+        getSimpleTester().run(engine -> {
+            createTableX(engine, 1000);
+            testHttpClient.assertGet(
+                    "{\"query\":\"x where d = 7960464771512399314\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[-99,-18571,-1619342575,7960464771512399314,\"221271209-10-06T04:42:32.542Z\",\"-242523-07-08T23:46:04.551753Z\",0.025056839,0.8515587750165008,\"LWDUW\",\"WJT\",false,[],\"9290f4e5-c9f9-e1db-e96e-2b9ec3beda7f\",\"hJ3hN\"]],\"count\":1,\"explain\":{\"jitCompiled\":true}}",
+                    "x where d = 7960464771512399314",
+                    new CharSequenceObjHashMap<String>() {{
+                        put("explain", "true");
+                    }}
+            );
+        });
     }
 
     @Test
@@ -3013,8 +3243,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01dd\r\n" +
-                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0,\"explain\":{\"jitCompiled\":false}}\r\n" +
+                        "01fb\r\n" +
+                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3072,7 +3302,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -3163,7 +3393,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -3205,7 +3435,6 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testJsonQueryCreateInsertTruncateAndDrop() throws Exception {
         testJsonQuery0(1, engine -> {
-
             // create table
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
@@ -3256,7 +3485,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -3382,18 +3611,6 @@ public class IODispatcherTest extends AbstractTest {
         );
     }
 
-    @Ignore// CTAS statements don't time out anymore but can be cancelled manually
-    @Test
-    public void testJsonQueryCreateTableAsSelectTimeoutNoWal() throws Exception {
-        testJsonQueryCreateTableAsSelectTimeout(false);
-    }
-
-    @Ignore// CTAS statements don't time out anymore but can be cancelled manually
-    @Test
-    public void testJsonQueryCreateTableAsSelectTimeoutWal() throws Exception {
-        testJsonQueryCreateTableAsSelectTimeout(true);
-    }
-
     @Test
     public void testJsonQueryDataError() throws Exception {
         assertMemoryLeak(() -> {
@@ -3452,7 +3669,7 @@ public class IODispatcherTest extends AbstractTest {
                             "\r\n";
 
                     NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    int fd = nf.socketTcp(true);
+                    long fd = nf.socketTcp(true);
                     try {
                         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
                         assert sockAddrInfo != -1;
@@ -3468,7 +3685,7 @@ public class IODispatcherTest extends AbstractTest {
                                 Utf8s.strCpyAscii(request, reqLen, ptr);
                                 while (sent < reqLen) {
                                     int n = NetworkFacadeImpl.INSTANCE.sendRaw(fd, ptr + sent, reqLen - sent);
-                                    Assert.assertTrue(n > -1);
+                                    assertTrue(n > -1);
                                     sent += n;
                                 }
 
@@ -3483,7 +3700,7 @@ public class IODispatcherTest extends AbstractTest {
                                         break;
                                     }
                                 }
-                                Assert.assertTrue("disconnect expected", disconnected);
+                                assertTrue("disconnect expected", disconnected);
                             } finally {
                                 Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
                             }
@@ -3513,18 +3730,18 @@ public class IODispatcherTest extends AbstractTest {
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                     final String query = "select * from test_data_unavailable(1, 10)";
-                    final String request = "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n"
+                    final String request = "GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n"
                             + SendAndReceiveRequestBuilder.RequestHeaders;
 
                     final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    int fd = -1;
+                    long fd = -1;
                     try {
                         fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(request);
                         TestUtils.assertEventually(() -> Assert.assertNotNull(eventRef.get()), 10);
                         nf.close(fd);
                         fd = -1;
                         // Check that I/O dispatcher closes the event once it detects the disconnect.
-                        TestUtils.assertEventually(() -> Assert.assertTrue(eventRef.get().isClosedByAtLeastOneSide()), 10);
+                        TestUtils.assertEventually(() -> assertTrue(eventRef.get().isClosedByAtLeastOneSide()), 10);
                     } finally {
                         if (fd > -1) {
                             nf.close(fd);
@@ -3600,7 +3817,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -3608,7 +3825,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
                         "31\r\n" +
-                        "{\"query\":\"\",\"error\":\"No query text\",\"position\":0}\r\n" +
+                        "{\"error\":\"empty query\",\"query\":\"\",\"position\":\"0\"}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3628,7 +3845,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\\{\"query\":\"select \\* from test_data_unavailable\\(1, 10\\)\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
                         "select * from test_data_unavailable(1, 10)",
                         null, null, null, null,
-                        "400"
+                        "408" // Request Timeout
                 ));
     }
 
@@ -3838,8 +4055,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "04d9\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"]],\"count\":14}\r\n" +
+                        "0549\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[59,-13676,-1529726228,4092568845903588572,null,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,[],\"c48ad6b8-f696-2219-b27b-0ac7fbdee201\",\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"],[100,-22306,1604613885,null,\"192651811-02-20T17:11:20.516Z\",\"-102298-11-25T12:53:13.351961Z\",0.21047932,0.8796413468565342,\"UTZOD\",\"KOC\",false,[],\"79ec07ef-72dc-a7a1-a27b-49491adab237\",null],[-8,5698,1926049591,-5591900440341014879,null,\"-188627-11-22T03:41:41.053028Z\",0.001653254,null,\"SBEGM\",\"TIN\",true,[],\"7a404335-fb0c-03a1-b722-c5d1c4541bf8\",\"\uDA4D\uDEE3u\uDA83\uDD58ߡ˪\"],[1,-22839,1579145140,null,\"-179476546-07-29T11:31:49.216Z\",\"277796-03-22T01:05:12.468447Z\",0.5700419,null,null,null,true,[],null,\"@p\uD981\uDF09۾芊\"],[11,-3298,null,5040581546737547170,\"217663545-06-24T17:53:59.219Z\",\"-188590-01-28T12:21:46.923000Z\",0.4755193,0.7617663592833062,null,\"ZSF\",true,[],\"41457ebc-5a02-a2b5-42cb-d49414e022a0\",null]],\"count\":14}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3866,8 +4083,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0342\r\n" +
-                        "{\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"]],\"count\":14}\r\n" +
+                        "0394\r\n" +
+                        "{\"dataset\":[[59,-13676,-1529726228,4092568845903588572,null,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,[],\"c48ad6b8-f696-2219-b27b-0ac7fbdee201\",\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"],[100,-22306,1604613885,null,\"192651811-02-20T17:11:20.516Z\",\"-102298-11-25T12:53:13.351961Z\",0.21047932,0.8796413468565342,\"UTZOD\",\"KOC\",false,[],\"79ec07ef-72dc-a7a1-a27b-49491adab237\",null],[-8,5698,1926049591,-5591900440341014879,null,\"-188627-11-22T03:41:41.053028Z\",0.001653254,null,\"SBEGM\",\"TIN\",true,[],\"7a404335-fb0c-03a1-b722-c5d1c4541bf8\",\"\uDA4D\uDEE3u\uDA83\uDD58ߡ˪\"],[1,-22839,1579145140,null,\"-179476546-07-29T11:31:49.216Z\",\"277796-03-22T01:05:12.468447Z\",0.5700419,null,null,null,true,[],null,\"@p\uD981\uDF09۾芊\"],[11,-3298,null,5040581546737547170,\"217663545-06-24T17:53:59.219Z\",\"-188590-01-28T12:21:46.923000Z\",0.4755193,0.7617663592833062,null,\"ZSF\",true,[],\"41457ebc-5a02-a2b5-42cb-d49414e022a0\",null]],\"count\":14}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4023,8 +4240,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0ea2\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"],[5,31291,null,-7460860813229540628,\"129690313-12-24T17:39:48.572Z\",null,0.4268921,0.34804764389663523,null,\"ZKY\",true,[],\"26928457-42d6-6747-42bd-f2c301f7f43b\"],[60,-10015,-957569989,-5722148114589357073,null,\"268603-07-17T16:20:37.463497Z\",0.8136066,0.8766908646423737,null,null,false,[],\"ab059a23-42cb-232f-5435-54ee7efea2c3\"],[-19,20400,-1440131320,null,null,\"-271841-11-06T10:08:21.455425Z\",0.73472875,0.5251698097331752,null,\"LIH\",true,[],\"985499c7-f073-68a3-3b8a-d671f6730aab\"],[-85,-1298,980916820,1979259865811371792,\"243489516-08-10T11:01:43.116Z\",\"-256868-02-13T02:53:08.892559Z\",0.011099219,0.5629104624260136,\"XYPOV\",\"DBZ\",true,[],\"9465e10f-93d3-ecdc-42d5-b398330f32df\"],[114,4567,1786866891,-3384541225473840596,\"-263374628-03-10T06:12:04.293Z\",\"154186-11-06T19:12:56.221046Z\",null,0.11286092606280262,\"ETTTK\",\"IVO\",true,[],\"8bb0645a-f60f-7a1f-b166-288cc3685d60\"],[-33,19521,null,null,null,null,null,0.0846754178136283,null,null,true,[],\"8055ebf2-c14f-6170-5f3f-358f3f41ca27\"],[-56,-19967,null,null,\"-261173464-07-23T05:03:03.226Z\",\"202010-04-20T01:47:44.821886Z\",0.5221781,0.2103287968720018,\"KDWOM\",\"XCB\",true,[],\"2e28a1ac-2237-a3f5-22eb-d09bed4bb888\"],[82,17661,88088322,null,\"152525393-08-28T08:19:48.512Z\",\"216070-11-17T13:37:58.936720Z\",null,null,\"JJILL\",\"YMI\",true,[],\"9f527485-c4aa-c4a2-826f-47baacd58b28\"],[60,12240,-958065826,-6269840107323772779,\"219763469-12-11T15:11:49.322Z\",\"239562-09-15T01:56:19.789254Z\",null,0.6884149023727977,\"WMDNZ\",\"BBU\",false,[],\"a195c293-cd15-d1c1-5d40-0142c9511e5c\"]],\"count\":20}\r\n" +
+                        "1020\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\",\"}龘и\uDA89\uDFA4~\"],[53,5639,-1162267908,6993925225312419449,\"195808098-05-09T04:14:54.347Z\",\"171005-04-19T09:31:35.433003Z\",0.24593449,0.29313719347837397,\"BVTMH\",null,false,[],\"d364c241-dde2-cf90-a7a8-f4e549997e46\",\"\uE961-\\\\篸{\"],[40,-8761,null,-7995393784734742820,\"275774022-08-09T21:28:04.485Z\",\"-264492-10-11T03:17:51.666853Z\",null,0.5065228336156442,\"LNVTI\",null,false,[],\"a011214b-ad88-8a69-9502-128cda0887fe\",null],[-31,4215,1362833895,null,\"-49144476-01-15T02:33:12.980Z\",null,0.26369333,0.7632615004324503,\"LHMLL\",\"OYP\",false,[],\"b92d0771-d782-63eb-5479-ae0482582ad0\",\"! Yc0\"],[-80,-23575,null,5552835357100545895,\"-229044588-12-31T09:43:18.056Z\",null,null,null,\"GLUOH\",\"ZHZ\",false,[],\"8b1134e2-9413-4389-a2cb-c77b1cdd7786\",\"1\uD97C\uDD2B珣zx\"],[119,-2044,-2043541236,-4547802916868961458,\"-281648402-09-21T10:33:06.955Z\",\"221810-02-23T20:19:19.020303Z\",0.56910527,null,\"WIFFL\",\"BRO\",false,[],\"09359765-2ae7-2c5c-14ef-c23546571bdc\",\"\uDA02\uDE66\uDA29\uDE0E⋜\uD9DC\uDEB3\uD90B\uDDC5\"],[16,30964,-1520181263,-7212878484370155026,null,\"280770-04-22T16:59:28.938593Z\",0.34608507,0.5780819331422455,\"UQDYO\",null,false,[],\"a579cf90-ccdf-133e-86be-020b55a15fd1\",null],[72,27348,-647653731,8737613628813682249,null,null,0.0024457574,0.19736767249829557,\"CBDMI\",\"QZV\",true,[],null,\"\uDB4F\uDC7Dl⤃堝ᢣ\"],[36,22350,null,null,\"77319557-11-14T08:22:42.686Z\",\"104977-04-08T13:34:21.431788Z\",0.112962544,0.9934423708117267,\"FNWGR\",\"DGG\",false,[],\"899850f1-14ad-249d-97af-847507d07b51\",\"d<J1n\"],[59,-13676,-1529726228,4092568845903588572,null,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,[],\"c48ad6b8-f696-2219-b27b-0ac7fbdee201\",\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"],[100,-22306,1604613885,null,\"192651811-02-20T17:11:20.516Z\",\"-102298-11-25T12:53:13.351961Z\",0.21047932,0.8796413468565342,\"UTZOD\",\"KOC\",false,[],\"79ec07ef-72dc-a7a1-a27b-49491adab237\",null],[-8,5698,1926049591,-5591900440341014879,null,\"-188627-11-22T03:41:41.053028Z\",0.001653254,null,\"SBEGM\",\"TIN\",true,[],\"7a404335-fb0c-03a1-b722-c5d1c4541bf8\",\"\uDA4D\uDEE3u\uDA83\uDD58ߡ˪\"],[1,-22839,1579145140,null,\"-179476546-07-29T11:31:49.216Z\",\"277796-03-22T01:05:12.468447Z\",0.5700419,null,null,null,true,[],null,\"@p\uD981\uDF09۾芊\"],[11,-3298,null,5040581546737547170,\"217663545-06-24T17:53:59.219Z\",\"-188590-01-28T12:21:46.923000Z\",0.4755193,0.7617663592833062,null,\"ZSF\",true,[],\"41457ebc-5a02-a2b5-42cb-d49414e022a0\",null],[108,8860,-1849825758,7001278939159424665,\"-179968926-04-15T02:07:40.791Z\",\"153077-08-01T18:41:42.471066Z\",0.56758314,0.21224614178286005,\"LFORG\",\"IEV\",true,[],null,\"\uDA65\uDE071(rո\"],[-83,-21070,421740366,-7994129278119873659,\"247843724-01-25T23:44:08.505Z\",\"154471-01-21T09:24:15.152962Z\",0.4417268,0.6713174919725877,\"PIQBU\",\"ZVQ\",true,[],\"721304ff-e1c9-3438-6466-208d506905af\",\"\uDA47\uDE9AخF\uD9DC\uDE05\uD8F0\uDF66\"],[-24,20018,172654235,3941299526844453307,\"-94778819-04-19T21:15:26.452Z\",\"263660-07-19T21:05:32.383556Z\",null,0.837738444021418,\"UIGEN\",null,true,[],\"138a6faa-5024-d18e-6536-0e5c86f6bf00\",\"5ŪD꘥\u061C\"],[-42,28924,-692944212,null,\"-288207102-10-16T11:59:11.774Z\",null,0.45388764,0.6728521416263535,\"FPVRQ\",\"GYD\",true,[],\"b9adab80-3662-ea78-7789-11f953eae95f\",\">\uD9F3\uDFD5a~=\"],[4,-8777,-1073362485,-5062925852203035101,\"-243518060-10-14T07:21:35.668Z\",\"180225-11-18T07:14:57.722116Z\",0.47486305,0.15464367746097551,\"KMEKP\",\"OYM\",false,[],null,\"䭣^寻&L\"],[-9,-21964,-1854980244,8551330700532522833,\"-283077346-06-27T16:03:38.091Z\",\"127497-03-02T22:08:20.151047Z\",0.8395367,0.8967196946317529,\"NMURE\",\"JUH\",false,[],\"697ed4cb-072a-e571-7181-091980558b1c\",\"2 \u0381駊:\"]],\"count\":20}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4051,10 +4268,9 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0281\r\n" +
-                        "{\"query\":\"\\n\\nselect * from x where i ~ 'E'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"count\":4}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                        "02ad\r\n" +
+                        "{\"query\":\"\\n\\nselect * from x where i ~ 'E'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\",\"}龘и\uDA89\uDFA4~\"]],\"count\":5}\r\n" +
+                        "00\r\n"
         );
     }
 
@@ -4079,8 +4295,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0b9d\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"timestamp\":-1,\"dataset\":[[false,-727724771,24814,8920866532787660373,\"-51129-02-11T06:38:29.397464Z\",\"-169665660-01-09T01:58:28.119Z\",null,null,\"EHNRX\",\"ZSX\",80,[]],[false,null,-15458,null,\"246280-11-21T19:36:06.863064Z\",\"271684783-08-14T19:54:59.209Z\",0.9687423,null,\"EDRQQ\",\"LOF\",27,[]],[false,-443320374,-12303,null,null,\"18125533-09-05T04:06:38.086Z\",0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",-15,[]],[false,844704299,-1072,-5439556746612026472,\"-223119-09-14T09:01:18.820936Z\",null,0.24008358,null,\"SSUQS\",\"LTK\",-26,[]],[false,1431425139,-16957,5703149806881083206,\"169679-01-30T22:35:53.709416Z\",\"-169092820-09-20T13:00:33.346Z\",0.85931313,0.021189232728939578,null,null,-22,[]],[false,null,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",0.38422543,null,\"ZHZSQ\",\"DGL\",40,[]],[true,null,26413,null,\"-212972-12-23T07:03:41.201156Z\",\"-280416206-11-15T18:10:34.329Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",12,[]],[false,-1594425659,10793,-7414829143044491558,\"-277346-12-26T06:26:35.016287Z\",null,0.48352557,null,null,null,-48,[]],[false,-895337819,-32283,6146164804821006241,null,\"-78315370-06-23T19:44:52.764Z\",0.43461353,0.2559680920632348,\"FDTNP\",null,-109,[]],[true,415709351,-4941,6153381060986313135,\"226653-05-24T13:46:11.574792Z\",\"216474105-07-04T10:25:00.310Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",43,[]],[false,1817259704,3605,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,-78,[]],[true,null,31291,-7460860813229540628,null,\"129690313-12-24T17:39:48.572Z\",0.4268921,0.34804764389663523,null,\"ZKY\",5,[]],[false,-957569989,-10015,-5722148114589357073,\"268603-07-17T16:20:37.463497Z\",null,0.8136066,0.8766908646423737,null,null,60,[]],[true,-1440131320,20400,null,\"-271841-11-06T10:08:21.455425Z\",null,0.73472875,0.5251698097331752,null,\"LIH\",-19,[]],[true,980916820,-1298,1979259865811371792,\"-256868-02-13T02:53:08.892559Z\",\"243489516-08-10T11:01:43.116Z\",0.011099219,0.5629104624260136,\"XYPOV\",\"DBZ\",-85,[]],[true,1786866891,4567,-3384541225473840596,\"154186-11-06T19:12:56.221046Z\",\"-263374628-03-10T06:12:04.293Z\",null,0.11286092606280262,\"ETTTK\",\"IVO\",114,[]],[true,null,19521,null,null,null,null,0.0846754178136283,null,null,-33,[]],[true,null,-19967,null,\"202010-04-20T01:47:44.821886Z\",\"-261173464-07-23T05:03:03.226Z\",0.5221781,0.2103287968720018,\"KDWOM\",\"XCB\",-56,[]],[true,88088322,17661,null,\"216070-11-17T13:37:58.936720Z\",\"152525393-08-28T08:19:48.512Z\",null,null,\"JJILL\",\"YMI\",82,[]],[false,-958065826,12240,-6269840107323772779,\"239562-09-15T01:56:19.789254Z\",\"219763469-12-11T15:11:49.322Z\",null,0.6884149023727977,\"WMDNZ\",\"BBU\",60,[]]],\"count\":20}\r\n" +
+                        "0c73\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"l\",\"type\":\"BINARY\"}],\"timestamp\":-1,\"dataset\":[[false,-727724771,24814,8920866532787660373,\"-51129-02-11T06:38:29.397464Z\",\"-169665660-01-09T01:58:28.119Z\",null,null,\"EHNRX\",\"ZSX\",80,[]],[false,-1162267908,5639,6993925225312419449,\"171005-04-19T09:31:35.433003Z\",\"195808098-05-09T04:14:54.347Z\",0.24593449,0.29313719347837397,\"BVTMH\",null,53,[]],[false,null,-8761,-7995393784734742820,\"-264492-10-11T03:17:51.666853Z\",\"275774022-08-09T21:28:04.485Z\",null,0.5065228336156442,\"LNVTI\",null,40,[]],[false,1362833895,4215,null,null,\"-49144476-01-15T02:33:12.980Z\",0.26369333,0.7632615004324503,\"LHMLL\",\"OYP\",-31,[]],[false,null,-23575,5552835357100545895,null,\"-229044588-12-31T09:43:18.056Z\",null,null,\"GLUOH\",\"ZHZ\",-80,[]],[false,-2043541236,-2044,-4547802916868961458,\"221810-02-23T20:19:19.020303Z\",\"-281648402-09-21T10:33:06.955Z\",0.56910527,null,\"WIFFL\",\"BRO\",119,[]],[false,-1520181263,30964,-7212878484370155026,\"280770-04-22T16:59:28.938593Z\",null,0.34608507,0.5780819331422455,\"UQDYO\",null,16,[]],[true,-647653731,27348,8737613628813682249,null,null,0.0024457574,0.19736767249829557,\"CBDMI\",\"QZV\",72,[]],[false,null,22350,null,\"104977-04-08T13:34:21.431788Z\",\"77319557-11-14T08:22:42.686Z\",0.112962544,0.9934423708117267,\"FNWGR\",\"DGG\",36,[]],[true,-1529726228,-13676,4092568845903588572,\"31470-11-18T18:43:57.264562Z\",null,0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",59,[]],[false,1604613885,-22306,null,\"-102298-11-25T12:53:13.351961Z\",\"192651811-02-20T17:11:20.516Z\",0.21047932,0.8796413468565342,\"UTZOD\",\"KOC\",100,[]],[true,1926049591,5698,-5591900440341014879,\"-188627-11-22T03:41:41.053028Z\",null,0.001653254,null,\"SBEGM\",\"TIN\",-8,[]],[true,1579145140,-22839,null,\"277796-03-22T01:05:12.468447Z\",\"-179476546-07-29T11:31:49.216Z\",0.5700419,null,null,null,1,[]],[true,null,-3298,5040581546737547170,\"-188590-01-28T12:21:46.923000Z\",\"217663545-06-24T17:53:59.219Z\",0.4755193,0.7617663592833062,null,\"ZSF\",11,[]],[true,-1849825758,8860,7001278939159424665,\"153077-08-01T18:41:42.471066Z\",\"-179968926-04-15T02:07:40.791Z\",0.56758314,0.21224614178286005,\"LFORG\",\"IEV\",108,[]],[true,421740366,-21070,-7994129278119873659,\"154471-01-21T09:24:15.152962Z\",\"247843724-01-25T23:44:08.505Z\",0.4417268,0.6713174919725877,\"PIQBU\",\"ZVQ\",-83,[]],[true,172654235,20018,3941299526844453307,\"263660-07-19T21:05:32.383556Z\",\"-94778819-04-19T21:15:26.452Z\",null,0.837738444021418,\"UIGEN\",null,-24,[]],[true,-692944212,28924,null,null,\"-288207102-10-16T11:59:11.774Z\",0.45388764,0.6728521416263535,\"FPVRQ\",\"GYD\",-42,[]],[false,-1073362485,-8777,-5062925852203035101,\"180225-11-18T07:14:57.722116Z\",\"-243518060-10-14T07:21:35.668Z\",0.47486305,0.15464367746097551,\"KMEKP\",\"OYM\",4,[]],[false,-1854980244,-21964,8551330700532522833,\"127497-03-02T22:08:20.151047Z\",\"-283077346-06-27T16:03:38.091Z\",0.8395367,0.8967196946317529,\"NMURE\",\"JUH\",-9,[]]],\"count\":20}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4107,8 +4323,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01af\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
+                        "01cd\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4135,12 +4351,11 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01bd\r\n" +
-                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
+                        "01db\r\n" +
+                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
-
         ObjList<SqlExecutionContextImpl> contexts = builder.getSqlExecutionContexts();
         for (int i = 0, n = contexts.size(); i < n; i++) {
             if (!contexts.getQuick(i).isColumnPreTouchEnabled()) {
@@ -4172,12 +4387,11 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01bd\r\n" +
-                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
+                        "01db\r\n" +
+                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
-
         ObjList<SqlExecutionContextImpl> contexts = builder.getSqlExecutionContexts();
         for (int i = 0, n = contexts.size(); i < n; i++) {
             if (contexts.getQuick(i).isColumnPreTouchEnabled()) {
@@ -4307,12 +4521,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testJsonQueryRenameTable() throws Exception {
         testJsonQuery0(2, engine -> {
             // create table with all column types
-            CreateTableTestUtils.createTestTable(
-                    engine,
-                    20,
-                    new Rnd(),
-                    new TestRecord.ArrayBinarySequence()
-            );
+            createTableX(engine, 20);
 
             // rename x -> y (quoted)
             sendAndReceive(
@@ -4360,10 +4569,8 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0275\r\n" +
-                            "{\"query\":\"y where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"count\":1}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            "02a1\r\n" +
+                            "{\"query\":\"y where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29",
                     1,
                     0,
                     false
@@ -4415,10 +4622,8 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            "0275\r\n" +
-                            "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"count\":1}\r\n" +
-                            "00\r\n" +
-                            "\r\n",
+                            "02a1\r\n" +
+                            "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29",
                     1,
                     0,
                     false
@@ -4448,8 +4653,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "02f5\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"],[-78,3605,1817259704,-4645139889518544281,null,null,0.81154263,null,\"IJYDV\",null,false,[],\"dc9aef01-0871-b1fe-dfd7-9391d4cc2a2e\"]],\"count\":11}\r\n" +
+                        "034a\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[59,-13676,-1529726228,4092568845903588572,null,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,[],\"c48ad6b8-f696-2219-b27b-0ac7fbdee201\",\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"],[100,-22306,1604613885,null,\"192651811-02-20T17:11:20.516Z\",\"-102298-11-25T12:53:13.351961Z\",0.21047932,0.8796413468565342,\"UTZOD\",\"KOC\",false,[],\"79ec07ef-72dc-a7a1-a27b-49491adab237\",null]],\"count\":11}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4509,7 +4714,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Content-Type: application/json; charset=utf-8\r\n" +
                             "Keep-Alive: timeout=5, max=10000\r\n" +
                             "\r\n" +
-                            JSON_DDL_RESPONSE,
+                            INSERT_QUERY_RESPONSE,
                     1,
                     0,
                     false
@@ -4631,8 +4836,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0275\r\n" +
-                        "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"]],\"count\":1}\r\n" +
+                        "02a1\r\n" +
+                        "{\"query\":\"x where i = ('EHNRX')\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\",\"}龘и\uDA89\uDFA4~\"]],\"count\":1}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4659,8 +4864,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01af\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
+                        "01cd\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 1,
@@ -4694,8 +4899,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01af\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
+                        "01cd\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
                         "00\r\n" +
                         "\r\n",
                 2,
@@ -4762,12 +4967,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 try {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            20,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, 20);
 
                     for (int i = 0; i < 10; i++) {
                         testHttpClient.assertGet(
@@ -4799,7 +4999,7 @@ public class IODispatcherTest extends AbstractTest {
                                 "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
                                 "select i, avg(l), max(l) from t group by i order by i asc limit 3",
                                 null, null, null, null,
-                                "400"
+                                "408"
                         );
                     }
                 });
@@ -4820,7 +5020,7 @@ public class IODispatcherTest extends AbstractTest {
                         engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                    "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                    "GET /exec?query=" + urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
                                     "f9\r\n" +
                                             "{\"query\":\"select i, avg(l), max(l) from t group by i order by i asc limit 3\",\"columns\":[{\"name\":\"i\",\"type\":\"INT\"},{\"name\":\"avg\",\"type\":\"DOUBLE\"},{\"name\":\"max\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[0,55.0,100],[1,46.0,91],[2,47.0,92]],\"count\":3}\r\n" +
                                             "00\r\n" +
@@ -4855,8 +5055,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "082f\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"]],\"count\":10}\r\n" +
+                        "08e1\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\",\"}龘и\uDA89\uDFA4~\"],[53,5639,-1162267908,6993925225312419449,\"195808098-05-09T04:14:54.347Z\",\"171005-04-19T09:31:35.433003Z\",0.24593449,0.29313719347837397,\"BVTMH\",null,false,[],\"d364c241-dde2-cf90-a7a8-f4e549997e46\",\"\uE961-\\\\篸{\"],[40,-8761,null,-7995393784734742820,\"275774022-08-09T21:28:04.485Z\",\"-264492-10-11T03:17:51.666853Z\",null,0.5065228336156442,\"LNVTI\",null,false,[],\"a011214b-ad88-8a69-9502-128cda0887fe\",null],[-31,4215,1362833895,null,\"-49144476-01-15T02:33:12.980Z\",null,0.26369333,0.7632615004324503,\"LHMLL\",\"OYP\",false,[],\"b92d0771-d782-63eb-5479-ae0482582ad0\",\"! Yc0\"],[-80,-23575,null,5552835357100545895,\"-229044588-12-31T09:43:18.056Z\",null,null,null,\"GLUOH\",\"ZHZ\",false,[],\"8b1134e2-9413-4389-a2cb-c77b1cdd7786\",\"1\uD97C\uDD2B珣zx\"],[119,-2044,-2043541236,-4547802916868961458,\"-281648402-09-21T10:33:06.955Z\",\"221810-02-23T20:19:19.020303Z\",0.56910527,null,\"WIFFL\",\"BRO\",false,[],\"09359765-2ae7-2c5c-14ef-c23546571bdc\",\"\uDA02\uDE66\uDA29\uDE0E⋜\uD9DC\uDEB3\uD90B\uDDC5\"],[16,30964,-1520181263,-7212878484370155026,null,\"280770-04-22T16:59:28.938593Z\",0.34608507,0.5780819331422455,\"UQDYO\",null,false,[],\"a579cf90-ccdf-133e-86be-020b55a15fd1\",null],[72,27348,-647653731,8737613628813682249,null,null,0.0024457574,0.19736767249829557,\"CBDMI\",\"QZV\",true,[],null,\"\uDB4F\uDC7Dl⤃堝ᢣ\"],[36,22350,null,null,\"77319557-11-14T08:22:42.686Z\",\"104977-04-08T13:34:21.431788Z\",0.112962544,0.9934423708117267,\"FNWGR\",\"DGG\",false,[],\"899850f1-14ad-249d-97af-847507d07b51\",\"d<J1n\"],[59,-13676,-1529726228,4092568845903588572,null,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,[],\"c48ad6b8-f696-2219-b27b-0ac7fbdee201\",\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"]],\"count\":10}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4883,10 +5083,9 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "082f\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"]],\"count\":20}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                        "08e1\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\",\"}龘и\uDA89\uDFA4~\"],[53,5639,-1162267908,6993925225312419449,\"195808098-05-09T04:14:54.347Z\",\"171005-04-19T09:31:35.433003Z\",0.24593449,0.29313719347837397,\"BVTMH\",null,false,[],\"d364c241-dde2-cf90-a7a8-f4e549997e46\",\"\uE961-\\\\篸{\"],[40,-8761,null,-7995393784734742820,\"275774022-08-09T21:28:04.485Z\",\"-264492-10-11T03:17:51.666853Z\",null,0.5065228336156442,\"LNVTI\",null,false,[],\"a011214b-ad88-8a69-9502-128cda0887fe\",null],[-31,4215,1362833895,null,\"-49144476-01-15T02:33:12.980Z\",null,0.26369333,0.7632615004324503,\"LHMLL\",\"OYP\",false,[],\"b92d0771-d782-63eb-5479-ae0482582ad0\",\"! Yc0\"],[-80,-23575,null,5552835357100545895,\"-229044588-12-31T09:43:18.056Z\",null,null,null,\"GLUOH\",\"ZHZ\",false,[],\"8b1134e2-9413-4389-a2cb-c77b1cdd7786\",\"1\uD97C\uDD2B珣zx\"],[119,-2044,-2043541236,-4547802916868961458,\"-281648402-09-21T10:33:06.955Z\",\"221810-02-23T20:19:19.020303Z\",0.56910527,null,\"WIFFL\",\"BRO\",false,[],\"09359765-2ae7-2c5c-14ef-c23546571bdc\",\"\uDA02\uDE66\uDA29\uDE0E⋜\uD9DC\uDEB3\uD90B\uDDC5\"],[16,30964,-1520181263,-7212878484370155026,null,\"280770-04-22T16:59:28.938593Z\",0.34608507,0.5780819331422455,\"UQDYO\",null,false,[],\"a579cf90-ccdf-133e-86be-020b55a15fd1\",null],[72,27348,-647653731,8737613628813682249,null,null,0.0024457574,0.19736767249829557,\"CBDMI\",\"QZV\",true,[],null,\"\uDB4F\uDC7Dl⤃堝ᢣ\"],[36,22350,null,null,\"77319557-11-14T08:22:42.686Z\",\"104977-04-08T13:34:21.431788Z\",0.112962544,0.9934423708117267,\"FNWGR\",\"DGG\",false,[],\"899850f1-14ad-249d-97af-847507d07b51\",\"d<J1n\"],[59,-13676,-1529726228,4092568845903588572,null,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,[],\"c48ad6b8-f696-2219-b27b-0ac7fbdee201\",\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"]],\"count\":20}\r\n" +
+                        "00\r\n"
         );
     }
 
@@ -4894,12 +5093,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testJsonQueryTopLimitHttp1() throws Exception {
         testJsonQuery0(2, engine -> {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            20,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, 20);
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
                             "GET /query?query=x&limit=10 HTTP/1.1\r\n" +
@@ -4920,10 +5114,9 @@ public class IODispatcherTest extends AbstractTest {
                                     "Connection: close\r\n" +
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
-                                    "082f\r\n" +
-                                    "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\"],[27,-15458,null,null,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,null,\"EDRQQ\",\"LOF\",false,[],\"59d574d2-ff5f-b1e3-687a-84abb7bfac3e\"],[-15,-12303,-443320374,null,\"18125533-09-05T04:06:38.086Z\",null,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,[],\"7dc85977-0af2-0493-8151-081b8acafadd\"],[-26,-1072,844704299,-5439556746612026472,null,\"-223119-09-14T09:01:18.820936Z\",0.24008358,null,\"SSUQS\",\"LTK\",false,[],\"867f8923-b442-2deb-b63b-32ce71b869c6\"],[-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,null,null,false,[],\"3eef3f15-8e08-4362-4d0f-a2564c351767\"],[40,-17824,null,null,\"75525295-09-06T22:11:27.250Z\",null,0.38422543,null,\"ZHZSQ\",\"DGL\",false,[],null],[12,26413,null,null,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,[],\"43452482-4ca8-4f52-3ed3-91560ac32754\"],[-48,10793,-1594425659,-7414829143044491558,null,\"-277346-12-26T06:26:35.016287Z\",0.48352557,null,null,null,false,[],\"628bdaed-6813-f20b-34a0-58990880698b\"],[-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",null,0.43461353,0.2559680920632348,\"FDTNP\",null,false,[],\"72f1d686-75d8-67cf-58b0-00a0492ff296\"],[43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,[],\"ce57f611-173c-e55d-d2bc-1ceb1d7c9713\"]],\"count\":10}\r\n" +
-                                    "00\r\n" +
-                                    "\r\n",
+                                    "08e1\r\n" +
+                                    "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",null,null,\"EHNRX\",\"ZSX\",false,[],\"c2593f82-b430-328d-84a0-9f29df637e38\",\"}龘и\uDA89\uDFA4~\"],[53,5639,-1162267908,6993925225312419449,\"195808098-05-09T04:14:54.347Z\",\"171005-04-19T09:31:35.433003Z\",0.24593449,0.29313719347837397,\"BVTMH\",null,false,[],\"d364c241-dde2-cf90-a7a8-f4e549997e46\",\"\uE961-\\\\篸{\"],[40,-8761,null,-7995393784734742820,\"275774022-08-09T21:28:04.485Z\",\"-264492-10-11T03:17:51.666853Z\",null,0.5065228336156442,\"LNVTI\",null,false,[],\"a011214b-ad88-8a69-9502-128cda0887fe\",null],[-31,4215,1362833895,null,\"-49144476-01-15T02:33:12.980Z\",null,0.26369333,0.7632615004324503,\"LHMLL\",\"OYP\",false,[],\"b92d0771-d782-63eb-5479-ae0482582ad0\",\"! Yc0\"],[-80,-23575,null,5552835357100545895,\"-229044588-12-31T09:43:18.056Z\",null,null,null,\"GLUOH\",\"ZHZ\",false,[],\"8b1134e2-9413-4389-a2cb-c77b1cdd7786\",\"1\uD97C\uDD2B珣zx\"],[119,-2044,-2043541236,-4547802916868961458,\"-281648402-09-21T10:33:06.955Z\",\"221810-02-23T20:19:19.020303Z\",0.56910527,null,\"WIFFL\",\"BRO\",false,[],\"09359765-2ae7-2c5c-14ef-c23546571bdc\",\"\uDA02\uDE66\uDA29\uDE0E⋜\uD9DC\uDEB3\uD90B\uDDC5\"],[16,30964,-1520181263,-7212878484370155026,null,\"280770-04-22T16:59:28.938593Z\",0.34608507,0.5780819331422455,\"UQDYO\",null,false,[],\"a579cf90-ccdf-133e-86be-020b55a15fd1\",null],[72,27348,-647653731,8737613628813682249,null,null,0.0024457574,0.19736767249829557,\"CBDMI\",\"QZV\",true,[],null,\"\uDB4F\uDC7Dl⤃堝ᢣ\"],[36,22350,null,null,\"77319557-11-14T08:22:42.686Z\",\"104977-04-08T13:34:21.431788Z\",0.112962544,0.9934423708117267,\"FNWGR\",\"DGG\",false,[],\"899850f1-14ad-249d-97af-847507d07b51\",\"d<J1n\"],[59,-13676,-1529726228,4092568845903588572,null,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,[],\"c48ad6b8-f696-2219-b27b-0ac7fbdee201\",\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"]],\"count\":10}\r\n" +
+                                    "00\r\n",
                             1,
                             0,
                             false,
@@ -4938,17 +5131,12 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testJsonQueryVacuumTable() throws Exception {
         testJsonQuery0(2, engine -> {
-            CreateTableTestUtils.createTestTable(
-                    engine,
-                    20,
-                    new Rnd(),
-                    new TestRecord.ArrayBinarySequence()
-            );
+            createTableX(engine, 20);
 
             final String vacuumQuery = "vacuum table x";
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=" + HttpUtils.urlEncodeQuery(vacuumQuery) + "&count=true HTTP/1.1\r\n" +
+                    "GET /query?query=" + urlEncodeQuery(vacuumQuery) + "&count=true HTTP/1.1\r\n" +
                             "Host: localhost:9001\r\n" +
                             "Connection: keep-alive\r\n" +
                             "Cache-Control: max-age=0\r\n" +
@@ -5017,12 +5205,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 try {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            30,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, 30);
 
                     // send multipart request to server
                     final String request = "GET /query?query=x HTTP/1.1\r\n" +
@@ -5096,12 +5279,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 try {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            1000,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, 1000);
 
                     // send multipart request to server
                     // testJsonQueryWithCompressedResults1 tested requests from REST API, while this test mimics requests sent from web console
@@ -5188,18 +5366,13 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 });
 
-                O3Utils.setupWorkerPool(workerPool, engine, null);
+                TestUtils.setupWorkerPool(workerPool, engine);
 
                 workerPool.start(LOG);
 
                 try {
                     // create table with all column types
-                    CreateTableTestUtils.createTestTable(
-                            engine,
-                            tableRowCount,
-                            new Rnd(),
-                            new TestRecord.ArrayBinarySequence()
-                    );
+                    createTableX(engine, tableRowCount);
 
                     // send multipart request to server
                     final String request = "GET /query?query=select+a+from+x+where+test_latched_counter() HTTP/1.1\r\n" +
@@ -5213,7 +5386,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                             "\r\n";
 
-                    int fd = nf.socketTcp(true);
+                    long fd = nf.socketTcp(true);
                     try {
                         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
                         assert sockAddrInfo != -1;
@@ -5243,7 +5416,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                     // depending on how quick the CI hardware is we may end up processing different
                     // number of rows before query is interrupted
-                    Assert.assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
+                    assertTrue(tableRowCount > TestLatchedCounterFunctionFactory.getCount());
                 } finally {
                     workerPool.halt();
                 }
@@ -5272,10 +5445,8 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: application/json; charset=utf-8\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "01af\r\n" +
-                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                        "01cd\r\n" +
+                        "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\""
         );
     }
 
@@ -5432,7 +5603,7 @@ public class IODispatcherTest extends AbstractTest {
                     new IOContextFactory<HttpConnectionContext>() {
                         @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -5444,7 +5615,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     }
             )) {
-                HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+                try (HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                     @Override
                     public void close() {
                     }
@@ -5458,38 +5629,39 @@ public class IODispatcherTest extends AbstractTest {
                     public HttpRequestProcessor select(Utf8Sequence url) {
                         return null;
                     }
-                };
+                }) {
 
-                AtomicBoolean serverRunning = new AtomicBoolean(true);
-                SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
+                    AtomicBoolean serverRunning = new AtomicBoolean(true);
+                    SOCountDownLatch serverHaltLatch = new SOCountDownLatch(1);
 
-                new Thread(() -> {
+                    new Thread(() -> {
+                        try {
+                            do {
+                                dispatcher.run(0);
+                                dispatcher.processIOQueue(
+                                        (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                );
+                            } while (serverRunning.get());
+                        } finally {
+                            serverHaltLatch.countDown();
+                        }
+                    }).start();
+
+                    LongList openFds = new LongList();
+
+                    final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
+                    final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
                     try {
-                        do {
-                            dispatcher.run(0);
-                            dispatcher.processIOQueue(
-                                    (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
-                            );
-                        } while (serverRunning.get());
+                        for (int i = 0; i < 10; i++) {
+                            testMaxConnections0(dispatcher, sockAddr, openFds, buf);
+                        }
                     } finally {
-                        serverHaltLatch.countDown();
+                        Net.freeSockAddr(sockAddr);
+                        Unsafe.free(buf, 4096, MemoryTag.NATIVE_DEFAULT);
+                        Assert.assertFalse(configuration.getLimit() < dispatcher.getConnectionCount());
+                        serverRunning.set(false);
+                        serverHaltLatch.await();
                     }
-                }).start();
-
-                IntList openFds = new IntList();
-
-                final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
-                final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int i = 0; i < 10; i++) {
-                        testMaxConnections0(dispatcher, sockAddr, openFds, buf);
-                    }
-                } finally {
-                    Net.freeSockAddr(sockAddr);
-                    Unsafe.free(buf, 4096, MemoryTag.NATIVE_DEFAULT);
-                    Assert.assertFalse(configuration.getLimit() < dispatcher.getConnectionCount());
-                    serverRunning.set(false);
-                    serverHaltLatch.await();
                 }
             }
         });
@@ -5599,7 +5771,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testMissingURL() throws Exception {
         testJsonQuery0(2, engine -> {
-            int fd = Net.socketTcp(true);
+            long fd = Net.socketTcp(true);
             try {
                 long sockAddrInfo = Net.getAddrInfo("127.0.0.1", 9001);
                 try {
@@ -5655,6 +5827,21 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testNoMetadataInTextExport() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(2)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run((engine) -> {
+                    CharSequenceObjHashMap<String> queryParams = new CharSequenceObjHashMap<>();
+                    queryParams.put("nm", "true");
+                    queryParams.put("query", "select 42 from long_sequence(1);");
+                    testHttpClient.assertGet("/exp", "42\r\n", queryParams, null, null);
+                });
+    }
+
+    @Test
     public void testPostRequestToGetProcessor() throws Exception {
         testImport(
                 "HTTP/1.1 404 Not Found\r\n" +
@@ -5664,7 +5851,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Type: text/plain; charset=utf-8\r\n" +
                         "\r\n" +
                         "27\r\n" +
-                        "method (multipart POST) not supported\r\n" +
+                        "Method (multipart POST) not supported\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n",
@@ -5740,7 +5927,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
                             "0100\r\n" +
                                     "{\"query\":\"select * from test_data_unavailable(32, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1,1,1],[2,2,2],[3,3,3],[4,4,4],[5,5,5],[6,6,6],[7,7,7],[8,8,8],[9,9,9],[10,10,10]\r\n" +
                                     "ff\r\n" +
@@ -5802,7 +5989,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
                             "d0\r\n" +
                                     "{\"query\":\"select * from test_data_unavailable(3, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}\r\n" +
                                     "00\r\n" +
@@ -5875,7 +6062,7 @@ public class IODispatcherTest extends AbstractTest {
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
-                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
+                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
                         writeRandomFile(path, rnd, 122222212222L);
@@ -5972,7 +6159,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     } finally {
                         workerPool.halt();
-                        Files.remove(path);
+                        Files.remove(path.$());
                     }
                 }
             }
@@ -6003,14 +6190,14 @@ public class IODispatcherTest extends AbstractTest {
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
-                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
+                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
                         final int diskBufferLen = 1024 * 1024;
 
                         writeRandomFile(path, rnd, 122299092L);
 
-                        int fd = Net.socketTcp(true);
+                        long fd = Net.socketTcp(true);
                         try {
                             long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                             try {
@@ -6113,7 +6300,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     } finally {
                         workerPool.halt();
-                        Files.remove(path);
+                        Files.remove(path.$());
                     }
                 }
             }
@@ -6153,10 +6340,9 @@ public class IODispatcherTest extends AbstractTest {
                 workerPool.start(LOG);
 
                 // create 20Mb file in /tmp directory
-                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt").$()) {
+                try (Path path = new Path().of(baseDir).concat("questdb-temp.txt")) {
                     try {
                         Rnd rnd = new Rnd();
-                        final int diskBufferLen = 1024 * 1024;
 
                         writeRandomFile(path, rnd, 122222212222L);
 
@@ -6257,7 +6443,7 @@ public class IODispatcherTest extends AbstractTest {
                             workerPool.halt();
                         }
                     } finally {
-                        Files.remove(path);
+                        Files.remove(path.$());
                     }
                 }
             }
@@ -6304,7 +6490,7 @@ public class IODispatcherTest extends AbstractTest {
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -6370,7 +6556,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }).start();
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -6457,8 +6643,13 @@ public class IODispatcherTest extends AbstractTest {
             HttpServerConfiguration httpServerConfiguration = new DefaultHttpServerConfiguration(
                     new DefaultHttpContextConfiguration() {
                         @Override
-                        public MillisecondClock getClock() {
-                            return () -> 0;
+                        public MillisecondClock getMillisecondClock() {
+                            return StationaryMillisClock.INSTANCE;
+                        }
+
+                        @Override
+                        public NanosecondClock getNanosecondClock() {
+                            return StationaryNanosClock.INSTANCE;
                         }
                     }
             );
@@ -6471,7 +6662,7 @@ public class IODispatcherTest extends AbstractTest {
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -6541,7 +6732,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }).start();
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -6559,7 +6750,7 @@ public class IODispatcherTest extends AbstractTest {
                             int read = 0;
                             while (read < expectedLen) {
                                 int n = Net.recv(fd, buffer, len);
-                                Assert.assertTrue(n > 0);
+                                assertTrue(n > 0);
 
                                 for (int i = 0; i < n; i++) {
                                     sink2.put((char) Unsafe.getUnsafe().getByte(buffer + i));
@@ -6631,7 +6822,7 @@ public class IODispatcherTest extends AbstractTest {
                     },
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -6696,7 +6887,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }).start();
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -6726,7 +6917,7 @@ public class IODispatcherTest extends AbstractTest {
                         Assert.assertEquals(0, dispatcher.getConnectionCount());
 
                         // do not close client side before server does theirs
-                        Assert.assertTrue(Net.isDead(fd));
+                        assertTrue(Net.isDead(fd));
 
                         TestUtils.assertEquals("", sink);
                     } finally {
@@ -6745,7 +6936,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testTextExportDisconnectOnDataUnavailableEventNeverFired() throws Exception {
         testDisconnectOnDataUnavailableEventNeverFired(
-                "GET /exp?query=" + HttpUtils.urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
+                "GET /exp?query=" + urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
                         + SendAndReceiveRequestBuilder.RequestHeaders
         );
     }
@@ -6765,7 +6956,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     final String select = "select * from test_data_unavailable(32, 10)";
                     new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                            "GET /exp?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
+                            "GET /exp?query=" + urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
                             "HTTP/1.1 200 OK\r\n" +
                                     "Server: questDB/1.0\r\n" +
                                     "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -6838,7 +7029,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                     new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                            "GET /exp?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "GET /exp?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
                             "HTTP/1.1 200 OK\r\n" +
                                     "Server: questDB/1.0\r\n" +
                                     "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -6884,7 +7075,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                     new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                            "GET /exp?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "GET /exp?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
                             "HTTP/1.1 200 OK\r\n" +
                                     "Server: questDB/1.0\r\n" +
                                     "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -6920,7 +7111,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String copyQuery = "copy test from 'test-numeric-headers.csv' with header true";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(copyQuery) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(copyQuery) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -6952,7 +7143,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String cancelQuery = "copy '0000000000000000' cancel";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(cancelQuery) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(cancelQuery) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -6984,7 +7175,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String incorrectCancelQuery = "copy 'ffffffffffffffff' cancel";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(incorrectCancelQuery) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(incorrectCancelQuery) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7217,7 +7408,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String createTableDdl = "create table balances(cust_id int, ccy symbol, balance double)";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(createTableDdl) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(createTableDdl) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7246,7 +7437,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String showColumnsQuery = "show columns from balances";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(showColumnsQuery) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(showColumnsQuery) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7277,7 +7468,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String dropTableDdl = "drop table balances";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(dropTableDdl) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(dropTableDdl) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7306,7 +7497,7 @@ public class IODispatcherTest extends AbstractTest {
                     // We should get a meaningful error.
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(showColumnsQuery) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(showColumnsQuery) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7358,19 +7549,13 @@ public class IODispatcherTest extends AbstractTest {
                 .run((engine) -> {
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
-                        // We expect header only to be sent and then a disconnect.
-                        new SendAndReceiveRequestBuilder()
-                                .withExpectReceiveDisconnect(true)
-                                .executeWithStandardRequestHeaders(
-                                        "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
-                                        "HTTP/1.1 200 OK\r\n" +
-                                                "Server: questDB/1.0\r\n" +
-                                                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                                "Transfer-Encoding: chunked\r\n" +
-                                                "Content-Type: text/csv; charset=utf-8\r\n" +
-                                                "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
-                                                "Keep-Alive: timeout=5, max=10000\r\n"
-                                );
+                        testHttpClient.assertGetRegexp(
+                                "/exp",
+                                "\\{\"query\":\"select i, avg\\(l\\), max\\(l\\) from t group by i order by i asc limit 3\",\"error\":\"\\[-1\\] timeout, query aborted \\[fd=\\d+\\]\",\"position\":0\\}",
+                                QUERY_TIMEOUT_SELECT,
+                                null, null, null, null,
+                                "408"
+                        );
                     }
                 });
     }
@@ -7390,7 +7575,7 @@ public class IODispatcherTest extends AbstractTest {
                         engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
                             new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                                    "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                    "GET /exp?query=" + urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
                                     "HTTP/1.1 200 OK\r\n" +
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -7438,21 +7623,88 @@ public class IODispatcherTest extends AbstractTest {
                         "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
-                        "0625\r\n" +
-                        "\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\",\"j\",\"k\",\"l\",\"m\"\r\n" +
-                        "80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",,,\"EHNRX\",\"ZSX\",false,,c2593f82-b430-328d-84a0-9f29df637e38\r\n" +
-                        "27,-15458,,,\"271684783-08-14T19:54:59.209Z\",\"246280-11-21T19:36:06.863064Z\",0.9687423,,\"EDRQQ\",\"LOF\",false,,59d574d2-ff5f-b1e3-687a-84abb7bfac3e\r\n" +
-                        "-15,-12303,-443320374,,\"18125533-09-05T04:06:38.086Z\",,0.053843975,0.6821660861001273,\"UVSDO\",\"SED\",false,,7dc85977-0af2-0493-8151-081b8acafadd\r\n" +
-                        "-26,-1072,844704299,-5439556746612026472,,\"-223119-09-14T09:01:18.820936Z\",0.24008358,,\"SSUQS\",\"LTK\",false,,867f8923-b442-2deb-b63b-32ce71b869c6\r\n" +
-                        "-22,-16957,1431425139,5703149806881083206,\"-169092820-09-20T13:00:33.346Z\",\"169679-01-30T22:35:53.709416Z\",0.85931313,0.021189232728939578,,,false,,3eef3f15-8e08-4362-4d0f-a2564c351767\r\n" +
-                        "40,-17824,,,\"75525295-09-06T22:11:27.250Z\",,0.38422543,,\"ZHZSQ\",\"DGL\",false,,\r\n" +
-                        "12,26413,,,\"-280416206-11-15T18:10:34.329Z\",\"-212972-12-23T07:03:41.201156Z\",0.67070186,0.7229359906306887,\"QCEHN\",\"MVE\",true,,43452482-4ca8-4f52-3ed3-91560ac32754\r\n" +
-                        "-48,10793,-1594425659,-7414829143044491558,,\"-277346-12-26T06:26:35.016287Z\",0.48352557,,,,false,,628bdaed-6813-f20b-34a0-58990880698b\r\n" +
-                        "-109,-32283,-895337819,6146164804821006241,\"-78315370-06-23T19:44:52.764Z\",,0.43461353,0.2559680920632348,\"FDTNP\",,false,,72f1d686-75d8-67cf-58b0-00a0492ff296\r\n" +
-                        "43,-4941,415709351,6153381060986313135,\"216474105-07-04T10:25:00.310Z\",\"226653-05-24T13:46:11.574792Z\",0.76532555,0.1511578096923386,\"QZSLQ\",\"FGP\",true,,ce57f611-173c-e55d-d2bc-1ceb1d7c9713\r\n" +
+                        "06c1\r\n" +
+                        "\"a\",\"b\",\"c\",\"d\",\"e\",\"f\",\"g\",\"h\",\"i\",\"j\",\"k\",\"l\",\"m\",\"n\"\r\n" +
+                        "80,24814,-727724771,8920866532787660373,\"-169665660-01-09T01:58:28.119Z\",\"-51129-02-11T06:38:29.397464Z\",,,\"EHNRX\",\"ZSX\",false,,c2593f82-b430-328d-84a0-9f29df637e38,\"}龘и\uDA89\uDFA4~\"\r\n" +
+                        "53,5639,-1162267908,6993925225312419449,\"195808098-05-09T04:14:54.347Z\",\"171005-04-19T09:31:35.433003Z\",0.24593449,0.29313719347837397,\"BVTMH\",,false,,d364c241-dde2-cf90-a7a8-f4e549997e46,\"\uE961-\\\\篸{\"\r\n" +
+                        "40,-8761,,-7995393784734742820,\"275774022-08-09T21:28:04.485Z\",\"-264492-10-11T03:17:51.666853Z\",,0.5065228336156442,\"LNVTI\",,false,,a011214b-ad88-8a69-9502-128cda0887fe,\r\n" +
+                        "-31,4215,1362833895,,\"-49144476-01-15T02:33:12.980Z\",,0.26369333,0.7632615004324503,\"LHMLL\",\"OYP\",false,,b92d0771-d782-63eb-5479-ae0482582ad0,\"! Yc0\"\r\n" +
+                        "-80,-23575,,5552835357100545895,\"-229044588-12-31T09:43:18.056Z\",,,,\"GLUOH\",\"ZHZ\",false,,8b1134e2-9413-4389-a2cb-c77b1cdd7786,\"1\uD97C\uDD2B珣zx\"\r\n" +
+                        "119,-2044,-2043541236,-4547802916868961458,\"-281648402-09-21T10:33:06.955Z\",\"221810-02-23T20:19:19.020303Z\",0.56910527,,\"WIFFL\",\"BRO\",false,,09359765-2ae7-2c5c-14ef-c23546571bdc,\"\uDA02\uDE66\uDA29\uDE0E⋜\uD9DC\uDEB3\uD90B\uDDC5\"\r\n" +
+                        "16,30964,-1520181263,-7212878484370155026,,\"280770-04-22T16:59:28.938593Z\",0.34608507,0.5780819331422455,\"UQDYO\",,false,,a579cf90-ccdf-133e-86be-020b55a15fd1,\r\n" +
+                        "72,27348,-647653731,8737613628813682249,,,0.0024457574,0.19736767249829557,\"CBDMI\",\"QZV\",true,,,\"\uDB4F\uDC7Dl⤃堝ᢣ\"\r\n" +
+                        "36,22350,,,\"77319557-11-14T08:22:42.686Z\",\"104977-04-08T13:34:21.431788Z\",0.112962544,0.9934423708117267,\"FNWGR\",\"DGG\",false,,899850f1-14ad-249d-97af-847507d07b51,\"d<J1n\"\r\n" +
+                        "59,-13676,-1529726228,4092568845903588572,,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,,c48ad6b8-f696-2219-b27b-0ac7fbdee201,\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"\r\n" +
                         "\r\n" +
                         "00\r\n" +
                         "\r\n"
+        );
+    }
+
+    @Test
+    public void testTextQueryVarchar() throws Exception {
+        testJsonQuery(
+                10,
+                "GET /exp?query=SELECT+n+as+varchar+FROM+x HTTP/1.1\r\n" +
+                        "Host: localhost:9000\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: */*\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: text/csv; charset=utf-8\r\n" +
+                        "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "89\r\n" +
+                        "\"varchar\"\r\n" +
+                        "\"}龘и\uDA89\uDFA4~\"\r\n" +
+                        "\"\uE961-\\\\篸{\"\r\n" +
+                        "\r\n" +
+                        "\"! Yc0\"\r\n" +
+                        "\"1\uD97C\uDD2B珣zx\"\r\n" +
+                        "\"\uDA02\uDE66\uDA29\uDE0E⋜\uD9DC\uDEB3\uD90B\uDDC5\"\r\n" +
+                        "\r\n" +
+                        "\"\uDB4F\uDC7Dl⤃堝ᢣ\"\r\n" +
+                        "\"d<J1n\"\r\n" +
+                        "\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"\r\n" +
+                        "\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testTimingsContainsAuthentication() throws Exception {
+        nanosecondClock = StationaryNanosClock.INSTANCE;
+        testJsonQuery(
+                10,
+                "GET /query?query=x%20where%20i%20%3D%20%27A%27&timings=true HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "021d\r\n" +
+                        "{\"query\":\"x where i = 'A'\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0,\"timings\":{\"authentication\":0,\"compiler\":0,\""
         );
     }
 
@@ -7561,17 +7813,19 @@ public class IODispatcherTest extends AbstractTest {
             final AtomicInteger requestsReceived = new AtomicInteger();
             final AtomicBoolean finished = new AtomicBoolean(false);
             final SOCountDownLatch senderHalt = new SOCountDownLatch(senderCount);
-            try (IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
-                    new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public boolean getPeerNoLinger() {
-                            return true;
-                        }
-                    },
-                    (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
-            )) {
+            try (
+                    IODispatcher<HttpConnectionContext> dispatcher = IODispatchers.create(
+                            new DefaultIODispatcherConfiguration() {
+                                @Override
+                                public boolean getPeerNoLinger() {
+                                    return true;
+                                }
+                            },
+                            (fd, dispatcher1) -> new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE).of(fd, dispatcher1)
+                    );
+                    final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024)
+            ) {
                 // server will publish status of each request to this queue
-                final RingQueue<Status> queue = new RingQueue<>(Status::new, 1024);
                 final MPSequence pubSeq = new MPSequence(queue.getCycle());
                 SCSequence subSeq = new SCSequence();
                 pubSeq.then(subSeq).then(pubSeq);
@@ -7625,7 +7879,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             };
 
-                            HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
+                            try (HttpRequestProcessorSelector selector = new HttpRequestProcessorSelector() {
                                 @Override
                                 public void close() {
                                 }
@@ -7639,18 +7893,19 @@ public class IODispatcherTest extends AbstractTest {
                                 public HttpRequestProcessor select(Utf8Sequence url) {
                                     return null;
                                 }
-                            };
+                            }) {
 
-                            try {
-                                while (serverRunning.get()) {
-                                    dispatcher.run(0);
-                                    dispatcher.processIOQueue(
-                                            (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
-                                    );
+                                try {
+                                    while (serverRunning.get()) {
+                                        dispatcher.run(0);
+                                        dispatcher.processIOQueue(
+                                                (operation, context, dispatcher1) -> handleClientOperation(context, operation, selector, EmptyRescheduleContext, dispatcher1)
+                                        );
+                                    }
+                                } finally {
+                                    Unsafe.free(responseBuf, 32, MemoryTag.NATIVE_DEFAULT);
+                                    serverHaltLatch.countDown();
                                 }
-                            } finally {
-                                Unsafe.free(responseBuf, 32, MemoryTag.NATIVE_DEFAULT);
-                                serverHaltLatch.countDown();
                             }
                         }).start();
                     }
@@ -7662,7 +7917,7 @@ public class IODispatcherTest extends AbstractTest {
                             long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                             try {
                                 for (int i = 0; i < N && !finished.get(); i++) {
-                                    int fd = Net.socketTcp(true);
+                                    long fd = Net.socketTcp(true);
                                     try {
                                         TestUtils.assertConnect(fd, sockAddr);
                                         int len = request.length();
@@ -7700,7 +7955,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                         boolean valid = queue.get(cursor).valid;
                         subSeq.done(cursor);
-                        Assert.assertTrue(valid);
+                        assertTrue(valid);
                         receiveCount++;
                     }
                 } finally {
@@ -7760,7 +8015,7 @@ public class IODispatcherTest extends AbstractTest {
                             try (TestHttpClient testHttpClient = new TestHttpClient()) {
                                 started.countDown();
                                 try {
-                                    testHttpClient.assertGetRegexp(url, ".*(\"ddl\":\"OK\").*", command, null, null, null);
+                                    testHttpClient.assertGetRegexp(url, ".*(\"dml\":\"OK\").*", command, null, null, null);
                                 } catch (Throwable e) {
                                     queryError.set(e);
                                 }
@@ -7781,7 +8036,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
                             } finally {
                                 // release native path memory used by the job
-                                Path.PATH.get().close();
+                                Path.clearThreadLocals();
                                 stopped.countDown();
                             }
                         }, "wal_job");
@@ -7829,7 +8084,8 @@ public class IODispatcherTest extends AbstractTest {
                                 executionContext,
                                 "select count(*) from tab where b=false",
                                 sink,
-                                "count\n1000\n");
+                                "count\n1000\n"
+                        );
 
                     } finally {
                         engine.getQueryRegistry().setListener(null);
@@ -7900,8 +8156,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 });
 
-                O3Utils.setupWorkerPool(workerPool, engine, engine.getConfiguration().getCircuitBreakerConfiguration());
-
+                WorkerPoolUtils.setupQueryJobs(workerPool, engine, engine.getConfiguration().getCircuitBreakerConfiguration());
                 workerPool.start(LOG);
 
                 try {
@@ -7926,7 +8181,7 @@ public class IODispatcherTest extends AbstractTest {
                         try (TestHttpClient testHttpClient = new TestHttpClient()) {
                             started.countDown();
                             try {
-                                testHttpClient.assertGetRegexp("/query", ".*(\"ddl\":\"OK\").*", command, null, null, null);
+                                testHttpClient.assertGetRegexp("/query", ".*(\"dml\":\"OK\").*", command, null, null, null);
                             } catch (Throwable e) {
                                 queryError.set(e);
                             }
@@ -7947,7 +8202,7 @@ public class IODispatcherTest extends AbstractTest {
                             }
                         } finally {
                             // release native path memory used by the job
-                            Path.PATH.get().close();
+                            Path.clearThreadLocals();
                             stopped.countDown();
                         }
                     }, "wal_job");
@@ -8035,7 +8290,7 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private static void assertDownloadResponse(
-            int fd,
+            long fd,
             Rnd rnd,
             long buffer,
             int len,
@@ -8050,7 +8305,7 @@ public class IODispatcherTest extends AbstractTest {
         while (downloadedSoFar < expectedResponseLen) {
             int contentOffset = 0;
             int n = Net.recv(fd, buffer, len);
-            Assert.assertTrue(n > -1);
+            assertTrue(n > -1);
             if (n > 0) {
                 if (headerCheckRemaining > 0) {
                     for (int i = 0; i < n && headerCheckRemaining > 0; i++) {
@@ -8102,12 +8357,12 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private static HttpServer createHttpServer(
-            HttpServerConfiguration configuration,
+            ServerConfiguration serverConfiguration,
             CairoEngine cairoEngine,
             WorkerPool workerPool
     ) {
         return Services.INSTANCE.createHttpServer(
-                configuration,
+                serverConfiguration,
                 cairoEngine,
                 workerPool,
                 workerPool.getWorkerCount(),
@@ -8115,13 +8370,21 @@ public class IODispatcherTest extends AbstractTest {
         );
     }
 
-    private static void createTestTable(CairoEngine engine) {
-        try (TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE)) {
-            model.col("j", ColumnType.SYMBOL);
-            TestUtils.create(model, engine);
-        }
+    private static void createTableX(CairoEngine engine, int n) {
+        CreateTableTestUtils.createTestTable(
+                engine,
+                n,
+                new Rnd(),
+                new TestRecord.ArrayBinarySequence()
+        );
+    }
 
-        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("y"))) {
+    private static void createTestTable(CairoEngine engine) {
+        TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE);
+        model.col("j", ColumnType.SYMBOL);
+        TestUtils.create(model, engine);
+
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("y"), engine)) {
             for (int i = 0; i < 20; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");
@@ -8180,7 +8443,7 @@ public class IODispatcherTest extends AbstractTest {
                 .execute(request, response);
     }
 
-    private static void sendRequest(String request, int fd, long buffer) {
+    private static void sendRequest(String request, long fd, long buffer) {
         final int requestLen = request.length();
         Utf8s.strCpyAscii(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
@@ -8193,8 +8456,8 @@ public class IODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
                 .run(engine -> {
-                    StringSink expected = new StringSink();
-                    StringSink actual = new StringSink();
+                    Utf8StringSink expected = new Utf8StringSink();
+                    Utf8StringSink actual = new Utf8StringSink();
                     final TestCases testCases = new TestCases();
 
                     // create tables
@@ -8205,7 +8468,7 @@ public class IODispatcherTest extends AbstractTest {
                         TestCase testCase = testCases.getQuick(i);
                         // http does not support bind variables yet
                         if (testCase.getBindVariableValues().length == 0) {
-                            System.out.println("************** SQL ******************");
+                            System.out.println("************** SQL " + i + " ******************");
                             System.out.println(testCase.getQuery());
                             System.out.println("*************************************");
 
@@ -8239,13 +8502,17 @@ public class IODispatcherTest extends AbstractTest {
 
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
         TableToken tableToken = new TableToken(tableName, dirName, 1, false, false, false);
-        try (TableReader reader = new TableReader(configuration, tableToken)) {
+        try (
+                TableReader reader = new TableReader(configuration, tableToken);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+        ) {
+            cursor.of(reader);
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());
             Assert.assertEquals(0, expectedImportedRows - reader.size());
             StringSink sink = new StringSink();
-            TestUtils.assertCursor(expectedData, reader.getCursor(), reader.getMetadata(), false, sink);
+            TestUtils.assertCursor(expectedData, cursor, reader.getMetadata(), false, sink);
         }
     }
 
@@ -8254,15 +8521,19 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false);
-        try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, true);
+        try (
+                TableReader reader = new TableReader(configuration, telemetryTableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+        ) {
+            cursor.of(reader);
             final StringSink sink = new StringSink();
             sink.clear();
-            printTelemetryEventAndOrigin(reader.getCursor(), reader.getMetadata(), sink);
+            printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
             TestUtils.assertEquals(expected, sink);
-            reader.getCursor().toTop();
+            cursor.toTop();
             sink.clear();
-            printTelemetryEventAndOrigin(reader.getCursor(), reader.getMetadata(), sink);
+            printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -8445,11 +8716,10 @@ public class IODispatcherTest extends AbstractTest {
                 false,
                 1,
                 engine -> {
-                    try (TableModel model = new TableModel(configuration, tableName, partitionBy)
+                    TableModel model = new TableModel(configuration, tableName, partitionBy)
                             .timestamp("ts")
-                            .col("int", ColumnType.INT)) {
-                        TestUtils.create(model, engine);
-                    }
+                            .col("int", ColumnType.INT);
+                    TestUtils.create(model, engine);
                 }
         );
 
@@ -8468,7 +8738,7 @@ public class IODispatcherTest extends AbstractTest {
                 // We re-create the table when overwrite is set.
                 extraMsyncs += msyncsPerTableCreation;
             }
-            Assert.assertTrue("at least " + (extraMsyncs + 1) + " msync calls expected, was " + msyncCallCount.get(), msyncCallCount.get() > extraMsyncs);
+            assertTrue("at least " + (extraMsyncs + 1) + " msync calls expected, was " + msyncCallCount.get(), msyncCallCount.get() > extraMsyncs);
         }
     }
 
@@ -8560,9 +8830,9 @@ public class IODispatcherTest extends AbstractTest {
             if (event < 0) {
                 continue; // skip non-event entries
             }
-            TestUtils.printColumn(record, metadata, 1, sink, false);
+            CursorPrinter.printColumn(record, metadata, 1, sink, false);
             sink.put('\t');
-            TestUtils.printColumn(record, metadata, 2, sink, false);
+            CursorPrinter.printColumn(record, metadata, 2, sink, false);
             sink.put('\n');
         }
     }
@@ -8579,7 +8849,7 @@ public class IODispatcherTest extends AbstractTest {
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                     final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    int fd = nf.socketTcp(true);
+                    long fd = nf.socketTcp(true);
                     try {
                         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
                         assert sockAddrInfo != -1;
@@ -8692,7 +8962,7 @@ public class IODispatcherTest extends AbstractTest {
                             final String ddl = ddls.getQuick(i);
                             boolean isWal = ddl.equals(walTable);
 
-                            engine.drop("drop table if exists tab", executionContext, null);
+                            engine.drop("drop table if exists tab", executionContext);
                             engine.ddl(ddl, executionContext);
                             engine.insert("insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)", executionContext);
                             if (isWal) {
@@ -8709,7 +8979,7 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 try {
-                                    engine.drop("drop table if exists new_tab", executionContext, null);
+                                    engine.drop("drop table if exists new_tab", executionContext);
                                     if (isWal) {
                                         drainWalQueue(engine);
                                     }
@@ -8746,45 +9016,45 @@ public class IODispatcherTest extends AbstractTest {
                                     long start = System.currentTimeMillis();
 
                                     //wait until query appears in registry and get query id
-                                    try {
-                                        while (true) {
-                                            Os.sleep(1);
-                                            testHttpClient.assertGetRegexp(
-                                                    "/query",
-                                                    ".*dataset.*",
-                                                    "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
-                                                    null, null, null,
-                                                    new CharSequenceObjHashMap<String>() {{
-                                                        put("nm", "true");
-                                                    }},
-                                                    "200"
-                                            );
-                                            String response = testHttpClient.getSink().toString();
-                                            int startIdx = response.indexOf("\"dataset\":[[");
-                                            if (startIdx > -1) {
-                                                startIdx += "\"dataset\":[[".length();
-                                                int endIdx = response.indexOf("]]", startIdx);
-                                                queryId = Numbers.parseLong(response, startIdx, endIdx);
-                                                break;
-                                            }
-                                            if (System.currentTimeMillis() - start > TIMEOUT) {
-                                                throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
-                                            }
-                                            if (queryError.get() != null) {
-                                                throw new RuntimeException("Query to cancel failed!", queryError.get());
-                                            }
+                                    while (true) {
+                                        Os.sleep(1);
+                                        testHttpClient.assertGetRegexp(
+                                                "/query",
+                                                ".*dataset.*",
+                                                "select query_id from query_activity() where query = '" + command.replace("'", "''") + "'",
+                                                null, null, null,
+                                                new CharSequenceObjHashMap<String>() {{
+                                                    put("nm", "true");
+                                                }},
+                                                "200"
+                                        );
+                                        String response = testHttpClient.getSink().toString();
+                                        int startIdx = response.indexOf("\"dataset\":[[");
+                                        if (startIdx > -1) {
+                                            startIdx += "\"dataset\":[[".length();
+                                            int endIdx = response.indexOf("]]", startIdx);
+                                            queryId = Numbers.parseLong(response, startIdx, endIdx);
+                                            break;
                                         }
+                                        if (System.currentTimeMillis() - start > TIMEOUT) {
+                                            throw new RuntimeException("Timed out waiting for command to appear in registry: " + command);
+                                        }
+                                        if (queryError.get() != null) {
+                                            throw new RuntimeException("Query to cancel failed!", queryError.get());
+                                        }
+                                    }
+
+                                    try {
+                                        testHttpClient.assertGetRegexp(
+                                                "/query",
+                                                ".*(query to cancel not found in registry|\"ddl\":\"OK\").*",
+                                                "cancel query " + queryId,
+                                                null, null,
+                                                "200"
+                                        );
                                     } finally {
                                         registryListener.queryFound.countDown();
                                     }
-
-                                    testHttpClient.assertGetRegexp(
-                                            "/query",
-                                            ".*(query to cancel not found in registry|\"ddl\":\"OK\").*",
-                                            "cancel query " + queryId,
-                                            null, null,
-                                            "200"
-                                    );
 
                                     start = System.currentTimeMillis();
 
@@ -8861,12 +9131,8 @@ public class IODispatcherTest extends AbstractTest {
     private HttpQueryTestBuilder testJsonQuery(int recordCount, String request, String expectedResponse, int requestCount, boolean telemetry) throws Exception {
         return testJsonQuery0(2, engine -> {
             // create table with all column types
-            CreateTableTestUtils.createTestTable(
-                    engine,
-                    recordCount,
-                    new Rnd(),
-                    new TestRecord.ArrayBinarySequence()
-            );
+            createTableX(engine, recordCount);
+            engine.metadataCacheHydrateAllTables();
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     request,
@@ -8896,6 +9162,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(telemetry)
                 .withTempFolder(root)
                 .withJitMode(SqlJitMode.JIT_MODE_ENABLED)
+                .withNanosClock(nanosecondClock)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()
                         .withServerKeepAlive(!http1)
                         .withSendBufferSize(16 * 1024)
@@ -8905,70 +9172,10 @@ public class IODispatcherTest extends AbstractTest {
         return builder;
     }
 
-    private void testJsonQueryCreateTableAsSelectTimeout(boolean withWal) throws Exception {
-        final String ddlAsSelectSuffix = withWal ? " wal" : " bypass wal";
-        final String ddlSuffix = withWal ? " bypass wal" : " wal";
-        new HttpQueryTestBuilder()
-                .withTempFolder(root)
-                .withWorkerCount(1)
-                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .withTelemetry(false)
-                .withQueryTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK)
-                .run((engine) -> {
-                    final String ddlAsSelect = "create table x as (select x::timestamp as ts, x as l from long_sequence(100)) timestamp(ts) partition by day" + ddlAsSelectSuffix;
-                    final String expectedErrorResponse = "HTTP/1.1 400 Bad request";
-                    new SendAndReceiveRequestBuilder()
-                            .withCompareLength(expectedErrorResponse.length())
-                            .execute(
-                                    "GET /exec?query=" + HttpUtils.urlEncodeQuery(ddlAsSelect) + " HTTP/1.1\r\n" +
-                                            "Host: localhost:9000\r\n" +
-                                            "Connection: keep-alive\r\n" +
-                                            "Accept: */*\r\n" +
-                                            "X-Requested-With: XMLHttpRequest\r\n" +
-                                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                                            "Sec-Fetch-Site: same-origin\r\n" +
-                                            "Sec-Fetch-Mode: cors\r\n" +
-                                            "Referer: http://localhost:9000/index.html\r\n" +
-                                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                            "\r\n",
-                                    expectedErrorResponse
-                            );
-                    // We should be able to create table with the same name.
-                    final String ddl = "create table x (ts timestamp, x long) timestamp(ts) partition by day" + ddlSuffix;
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            "GET /exec?query=" + HttpUtils.urlEncodeQuery(ddl) + " HTTP/1.1\r\n" +
-                                    "Host: localhost:9000\r\n" +
-                                    "Connection: keep-alive\r\n" +
-                                    "Accept: */*\r\n" +
-                                    "X-Requested-With: XMLHttpRequest\r\n" +
-                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.87 Safari/537.36\r\n" +
-                                    "Sec-Fetch-Site: same-origin\r\n" +
-                                    "Sec-Fetch-Mode: cors\r\n" +
-                                    "Referer: http://localhost:9000/index.html\r\n" +
-                                    "Accept-Encoding: gzip, deflate, br\r\n" +
-                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                    "\r\n",
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: application/json; charset=utf-8\r\n" +
-                                    "Keep-Alive: timeout=5, max=10000\r\n" +
-                                    "\r\n" +
-                                    JSON_DDL_RESPONSE,
-                            1,
-                            0,
-                            false
-                    );
-                });
-    }
-
     private void testMaxConnections0(
             IODispatcher<HttpConnectionContext> dispatcher,
             long sockAddr,
-            IntList openFds,
+            LongList openFds,
             long buf
     ) {
         // Connect sockets that would be consumed by dispatcher plus
@@ -8976,7 +9183,7 @@ public class IODispatcherTest extends AbstractTest {
         // This is necessary for TCP stack to start rejecting new connections
         openFds.clear();
         for (int i = 0; i < 400; i++) {
-            int fd = Net.socketTcp(true);
+            long fd = Net.socketTcp(true);
             LOG.info().$("Connecting socket ").$(i).$(" fd=").$(fd).$();
             TestUtils.assertConnect(fd, sockAddr);
             openFds.add(fd);
@@ -9007,7 +9214,7 @@ public class IODispatcherTest extends AbstractTest {
         try {
             for (int i = 0; i < 400; i++) {
                 LOG.info().$("Sending request via socket #").$(i).$();
-                int fd = openFds.getQuick(i);
+                long fd = openFds.getQuick(i);
                 Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
                 // ensure we have response from server
                 int len = Net.recv(fd, buf, 64);
@@ -9047,10 +9254,10 @@ public class IODispatcherTest extends AbstractTest {
             final long queuedConnectionTimeoutInMs = 250;
 
             class TestIOContext extends IOContext<TestIOContext> {
-                private final IntHashSet serverConnectedFds;
+                private final LongHashSet serverConnectedFds;
                 private long heartbeatId;
 
-                public TestIOContext(int fd, IntHashSet serverConnectedFds) {
+                public TestIOContext(long fd, LongHashSet serverConnectedFds) {
                     super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
                     socket.of(fd);
                     this.serverConnectedFds = serverConnectedFds;
@@ -9058,7 +9265,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 @Override
                 public void close() {
-                    final int fd = getFd();
+                    final long fd = getFd();
                     super.close();
                     LOG.info().$(fd).$(" disconnected").$();
                     serverConnectedFds.remove(fd);
@@ -9100,8 +9307,8 @@ public class IODispatcherTest extends AbstractTest {
             final int listenBackLog = configuration.getListenBacklog();
 
             final AtomicInteger nConnected = new AtomicInteger();
-            final IntHashSet serverConnectedFds = new IntHashSet();
-            final IntHashSet clientActiveFds = new IntHashSet();
+            final LongHashSet serverConnectedFds = new LongHashSet();
+            final LongHashSet clientActiveFds = new LongHashSet();
             IOContextFactory<TestIOContext> contextFactory = (fd, dispatcher) -> {
                 LOG.info().$(fd).$(" connected").$();
                 serverConnectedFds.add(fd);
@@ -9122,7 +9329,7 @@ public class IODispatcherTest extends AbstractTest {
                     public void run() {
                         long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
                         IORequestProcessor<TestIOContext> requestProcessor = (operation, context, dispatcher) -> {
-                            int fd = context.getFd();
+                            long fd = context.getFd();
                             int rc;
                             switch (operation) {
                                 case IOOperation.READ:
@@ -9171,8 +9378,8 @@ public class IODispatcherTest extends AbstractTest {
                 int nClientConnects = 0;
                 int nClientConnectRefused = 0;
                 for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
-                    int fd = Net.socketTcp(true);
-                    Assert.assertTrue(fd > -1);
+                    long fd = Net.socketTcp(true);
+                    assertTrue(fd > -1);
                     clientActiveFds.add(fd);
                     if (Net.connect(fd, sockAddr) != 0) {
                         nClientConnectRefused++;
@@ -9196,7 +9403,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 // Close all connections and wait for server to resume listening
                 while (clientActiveFds.size() > 0) {
-                    int fd = clientActiveFds.get(0);
+                    long fd = clientActiveFds.get(0);
                     clientActiveFds.remove(fd);
                     Net.close(fd);
                 }
@@ -9211,8 +9418,8 @@ public class IODispatcherTest extends AbstractTest {
                 nClientConnects = 0;
                 nClientConnectRefused = 0;
                 for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
-                    int fd = Net.socketTcp(true);
-                    Assert.assertTrue(fd > -1);
+                    long fd = Net.socketTcp(true);
+                    assertTrue(fd > -1);
                     clientActiveFds.add(fd);
                     if (Net.connect(fd, sockAddr) != 0) {
                         nClientConnectRefused++;
@@ -9236,7 +9443,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 // Close all remaining client connections
                 for (int n = 0; n < clientActiveFds.size(); n++) {
-                    int fd = clientActiveFds.get(n);
+                    long fd = clientActiveFds.get(n);
                     Net.close(fd);
                 }
                 serverThread.interrupt();
@@ -9253,10 +9460,10 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private void writeRandomFile(Path path, Rnd rnd, long lastModified) {
-        if (Files.exists(path)) {
-            Assert.assertTrue(Files.remove(path));
+        if (Files.exists(path.$())) {
+            assertTrue(Files.remove(path.$()));
         }
-        int fd = Files.openAppend(path);
+        long fd = Files.openAppend(path.$());
 
         long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
         for (int i = 0; i < 1048576; i++) {
@@ -9268,7 +9475,7 @@ public class IODispatcherTest extends AbstractTest {
         }
 
         TestFilesFacadeImpl.INSTANCE.close(fd);
-        Files.setLastModified(path, lastModified);
+        Files.setLastModified(path.$(), lastModified);
         Unsafe.free(buf, 1048576, MemoryTag.NATIVE_DEFAULT);
     }
 
@@ -9338,7 +9545,7 @@ public class IODispatcherTest extends AbstractTest {
         private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         private final SOCountDownLatch closeLatch;
 
-        public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
+        public HelloContext(long fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
             super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
             this.of(fd, dispatcher);
             this.closeLatch = closeLatch;

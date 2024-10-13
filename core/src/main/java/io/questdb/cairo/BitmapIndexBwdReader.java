@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -53,9 +53,10 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             updateKeyCount();
         }
 
-        if (key == 0 && unIndexedNullCount > 0) {
+        if (key == 0 && unindexedNullCount > 0 && minValue < unindexedNullCount) {
+            // we need to return the whole set of actual index values and then some nulls
             final NullCursor nullCursor = getNullCursor(cachedInstance);
-            nullCursor.nullCount = unIndexedNullCount;
+            nullCursor.nullCount = Math.min(unindexedNullCount, maxValue + 1);
             nullCursor.of(key, minValue, maxValue, keyCount);
             return nullCursor;
         }
@@ -85,12 +86,6 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
 
         @Override
-        public IndexFrame getNext() {
-            // See BitmapIndexFwdReader if it needs implementing
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public boolean hasNext() {
             if (valueCount > 0) {
                 long cellIndex = getValueCellIndex(--valueCount);
@@ -113,7 +108,13 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
         @Override
         public long next() {
-            return next;
+            return next - minValue;
+        }
+
+        @Override
+        public IndexFrame nextIndexFrame() {
+            // See BitmapIndexFwdReader if it needs implementing
+            throw new UnsupportedOperationException();
         }
 
         private long getPreviousBlock(long currentValueBlockOffset) {
@@ -174,6 +175,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
                 } else {
                     seekValue(valueCount, valueBlockOffset);
                 }
+
                 this.minValue = minValue;
             }
         }
@@ -189,7 +191,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             }
 
             if (--nullCount >= minValue) {
-                this.next = nullCount;
+                next = nullCount;
                 return true;
             }
             return false;

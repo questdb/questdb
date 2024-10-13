@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,16 +24,23 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.ServerMain;
+import io.questdb.DynamicUsernamePasswordMatcher;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.cutlass.auth.SocketAuthenticator;
+import io.questdb.cutlass.auth.UsernamePasswordMatcher;
+import org.jetbrains.annotations.Nullable;
 
 public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
-    public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactory();
+    public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactory(null);
+    private final ServerConfiguration serverConfiguration;
+
+    public DefaultPgWireAuthenticatorFactory(@Nullable ServerConfiguration serverConfiguration) {
+        this.serverConfiguration = serverConfiguration;
+    }
 
     @Override
-    public Authenticator getPgWireAuthenticator(
+    public SocketAuthenticator getPgWireAuthenticator(
             PGWireConfiguration configuration,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
@@ -44,15 +51,7 @@ public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthentica
         // But the Default implementation does not use FactoryProviders at all. There is a single static field INSTANCE, see above.
         // Thus, there is nothing what could own and close the buffers. So we allocate buffers for each authenticator
         // and the authenticator will be responsible for closing them.
-        DirectUtf8Sink defaultUserPasswordSink = new DirectUtf8Sink(4);
-        DirectUtf8Sink readOnlyUserPasswordSink = new DirectUtf8Sink(4);
-        UsernamePasswordMatcher matcher = new CustomCloseActionPasswordMatcherDelegate(
-                ServerMain.newPgWireUsernamePasswordMatcher(configuration, defaultUserPasswordSink, readOnlyUserPasswordSink),
-                () -> {
-                    defaultUserPasswordSink.close();
-                    readOnlyUserPasswordSink.close();
-                }
-        );
+        final UsernamePasswordMatcher matcher = new DynamicUsernamePasswordMatcher(serverConfiguration, configuration);
 
         return new CleartextPasswordPgWireAuthenticator(
                 configuration,

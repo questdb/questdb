@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,19 +39,19 @@ import static org.junit.Assert.fail;
 public class UdpLineChannelTest {
     private static final NetworkFacade FAILS_SET_SET_TTL_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int setMulticastTtl(int fd, int ttl) {
+        public int setMulticastTtl(long fd, int ttl) {
             return -1;
         }
     };
     private static final NetworkFacade FAILS_TO_SET_MULTICAST_IFACE_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int setMulticastInterface(int fd, int ipv4Address) {
+        public int setMulticastInterface(long fd, int ipv4Address) {
             return -1;
         }
     };
     private static final NetworkFacade FD_EXHAUSTED_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int socketUdp() {
+        public long socketUdp() {
             return -1;
         }
     };

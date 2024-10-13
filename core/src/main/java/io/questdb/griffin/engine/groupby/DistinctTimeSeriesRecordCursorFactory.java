@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,25 +49,29 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             @Transient @NotNull BytecodeAssembler asm
     ) {
         super(base.getMetadata());
-        assert base.recordCursorSupportsRandomAccess();
-        final RecordMetadata metadata = base.getMetadata();
-        // sink will be storing record columns to map key
-        columnFilter.of(metadata.getColumnCount());
-        RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter, false);
-        Map dataMap = new OrderedMap(
-                configuration.getSqlSmallMapPageSize(),
-                metadata,
-                configuration.getSqlDistinctTimestampKeyCapacity(),
-                configuration.getSqlDistinctTimestampLoadFactor(),
-                Integer.MAX_VALUE
-        );
-
         this.base = base;
-        this.cursor = new DistinctTimeSeriesRecordCursor(
-                getMetadata().getTimestampIndex(),
-                dataMap,
-                recordSink
-        );
+        try {
+            assert base.recordCursorSupportsRandomAccess();
+            final RecordMetadata metadata = base.getMetadata();
+            // sink will be storing record columns to map key
+            columnFilter.of(metadata.getColumnCount());
+            RecordSink recordSink = RecordSinkFactory.getInstance(asm, metadata, columnFilter);
+            Map dataMap = new OrderedMap(
+                    configuration.getSqlSmallMapPageSize(),
+                    metadata,
+                    configuration.getSqlDistinctTimestampKeyCapacity(),
+                    configuration.getSqlDistinctTimestampLoadFactor(),
+                    Integer.MAX_VALUE
+            );
+            this.cursor = new DistinctTimeSeriesRecordCursor(
+                    getMetadata().getTimestampIndex(),
+                    dataMap,
+                    recordSink
+            );
+        } catch (Throwable t) {
+            close();
+            throw t;
+        }
     }
 
     @Override
@@ -77,7 +81,13 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        return cursor.of(base.getCursor(executionContext), executionContext);
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        try {
+            return cursor.of(baseCursor, executionContext);
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
     }
 
     @Override
@@ -99,8 +109,8 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     protected void _close() {
-        base.close();
-        cursor.close();
+        Misc.free(base);
+        Misc.free(cursor);
     }
 
     private static class DistinctTimeSeriesRecordCursor implements RecordCursor {
@@ -132,7 +142,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         public void close() {
             if (isOpen) {
                 isOpen = false;
-                Misc.free(baseCursor);
+                baseCursor = Misc.free(baseCursor);
                 Misc.free(dataMap);
             }
         }
@@ -194,14 +204,14 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         }
 
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {
+            this.baseCursor = baseCursor;
+            record = baseCursor.getRecord();
+            recordB = baseCursor.getRecordB();
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
             }
-            this.baseCursor = baseCursor;
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-            record = baseCursor.getRecord();
-            recordB = baseCursor.getRecordB();
             state = INIT_FIRST_TIMESTAMP;
             return this;
         }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -52,15 +52,6 @@ public class CountDoubleGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            double val = arg.getDouble(null);
-            if (!Double.isNaN(val)) {
-                return new CountLongConstGroupByFunction();
-            }
-            throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
-        } else {
-            return new CountDoubleGroupByFunction(arg);
-        }
+        return new CountDoubleGroupByFunction(args.getQuick(0));
     }
 }

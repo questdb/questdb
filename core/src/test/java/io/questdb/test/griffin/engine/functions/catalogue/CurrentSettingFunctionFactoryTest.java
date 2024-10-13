@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,7 +38,7 @@ public class CurrentSettingFunctionFactoryTest extends AbstractFunctionFactoryTe
         call("").andAssert("");
         call((String) null).andAssert("");
         call("eee").andAssert("");
-        call(CurrentSettingFunctionFactory.SERVER_VERSION_NUM).andAssert(Constants.PG_COMPATIBLE_VERSION_NUM_CONSTANT.getStr(null));
+        call(CurrentSettingFunctionFactory.SERVER_VERSION_NUM).andAssert(Constants.PG_COMPATIBLE_VERSION_NUM_CONSTANT.getStrA(null));
     }
 
     @Override

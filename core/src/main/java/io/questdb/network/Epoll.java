@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ public final class Epoll implements Closeable {
 
     private final int capacity;
     private final EpollFacade epf;
-    private final int epollFd;
+    private final long epollFd;
     private final long events;
     private long _rPtr;
     private boolean closed = false;
@@ -45,12 +45,14 @@ public final class Epoll implements Closeable {
     public Epoll(EpollFacade epf, int capacity) {
         this.epf = epf;
         this.capacity = capacity;
-        this.events = this._rPtr = Unsafe.calloc(EpollAccessor.SIZEOF_EVENT * (long) capacity, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-        this.epollFd = epf.epollCreate();
+        long size = EpollAccessor.SIZEOF_EVENT * (long) capacity;
+        this.events = this._rPtr = Unsafe.calloc(size, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        int epollFd = epf.epollCreate();
         if (epollFd < 0) {
+            Unsafe.free(events, size, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             throw NetworkError.instance(epf.errno(), "could not create epoll");
         }
-        Files.bumpFileCount(this.epollFd);
+        this.epollFd = Files.createUniqueFd(epollFd);
     }
 
     @Override
@@ -63,7 +65,7 @@ public final class Epoll implements Closeable {
         closed = true;
     }
 
-    public int control(int fd, long id, int cmd, int event) {
+    public int control(long fd, long id, int cmd, int event) {
         Unsafe.getUnsafe().putInt(events + EpollAccessor.EVENTS_OFFSET, event | EpollAccessor.EPOLLET | EpollAccessor.EPOLLONESHOT);
         Unsafe.getUnsafe().putLong(events + EpollAccessor.DATA_OFFSET, id);
         return epf.epollCtl(epollFd, cmd, fd, events);
@@ -77,7 +79,7 @@ public final class Epoll implements Closeable {
         return Unsafe.getUnsafe().getInt(_rPtr + EpollAccessor.EVENTS_OFFSET);
     }
 
-    public void listen(int sfd) {
+    public void listen(long sfd) {
         Unsafe.getUnsafe().putInt(events + EpollAccessor.EVENTS_OFFSET, EpollAccessor.EPOLLIN | EpollAccessor.EPOLLET);
         Unsafe.getUnsafe().putLong(events + EpollAccessor.DATA_OFFSET, 0);
         if (epf.epollCtl(epollFd, EpollAccessor.EPOLL_CTL_ADD, sfd, events) != 0) {
@@ -93,7 +95,7 @@ public final class Epoll implements Closeable {
         return poll(0);
     }
 
-    public void removeListen(int sfd) {
+    public void removeListen(long sfd) {
         Unsafe.getUnsafe().putInt(events + EpollAccessor.EVENTS_OFFSET, EpollAccessor.EPOLLIN | EpollAccessor.EPOLLET);
         Unsafe.getUnsafe().putLong(events + EpollAccessor.DATA_OFFSET, 0);
         if (epf.epollCtl(epollFd, EpollAccessor.EPOLL_CTL_DEL, sfd, events) != 0) {

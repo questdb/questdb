@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CotDoubleFunctionFactory implements FunctionFactory {
@@ -69,7 +70,7 @@ public class CotDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             double angle = angleRad.getDouble(rec);
-            if (Double.isNaN(angle) || Double.isInfinite(angle)) {
+            if (Numbers.isNull(angle)) {
                 return Double.NaN;
             }
             return 1.0 / Math.tan(angle);

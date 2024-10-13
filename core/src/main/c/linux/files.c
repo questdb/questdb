@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -93,7 +93,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     return len == 0 ? 0 : -1;
 }
 
-size_t copyData0(int srcFd, int dstFd, off_t srcOffset, off_t dstOffset, int64_t length) {
+size_t copyData0(int srcFd, long dstFd, off_t srcOffset, off_t dstOffset, int64_t length) {
     lseek64(dstFd, dstOffset, SEEK_SET);
 
     size_t len = length > 0 ? length : SIZE_MAX;
@@ -365,6 +365,9 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
             case 0x012ff7b4:
                 strcpy((char *) lpszName, "XENIX");
                 return sb.f_type;
+            case 0x2Fc12fc1:
+                strcpy((char *) lpszName, "ZFS");
+                return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
             case 0x58465342:
                 strcpy((char *) lpszName, "XFS");
                 return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);

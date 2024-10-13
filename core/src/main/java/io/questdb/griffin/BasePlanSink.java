@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -55,6 +55,7 @@ public abstract class BasePlanSink implements PlanSink {
         this.order = -1;
     }
 
+    @Override
     public PlanSink child(Plannable p, int order) {
         this.order = order;
         child(p);
@@ -63,6 +64,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public void clear() {
         this.sink.clear();
         this.depth = 0;
@@ -86,10 +88,20 @@ public abstract class BasePlanSink implements PlanSink {
         return sink;
     }
 
+    @Override
     public boolean getUseBaseMetadata() {
         return useBaseMetadata;
     }
 
+    @Override
+    public PlanSink optAttr(CharSequence name, CharSequence value) {
+        if (value != null) {
+            attr(name).val(value);
+        }
+        return this;
+    }
+
+    @Override
     public PlanSink optAttr(CharSequence name, Sinkable value) {
         if (value != null) {
             attr(name).val(value);
@@ -97,6 +109,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public PlanSink optAttr(CharSequence name, Plannable value) {
         if (value != null) {
             if (value instanceof ConstantFunction && ((ConstantFunction) value).isNullConstant()) {
@@ -107,6 +120,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public PlanSink optAttr(CharSequence name, Plannable value, boolean useBaseMetadata) {
         this.useBaseMetadata = useBaseMetadata;
         optAttr(name, value);
@@ -114,6 +128,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value) {
         if (value != null && value.size() > 0) {
             attr(name).val(value);
@@ -121,6 +136,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value, boolean useBaseMetadata) {
         this.useBaseMetadata = useBaseMetadata;
         optAttr(name, value);
@@ -128,36 +144,37 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
-    public PlanSink putBaseColumnName(int columnIdx) {
-        return val(factoryStack.peek().getBaseColumnName(columnIdx));
+    @Override
+    public PlanSink putBaseColumnName(int columnIndex) {
+        return val(factoryStack.peek().getBaseColumnName(columnIndex));
     }
 
-    public PlanSink putBaseColumnNameNoRemap(int columnIdx) {
-        return val(factoryStack.peek().getBaseColumnNameNoRemap(columnIdx));
-    }
-
-    public PlanSink putColumnName(int columnIdx) {
+    @Override
+    public PlanSink putColumnName(int columnIndex) {
         if (useBaseMetadata) {
-            putBaseColumnName(columnIdx);
+            putBaseColumnName(columnIndex);
         } else {
-            val(factoryStack.peek().getMetadata().getColumnName(columnIdx));
+            val(factoryStack.peek().getMetadata().getColumnName(columnIndex));
         }
         return this;
     }
 
     @Override
-    public void useBaseMetadata(boolean useBaseMetdata) {
-        this.useBaseMetadata = useBaseMetdata;
+    public void useBaseMetadata(boolean useBaseMetadata) {
+        this.useBaseMetadata = useBaseMetadata;
     }
 
+    @Override
     public PlanSink val(ObjList<?> list) {
         return val(list, 0, list.size());
     }
 
+    @Override
     public PlanSink val(ObjList<?> list, int from) {
         return val(list, from, list.size());
     }
 
+    @Override
     public PlanSink val(ObjList<?> list, int from, int to) {
         sink.put('[');
         for (int i = from; i < to; i++) {
@@ -187,6 +204,7 @@ public abstract class BasePlanSink implements PlanSink {
     }
 
     static class EscapingStringSink extends StringSink {
+
         @Override
         public StringSink put(@Nullable CharSequence cs) {
             if (cs != null) {

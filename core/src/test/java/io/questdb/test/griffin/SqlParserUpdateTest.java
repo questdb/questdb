@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -236,7 +236,21 @@ public class SqlParserUpdateTest extends AbstractSqlParserTest {
     public void testUpdateSingleTableWithJoinAndNestedSampleBy() throws Exception {
         assertUpdate(
                 "update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join select [y] from (select-group-by [first(y) y, ts] ts, first(y) y from (select [y, ts] from tbly timestamp (ts)) sample by 1h) y on y = x))",
-                "update tblx set tt = 1 from (select ts, first(y) as y from tbly SAMPLE BY 1h) y where x = y",
+                "update tblx set tt = 1 from (select ts, first(y) as y from tbly SAMPLE BY 1h ALIGN TO FIRST OBSERVATION) y where x = y",
+                partitionedModelOf("tblx")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("x", ColumnType.INT)
+                        .col("tt", ColumnType.INT)
+                        .timestamp(),
+                partitionedModelOf("tbly")
+                        .col("t", ColumnType.TIMESTAMP)
+                        .col("y", ColumnType.INT)
+                        .timestamp("ts")
+        );
+
+        assertUpdate(
+                "update tblx set tt = 1 from (select-virtual 1 tt from (select [x] from tblx timestamp (timestamp) join select [y] from (select-group-by [first(y) y, timestamp_floor('1h',ts) ts] timestamp_floor('1h',ts) ts, first(y) y from (select [y, ts] from tbly timestamp (ts) stride 1h) order by ts) y on y = x))",
+                "update tblx set tt = 1 from (select ts, first(y) as y from tbly SAMPLE BY 1h ALIGN TO CALENDAR) y where x = y",
                 partitionedModelOf("tblx")
                         .col("t", ColumnType.TIMESTAMP)
                         .col("x", ColumnType.INT)

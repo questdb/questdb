@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -43,10 +42,10 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
         // expect row duplication
         assertQuery(
                 "nspname\toid\txmin\tnspowner\toid1\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin1\tobjoid\tclassoid\tobjsubid\tdescription\n" +
-                        "pg_catalog\t11\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n" +
-                        "public\t2200\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n" +
-                        "pg_catalog\t11\t0\t1\t1\tbeta\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n" +
-                        "public\t2200\t0\t1\t1\tbeta\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tNaN\tNaN\t0\t\n",
+                        "pg_catalog\t11\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tnull\tnull\t0\t\n" +
+                        "public\t2200\t0\t1\t1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tnull\tnull\t0\t\n" +
+                        "pg_catalog\t11\t0\t1\t1\tbeta\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tnull\tnull\t0\t\n" +
+                        "public\t2200\t0\t1\t1\tbeta\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\tnull\tnull\t0\t\n",
                 "    pg_catalog.pg_namespace n, \n" +
                         "    pg_catalog.pg_class c  \n" +
                         "    LEFT JOIN pg_catalog.pg_description d ON (c.oid = d.objoid AND d.objsubid = 0) \n",
@@ -135,10 +134,9 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLeakAfterIncompleteFetch() throws Exception {
         assertMemoryLeak(() -> {
-            sink.clear();
             try (RecordCursorFactory factory = select("select * from pg_catalog.pg_class")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    println(factory, cursor);
                     TestUtils.assertEquals(
                             "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
                                     "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
@@ -212,27 +210,28 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testPgClassTwoTables() throws Exception {
         assertQuery("oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
-                        "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
-                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n", "pg_catalog.pg_class order by 1", "create table x(a int)", null, "create table y(a int)", "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
-                        "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
-                        "2\ty\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
-                        "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n", true, false, false);
+                "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
+                "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n", "pg_catalog.pg_class order by 1", "create table x(a int)", null, "create table y(a int)", "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                "1\tx\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
+                "2\ty\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
+                "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n", true, false, false);
     }
 
     @Test
-    public void testPythonInitialSql() throws SqlException {
-        assertQuery(
+    public void testPythonInitialSql() throws Exception {
+        assertMemoryLeak(() -> assertQuery(
                 "oid\ttyparray\n",
                 "SELECT t.oid, typarray\n" +
                         "FROM pg_type t JOIN pg_namespace ns\n" +
                         "    ON typnamespace = ns.oid\n" +
                         "WHERE typname = 'hstore';",
-                null, false
-        );
+                null,
+                false
+        ));
     }
 
     @Test
-    public void testShowMaxIdentifierLength() throws SqlException {
+    public void testShowMaxIdentifierLength() throws Exception {
         assertQuery(
                 "max_identifier_length\n" +
                         "63\n",
@@ -244,7 +243,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShowTransactionIsolationLevel() throws SqlException {
+    public void testShowTransactionIsolationLevel() throws Exception {
         assertQuery(
                 "transaction_isolation\n" +
                         "read committed\n",
@@ -276,7 +275,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShowTransactionIsolationUnderscore() throws SqlException {
+    public void testShowTransactionIsolationUnderscore() throws Exception {
         assertQuery(
                 "transaction_isolation\n" +
                         "read committed\n",
@@ -290,11 +289,10 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            sink.clear();
             try (RecordCursorFactory factory = select("select * from pg_catalog.pg_class() order by relname")) {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext);
                 try {
-                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    println(factory, cursor);
                     TestUtils.assertEquals(
                             "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
                                     "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
@@ -306,8 +304,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
 
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    println(factory, cursor);
                     TestUtils.assertEquals(
                             "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
                                     "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
@@ -326,22 +323,22 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
 
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    println(factory, cursor);
 
-                    TestUtils.assertEquals("oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
+                    TestUtils.assertEquals(
+                            "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
                                     "1259\tpg_class\t11\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tu\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\tfalse\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
                                     "1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n" +
-                                    "2\tавтомобилей\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n"
-                            , sink);
+                                    "2\tавтомобилей\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
+                            sink
+                    );
 
                     drop("drop table автомобилей;");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
 
-                    sink.clear();
-                    printer.print(cursor, factory.getMetadata(), true, sink);
+                    println(factory, cursor);
 
                     TestUtils.assertEquals(
                             "oid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\n" +
@@ -349,7 +346,6 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                                     "1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\n",
                             sink
                     );
-
                 } finally {
                     cursor.close();
                 }
@@ -358,10 +354,11 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVarcharCast() throws SqlException {
+    public void testVarcharCast() throws Exception {
         assertQuery(
                 "anon_1\n" +
-                        "test plain returns\n", "SELECT CAST('test plain returns' AS VARCHAR(60)) AS anon_1",
+                        "test plain returns\n",
+                "SELECT CAST('test plain returns' AS VARCHAR(60)) AS anon_1",
                 null,
                 true,
                 true

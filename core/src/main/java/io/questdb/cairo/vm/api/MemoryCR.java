@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -28,11 +28,17 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.std.*;
-import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
 
 //contiguous readable 
 public interface MemoryCR extends MemoryC, MemoryR {
+    long addressHi();
+
+    default boolean checkOffsetMapped(long offset) {
+        return offset <= size();
+    }
+
     default BinarySequence getBin(long offset, ByteSequenceView view) {
         final long addr = addressOf(offset);
         final long len = Unsafe.getUnsafe().getLong(addr);
@@ -64,6 +70,8 @@ public interface MemoryCR extends MemoryC, MemoryR {
         assert addressOf(offset + Double.BYTES) > 0;
         return Unsafe.getUnsafe().getDouble(addressOf(offset));
     }
+
+    long getFd();
 
     default float getFloat(long offset) {
         assert addressOf(offset + Float.BYTES) > 0;
@@ -102,12 +110,21 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return Unsafe.getUnsafe().getShort(addressOf(offset));
     }
 
-    default CharSequence getStr(long offset, CharSequenceView view) {
+    default DirectString getStr(long offset, DirectString view) {
         long addr = addressOf(offset);
         assert addr > 0;
+        if (Vm.PARANOIA_MODE && !checkOffsetMapped(offset + 4)) {
+            throw CairoException.critical(0)
+                    .put("String is outside of file boundary [offset=")
+                    .put(offset)
+                    .put(", size=")
+                    .put(size())
+                    .put(']');
+        }
+
         final int len = Unsafe.getUnsafe().getInt(addr);
         if (len != TableUtils.NULL_LEN) {
-            if (len + 4 + offset <= size()) {
+            if (checkOffsetMapped(Vm.getStorageLength(len) + offset)) {
                 return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
             }
             throw CairoException.critical(0)
@@ -124,6 +141,13 @@ public interface MemoryCR extends MemoryC, MemoryR {
 
     default int getStrLen(long offset) {
         return getInt(offset);
+    }
+
+    default boolean isFileBased() {
+        return false;
+    }
+
+    default void map() {
     }
 
     class ByteSequenceView implements BinarySequence, Mutable {
@@ -153,32 +177,6 @@ public interface MemoryCR extends MemoryC, MemoryR {
         }
 
         public ByteSequenceView of(long address, long len) {
-            this.address = address;
-            this.len = len;
-            return this;
-        }
-    }
-
-    class CharSequenceView extends AbstractCharSequence implements Mutable {
-        private long address;
-        private int len;
-
-        @Override
-        public char charAt(int index) {
-            return Unsafe.getUnsafe().getChar(address + index * 2L);
-        }
-
-        @Override
-        public void clear() {
-            len = 0;
-        }
-
-        @Override
-        public int length() {
-            return len;
-        }
-
-        public CharSequenceView of(long address, int len) {
             this.address = address;
             this.len = len;
             return this;

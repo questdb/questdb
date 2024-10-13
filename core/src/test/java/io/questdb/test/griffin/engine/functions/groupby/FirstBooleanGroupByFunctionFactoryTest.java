@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ import org.junit.Test;
 public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testAllNull() throws SqlException {
+    public void testAllFalse() throws SqlException {
         ddl("create table tab (f boolean)");
 
         try (TableWriter w = getWriter("tab")) {
@@ -71,7 +71,7 @@ public class FirstBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLastBoolean2() throws Exception {
+    public void testFirstBoolean2() throws Exception {
         assertQuery(
                 "a\n" +
                         "true\n",

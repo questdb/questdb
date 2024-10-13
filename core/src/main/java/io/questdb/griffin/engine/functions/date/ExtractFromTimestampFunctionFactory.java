@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -54,7 +54,7 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final CharSequence part = args.getQuick(0).getStr(null);
+        final CharSequence part = args.getQuick(0).getStrA(null);
         final Function arg = args.getQuick(1);
 
         if (SqlKeywords.isCenturyKeyword(part)) {
@@ -140,10 +140,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getCentury(value);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
     }
 
@@ -155,10 +155,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getDecade(value);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
     }
 
@@ -170,10 +170,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getDow(value);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
     }
 
@@ -185,10 +185,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getDoy(value);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
     }
 
@@ -200,10 +200,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return value / Timestamps.SECOND_MICROS;
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
     }
 
@@ -233,10 +233,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getDayOfWeek(value);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
     }
 
@@ -248,10 +248,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getIsoYear(value);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
     }
 
@@ -281,10 +281,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getMicrosOfMinute(value);
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
     }
 
@@ -296,10 +296,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getMillennium(value);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
     }
 
@@ -311,10 +311,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getMillisOfMinute(value);
             }
-            return Numbers.LONG_NaN;
+            return Numbers.LONG_NULL;
         }
     }
 
@@ -326,10 +326,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getQuarter(value);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
     }
 
@@ -341,10 +341,10 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final long value = arg.getTimestamp(rec);
-            if (value != Numbers.LONG_NaN) {
+            if (value != Numbers.LONG_NULL) {
                 return Timestamps.getWeek(value);
             }
-            return Numbers.INT_NaN;
+            return Numbers.INT_NULL;
         }
     }
 }

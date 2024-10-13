@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,10 +37,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
-import io.questdb.std.str.DirectUtf16Sink;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -54,7 +51,7 @@ public class TextLoader implements Closeable, Mutable {
     private static final Log LOG = LogFactory.getLog(TextLoader.class);
     private final JsonLexer jsonLexer;
     private final ObjList<ParserMethod> parseMethods = new ObjList<>();
-    private final Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+    private final Path path;
     private final int textAnalysisMaxLines;
     private final TextConfiguration textConfiguration;
     private final TextDelimiterScanner textDelimiterScanner;
@@ -63,7 +60,8 @@ public class TextLoader implements Closeable, Mutable {
     private final CairoTextWriter textWriter;
     private final TextLexerWrapper tlw;
     private final TypeManager typeManager;
-    private final DirectUtf16Sink utf8Sink;
+    private final DirectUtf16Sink utf16Sink;
+    private final DirectUtf8Sink utf8Sink;
     private byte columnDelimiter = -1;
     private boolean forceHeaders = false;
     private AbstractTextLexer lexer;
@@ -74,20 +72,28 @@ public class TextLoader implements Closeable, Mutable {
     private CharSequence timestampColumn;
 
     public TextLoader(CairoEngine engine) {
-        this.tlw = new TextLexerWrapper(engine.getConfiguration().getTextConfiguration());
-        this.textWriter = new CairoTextWriter(engine);
-        this.textConfiguration = engine.getConfiguration().getTextConfiguration();
-        this.utf8Sink = new DirectUtf16Sink(textConfiguration.getUtf8SinkSize());
-        this.typeManager = new TypeManager(textConfiguration, utf8Sink);
-        jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
+        try {
+            this.path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
+            this.tlw = new TextLexerWrapper(engine.getConfiguration().getTextConfiguration());
+            this.textWriter = new CairoTextWriter(engine);
+            this.textConfiguration = engine.getConfiguration().getTextConfiguration();
+            int utf8SinkSize = textConfiguration.getUtf8SinkSize();
+            this.utf16Sink = new DirectUtf16Sink(utf8SinkSize);
+            this.utf8Sink = new DirectUtf8Sink(utf8SinkSize);
+            this.typeManager = new TypeManager(textConfiguration, utf16Sink, utf8Sink);
+            jsonLexer = new JsonLexer(textConfiguration.getJsonCacheSize(), textConfiguration.getJsonCacheLimit());
 
-        textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
-        textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
-        textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
-        textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
-        parseMethods.extendAndSet(LOAD_JSON_METADATA, this::parseJsonMetadata);
-        parseMethods.extendAndSet(ANALYZE_STRUCTURE, this::parseStructure);
-        parseMethods.extendAndSet(LOAD_DATA, this::parseData);
+            textMetadataDetector = new TextMetadataDetector(typeManager, textConfiguration);
+            textMetadataParser = new TextMetadataParser(textConfiguration, typeManager);
+            textAnalysisMaxLines = textConfiguration.getTextAnalysisMaxLines();
+            textDelimiterScanner = new TextDelimiterScanner(textConfiguration);
+            parseMethods.extendAndSet(LOAD_JSON_METADATA, this::parseJsonMetadata);
+            parseMethods.extendAndSet(ANALYZE_STRUCTURE, this::parseStructure);
+            parseMethods.extendAndSet(LOAD_DATA, this::parseData);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -117,6 +123,7 @@ public class TextLoader implements Closeable, Mutable {
         Misc.free(jsonLexer);
         Misc.free(path);
         Misc.free(textDelimiterScanner);
+        Misc.free(utf16Sink);
         Misc.free(utf8Sink);
     }
 
@@ -172,6 +179,10 @@ public class TextLoader implements Closeable, Mutable {
         return textWriter.getColumnErrorCounts();
     }
 
+    public boolean getCreate() {
+        return textWriter.getCreate();
+    }
+
     public long getErrorLineCount() {
         return lexer != null ? lexer.getErrorCount() : 0;
     }
@@ -194,10 +205,6 @@ public class TextLoader implements Closeable, Mutable {
 
     public int getPartitionBy() {
         return textWriter.getPartitionBy();
-    }
-
-    public boolean getCreate() {
-        return textWriter.getCreate();
     }
 
     public CharSequence getTableName() {
@@ -251,6 +258,10 @@ public class TextLoader implements Closeable, Mutable {
         lexer.restart(header);
     }
 
+    public void setCreate(boolean create) {
+        textWriter.setCreate(create);
+    }
+
     public void setDelimiter(byte delimiter) {
         this.lexer = tlw.getLexer(delimiter);
         this.lexer.setTableName(tableName);
@@ -259,10 +270,6 @@ public class TextLoader implements Closeable, Mutable {
 
     public void setForceHeaders(boolean forceHeaders) {
         this.forceHeaders = forceHeaders;
-    }
-
-    public void setCreate(boolean create) {
-        textWriter.setCreate(create);
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

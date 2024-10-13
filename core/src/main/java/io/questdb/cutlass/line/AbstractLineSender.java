@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -223,11 +223,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
-    public AbstractLineSender putUtf8(long lo, long hi) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public AbstractLineSender putAscii(char @NotNull [] chars, int start, int len) {
         validateNotClosed();
         if (ptr + len < hi) {
@@ -309,6 +304,11 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
             }
         }
         return this;
+    }
+
+    @Override
+    public AbstractLineSender putNonAscii(long lo, long hi) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

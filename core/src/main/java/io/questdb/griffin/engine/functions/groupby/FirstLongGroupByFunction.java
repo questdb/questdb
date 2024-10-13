@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,12 +44,13 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
-        mapValue.putLong(valueIndex, arg.getLong(record));
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        mapValue.putLong(valueIndex, rowId);
+        mapValue.putLong(valueIndex + 1, arg.getLong(record));
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         // empty
     }
 
@@ -60,7 +61,7 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
 
     @Override
     public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
+        return rec.getLong(valueIndex + 1);
     }
 
     @Override
@@ -74,28 +75,47 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return false;
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.LONG); // row id
+        columnTypes.add(ColumnType.LONG); // value
+    }
+
+    @Override
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
+    }
+
+    @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcRowId = srcValue.getLong(valueIndex);
+        long destRowId = destValue.getLong(valueIndex);
+        if (srcRowId != Numbers.LONG_NULL && (srcRowId < destRowId || destRowId == Numbers.LONG_NULL)) {
+            destValue.putLong(valueIndex, srcRowId);
+            destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
+        }
     }
 
     @Override
     public void setLong(MapValue mapValue, long value) {
-        mapValue.putTimestamp(valueIndex, value);
+        // This method is used to define interpolated points and to init
+        // an empty value, so it's ok to reset the row id field here.
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putLong(valueIndex + 1, value);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        setLong(mapValue, Numbers.LONG_NaN);
+        setLong(mapValue, Numbers.LONG_NULL);
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

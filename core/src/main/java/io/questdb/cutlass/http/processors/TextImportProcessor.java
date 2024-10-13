@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@ import static io.questdb.cutlass.text.TextLoadWarning.*;
 public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartContentListener, Closeable {
     static final int MESSAGE_UNKNOWN = 3;
     static final int RESPONSE_PREFIX = 1;
-    private final static Log LOG = LogFactory.getLog(TextImportProcessor.class);
+    private static final Log LOG = LogFactory.getLog(TextImportProcessor.class);
     // Local value has to be static because each thread will have its own instance of
     // processor. For different threads to lookup the same value from local value map the key,
     // which is LV, has to be the same between processor instances
@@ -223,7 +223,9 @@ public class TextImportProcessor implements HttpRequestProcessor, HttpMultipartC
 
     @Override
     public void onRequestComplete(HttpConnectionContext context) {
-        transientState.clear();
+        if (transientState != null) {
+            transientState.clear();
+        }
     }
 
     @Override

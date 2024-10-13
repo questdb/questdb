@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -84,7 +85,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     @AfterClass
     public static void tearDownStatic() {
-        Assert.assertTrue(Files.rmdir(auxPath.of(otherVolume).$(), true));
+        Assert.assertTrue(Files.rmdir(auxPath.of(otherVolume), true));
         AbstractBootstrapTest.tearDownStatic();
     }
 
@@ -198,28 +199,28 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
             // copy the table to a foreign location, remove it, then symlink it
             try (
-                    Path filePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-                    Path fakeTablePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat("coconut").$();
-                    Path foreignPath = new Path().of(root).concat("banana").concat(tableName).slash$()
+                    Path filePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat(TableUtils.TAB_INDEX_FILE_NAME);
+                    Path fakeTablePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat("coconut");
+                    Path foreignPath = new Path().of(root).concat("banana").concat(tableName).slash()
             ) {
-                if (!Files.exists(foreignPath)) {
+                if (!Files.exists(foreignPath.$())) {
                     Assert.assertEquals(0, Files.mkdirs(foreignPath, 509));
                 }
-                Assert.assertTrue(Files.exists(foreignPath));
+                Assert.assertTrue(Files.exists(foreignPath.$()));
                 dbPath.trimTo(dbPathLen).concat(tableName).$();
                 TestUtils.copyDirectory(dbPath, foreignPath, 509);
 
                 String tablePathStr = dbPath.toString();
                 String foreignPathStr = foreignPath.toString();
-                Assert.assertTrue(Files.rmdir(auxPath.of(tablePathStr).$(), true));
-                Assert.assertFalse(Files.exists(dbPath));
+                Assert.assertTrue(Files.rmdir(auxPath.of(tablePathStr), true));
+                Assert.assertFalse(Files.exists(dbPath.$()));
                 createSoftLink(foreignPathStr, tablePathStr);
-                Assert.assertTrue(Files.exists(dbPath));
+                Assert.assertTrue(Files.exists(dbPath.$()));
 
-                if (!Files.exists(fakeTablePath)) {
+                if (!Files.exists(fakeTablePath.$())) {
                     createSoftLink(filePath.toString(), fakeTablePath.toString());
                 }
-                Assert.assertTrue(Files.exists(fakeTablePath));
+                Assert.assertTrue(Files.exists(fakeTablePath.$()));
             }
 
             // check content of table after sym-linking it
@@ -343,23 +344,14 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 CairoEngine engine = qdb.getEngine();
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, false);
                 assertTableExists(tableToken, true, true);
-                long t = System.currentTimeMillis();
-                while (true) {
-                    try {
-                        assertSql(
-                                compiler,
-                                context,
-                                "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                                new StringSink(),
-                                TABLE_START_CONTENT
-                        );
-                        break;
-                    } catch (AssertionError e) {
-                        if (System.currentTimeMillis() - t > 5000) {
-                            throw e;
-                        }
-                    }
-                }
+                qdb.awaitTxn(tableName, 1);
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        new StringSink(),
+                        TABLE_START_CONTENT
+                );
                 dropTable(compiler, context, tableToken);
             }
         });
@@ -550,7 +542,8 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 RecordCursorFactory factory = cc.getRecordCursorFactory();
                 RecordCursor cursor = factory.getCursor(context)
         ) {
-            TestUtils.printCursor(cursor, factory.getMetadata(), true, resultSink, printer);
+            RecordMetadata metadata = factory.getMetadata();
+            CursorPrinter.println(cursor, metadata, resultSink);
             String expected = tableToken.getTableName() + "\tts\tDAY\t500000\t600000000\t" + true + '\t' + tableToken.getDirName();
             if (inVolume) {
                 expected += " (->)";
@@ -624,20 +617,17 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
         sink.put('\n');
         compiler.compile(sink.toString(), context);
 
-        try (
-                TableModel tableModel = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)
-                        .col("investmentMill", ColumnType.LONG)
-                        .col("ticketThous", ColumnType.INT)
-                        .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
-                        .timestamp("ts")
-        ) {
-            // todo: replace with metadata
-            if (isWal) {
-                tableModel.wal();
-            }
-            CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
-            compiler.compile(insert, context);
+        TableModel tableModel = new TableModel(engine.getConfiguration(), tableName, PartitionBy.DAY)
+                .col("investmentMill", ColumnType.LONG)
+                .col("ticketThous", ColumnType.INT)
+                .col("broker", ColumnType.SYMBOL).symbolCapacity(32)
+                .timestamp("ts");
+        // todo: replace with metadata
+        if (isWal) {
+            tableModel.wal();
         }
+        CharSequence insert = insertFromSelectPopulateTableStmt(tableModel, 1000000, firstPartitionName, partitionCount);
+        compiler.compile(insert, context);
         return engine.verifyTableName(tableName);
     }
 

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,15 +41,18 @@ import java.io.Closeable;
  * Instances of this class can be re-cycled for creating many different paths and
  * must be closed when no longer required.
  */
-public class Path implements Utf8Sink, LPSZ, Closeable {
+public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
+    private static final byte NULL = (byte) 0;
+    private static final int OVERHEAD = 4;
+    private static final boolean PARANOIA_MODE = false;
     public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
-    private static final byte NULL = (byte) 0;
-    private static final int OVERHEAD = 4;
-    private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    private final LPSZ lpsz = new PathLPSZ();
     private final int memoryTag;
+    private boolean ascii;
     private int capacity;
     private long headPtr;
     private long tailPtr;
@@ -67,14 +70,26 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         this.capacity = capacity;
         this.memoryTag = memoryTag;
         headPtr = tailPtr = Unsafe.malloc(capacity + 1, memoryTag);
+        if (PARANOIA_MODE) {
+            randomSeed();
+        }
+        ascii = true;
     }
 
     public static void clearThreadLocals() {
-        Misc.free(PATH);
-        Misc.free(PATH2);
+        // It could be PATH.get.close(); but this would generated JDK failures on MacOS (SIGABRT)
+        // when running tests. Despite all the effort to find the exact cause, it was not possible
+        // and this is the best solution so far. This approach will remove the thread local
+        // on close and the next time a new object is created.
+        PATH.close();
+        PATH2.close();
     }
 
     public static Path getThreadLocal(CharSequence root) {
+        return PATH.get().of(root);
+    }
+
+    public static Path getThreadLocal(Utf8Sequence root) {
         return PATH.get().of(root);
     }
 
@@ -97,18 +112,17 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         return PATH2.get().of(root);
     }
 
-    public Path $() {
+    public LPSZ $() {
         if (tailPtr == headPtr || Unsafe.getUnsafe().getByte(tailPtr) != NULL) {
             Unsafe.getUnsafe().putByte(tailPtr, NULL);
         }
-        return this;
+        return this.lpsz;
     }
 
     public void $at(int index) {
         Unsafe.getUnsafe().putByte(headPtr + index, NULL);
     }
 
-    @Override
     public @NotNull CharSequence asAsciiCharSequence() {
         return asciiCharSequence.of(this);
     }
@@ -139,6 +153,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     public Path concat(long pUtf8NameZ) {
+        ascii = false;
         ensureSeparator();
         long p = pUtf8NameZ;
         while (true) {
@@ -158,8 +173,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
 
     public Path concat(CharSequence str, int from, int to) {
         ensureSeparator();
-        put(str, from, to);
-        return this;
+        return put(str, from, to);
     }
 
     public void extend(int newCapacity) {
@@ -174,13 +188,20 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         $();
     }
 
+    @Override
+    public boolean isAscii() {
+        return ascii;
+    }
+
     public Path of(CharSequence str) {
+        ascii = true;
         checkClosed();
         tailPtr = headPtr;
         return concat(str);
     }
 
     public Path of(Utf8Sequence str) {
+        ascii = str.isAscii();
         checkClosed();
         if (str == this) {
             tailPtr = headPtr + str.size();
@@ -192,10 +213,12 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     public Path of(Path other) {
-        return of((LPSZ) other);
+        ascii = other.isAscii();
+        return of((Utf8Sequence) other);
     }
 
-    public Path of(LPSZ other) {
+    public Path of(LPSZ other, boolean isAscii) {
+        this.ascii = isAscii;
         // This is different from of(CharSequence str) because
         // another Path is already UTF8 encoded and cannot be treated as CharSequence.
         // Copy binary array representation instead of trying to UTF8 encode it
@@ -215,6 +238,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     public Path of(CharSequence str, int from, int to) {
+        ascii = true;
         checkClosed();
         tailPtr = headPtr;
         return concat(str, from, to);
@@ -238,9 +262,10 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         return this;
     }
 
-    public Path prefix(@Nullable Path prefix, int prefixLen) {
+    public Path prefix(@Nullable Utf8Sequence prefix, int prefixLen) {
         if (prefix != null) {
             if (prefixLen > 0) {
+                ascii &= prefix.isAscii();
                 int thisSize = size();
                 checkExtend(thisSize + prefixLen);
                 Vect.memmove(headPtr + prefixLen, headPtr, thisSize);
@@ -257,12 +282,14 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     }
 
     public void put(int index, byte b) {
+        ascii = false;
         Unsafe.getUnsafe().putByte(headPtr + index, b);
     }
 
     @Override
     public Path put(@Nullable Utf8Sequence us) {
         if (us != null) {
+            ascii &= us.isAscii();
             int size = us.size();
             checkExtend(size + 1);
             Utf8s.strCpy(us, size, tailPtr);
@@ -273,13 +300,8 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
 
     @Override
     public Path put(byte b) {
-        assert b != NULL;
-        int requiredCapacity = size() + 1;
-        if (requiredCapacity >= capacity) {
-            extend(requiredCapacity + 15);
-        }
-        Unsafe.getUnsafe().putByte(tailPtr++, b);
-        return this;
+        ascii = false;
+        return putByte0(b);
     }
 
     @Override
@@ -298,15 +320,6 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     public Path put(@NotNull CharSequence cs, int lo, int hi) {
         checkExtend(hi - lo + 1);
         Utf8Sink.super.put(cs, lo, hi);
-        return this;
-    }
-
-    @Override
-    public Path putUtf8(long lo, long hi) {
-        final int size = Bytes.checkedLoHiSize(lo, hi, this.size());
-        checkExtend(size);
-        Vect.memcpy(tailPtr, lo, size);
-        tailPtr += size;
         return this;
     }
 
@@ -348,10 +361,18 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
     @Override
     public Path putAscii(char c) {
         if (c == '/' && Os.isWindows()) {
-            Utf8Sink.super.putAscii('\\');
-        } else {
-            Utf8Sink.super.putAscii(c);
+            return putByte0((byte) '\\');
         }
+        return putByte0((byte) c);
+    }
+
+    @Override
+    public Path putNonAscii(long lo, long hi) {
+        ascii = false;
+        final int size = Bytes.checkedLoHiSize(lo, hi, this.size());
+        checkExtend(size);
+        Vect.memcpy(tailPtr, lo, size);
+        tailPtr += size;
         return this;
     }
 
@@ -377,7 +398,7 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         return this;
     }
 
-    public Path slash$() {
+    public LPSZ slash$() {
         ensureSeparator();
         return $();
     }
@@ -425,9 +446,42 @@ public class Path implements Utf8Sink, LPSZ, Closeable {
         }
     }
 
+    @NotNull
+    private Path putByte0(byte b) {
+        int requiredCapacity = size() + 1;
+        if (requiredCapacity >= capacity) {
+            extend(requiredCapacity + 15);
+        }
+        Unsafe.getUnsafe().putByte(tailPtr++, b);
+        return this;
+    }
+
+    private void randomSeed() {
+        for (long p = headPtr, hi = headPtr + capacity + 1; p < hi; p++) {
+            Unsafe.getUnsafe().putByte(p, (byte) (p % 127));
+        }
+    }
+
     protected final void ensureSeparator() {
         if (tailPtr > headPtr && Unsafe.getUnsafe().getByte(tailPtr - 1) != Files.SEPARATOR) {
-            Unsafe.getUnsafe().putByte(tailPtr++, (byte) Files.SEPARATOR);
+            putByte0((byte) Files.SEPARATOR);
+        }
+    }
+
+    private class PathLPSZ implements LPSZ {
+        @Override
+        public @NotNull CharSequence asAsciiCharSequence() {
+            return Path.this.asAsciiCharSequence();
+        }
+
+        @Override
+        public long ptr() {
+            return headPtr;
+        }
+
+        @Override
+        public int size() {
+            return (int) (tailPtr - headPtr);
         }
     }
 }

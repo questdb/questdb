@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -36,8 +36,8 @@ public class MaxDateVecGroupByFunctionFactoryTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
 
         assertQuery("avg\n" +
-                        "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b date", "avg\n" +
-                        "5261.376146789\n", false, true, false);
+                "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b date", "avg\n" +
+                "5261.376146789\n", false, true, false);
 
         assertQuery(
                 "avg\tmax\n" +
@@ -53,8 +53,8 @@ public class MaxDateVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery("max\n" +
-                        "\n", "select max(f) from tab", "create table tab as (select cast(null as date) f from long_sequence(33))", null, "insert into tab select 99999999999995L from long_sequence(1)", "max\n" +
-                        "5138-11-16T09:46:39.995Z\n", false, true, false);
+                "\n", "select max(f) from tab", "create table tab as (select cast(null as date) f from long_sequence(33))", null, "insert into tab select 99999999999995L from long_sequence(1)", "max\n" +
+                "5138-11-16T09:46:39.995Z\n", false, true, false);
     }
 
     @Test

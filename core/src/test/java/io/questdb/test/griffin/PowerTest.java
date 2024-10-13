@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,7 +49,7 @@ public class PowerTest extends AbstractCairoTest {
                 "select power(NaN, 3)",
                 sink,
                 "power\n" +
-                        "NaN\n"
+                        "null\n"
         ));
     }
 
@@ -61,7 +61,7 @@ public class PowerTest extends AbstractCairoTest {
                 "select power(1.5, NaN)",
                 sink,
                 "power\n" +
-                        "NaN\n"
+                        "null\n"
         ));
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,23 +47,28 @@ public class LineTcpReceiver implements Closeable {
             WorkerPool ioWorkerPool,
             WorkerPool writerWorkerPool
     ) {
-        this.scheduler = null;
-        this.metrics = engine.getMetrics();
-        ObjectFactory<LineTcpConnectionContext> factory;
-        factory = () -> new LineTcpConnectionContext(configuration, scheduler, metrics);
+        try {
+            this.scheduler = null;
+            this.metrics = engine.getMetrics();
+            ObjectFactory<LineTcpConnectionContext> factory;
+            factory = () -> new LineTcpConnectionContext(configuration, scheduler, metrics);
 
-        IOContextFactoryImpl<LineTcpConnectionContext> contextFactory = new IOContextFactoryImpl<>(
-                factory,
-                configuration.getConnectionPoolInitialCapacity()
-        );
-        this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), contextFactory);
-        ioWorkerPool.assign(dispatcher);
-        this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
+            IOContextFactoryImpl<LineTcpConnectionContext> contextFactory = new IOContextFactoryImpl<>(
+                    factory,
+                    configuration.getConnectionPoolInitialCapacity()
+            );
+            this.dispatcher = IODispatchers.create(configuration.getDispatcherConfiguration(), contextFactory);
+            ioWorkerPool.assign(dispatcher);
+            this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, ioWorkerPool, dispatcher, writerWorkerPool);
 
-        for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
-            // http context factory has thread local pools
-            // therefore we need each thread to clean their thread locals individually
-            ioWorkerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+            for (int i = 0, n = ioWorkerPool.getWorkerCount(); i < n; i++) {
+                // http context factory has thread local pools
+                // therefore we need each thread to clean their thread locals individually
+                ioWorkerPool.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+            }
+        } catch (Throwable t) {
+            close();
+            throw t;
         }
     }
 

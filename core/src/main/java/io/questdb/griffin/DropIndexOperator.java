@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -84,7 +84,7 @@ public class DropIndexOperator {
                     partitionDFile(path, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnVersion);
                     // hard link
                     partitionDFile(other, rootLen, partitionBy, pTimestamp, pVersion, columnName, columnDropIndexVersion);
-                    if (-1 == ff.hardLink(path, other)) {
+                    if (-1 == ff.hardLink(path.$(), other.$())) {
                         throw CairoException.critical(ff.errno())
                                 .put("cannot hardLink [src=").put(path)
                                 .put(", hardLink=").put(other)
@@ -108,7 +108,7 @@ public class DropIndexOperator {
                     final long pTimestamp = rollbackColumnVersions.getQuick(i + 2);
                     final long partitionNameTxn = rollbackColumnVersions.getQuick(i + 3);
                     partitionDFile(other, rootLen, partitionBy, pTimestamp, partitionNameTxn, columnName, columnDropIndexVersion);
-                    if (!ff.removeQuiet(other)) {
+                    if (!ff.removeQuiet(other.$())) {
                         LOG.info().$("Please remove this file \"").$(other).$('"').I$();
                     }
                 }

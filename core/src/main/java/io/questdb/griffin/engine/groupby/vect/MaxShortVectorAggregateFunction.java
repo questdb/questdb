@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
     private final DistinctFunc distinctFunc;
     private final KeyValueFunc keyValueFunc;
     private final LongAccumulator accumulator = new LongAccumulator(
-            MAX, Numbers.INT_NaN
+            MAX, Numbers.INT_NULL
     );
     private int valueOffset;
 
@@ -62,21 +62,21 @@ public class MaxShortVectorAggregateFunction extends IntFunction implements Vect
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
+    public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            final long value = Vect.maxShort(address, addressSize / Short.BYTES);
-            if (value != Numbers.INT_NaN) {
+            final long value = Vect.maxShort(address, frameRowCount);
+            if (value != Numbers.INT_NULL) {
                 accumulator.accumulate(value);
             }
         }
     }
 
     @Override
-    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount) {
         if (valueAddress == 0) {
-            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Short.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, frameRowCount);
         } else {
-            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Short.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
         }
     }
 

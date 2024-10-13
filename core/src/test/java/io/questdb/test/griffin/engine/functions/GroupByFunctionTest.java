@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,19 +30,21 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 public class GroupByFunctionTest {
     private static final GroupByFunction function = new GroupByFunction() {
         @Override
-        public void computeFirst(MapValue mapValue, Record record) {
+        public void computeFirst(MapValue mapValue, Record record, long rowId) {
         }
 
         @Override
-        public void computeNext(MapValue mapValue, Record record) {
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
         }
 
         @Override
@@ -121,6 +123,11 @@ public class GroupByFunctionTest {
         }
 
         @Override
+        public @NotNull Interval getInterval(Record rec) {
+            return Interval.NULL;
+        }
+
+        @Override
         public long getLong(Record rec) {
             return 0;
         }
@@ -165,21 +172,13 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public CharSequence getStr(Record rec) {
+        public CharSequence getStrA(Record rec) {
             return null;
         }
 
         @Override
-        public CharSequence getStr(Record rec, int arrayIndex) {
+        public CharSequence getStrA(Record rec, int arrayIndex) {
             return null;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink) {
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
         }
 
         @Override
@@ -228,15 +227,30 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public void pushValueTypes(ArrayColumnTypes columnTypes) {
+        public Utf8Sequence getVarcharA(Record rec) {
+            return null;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            return null;
+        }
+
+        @Override
+        public int getVarcharSize(Record rec) {
+            return 0;
+        }
+
+        @Override
+        public void initValueIndex(int valueIndex) {
+        }
+
+        @Override
+        public void initValueTypes(ArrayColumnTypes columnTypes) {
         }
 
         @Override
         public void setNull(MapValue mapValue) {
-        }
-
-        @Override
-        public void setValueIndex(int valueIndex) {
         }
     };
 

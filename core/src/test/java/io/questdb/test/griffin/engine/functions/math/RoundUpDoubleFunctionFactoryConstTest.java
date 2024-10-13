@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,17 +25,15 @@
 package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.griffin.SqlException;
 import org.junit.Test;
 
 public class RoundUpDoubleFunctionFactoryConstTest extends AbstractCairoTest {
 
-
     @Test
-    public void testLargeNegScale() throws SqlException {
+    public void testLargeNegScale() throws Exception {
         assertQuery(
                 "round_up\n" +
-                        "NaN\n",
+                        "null\n",
                 "select round_up(14.7778, -18) from long_sequence(1)",
                 null,
                 true,
@@ -44,10 +42,10 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLargePosScale() throws SqlException {
+    public void testLargePosScale() throws Exception {
         assertQuery(
                 "round_up\n" +
-                        "NaN\n",
+                        "null\n",
                 "select round_up(14.7778, 18) from long_sequence(1)",
                 null,
                 true,
@@ -56,7 +54,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNegScaleHigherThanNumber() throws SqlException {
+    public void testNegScaleHigherThanNumber() throws Exception {
         assertQuery(
                 "round_up\n" +
                         "-100000.0\n",
@@ -68,7 +66,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNegScaleNegValue() throws SqlException {
+    public void testNegScaleNegValue() throws Exception {
         assertQuery(
                 "round_up\n" +
                         "-20.0\n",
@@ -80,7 +78,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNegScalePosValue() throws SqlException {
+    public void testNegScalePosValue() throws Exception {
         assertQuery(
                 "round_up\n" +
                         "20.0\n",
@@ -92,7 +90,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOKNegScale() throws SqlException {
+    public void testOKNegScale() throws Exception {
         assertQuery(
                 "round_up\n" +
                         "0.0\n",
@@ -104,7 +102,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOKPosScale() throws SqlException {
+    public void testOKPosScale() throws Exception {
         assertQuery(
                 "round_up\n" +
                         "14.777800000000001\n",
@@ -116,7 +114,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPosScaleHigherThanNumber() throws SqlException {
+    public void testPosScaleHigherThanNumber() throws Exception {
         assertQuery(
                 "round_up\n" +
                         "-14.7780001\n",
@@ -128,7 +126,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPosScaleNegValue() throws SqlException {
+    public void testPosScaleNegValue() throws Exception {
         assertQuery(
                 "round_up\n" +
                         "-101.0\n",
@@ -140,7 +138,7 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPosScalePosValue() throws SqlException {
+    public void testPosScalePosValue() throws Exception {
         assertQuery(
                 "round_up\n" +
                         "100.10000000000001\n",
@@ -150,5 +148,4 @@ public class RoundUpDoubleFunctionFactoryConstTest extends AbstractCairoTest {
                 true
         );
     }
-
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -38,6 +38,34 @@ import org.junit.Test;
 public class LatestByTest extends AbstractCairoTest {
 
     @Test
+    public void testLatestByAllFilteredReentrant() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table zyzy as (\n" +
+                            "  select \n" +
+                            "  timestamp_sequence(1,1000) ts,\n" +
+                            "  rnd_int(0,5,0) a,\n" +
+                            "  rnd_int(0,5,0) b,\n" +
+                            "  rnd_int(0,5,0) c,\n" +
+                            "  rnd_int(0,5,0) x,\n" +
+                            "  rnd_int(0,5,0) y,\n" +
+                            "  rnd_int(0,5,0) z,\n" +
+                            "  from long_sequence(100)\n" +
+                            ") timestamp(ts);\n"
+            );
+            assertQuery(
+                    "x\tohoh\n" +
+                            "15\t29\n" +
+                            "17\t26\n" +
+                            "9\t29\n" +
+                            "7\t25\n",
+                    "select a+b*c x, sum(z)+25 ohoh from zyzy where a in (x,y) and b = 3 latest on ts partition by x;",
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testLatestByAllFilteredResolvesSymbol() throws Exception {
         assertQuery(
                 "devid\taddress\tvalue\tvalue_decimal\tcreated_at\tts\n",
@@ -63,11 +91,11 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByAllIndexedIndexReaderGetsReloaded() throws Exception {
         final int iterations = 100;
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE e ( \n" +
+            ddl("CREATE TABLE e ( \n" +
                     "  ts TIMESTAMP, \n" +
                     "  sym SYMBOL CAPACITY 32768 INDEX CAPACITY 4 \n" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
-            compile("CREATE TABLE p ( \n" +
+            ddl("CREATE TABLE p ( \n" +
                     "  ts TIMESTAMP, \n" +
                     "  sym SYMBOL CAPACITY 32768 CACHE INDEX CAPACITY 4, \n" +
                     "  lon FLOAT, \n" +
@@ -142,16 +170,16 @@ public class LatestByTest extends AbstractCairoTest {
                     "LATEST ON ts \n" +
                     "PARTITION BY device_id";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "LatestByAllIndexed\n" +
-                            "    Index backward scan on: device_id parallel: true\n" +
+                            "    Async index backward scan on: device_id workers: 1\n" +
                             "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
                             "    Interval backward scan on: pos_test\n" +
                             "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n"
             );
 
-            //prefix filter is applied AFTER latest on
+            // prefix filter is applied AFTER latest on
             assertQuery(
                     "ts\tdevice_id\tg8c\n" +
                             "2021-09-02T00:00:00.000001Z\tdevice_2\t46swgj10\n",
@@ -168,7 +196,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -200,7 +228,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -233,7 +261,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -266,7 +294,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -301,7 +329,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -334,7 +362,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -377,7 +405,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -426,33 +454,35 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByPartitionByDesignatedTimestamp() throws Exception {
-        compile("create table forecasts (when timestamp, ts timestamp, temperature double) timestamp(ts) partition by day");
+        assertMemoryLeak(() -> {
+            compile("create table forecasts (when timestamp, ts timestamp, temperature double) timestamp(ts) partition by day");
 
-        // forecasts for 2020-05-05
-        insert("insert into forecasts values " +
-                "  ('2020-05-05', '2020-05-02', 40), " +
-                "  ('2020-05-05', '2020-05-03', 41), " +
-                "  ('2020-05-05', '2020-05-04', 42)"
-        );
+            // forecasts for 2020-05-05
+            insert("insert into forecasts values " +
+                    "  ('2020-05-05', '2020-05-02', 40), " +
+                    "  ('2020-05-05', '2020-05-03', 41), " +
+                    "  ('2020-05-05', '2020-05-04', 42)"
+            );
 
-        // forecasts for 2020-05-06
-        insert("insert into forecasts values " +
-                "  ('2020-05-06', '2020-05-01', 140), " +
-                "  ('2020-05-06', '2020-05-03', 141), " +
-                "  ('2020-05-06', '2020-05-05', 142), " +// this row has the same ts as following one and will be de-duped
-                "  ('2020-05-07', '2020-05-05', 143)"
-        );
+            // forecasts for 2020-05-06
+            insert("insert into forecasts values " +
+                    "  ('2020-05-06', '2020-05-01', 140), " +
+                    "  ('2020-05-06', '2020-05-03', 141), " +
+                    "  ('2020-05-06', '2020-05-05', 142), " +// this row has the same ts as following one and will be de-duped
+                    "  ('2020-05-07', '2020-05-05', 143)"
+            );
 
-        // PARTITION BY <DESIGNATED_TIMESTAMP> is perhaps a bit silly, but it is a valid query. so let's check it's working as expected
-        String query = "select when, ts, temperature from forecasts latest on ts partition by ts";
-        String expected = "when\tts\ttemperature\n" +
-                "2020-05-06T00:00:00.000000Z\t2020-05-01T00:00:00.000000Z\t140.0\n" +
-                "2020-05-05T00:00:00.000000Z\t2020-05-02T00:00:00.000000Z\t40.0\n" +
-                "2020-05-06T00:00:00.000000Z\t2020-05-03T00:00:00.000000Z\t141.0\n" +
-                "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
-                "2020-05-07T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t143.0\n";
+            // PARTITION BY <DESIGNATED_TIMESTAMP> is perhaps a bit silly, but it is a valid query. so let's check it's working as expected
+            String query = "select when, ts, temperature from forecasts latest on ts partition by ts";
+            String expected = "when\tts\ttemperature\n" +
+                    "2020-05-06T00:00:00.000000Z\t2020-05-01T00:00:00.000000Z\t140.0\n" +
+                    "2020-05-05T00:00:00.000000Z\t2020-05-02T00:00:00.000000Z\t40.0\n" +
+                    "2020-05-06T00:00:00.000000Z\t2020-05-03T00:00:00.000000Z\t141.0\n" +
+                    "2020-05-05T00:00:00.000000Z\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                    "2020-05-07T00:00:00.000000Z\t2020-05-05T00:00:00.000000Z\t143.0\n";
 
-        assertQuery(expected, query, "ts", true, true);
+            assertQuery(expected, query, "ts", true, true);
+        });
     }
 
     @Test
@@ -566,7 +596,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan any partition, searched symbol values don't exist in symbol table
                     if (Utf8s.containsAscii(name, "1970-01-01") || Utf8s.containsAscii(name, "1970-01-02")) {
                         return -1;
@@ -610,7 +640,7 @@ public class LatestByTest extends AbstractCairoTest {
 
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in other partitions
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -650,7 +680,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -686,7 +716,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -1120,11 +1150,63 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnVarchar() throws Exception {
+        assertQuery(
+                "x\tv\tts\n" +
+                        "42\tb\t1970-01-02T17:00:00.000000Z\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000Z\n",
+                "t " +
+                        "where v in ('a', 'b', 'd') and x%2 = 0 " +
+                        "latest on ts partition by v",
+                "create table t as (" +
+                        "select " +
+                        "x, " +
+                        "rnd_varchar('a', 'b', 'c', null) v, " +
+                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                        "from long_sequence(49)" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                "insert into t values (1000, 'd', '1970-01-02T20:00')",
+                "x\tv\tts\n" +
+                        "42\tb\t1970-01-02T17:00:00.000000Z\n" +
+                        "1000\td\t1970-01-02T20:00:00.000000Z\n" +
+                        "48\ta\t1970-01-02T23:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testLatestOnVarcharNonAscii() throws Exception {
+        assertQuery(
+                "x\tv\tts\n" +
+                        "14\t\t1970-01-01T13:00:00.000000Z\n" +
+                        "17\tраз\t1970-01-01T16:00:00.000000Z\n" +
+                        "19\tдва\t1970-01-01T18:00:00.000000Z\n" +
+                        "20\tтри\t1970-01-01T19:00:00.000000Z\n",
+                "select * " +
+                        "from t " +
+                        "latest on ts partition by v",
+                "create table t as (" +
+                        "select " +
+                        "x, " +
+                        "rnd_varchar('раз', 'два', 'три', null) v, " +
+                        "timestamp_sequence(0, 60*60*1000*1000L) ts " +
+                        "from long_sequence(20)" +
+                        ") timestamp(ts) partition by DAY",
+                "ts",
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testLatestWithFilterByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -1160,7 +1242,7 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestWithFilterByDoesNotNeedFullScanValueNotInSymbolTable() throws Exception {
         ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 // Query should not scan the first partition
                 // all the latest values are in the second, third partition
                 if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -1211,7 +1293,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -1246,7 +1328,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -1302,33 +1384,35 @@ public class LatestByTest extends AbstractCairoTest {
                     if (i++ > 0) {
                         sink.put(',');
                     }
-                    sink.put('\'').put(record.getSym(0)).put('\'');
+                    sink.put('\'').put(record.getSymA(0)).put('\'');
                 }
             }
         }
         return sink.toString();
     }
 
-    private void testLatestByPartitionBy(String partitionByType, String valueA, String valueB) throws SqlException {
-        compile("create table forecasts " +
-                "( when " + partitionByType + ", " +
-                "version timestamp, " +
-                "temperature double) timestamp(version) partition by day");
-        insert("insert into forecasts values " +
-                "  (" + valueA + ", '2020-05-02', 40), " +
-                "  (" + valueA + ", '2020-05-03', 41), " +
-                "  (" + valueA + ", '2020-05-04', 42), " +
-                "  (" + valueB + ", '2020-05-01', 140), " +
-                "  (" + valueB + ", '2020-05-03', 141), " +
-                "  (" + valueB + ", '2020-05-05', 142)"
-        );
+    private void testLatestByPartitionBy(String partitionByType, String valueA, String valueB) throws Exception {
+        assertMemoryLeak(() -> {
+            compile("create table forecasts " +
+                    "( when " + partitionByType + ", " +
+                    "version timestamp, " +
+                    "temperature double) timestamp(version) partition by day");
+            insert("insert into forecasts values " +
+                    "  (" + valueA + ", '2020-05-02', 40), " +
+                    "  (" + valueA + ", '2020-05-03', 41), " +
+                    "  (" + valueA + ", '2020-05-04', 42), " +
+                    "  (" + valueB + ", '2020-05-01', 140), " +
+                    "  (" + valueB + ", '2020-05-03', 141), " +
+                    "  (" + valueB + ", '2020-05-05', 142)"
+            );
 
-        String query = "select when, version, temperature from forecasts latest on version partition by when";
-        String expected = "when\tversion\ttemperature\n" +
-                valueA.replaceAll("'|#", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
-                valueB.replaceAll("'|#", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
+            String query = "select when, version, temperature from forecasts latest on version partition by when";
+            String expected = "when\tversion\ttemperature\n" +
+                    valueA.replaceAll("['#]", "") + "\t2020-05-04T00:00:00.000000Z\t42.0\n" +
+                    valueB.replaceAll("['#]", "") + "\t2020-05-05T00:00:00.000000Z\t142.0\n";
 
-        assertQuery(expected, query, "version", true, true);
+            assertQueryNoLeakCheck(expected, query, "version", true, true);
+        });
     }
 
     private void testLatestByWithJoin(boolean indexed) throws Exception {

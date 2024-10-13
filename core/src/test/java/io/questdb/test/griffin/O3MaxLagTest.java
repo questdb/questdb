@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.TableWriter.Row;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -35,6 +36,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -43,42 +45,40 @@ import org.junit.Test;
 public class O3MaxLagTest extends AbstractO3Test {
 
     private final static Log LOG = LogFactory.getLog(O3MaxLagTest.class);
+    private static final Utf8StringSink utf8Sink = new Utf8StringSink();
 
     @Test
     public void testBigUncommittedCheckStrColFixedAndVarMappedSizes() throws Exception {
         executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
-                tableModel
-                        .col("id", ColumnType.STRING)
-                        .timestamp("ts");
-                testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
-            }
+            TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY);
+            tableModel
+                    .col("id", ColumnType.STRING)
+                    .timestamp("ts");
+            testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
         });
     }
 
     @Test
     public void testBigUncommittedMovesTimestampOnEdge() throws Exception {
         executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
-                tableModel
-                        .col("id", ColumnType.LONG)
-                        .timestamp("ts");
-                testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
-            }
+            TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY);
+            tableModel
+                    .col("id", ColumnType.LONG)
+                    .timestamp("ts");
+            testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
         });
     }
 
     @Test
     public void testBigUncommittedToMove() throws Exception {
         executeWithPool(0, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            try (TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY)) {
-                tableModel
-                        .col("id", ColumnType.LONG)
-                        .col("ok", ColumnType.FLOAT)
-                        .col("str", ColumnType.STRING)
-                        .timestamp("ts");
-                testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
-            }
+            TableModel tableModel = new TableModel(engine.getConfiguration(), "table", PartitionBy.DAY);
+            tableModel
+                    .col("id", ColumnType.LONG)
+                    .col("ok", ColumnType.FLOAT)
+                    .col("str", ColumnType.STRING)
+                    .timestamp("ts");
+            testBigUncommittedMove1(engine, compiler, sqlExecutionContext, tableModel);
         });
     }
 
@@ -389,42 +389,59 @@ public class O3MaxLagTest extends AbstractO3Test {
     }
 
     private void appendRows(TableWriter tw, int count, Rnd rnd) throws NumericException {
+        TableMetadata metadata = tw.getMetadata();
         for (int i = 0; i < count; i++) {
             long timestamp = IntervalUtils.parseFloorPartialTimestamp("1970-01-01T11:00:00.000000Z") + rnd.nextLong(Timestamps.DAY_MICROS);
             Row row = tw.newRow(timestamp);
 
-            row.putStr(0, "cc");
+            putVariantStr(metadata, row, 0, "cc");
             row.putLong(2, 11111L);
-            row.putStr(3, "dd");
+            putVariantStr(metadata, row, 3, "dd");
             row.putLong(4, 22222L);
             row.append();
 
             row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("1970-01-02T11:00:00.000000Z"));
-            row.putStr(0, "cc");
+            putVariantStr(metadata, row, 0, "cc");
             row.putLong(2, 333333L);
-            row.putStr(3, "dd");
+            putVariantStr(metadata, row, 3, "dd");
             row.putLong(4, 444444L);
             row.append();
         }
     }
 
     private void appendRowsWithDroppedColumn(TableWriter tw, int count, Rnd rnd) throws NumericException {
+        TableMetadata metadata = tw.getMetadata();
         for (int i = 0; i < count; i++) {
             long timestamp = IntervalUtils.parseFloorPartialTimestamp("1970-01-01") + rnd.nextLong(Timestamps.DAY_MICROS);
             Row row = tw.newRow(timestamp);
 
-            row.putStr(0, "cc");
+            putVariantStr(metadata, row, 0, "cc");
             row.putLong(2, 11111L);
-            row.putStr(4, "dd");
+            putVariantStr(metadata, row, 4, "dd");
             row.putLong(5, 22222L);
             row.append();
 
             row = tw.newRow(IntervalUtils.parseFloorPartialTimestamp("1970-01-02T10:00:01.000000Z"));
-            row.putStr(0, "cc");
+            putVariantStr(metadata, row, 0, "cc");
             row.putLong(2, 333333L);
-            row.putStr(4, "dd");
+            putVariantStr(metadata, row, 4, "dd");
             row.putLong(5, 444444L);
             row.append();
+        }
+    }
+
+    private void putVariantStr(RecordMetadata metadata, Row row, int col, String value) {
+        switch (metadata.getColumnType(col)) {
+            case ColumnType.STRING:
+                row.putStr(col, value);
+                break;
+            case ColumnType.VARCHAR:
+                utf8Sink.clear();
+                utf8Sink.put(value);
+                row.putVarchar(col, utf8Sink);
+                break;
+            default:
+                throw new UnsupportedOperationException();
         }
     }
 
@@ -484,6 +501,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             // Add 2 batches
             try (TableWriter o3 = TestUtils.getWriter(engine, "o3")) {
                 try (TableWriter ordered = TestUtils.getWriter(engine, "ordered")) {
+                    TableMetadata metadata = o3.getMetadata();
                     for (int i = 0; i < iterations; i++) {
                         long backwards = iterations - i - 1;
                         final Rnd rnd = new Rnd();
@@ -498,7 +516,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                                 row.putFloat(floatColIndex, rndFloat);
                             }
                             if (strColIndex > -1) {
-                                row.putStr(strColIndex, varCol[id % varCol.length]);
+                                putVariantStr(metadata, row, strColIndex, varCol[id % varCol.length]);
                             }
                             row.append();
 
@@ -511,7 +529,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                                 row.putFloat(floatColIndex, rndFloat);
                             }
                             if (strColIndex > -1) {
-                                row.putStr(strColIndex, varCol[id % varCol.length]);
+                                putVariantStr(metadata, row, strColIndex, varCol[id % varCol.length]);
                             }
                             row.append();
                         }
@@ -1349,16 +1367,16 @@ public class O3MaxLagTest extends AbstractO3Test {
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
                     "str\tts\tx\tstr2\ty\n" +
-                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
+                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n");
 
             appendRowsWithDroppedColumn(tw, appendCount - halfCount, rnd);
             tw.ic(Timestamps.HOUR_MICROS);
 
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
                     "str\tts\tx\tstr2\ty\n" +
-                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
+                            "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n");
 
             if (iteration % 2 == 0) {
                 tw.commit();
@@ -1371,7 +1389,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
                 "str\tts\tx\tstr2\ty\n" +
-                        "aa\t1970-01-01T11:00:00.000000Z\t1\t\tNaN\n" +
-                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tNaN\n");
+                        "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
+                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n");
     }
 }

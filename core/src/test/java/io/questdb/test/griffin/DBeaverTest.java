@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,27 +24,27 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class DBeaverTest extends AbstractCairoTest {
+
     @Test
-    public void testDotNetGetTypes() throws SqlException {
+    public void testDotNetGetTypes() throws Exception {
         assertQuery(
                 "nspname\toid\ttypnamespace\ttypname\ttyptype\ttyprelid\ttypnotnull\trelkind\telemtypoid\telemtypname\telemrelkind\telemtyptype\tord\n" +
-                        "public\t1043\t2200\tvarchar\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t1114\t2200\ttimestamp\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t701\t2200\tfloat8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t700\t2200\tfloat4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t23\t2200\tint4\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t21\t2200\tint2\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t18\t2200\tchar\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t20\t2200\tint8\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t16\t2200\tbool\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t17\t2200\tbinary\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t1082\t2200\tdate\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n" +
-                        "public\t2950\t2200\tuuid\tb\tNaN\tfalse\t\tNaN\t\t\t\t0\n",
+                        "public\t1043\t2200\tvarchar\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t1114\t2200\ttimestamp\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t701\t2200\tfloat8\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t700\t2200\tfloat4\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t23\t2200\tint4\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t21\t2200\tint2\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t18\t2200\tchar\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t20\t2200\tint8\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t16\t2200\tbool\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t17\t2200\tbinary\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t1082\t2200\tdate\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t2950\t2200\tuuid\tb\tnull\tfalse\t\tnull\t\t\t\t0\n",
                 "SELECT ns.nspname, typ_and_elem_type.*,\n" +
                         "   CASE\n" +
                         "       WHEN typtype IN ('b', 'e', 'p') THEN 0           -- First base types, enums, pseudo-types\n" +
@@ -97,7 +97,7 @@ public class DBeaverTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFrequentSql() throws SqlException {
+    public void testFrequentSql() throws Exception {
         assertQuery(
                 "current_schema\tsession_user\n" +
                         "public\tadmin\n",
@@ -114,7 +114,7 @@ public class DBeaverTest extends AbstractCairoTest {
             ddl("create table xyz(a int, t timestamp)");
             ddl("create table tab2(b long, z binary)");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\tdef_value\tdescription\n" +
                             "xyz\t1\ta\t1\t23\tfalse\t0\t4\t\tfalse\ttrue\t\t\n" +
                             "xyz\t1\tt\t2\t1114\tfalse\t0\t-1\t\tfalse\ttrue\t\t\n",
@@ -140,7 +140,7 @@ public class DBeaverTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table xyz(a int)");
             ddl("create table tab2(b long)");
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "oid tral\toid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\tdescription\tpartition_expr\tpartition_key\n" +
                             "2\t2\ttab2\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n" +
                             "1\t1\txyz\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n",
@@ -152,26 +152,25 @@ public class DBeaverTest extends AbstractCairoTest {
                     true,
                     false
             );
-
         });
     }
 
     @Test
-    public void testListTypes() throws SqlException {
+    public void testListTypes() throws Exception {
         assertQuery(
                 "oid1\toid\ttypname\ttypbasetype\ttyparray\ttypnamespace\ttypnotnull\ttyptypmod\ttyptype\ttypcategory\ttyprelid\ttypelem\ttypreceive\ttypdelim\ttypinput\ttypowner\ttyplen\ttypbyval\ttypispreferred\ttypisdefined\ttypalign\ttypstorage\ttypndims\ttypcollation\ttypdefault\trelkind\tbase_type_name\tdescription\n" +
-                        "16\t16\tbool\t0\t0\t2200\tfalse\t0\tb\tB\tNaN\t0\t0\t0\t0\t0\t1\tfalse\tfalse\ttrue\tc\tp\t0\t0\tfalse\t\t\t\n" +
-                        "17\t17\tbinary\t0\t0\t2200\tfalse\t0\tb\tU\tNaN\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
-                        "18\t18\tchar\t0\t0\t2200\tfalse\t0\tb\tZ\tNaN\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
-                        "20\t20\tint8\t0\t0\t2200\tfalse\t0\tb\tN\tNaN\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
-                        "21\t21\tint2\t0\t0\t2200\tfalse\t0\tb\tN\tNaN\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
-                        "23\t23\tint4\t0\t0\t2200\tfalse\t0\tb\tN\tNaN\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
-                        "700\t700\tfloat4\t0\t0\t2200\tfalse\t0\tb\tN\tNaN\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
-                        "701\t701\tfloat8\t0\t0\t2200\tfalse\t0\tb\tN\tNaN\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
-                        "1043\t1043\tvarchar\t0\t0\t2200\tfalse\t0\tb\tS\tNaN\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
-                        "1082\t1082\tdate\t0\t0\t2200\tfalse\t0\tb\tD\tNaN\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
-                        "1114\t1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tD\tNaN\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
-                        "2950\t2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tU\tNaN\t0\t0\t0\t0\t0\t16\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n",
+                        "16\t16\tbool\t0\t0\t2200\tfalse\t0\tb\tB\tnull\t0\t0\t0\t0\t0\t1\tfalse\tfalse\ttrue\tc\tp\t0\t0\tfalse\t\t\t\n" +
+                        "17\t17\tbinary\t0\t0\t2200\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "18\t18\tchar\t0\t0\t2200\tfalse\t0\tb\tZ\tnull\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
+                        "20\t20\tint8\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "21\t21\tint2\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
+                        "23\t23\tint4\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "700\t700\tfloat4\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "701\t701\tfloat8\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1043\t1043\tvarchar\t0\t0\t2200\tfalse\t0\tb\tS\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1082\t1082\tdate\t0\t0\t2200\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "1114\t1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "2950\t2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t16\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n",
                 "SELECT t.oid as oid1,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
                         "FROM pg_catalog.pg_type t\n" +
                         "LEFT OUTER JOIN pg_catalog.pg_class c ON c.oid=t.typrelid\n" +
@@ -185,7 +184,7 @@ public class DBeaverTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNamespaceListSql() throws SqlException {
+    public void testNamespaceListSql() throws Exception {
         assertQuery(
                 "n_oid\tnspname\toid\txmin\tnspowner\tdescription\n" +
                         "11\tpg_catalog\t11\t0\t1\t\n" +
@@ -200,7 +199,7 @@ public class DBeaverTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testShowSearchPath() throws SqlException {
+    public void testShowSearchPath() throws Exception {
         assertQuery(
                 "search_path\n" +
                         "\"$user\", public\n",

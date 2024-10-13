@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,9 +33,12 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -96,19 +99,17 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         final Function pattern = args.getQuick(1);
 
         if (pattern.isConstant()) {
-            final CharSequence likeSeq = pattern.getStr(null);
+            final CharSequence likeSeq = pattern.getStrA(null);
             int len;
             if (likeSeq != null && (len = likeSeq.length()) > 0) {
-                int oneCount = countChar(likeSeq, '_');
-                if (oneCount == 0) {
-                    if (likeSeq.charAt(len - 1) == '\\') {
-                        throw SqlException.parserErr(len - 1, likeSeq, "LIKE pattern must not end with escape character");
-                    }
-
-                    int anyCount = countChar(likeSeq, '%');
+                if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
+                    final int anyCount = countChar(likeSeq, '%');
                     if (anyCount == 1) {
                         if (len == 1) {
-                            return BooleanConstant.TRUE; // LIKE '%' case
+                            // LIKE '%' case
+                            final NegatableBooleanFunction notNullFunc = new EqStrFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
                         } else if (likeSeq.charAt(0) == '%') {
                             // LIKE/ILIKE '%abc' case
                             final String patternStr = likeSeq.subSequence(1, len).toString();
@@ -128,7 +129,10 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                         }
                     } else if (anyCount == 2) {
                         if (len == 2) {
-                            return BooleanConstant.TRUE; // LIKE '%%' case
+                            // LIKE '%%' case
+                            final NegatableBooleanFunction notNullFunc = new EqStrFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
                         } else if (likeSeq.charAt(0) == '%' && likeSeq.charAt(len - 1) == '%') {
                             // LIKE/ILIKE '%abc%' case
                             final String patternStr = likeSeq.subSequence(1, len - 1).toString();
@@ -146,6 +150,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 int flags = Pattern.DOTALL;
                 if (isCaseInsensitive()) {
                     flags |= Pattern.CASE_INSENSITIVE;
+                    p = p.toLowerCase();
                 }
                 return new ConstLikeStrFunction(
                         value,
@@ -163,7 +168,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
     }
 
-    private static int countChar(@NotNull CharSequence seq, char c) {
+    static int countChar(@NotNull CharSequence seq, char c) {
         int count = 0;
         for (int i = 0, n = seq.length(); i < n; i++) {
             if (seq.charAt(i) == c) {
@@ -175,7 +180,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
     protected abstract boolean isCaseInsensitive();
 
-    private static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
+    static class BindLikeStrFunction extends BooleanFunction implements BinaryFunction {
         private final boolean caseInsensitive;
         private final Function pattern;
         private final Function value;
@@ -189,34 +194,39 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
         public boolean getBool(Record rec) {
             if (matcher != null) {
-                CharSequence cs = getArg().getStr(rec);
+                CharSequence cs = value.getStrA(rec);
                 return cs != null && matcher.reset(cs).matches();
             }
             return false;
         }
 
         @Override
+        public Function getLeft() {
+            return value;
+        }
+
+        @Override
+        public Function getRight() {
+            return pattern;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            value.init(symbolTableSource, executionContext);
-            pattern.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
             // this is bind variable, we can use it as constant
-            final CharSequence patternValue = pattern.getStr(null);
+            final CharSequence patternValue = pattern.getStrA(null);
             if (patternValue != null && patternValue.length() > 0) {
-                final String p = escapeSpecialChars(patternValue, lastPattern);
+                String p = escapeSpecialChars(patternValue, lastPattern);
                 if (p != null) {
                     int flags = Pattern.DOTALL;
                     if (caseInsensitive) {
                         flags |= Pattern.CASE_INSENSITIVE;
+                        p = p.toLowerCase();
                     }
-                    this.matcher = Pattern.compile(p, flags).matcher("");
-                    this.lastPattern = p;
+                    matcher = Pattern.compile(p, flags).matcher("");
+                    lastPattern = p;
                 }
             } else {
                 lastPattern = null;
@@ -225,7 +235,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 
@@ -257,16 +267,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             if (cs == null) {
                 return false;
             }
             return Chars.contains(cs, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override
@@ -295,13 +300,8 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             return Chars.endsWith(cs, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override
@@ -313,7 +313,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
     }
 
-    private static class ConstIContainsStrFunction extends BooleanFunction implements UnaryFunction {
+    static class ConstIContainsStrFunction extends BooleanFunction implements UnaryFunction {
         private final String pattern;
         private final Function value;
 
@@ -329,16 +329,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             if (cs == null) {
                 return false;
             }
             return Chars.containsLowerCase(cs, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override
@@ -351,7 +346,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
     }
 
-    private static class ConstIEndsWithStrFunction extends BooleanFunction implements UnaryFunction {
+    static class ConstIEndsWithStrFunction extends BooleanFunction implements UnaryFunction {
         private final String pattern;
         private final Function value;
 
@@ -367,13 +362,8 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             return Chars.endsWithLowerCase(cs, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override
@@ -385,7 +375,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
     }
 
-    private static class ConstIStartsWithStrFunction extends BooleanFunction implements UnaryFunction {
+    static class ConstIStartsWithStrFunction extends BooleanFunction implements UnaryFunction {
         private final String pattern;
         private final Function value;
 
@@ -401,13 +391,8 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             return Chars.startsWithLowerCase(cs, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override
@@ -419,7 +404,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
     }
 
-    private static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
+    static class ConstLikeStrFunction extends BooleanFunction implements UnaryFunction {
         private final Matcher matcher;
         private final Function value;
 
@@ -435,12 +420,12 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             return cs != null && matcher.reset(cs).matches();
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 
@@ -472,13 +457,8 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
         @Override
         public boolean getBool(Record rec) {
-            CharSequence cs = getArg().getStr(rec);
+            CharSequence cs = value.getStrA(rec);
             return Chars.startsWith(cs, pattern);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
         }
 
         @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -76,7 +76,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openCleanRW(LPSZ name, long size) {
+                public long openCleanRW(LPSZ name, long size) {
                     return -1;
                 }
             };
@@ -98,7 +98,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openCleanRW(LPSZ name, long size) {
+                public long openCleanRW(LPSZ name, long size) {
                     return -1;
                 }
             };
@@ -343,7 +343,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     return -1;
                 }
             };
@@ -365,7 +365,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     return -1;
                 }
             };

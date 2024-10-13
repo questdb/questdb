@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,53 +31,61 @@ import java.io.Closeable;
 public class RingQueue<T> implements Closeable {
     private final T[] buf;
     private final int mask;
-    private final long memory;
     private final int memoryTag;
+    private long memory;
     private long memorySize;
 
     @SuppressWarnings("unchecked")
     public RingQueue(ObjectFactory<T> factory, int cycle) {
-
         // zero queue is allowed for testing
         assert cycle == 0 || Numbers.isPow2(cycle);
+        try {
+            this.mask = cycle - 1;
+            this.buf = (T[]) new Object[cycle];
 
-        this.mask = cycle - 1;
-        this.buf = (T[]) new Object[cycle];
+            for (int i = 0; i < cycle; i++) {
+                buf[i] = factory.newInstance();
+            }
 
-        for (int i = 0; i < cycle; i++) {
-            buf[i] = factory.newInstance();
+            // heap based queue
+            this.memory = 0;
+            this.memorySize = 0;
+            this.memoryTag = 0;
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-
-        // heap based queue
-        this.memory = 0;
-        this.memorySize = 0;
-        this.memoryTag = 0;
     }
 
     @SuppressWarnings("unchecked")
     public RingQueue(DirectObjectFactory<T> factory, long slotSize, int cycle, int memoryTag) {
-        this.mask = cycle - 1;
-        this.buf = (T[]) new Object[cycle];
+        try {
+            this.mask = cycle - 1;
+            this.buf = (T[]) new Object[cycle];
 
-        this.memorySize = slotSize * cycle;
-        this.memoryTag = memoryTag;
-        this.memory = Unsafe.calloc(memorySize, memoryTag);
-        long p = memory;
-        for (int i = 0; i < cycle; i++) {
-            // intention is that whatever comes out of the factory it should work with the
-            // memory allocated by the queue for this slot and should not reallocate ever
-            buf[i] = factory.newInstance(p, slotSize);
-            p += slotSize;
+            this.memorySize = slotSize * cycle;
+            this.memoryTag = memoryTag;
+            this.memory = Unsafe.calloc(memorySize, memoryTag);
+            long p = memory;
+            for (int i = 0; i < cycle; i++) {
+                // intention is that whatever comes out of the factory it should work with the
+                // memory allocated by the queue for this slot and should not reallocate ever
+                buf[i] = factory.newInstance(p, slotSize);
+                p += slotSize;
+            }
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
     }
 
     @Override
     public void close() {
         for (int i = 0, n = buf.length; i < n; i++) {
-            Misc.freeIfCloseable(buf[i]);
+            buf[i] = Misc.freeIfCloseable(buf[i]);
         }
-        if (memorySize > 0) {
-            Unsafe.free(memory, memorySize, memoryTag);
+        if (memory != 0) {
+            memory = Unsafe.free(memory, memorySize, memoryTag);
             this.memorySize = 0;
         }
     }

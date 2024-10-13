@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
 
@@ -67,7 +66,7 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
         };
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_HTTP_CONN) {
             @Override
-            public boolean checkIfTripped(long millis, int fd) {
+            public boolean checkIfTripped(long millis, long fd) {
                 return breakConnection == 0 || --breakConnection == 0;
             }
 
@@ -152,7 +151,7 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
                 breakConnection = i;
                 try {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
+                        println(factory, cursor);
                     }
                     Assert.fail();
                 } catch (CairoException ex) {

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,25 +24,31 @@
 
 package io.questdb.std;
 
+import com.sun.management.OperatingSystemMXBean;
 import io.questdb.std.ex.FatalError;
 import io.questdb.std.ex.KerberosException;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.management.ManagementFactory;
 import java.util.concurrent.locks.LockSupport;
 
 public final class Os {
-    public static final int FREEBSD = 5;
-    public static final int LINUX_AMD64 = 2;
-    public static final int LINUX_ARM64 = 4;
-    public static final int OSX_AMD64 = 1;
-    public static final int OSX_ARM64 = 6;
+    public static final int ARCH_AARCH64 = 1;
+    public static final int ARCH_X86_64 = 2;
+    public static final int DARWIN = 1;
+    public static final int FREEBSD = 4;
+    public static final int LINUX = 2;
     public static final long PARK_NANOS_MAX = 5 * 1_000_000_000L;
     public static final int WINDOWS = 3;
     public static final int _32Bit = -2;
+    public static final int arch;
+    public static final String archName;
+    public static final String name;
     public static final int type;
 
     private Os() {
@@ -91,10 +97,12 @@ public final class Os {
         return Unsafe.getUnsafe().getInt(forkExecT + 4);
     }
 
+    public static native void free(long mem);
+
     public static byte[] generateKerberosToken(CharSequence spn) throws KerberosException {
         // We use Path as a LPSZ sink here.
-        try (Path sink = new Path().of(spn).$()) {
-            final long struct = generateKrbToken(sink.ptr());
+        try (Path sink = new Path().of(spn)) {
+            final long struct = generateKrbToken(sink.$().ptr());
             int status = Unsafe.getUnsafe().getInt(struct);
             int bufLen = Unsafe.getUnsafe().getInt(struct + 4);
             long ptoken = Unsafe.getUnsafe().getLong(struct + 8);
@@ -116,6 +124,21 @@ public final class Os {
 
     public static native int getEnvironmentType();
 
+    /**
+     * Uses the com.sun.management.OperatingSystemMXBean to get the memory size.
+     * This report takes into account the limit set through cgroups (e.g., inside
+     * a Docker container).
+     * <p>
+     * If the MXBean doesn't exist, returns -1.
+     */
+    public static long getMemorySizeFromMXBean() {
+        OperatingSystemMXBean bean = ManagementFactory.getPlatformMXBean(OperatingSystemMXBean.class);
+        if (bean == null) {
+            return -1;
+        }
+        return bean.getTotalPhysicalMemorySize();
+    }
+
     public static native int getPid();
 
     /**
@@ -129,21 +152,57 @@ public final class Os {
     public static void init() {
     }
 
+    public static boolean isFreeBSD() {
+        return type == Os.FREEBSD;
+    }
+
     public static boolean isLinux() {
-        return type == LINUX_AMD64 || type == LINUX_ARM64;
+        return type == LINUX;
     }
 
     public static boolean isOSX() {
-        return type == OSX_AMD64 || type == OSX_ARM64;
+        return type == DARWIN;
     }
 
     public static boolean isPosix() {
         return type != Os.WINDOWS;
     }
 
+    public static native boolean isRustReleaseBuild();
+
     public static boolean isWindows() {
         return type == Os.WINDOWS;
     }
+
+    public static void loadLib(String lib, @NotNull InputStream libStream) {
+        try {
+            File tempLib = null;
+            try {
+                int dot = lib.indexOf('.');
+                tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));
+                // copy to tempLib
+                try (FileOutputStream out = new FileOutputStream(tempLib)) {
+                    byte[] buf = new byte[4096];
+                    while (true) {
+                        int read = libStream.read(buf);
+                        if (read == -1) {
+                            break;
+                        }
+                        out.write(buf, 0, read);
+                    }
+                } finally {
+                    tempLib.deleteOnExit();
+                }
+                System.load(tempLib.getAbsolutePath());
+            } catch (IOException e) {
+                throw new FatalError("Internal error: cannot unpack " + tempLib, e);
+            }
+        } finally {
+            Misc.free(libStream);
+        }
+    }
+
+    public static native long malloc(long size);
 
     public static void park() {
         LockSupport.parkNanos(Os.PARK_NANOS_MAX);
@@ -155,6 +214,8 @@ public final class Os {
         } catch (InterruptedException ignore) {
         }
     }
+
+    public static native long realloc(long mem, long size);
 
     public static int setCurrentThreadAffinity(int cpu) {
         if (cpu == -1) {
@@ -178,77 +239,96 @@ public final class Os {
         }
     }
 
+    public static native long smokeTest(long a, long b);
+
     private static native long forkExec(long argv);
 
     private static native void freeKrbToken(long struct);
 
     private static native long generateKrbToken(long spn);
 
+    private static native void initRust();
+
     private static void loadLib(String lib) {
         InputStream is = Os.class.getResourceAsStream(lib);
         if (is == null) {
             throw new FatalError("Internal error: cannot find " + lib + ", broken package?");
         }
-
-        try {
-            File tempLib = null;
-            try {
-                int dot = lib.indexOf('.');
-                tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));
-                // copy to tempLib
-                try (FileOutputStream out = new FileOutputStream(tempLib)) {
-                    byte[] buf = new byte[4096];
-                    while (true) {
-                        int read = is.read(buf);
-                        if (read == -1) {
-                            break;
-                        }
-                        out.write(buf, 0, read);
-                    }
-                } finally {
-                    tempLib.deleteOnExit();
-                }
-                System.load(tempLib.getAbsolutePath());
-            } catch (IOException e) {
-                throw new FatalError("Internal error: cannot unpack " + tempLib, e);
-            }
-        } finally {
-            Misc.free(is);
-        }
+        loadLib(lib, is);
     }
 
     private static native int setCurrentThreadAffinity0(int cpu);
 
     static {
+        if ("aarch64".equals(System.getProperty("os.arch"))) {
+            arch = ARCH_AARCH64;
+            archName = "aarch64";
+        } else {
+            arch = ARCH_X86_64;
+            archName = "x86-64";
+        }
+
         if ("64".equals(System.getProperty("sun.arch.data.model"))) {
             String osName = System.getProperty("os.name");
+            String outputLibExt;
+
             if (osName.contains("Linux")) {
-                if ("aarch64".equals(System.getProperty("os.arch"))) {
-                    type = LINUX_ARM64;
-                    loadLib("/io/questdb/bin/armlinux/libquestdb.so");
-                } else {
-                    type = LINUX_AMD64;
-                    loadLib("/io/questdb/bin/linux/libquestdb.so");
-                }
+                name = "linux";
+                outputLibExt = ".so";
+                type = LINUX;
             } else if (osName.contains("Mac")) {
-                if ("aarch64".equals(System.getProperty("os.arch"))) {
-                    type = OSX_ARM64;
-                    loadLib("/io/questdb/bin/armosx/libquestdb.dylib");
-                } else {
-                    type = OSX_AMD64; // darwin
-                    loadLib("/io/questdb/bin/osx/libquestdb.dylib");
-                }
+                name = "darwin";
+                outputLibExt = ".dylib";
+                type = DARWIN;
             } else if (osName.contains("Windows")) {
+                name = "windows";
+                outputLibExt = ".dll";
                 type = WINDOWS;
-                loadLib("/io/questdb/bin/windows/libquestdb.dll");
             } else if (osName.contains("FreeBSD")) {
+                name = "freebsd";
+                outputLibExt = ".so";
                 type = FREEBSD; // darwin is based on FreeBSD, so things that work for OSX will probably work for FreeBSD
-                loadLib("/io/questdb/bin/freebsd/libquestdb.so");
             } else {
                 throw new Error("Unsupported OS: " + osName);
             }
+
+            String prdLibRoot = "/io/questdb/bin/" + name + '-' + archName + '/';
+            String devCXXLibRoot = "/io/questdb/bin-local/";
+            String cxxLibName = "libquestdb" + outputLibExt;
+            String devCXXLib = devCXXLibRoot + cxxLibName;
+
+            // try dev CXX lib first
+            InputStream libCXXStream = Os.class.getResourceAsStream(devCXXLib);
+            if (libCXXStream == null) {
+                loadLib(prdLibRoot + cxxLibName);
+            } else {
+                System.err.println("Loading DEV CXX library: " + devCXXLib);
+                loadLib(devCXXLib, libCXXStream);
+            }
+
+            // Rust library is loaded conditionally to allow for convenience
+            // of the development environments that target Rust source code
+            // The library file is missing "lib" prefix on Windows
+            String devRustLibRoot = "/io/questdb/rust/";
+            final String rustLibName;
+            if (type == WINDOWS) {
+                rustLibName = "questdbr" + outputLibExt;
+            } else {
+                rustLibName = "libquestdbr" + outputLibExt;
+            }
+
+            final String devRustLib = devRustLibRoot + rustLibName;
+
+            InputStream libRustStream = Os.class.getResourceAsStream(devRustLib);
+            if (libRustStream == null) {
+                loadLib(prdLibRoot + rustLibName);
+            } else {
+                loadLib(devRustLib, libRustStream);
+            }
+            initRust();
         } else {
             type = _32Bit;
+            name = System.getProperty("os.name");
         }
     }
 }

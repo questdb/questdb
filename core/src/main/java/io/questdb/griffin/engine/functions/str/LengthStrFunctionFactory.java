@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,20 +35,27 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class LengthStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "length(S)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LengthStrVFunc(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func(args.getQuick(0));
     }
 
-    private static class LengthStrVFunc extends IntFunction implements UnaryFunction {
+    private static class Func extends IntFunction implements UnaryFunction {
         private final Function arg;
 
-        public LengthStrVFunc(Function arg) {
+        public Func(Function arg) {
             this.arg = arg;
         }
 

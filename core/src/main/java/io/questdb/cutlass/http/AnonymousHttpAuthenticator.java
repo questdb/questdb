@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,20 +24,12 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
-
 public class AnonymousHttpAuthenticator implements HttpAuthenticator {
     public static final AnonymousHttpAuthenticator INSTANCE = new AnonymousHttpAuthenticator();
 
     @Override
     public boolean authenticate(HttpRequestHeader headers) {
         return true;
-    }
-
-    @Override
-    public @Nullable ObjList<CharSequence> getGroups() {
-        return null;
     }
 
     @Override

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,14 +63,17 @@ public interface FunctionFactory {
      * <li>q = REGPROCEDURE - this type is used in cast()</li>
      * <li>J = long128</li>
      * <li>Z = uuid</li>
-     * <li>w = string array</li>
-     * <li>x = ipv4</li>
+     * <li>W = string array</li>
+     * <li>X = ipv4</li>
+     * <li>Ø(ø) = varchar</li>
+     * <li>Δ(δ) = interval</li>
      * </ul>
      * <p>
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and
-     * variable expressions.
+     * non-constant expressions.
      *
      * @return signature, for example "substr(SII)"
+     * @see Function#isConstant()
      */
     String getSignature();
 

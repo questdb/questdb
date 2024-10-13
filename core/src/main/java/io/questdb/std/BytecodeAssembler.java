@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -428,12 +428,10 @@ public class BytecodeAssembler {
         putByte(0x69);
     }
 
-    @SuppressWarnings("unchecked")
-    @Nullable
-    public <T> Class<T> loadClass(Class<?> host) {
-        byte[] b = new byte[position()];
-        System.arraycopy(buf.array(), 0, b, 0, b.length);
-        return (Class<T>) Unsafe.defineAnonymousClass(host, b);
+    public <T> Class<T> loadClass() {
+        Class<T> x = loadClass(host);
+        assert x != null;
+        return x;
     }
 
     public void lreturn() {
@@ -753,6 +751,14 @@ public class BytecodeAssembler {
         return pos;
     }
 
+    @SuppressWarnings("unchecked")
+    @Nullable
+    private <T> Class<T> loadClass(Class<?> host) {
+        byte[] b = new byte[position()];
+        System.arraycopy(buf.array(), 0, b, 0, b.length);
+        return (Class<T>) Unsafe.defineAnonymousClass(host, b);
+    }
+
     private void optimisedIO(int code0, int code1, int code2, int code3, int code, int value) {
         switch (value) {
             case 0:
@@ -841,15 +847,6 @@ public class BytecodeAssembler {
         }
 
         @Override
-        public Utf8Appender putUtf8(long lo, long hi) {
-            Bytes.checkedLoHiSize(lo, hi, BytecodeAssembler.this.position());
-            for (long p = lo; p < hi; p++) {
-                BytecodeAssembler.this.putByte(Unsafe.getUnsafe().getByte(p));
-            }
-            return this;
-        }
-
-        @Override
         public Utf8Appender put(@Nullable CharSequence cs) {
             Utf8Sink.super.put(cs);
             return this;
@@ -869,6 +866,15 @@ public class BytecodeAssembler {
                     BytecodeAssembler.this.putByte(cs.charAt(i));
                 }
                 utf8len += len;
+            }
+            return this;
+        }
+
+        @Override
+        public Utf8Appender putNonAscii(long lo, long hi) {
+            Bytes.checkedLoHiSize(lo, hi, BytecodeAssembler.this.position());
+            for (long p = lo; p < hi; p++) {
+                BytecodeAssembler.this.putByte(Unsafe.getUnsafe().getByte(p));
             }
             return this;
         }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -64,7 +64,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public int connect(int fd, long pSockaddr) {
+                public int connect(long fd, long pSockaddr) {
                     return -1;
                 }
             };
@@ -141,7 +141,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             final NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public int connect(int fd, long pSockaddr) {
+                public int connect(long fd, long pSockaddr) {
                     return -1;
                 }
             };
@@ -433,7 +433,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public int connect(int fd, long pSockaddr) {
+                public int connect(long fd, long pSockaddr) {
                     return -1;
                 }
             };
@@ -449,7 +449,7 @@ public class LogAlertSocketTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public int connect(int fd, long pSockaddr) {
+                public int connect(long fd, long pSockaddr) {
                     return -1;
                 }
             };
@@ -562,12 +562,23 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord $uuid(long lo, long hi) {
+            Numbers.appendUuid(lo, hi, sink);
+            return this;
+        }
+
+        @Override
         public LogRecord $(@Nullable Utf8Sequence sequence) {
             throw new UnsupportedOperationException();
         }
 
         @Override
         public LogRecord $(@Nullable DirectUtf8Sequence sequence) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
             throw new UnsupportedOperationException();
         }
 
@@ -647,6 +658,12 @@ public class LogAlertSocketTest {
         }
 
         @Override
+        public LogRecord $size(long memoryBytes) {
+            sink.putSize(memoryBytes);
+            return this;
+        }
+
+        @Override
         public LogRecord $ts(long x) {
             throw new UnsupportedOperationException();
         }
@@ -685,7 +702,7 @@ public class LogAlertSocketTest {
         }
 
         @Override
-        public Utf8Sink putUtf8(long lo, long hi) {
+        public Utf8Sink putNonAscii(long lo, long hi) {
             sink.put(lo, hi);
             return this;
         }

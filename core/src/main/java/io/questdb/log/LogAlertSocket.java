@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -63,7 +63,7 @@ public class LogAlertSocket implements Closeable {
     private String alertTargets; // host[:port](,host[:port])*
     private long inBufferPtr;
     private long outBufferPtr;
-    private int socketFd = -1;
+    private long socketFd = -1;
 
     public LogAlertSocket(NetworkFacade nf, String alertTargets, Log log) {
         this(

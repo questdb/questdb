@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import io.questdb.network.NetworkFacade;
 
 public final class PlainTcpLineChannel implements LineChannel {
     private static final Log LOG = LogFactory.getLog(PlainTcpLineChannel.class);
-    private final int fd;
+    private final long fd;
     private final NetworkFacade nf;
     private final long sockaddr;
 
@@ -118,6 +118,6 @@ public final class PlainTcpLineChannel implements LineChannel {
         int orgSndBufSz = nf.getSndBuf(fd);
         nf.setSndBuf(fd, sndBufferSize);
         int newSndBufSz = nf.getSndBuf(fd);
-        LOG.info().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
+        LOG.debug().$("Send buffer size change from ").$(orgSndBufSz).$(" to ").$(newSndBufSz).$();
     }
 }

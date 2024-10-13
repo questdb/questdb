@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,16 +25,15 @@
 package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.griffin.SqlException;
 import org.junit.Test;
 
 public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
 
     @Test
-    public void testLargeNegScale() throws SqlException {
+    public void testLargeNegScale() throws Exception {
         assertQuery(
                 "round\n" +
-                        "NaN\n",
+                        "null\n",
                 "select round(14.7778, -18) from long_sequence(1)",
                 null,
                 true,
@@ -43,10 +42,10 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLargePosScale() throws SqlException {
+    public void testLargePosScale() throws Exception {
         assertQuery(
                 "round\n" +
-                        "NaN\n",
+                        "null\n",
                 "select round(14.7778, 17) from long_sequence(1)",
                 null,
                 true,
@@ -55,7 +54,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNegScaleHigherThanNumber() throws SqlException {
+    public void testNegScaleHigherThanNumber() throws Exception {
         assertQuery(
                 "round\n" +
                         "-0.0\n",
@@ -67,7 +66,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNegScaleNegValue() throws SqlException {
+    public void testNegScaleNegValue() throws Exception {
         assertQuery(
                 "round\n" +
                         "-100.0\n",
@@ -79,7 +78,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNegScaleNegValue2() throws SqlException {
+    public void testNegScaleNegValue2() throws Exception {
         assertQuery(
                 "round\n" +
                         "-110.0\n",
@@ -91,7 +90,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNegScalePosValue() throws SqlException {
+    public void testNegScalePosValue() throws Exception {
         assertQuery(
                 "round\n" +
                         "100.0\n",
@@ -103,7 +102,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNegScalePosValue2() throws SqlException {
+    public void testNegScalePosValue2() throws Exception {
         assertQuery(
                 "round\n" +
                         "110.0\n",
@@ -115,7 +114,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOKNegScale() throws SqlException {
+    public void testOKNegScale() throws Exception {
         assertQuery(
                 "round\n" +
                         "0.0\n",
@@ -127,7 +126,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOKPosScale() throws SqlException {
+    public void testOKPosScale() throws Exception {
         assertQuery(
                 "round\n" +
                         "14.7778\n",
@@ -139,7 +138,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPosScaleHigherThanNumber() throws SqlException {
+    public void testPosScaleHigherThanNumber() throws Exception {
         assertQuery(
                 "round\n" +
                         "-14.777999999999999\n",
@@ -151,7 +150,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPosScaleNegValue() throws SqlException {
+    public void testPosScaleNegValue() throws Exception {
         assertQuery(
                 "round\n" +
                         "-100.5\n",
@@ -163,7 +162,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPosScaleNegValue2() throws SqlException {
+    public void testPosScaleNegValue2() throws Exception {
         assertQuery(
                 "round\n" +
                         "-100.60000000000001\n",
@@ -175,7 +174,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPosScalePosValue() throws SqlException {
+    public void testPosScalePosValue() throws Exception {
         assertQuery(
                 "round\n" +
                         "100.4\n",
@@ -187,7 +186,7 @@ public class RoundDoubleFunctionFactoryConstTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPosScalePosValue2() throws SqlException {
+    public void testPosScalePosValue2() throws Exception {
         assertQuery(
                 "round\n" +
                         "100.5\n",

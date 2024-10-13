@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,10 +31,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
-import io.questdb.std.Chars;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
 public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
@@ -63,7 +60,7 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final float value = arg.getFloat(rec);
-            if (Float.isNaN(value)) {
+            if (Numbers.isNull(value)) {
                 return SymbolTable.VALUE_IS_NULL;
             }
             final int key = Float.floatToIntBits(value);
@@ -73,7 +70,7 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getSymbol(Record rec) {
             final float value = arg.getFloat(rec);
-            if (Float.isNaN(value)) {
+            if (Numbers.isNull(value)) {
                 return null;
             }
 

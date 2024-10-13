@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -52,10 +52,10 @@ public class ClientInteropTest {
 
         StringChannel channel = new StringChannel();
         try (JsonLexer lexer = new JsonLexer(1024, 1024);
-             Path path = new Path().of(pp).$();
+             Path path = new Path().of(pp);
              Sender sender = new LineTcpSender(channel, 1024)) {
             JsonTestSuiteParser parser = new JsonTestSuiteParser(sender, channel);
-            int fd = ff.openRO(path);
+            long fd = ff.openRO(path.$());
             assert fd > 0;
             final long memSize = 1024 * 1024;
             final long mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_DEFAULT);

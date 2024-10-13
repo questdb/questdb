@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -353,7 +353,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
                 24,
-                "supported column types are STRING and SYMBOL, found: INT"
+                "supported column types are VARCHAR, SYMBOL and STRING, found: INT"
         );
     }
 }

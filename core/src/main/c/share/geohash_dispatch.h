@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,7 +50,6 @@ void filter_with_prefix_generic(
     for (; i < limit; i += step) {
         MM_PREFETCH_T0(rows + i + 64);
 
-        //TODO: optimize load
         TVec current_hashes_vec;
         for (int j = 0; j < TVec::size(); ++j) {
             current_hashes_vec.insert(j, hashes[to_local_row_id(rows[i + j] - 1)]);

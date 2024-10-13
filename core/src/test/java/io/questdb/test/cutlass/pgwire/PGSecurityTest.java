@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -126,7 +126,7 @@ public class PGSecurityTest extends BasePGTest {
             ddl("create table src (ts TIMESTAMP)");
             try {
                 executeWithPg("delete from src");
-                assertException("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
+                assertExceptionNoLeakCheck("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
             } catch (PSQLException e) {
                 // the parser does not support DELETE
                 assertContains(e.getMessage(), "unexpected token [from]");
@@ -165,11 +165,11 @@ public class PGSecurityTest extends BasePGTest {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(() -> {
             ddl("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
             try {
-                assertQueryDisallowed("snapshot complete");
+                assertQueryDisallowed("checkpoint release");
             } finally {
-                ddl("snapshot complete");
+                ddl("checkpoint release");
             }
         });
     }
@@ -179,7 +179,7 @@ public class PGSecurityTest extends BasePGTest {
         // snapshot is not supported on Windows at all
         assertMemoryLeak(() -> {
             ddl("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
-            assertQueryDisallowed("snapshot prepare");
+            assertQueryDisallowed("checkpoint create");
         });
     }
 
@@ -295,7 +295,7 @@ public class PGSecurityTest extends BasePGTest {
                     String query = "drop table src";
                     try (final Statement statement = roUserConnection.createStatement()) {
                         statement.execute(query);
-                        assertException("Query '" + query + "' must fail for the read-only user!");
+                        assertExceptionNoLeakCheck("Query '" + query + "' must fail for the read-only user!");
                     } catch (PSQLException e) {
                         assertContains(e.getMessage(), "Write permission denied");
                     }

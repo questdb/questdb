@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,8 +35,8 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractCairoTest {
         // fix page frame size, because it affects AVG accuracy
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
         assertQuery("avg\n" +
-                        "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b date", "avg\n" +
-                        "5261.376146789\n", false, true, false);
+                "5261.376146789\n", "select round(avg(f),9) avg from tab", "create table tab as (select rnd_int(-55, 9009, 2) f from long_sequence(131))", null, "alter table tab add column b date", "avg\n" +
+                "5261.376146789\n", false, true, false);
 
         assertQuery(
                 "avg\tmin\n" +
@@ -52,22 +52,22 @@ public class MinDateVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAllNullThenOne() throws Exception {
         assertQuery("min\n" +
-                        "\n", "select min(f) from tab", "create table tab as (select cast(null as date) f from long_sequence(33))", null, "insert into tab select 99999999999999999L from long_sequence(1)", "min\n" +
-                        "3170843-11-07T09:46:39.999Z\n", false, true, false);
+                "\n", "select min(f) from tab", "create table tab as (select cast(null as date) f from long_sequence(33))", null, "insert into tab select 99999999999999999L from long_sequence(1)", "min\n" +
+                "3170843-11-07T09:46:39.999Z\n", false, true, false);
     }
 
     @Test
     public void testKeyedMaxDateOrNullThenMaxLong() throws Exception {
         assertQuery("i\tmin\n" +
-                        "1\t\n", "select i, min(f) from tab", "create table tab as (select cast(1 as int) i, cast(null as date) f from long_sequence(33))", null, "insert into tab select 1, 9223372036854775807L from long_sequence(1)", "i\tmin\n" +
-                        "1\t292278994-08-17T07:12:55.807Z\n", true, true, false);
+                "1\t\n", "select i, min(f) from tab", "create table tab as (select cast(1 as int) i, cast(null as date) f from long_sequence(33))", null, "insert into tab select 1, 9223372036854775807L from long_sequence(1)", "i\tmin\n" +
+                "1\t292278994-08-17T07:12:55.807Z\n", true, true, false);
     }
 
     @Test
     public void testMaxDateOrNullThenMaxLong() throws Exception {
         assertQuery("min\n" +
-                        "\n", "select min(f) from tab", "create table tab as (select cast(null as date) f from long_sequence(33))", null, "insert into tab select 9223372036854775807L from long_sequence(1)", "min\n" +
-                        "292278994-08-17T07:12:55.807Z\n", false, true, false);
+                "\n", "select min(f) from tab", "create table tab as (select cast(null as date) f from long_sequence(33))", null, "insert into tab select 9223372036854775807L from long_sequence(1)", "min\n" +
+                "292278994-08-17T07:12:55.807Z\n", false, true, false);
     }
 
     @Test

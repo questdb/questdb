@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -140,7 +140,7 @@ public class BrokenIntReadTest extends AbstractCairoTest {
     }
 
     private void createTables(FilesFacade ff) {
-        try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
+        TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
             public @NotNull FilesFacade getFilesFacade() {
                 return ff;
@@ -150,11 +150,10 @@ public class BrokenIntReadTest extends AbstractCairoTest {
                 .col("productName", ColumnType.STRING)
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
-                .timestamp()) {
-            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
-        }
+                .timestamp();
+        CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
 
-        try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
+        model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
             public @NotNull FilesFacade getFilesFacade() {
                 return ff;
@@ -165,11 +164,10 @@ public class BrokenIntReadTest extends AbstractCairoTest {
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
 
-                .timestamp()) {
-            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
-        }
+                .timestamp();
+        CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
 
-        try (TableModel model = new TableModel(new DefaultTestCairoConfiguration(root) {
+        model = new TableModel(new DefaultTestCairoConfiguration(root) {
             @Override
             public @NotNull FilesFacade getFilesFacade() {
                 return ff;
@@ -179,9 +177,8 @@ public class BrokenIntReadTest extends AbstractCairoTest {
                 .col("productName", ColumnType.STRING)
                 .col("supplier", ColumnType.SYMBOL)
                 .col("category", ColumnType.SYMBOL)
-                .timestamp()) {
-            CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
-        }
+                .timestamp();
+        CreateTableTestUtils.createTableWithVersionAndId(model, engine, ColumnType.VERSION, 2);
     }
 
     private void testFailOnRead(int i, String expected) throws Exception {
@@ -214,7 +211,7 @@ public class BrokenIntReadTest extends AbstractCairoTest {
         }
 
         @Override
-        public long read(int fd, long buf, long len, long offset) {
+        public long read(long fd, long buf, long len, long offset) {
             callCount++;
             if (callCount == failOnCount) {
                 return -1;

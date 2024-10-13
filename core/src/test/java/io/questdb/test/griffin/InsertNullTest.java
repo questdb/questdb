@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -43,12 +43,12 @@ public class InsertNullTest extends AbstractCairoTest {
             {"byte", "0"},
             {"short", "0"},
             {"char", ""},
-            {"int", "NaN"},
-            {"long", "NaN"},
+            {"int", "null"},
+            {"long", "null"},
             {"date", ""},
             {"timestamp", ""},
-            {"float", "NaN"},
-            {"double", "NaN"},
+            {"float", "null"},
+            {"double", "null"},
             {"string", ""},
             {"symbol", ""},
             {"long256", ""},
@@ -123,7 +123,7 @@ public class InsertNullTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (SqlException expected) {
-                Assert.assertEquals("[0] insert statement must populate timestamp", expected.getMessage());
+                Assert.assertEquals("[0] designated timestamp column cannot be NULL", expected.getMessage());
             }
         });
     }

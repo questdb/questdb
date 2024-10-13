@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -42,7 +42,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private static final Log LOG = LogFactory.getLog(MemoryCMARWImpl.class);
     private final Long256Acceptor long256Acceptor = this::putLong256;
     private long appendAddress = 0;
+    private boolean closeFdOnClose = true;
     private long extendSegmentMsb;
+    private long fd = -1;
     private int madviseOpts = -1;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
     private long minMappedMemorySize = -1;
@@ -52,6 +54,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     public MemoryCMARWImpl() {
+    }
+
+    @Override
+    public long addressHi() {
+        return lim;
     }
 
     @Override
@@ -99,13 +106,20 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             ff.munmap(pageAddress, size, memoryTag);
             this.pageAddress = 0;
             try {
-                Vm.bestEffortClose(ff, LOG, fd, truncateSize, truncateMode);
+                if (closeFdOnClose) {
+                    Vm.bestEffortClose(ff, LOG, fd, truncateSize, truncateMode);
+                } else {
+                    Vm.bestEffortTruncate(ff, LOG, fd, truncateSize, truncateMode);
+                }
             } finally {
                 fd = -1;
             }
         }
-        if (ff != null && ff.close(fd)) {
-            LOG.debug().$("closed [fd=").$(fd).$(']').$();
+        if (ff != null) {
+            if (closeFdOnClose) {
+                ff.close(fd);
+                LOG.debug().$("closed [fd=").$(fd).I$();
+            }
             fd = -1;
         }
         size = 0;
@@ -115,6 +129,19 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public void close() {
         close(true);
+    }
+
+    @Override
+    public long detachFdClose() {
+        try {
+            long fd = this.fd;
+            this.closeFdOnClose = false;
+            close();
+            assert this.fd == -1;
+            return fd;
+        } finally {
+            closeFdOnClose = true;
+        }
     }
 
     @Override
@@ -145,6 +172,16 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
+    public long getFd() {
+        return fd;
+    }
+
+    @Override
+    public boolean isFileBased() {
+        return true;
+    }
+
+    @Override
     public void jumpTo(long offset) {
         checkAndExtend(pageAddress + offset);
         appendAddress = pageAddress + offset;
@@ -171,7 +208,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, int fd, @Nullable LPSZ fileName, long size, int memoryTag) {
+    public void of(FilesFacade ff, long fd, @Nullable LPSZ fileName, long size, int memoryTag) {
         close();
         assert fd > 0;
         this.ff = ff;
@@ -182,7 +219,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, int fd, @Nullable LPSZ fileName, long extendSegmentSize, long size, int memoryTag) {
+    public void of(FilesFacade ff, long fd, @Nullable LPSZ fileName, long extendSegmentSize, long size, int memoryTag) {
         of(ff, fd, null, size, memoryTag);
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
     }
@@ -204,7 +241,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void switchTo(int fd, long offset, boolean truncate, byte truncateMode) {
+    public void switchTo(FilesFacade ff, long fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
+        this.ff = ff;
+        this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         close(truncate, truncateMode);
         this.fd = fd;
         map(ff, null, offset, memoryTag);

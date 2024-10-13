@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -26,12 +26,16 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -63,10 +67,38 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    // to be used in combination with compiled filter
+    @Nullable
+    public ObjList<Function> getBindVarFunctions() {
+        return base.getBindVarFunctions();
+    }
+
+    // to be used in combination with compiled filter
+    @Nullable
+    public MemoryCARW getBindVarMemory() {
+        return base.getBindVarMemory();
+    }
+
+    @Override
+    public CompiledFilter getCompiledFilter() {
+        return base.getCompiledFilter();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(base.getCursor(executionContext));
-        return cursor;
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        try {
+            cursor.of(baseCursor);
+            return cursor;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
+        }
+    }
+
+    @Override
+    public Function getFilter() {
+        return base.getFilter();
     }
 
     @Override
@@ -78,12 +110,17 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         if (pageFrameCursor == null) {
             pageFrameCursor = new SelectedPageFrameCursor(columnCrossIndex);
         }
-        return pageFrameCursor.of(baseCursor);
+        return pageFrameCursor.wrap(baseCursor);
     }
 
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
+    }
+
+    @Override
+    public void halfClose() {
+        base.halfClose();
     }
 
     @Override
@@ -97,8 +134,8 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean supportPageFrameCursor() {
-        return base.supportPageFrameCursor();
+    public boolean supportsPageFrameCursor() {
+        return base.supportsPageFrameCursor();
     }
 
     @Override
@@ -136,18 +173,28 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward) {
-            return baseFrame.getBitmapIndexReader(columnCrossIndex.getQuick(columnIndex), dirForward);
+        public long getAuxPageAddress(int columnIndex) {
+            return baseFrame.getAuxPageAddress(columnCrossIndex.getQuick(columnIndex));
         }
 
         @Override
-        public int getColumnShiftBits(int columnIndex) {
-            return baseFrame.getColumnShiftBits(columnCrossIndex.getQuick(columnIndex));
+        public long getAuxPageSize(int columnIndex) {
+            return baseFrame.getAuxPageSize(columnCrossIndex.getQuick(columnIndex));
         }
 
         @Override
-        public long getIndexPageAddress(int columnIndex) {
-            return baseFrame.getIndexPageAddress(columnCrossIndex.getQuick(columnIndex));
+        public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
+            return baseFrame.getBitmapIndexReader(columnCrossIndex.getQuick(columnIndex), direction);
+        }
+
+        @Override
+        public int getColumnCount() {
+            return columnCrossIndex.size();
+        }
+
+        @Override
+        public byte getFormat() {
+            return baseFrame.getFormat();
         }
 
         @Override
@@ -192,13 +239,23 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public void calculateSize(RecordCursor.Counter counter) {
+            baseCursor.calculateSize(counter);
+        }
+
+        @Override
         public void close() {
             baseCursor.close();
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
+        }
+
+        @Override
+        public TableReader getTableReader() {
+            return baseCursor.getTableReader();
         }
 
         @Override
@@ -217,9 +274,9 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
             return baseFrame != null ? pageFrame.of(baseFrame) : null;
         }
 
-        public SelectedPageFrameCursor of(PageFrameCursor baseCursor) {
-            this.baseCursor = baseCursor;
-            return this;
+        @Override
+        public PageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
+            return baseCursor.of(partitionFrameCursor);
         }
 
         @Override
@@ -228,8 +285,18 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public boolean supportsSizeCalculation() {
+            return baseCursor.supportsSizeCalculation();
+        }
+
+        @Override
         public void toTop() {
             baseCursor.toTop();
+        }
+
+        public SelectedPageFrameCursor wrap(PageFrameCursor baseCursor) {
+            this.baseCursor = baseCursor;
+            return this;
         }
     }
 }

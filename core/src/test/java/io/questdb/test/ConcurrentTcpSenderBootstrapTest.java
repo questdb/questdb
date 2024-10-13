@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,7 +39,6 @@ import java.io.UnsupportedEncodingException;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
-
     private static final int CONCURRENCY_LEVEL = 64;
 
     @Before
@@ -59,6 +58,11 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
         dbPath.parent().$();
     }
 
+    @Override
+    public void tearDown() throws Exception {
+        super.tearDown();
+        ILP_WORKER_COUNT = 1;
+    }
 
     @Test
     public void testConcurrentAuth() throws Exception {
@@ -83,7 +87,7 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
             for (int i = startingOffset; i < nThreads + startingOffset; i++) {
                 int threadNo = i;
                 Thread th = new Thread(() -> {
-                    try (Sender sender = Sender.builder()
+                    try (Sender sender = Sender.builder(Sender.Transport.TCP)
                             .address("localhost")
                             .port(serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort())
                             .enableAuth(AbstractLineTcpReceiverTest.AUTH_KEY_ID1)

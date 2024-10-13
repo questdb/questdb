@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -91,7 +91,7 @@ public class MemRemappedFileTest extends AbstractTest {
                 long offset = 0;
                 for (int nPage = 0; nPage < NPAGES; nPage++) {
                     long newSize = MAPPING_PAGE_SIZE * (nPage + 1);
-                    appMem.of(ff, path, newSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                    appMem.of(ff, path.$(), newSize, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                     appMem.skip(newSize - MAPPING_PAGE_SIZE);
                     for (int i = 0; i < MAPPING_PAGE_SIZE; i++) {
                         byte b = (byte) rnd.nextInt();
@@ -99,7 +99,7 @@ public class MemRemappedFileTest extends AbstractTest {
                         expectedTotal += b;
                     }
                     if (nPage == 0) {
-                        readMem.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                        readMem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                     } else {
                         readMem.extend(newSize);
                     }
@@ -113,7 +113,7 @@ public class MemRemappedFileTest extends AbstractTest {
                 Assert.assertEquals(expectedTotal, actualTotal);
                 appMem.close();
                 readMem.close();
-                ff.remove(path);
+                ff.remove(path.$());
             }
             readMem.close();
             return nanos / 1000000.0;

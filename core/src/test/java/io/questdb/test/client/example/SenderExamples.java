@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -34,7 +34,7 @@ public class SenderExamples {
     public static void main(String[] args) {
 
         // how to use Sender API with no authentication and no encryption
-        try (Sender sender = Sender.builder().address("localhost:9009").build()) {
+        try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost:9009").build()) {
             sender.table("mytable")
                     .longColumn("id", 0)
                     .stringColumn("name", "Joe Adams")
@@ -42,7 +42,7 @@ public class SenderExamples {
         }
 
         // how to use Sender API with QuestDB Cloud
-        try (Sender sender = Sender.builder()
+        try (Sender sender = Sender.builder(Sender.Transport.TCP)
                 .address("clever-black-363-c1213c97.ilp.b04c.questdb.net:32074")
                 .enableTls()
                 .enableAuth("admin").authToken("GwBXoGG5c6NoUTLXnzMxw_uNiVa8PKobzx5EiuylMW0")

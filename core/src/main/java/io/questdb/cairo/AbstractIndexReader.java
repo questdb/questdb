@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -37,15 +37,15 @@ import io.questdb.std.str.Path;
 
 public abstract class AbstractIndexReader implements BitmapIndexReader {
     public static final String INDEX_CORRUPT = "cursor could not consistently read index header [corrupt?]";
-    protected final static Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
-    protected final MemoryMR keyMem = Vm.getMRInstance();
-    protected final MemoryMR valueMem = Vm.getMRInstance();
+    protected static final Log LOG = LogFactory.getLog(BitmapIndexBwdReader.class);
+    protected final MemoryMR keyMem = Vm.getCMRInstance();
+    protected final MemoryMR valueMem = Vm.getCMRInstance();
     protected int blockCapacity;
     protected int blockValueCountMod;
     protected MillisecondClock clock;
     protected int keyCount;
     protected long spinLockTimeoutMs;
-    protected long unIndexedNullCount;
+    protected long unindexedNullCount;
     private int keyCountIncludingNulls;
 
     @Override
@@ -70,7 +70,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     }
 
     public long getUnIndexedNullCount() {
-        return unIndexedNullCount;
+        return unindexedNullCount;
     }
 
     public long getValueBaseAddress() {
@@ -92,7 +92,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
     @Override
     public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount) {
-        this.unIndexedNullCount = unIndexedNullCount;
+        this.unindexedNullCount = unIndexedNullCount;
         final int plen = path.size();
         this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
 
@@ -184,7 +184,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
         if (keyCount > this.keyCount) {
             this.keyCount = keyCount;
-            this.keyCountIncludingNulls = unIndexedNullCount > 0 ? keyCount + 1 : keyCount;
+            this.keyCountIncludingNulls = unindexedNullCount > 0 ? keyCount + 1 : keyCount;
         }
     }
 }

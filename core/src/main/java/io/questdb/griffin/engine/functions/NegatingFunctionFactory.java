@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.griffin.FunctionFactoryDescriptor.replaceSignatureName;
 
@@ -43,6 +44,11 @@ public class NegatingFunctionFactory implements FunctionFactory {
     public NegatingFunctionFactory(String name, FunctionFactory delegate) throws SqlException {
         this.signature = replaceSignatureName(name, delegate.getSignature());
         this.delegate = delegate;
+    }
+
+    @TestOnly
+    public FunctionFactory getDelegate() {
+        return delegate;
     }
 
     @Override
@@ -60,9 +66,9 @@ public class NegatingFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         Function function = delegate.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         if (function instanceof NegatableBooleanFunction) {
-            NegatableBooleanFunction negateableFunction = (NegatableBooleanFunction) function;
-            negateableFunction.setNegated();
-            return negateableFunction;
+            NegatableBooleanFunction negatableFunction = (NegatableBooleanFunction) function;
+            negatableFunction.setNegated();
+            return negatableFunction;
         }
         if (function instanceof BooleanConstant) {
             return BooleanConstant.of(!function.getBool(null));

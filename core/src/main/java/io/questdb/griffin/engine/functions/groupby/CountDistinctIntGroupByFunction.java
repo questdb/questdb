@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -44,9 +44,8 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
 
     public CountDistinctIntGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        // We use zero as the default value to speed up zeroing on rehash.
-        setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, 0);
-        setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, 0);
+        setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
+        setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
     }
 
     @Override
@@ -56,12 +55,10 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         int val = arg.getInt(record);
-        if (val != Numbers.INT_NaN) {
+        if (val != Numbers.INT_NULL) {
             mapValue.putLong(valueIndex, 1);
-            // Remap zero since it's used as the no entry key.
-            val = (val == 0) ? Numbers.INT_NaN : val;
             setA.of(0).add(val);
             mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
@@ -71,13 +68,11 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
-    public void computeNext(MapValue mapValue, Record record) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         int val = arg.getInt(record);
-        if (val != Numbers.INT_NaN) {
+        if (val != Numbers.INT_NULL) {
             long ptr = mapValue.getLong(valueIndex + 1);
-            // Remap zero since it's used as the no entry key.
-            val = (val == 0) ? Numbers.INT_NaN : val;
-            final int index = setA.of(ptr).keyIndex(val);
+            final long index = setA.of(ptr).keyIndex(val);
             if (index >= 0) {
                 setA.addAt(index, val);
                 mapValue.addLong(valueIndex, 1);
@@ -107,30 +102,37 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
+    public void initValueIndex(int valueIndex) {
+        this.valueIndex = valueIndex;
+    }
+
+    @Override
+    public void initValueTypes(ArrayColumnTypes columnTypes) {
+        this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // count
+        columnTypes.add(ColumnType.LONG); // GroupByIntHashSet pointer
+    }
+
+    @Override
     public boolean isConstant() {
         return false;
     }
 
     @Override
-    public boolean isParallelismSupported() {
-        return UnaryFunction.super.isParallelismSupported();
-    }
-
-    @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcCount = srcValue.getLong(valueIndex);
-        if (srcCount == 0 || srcCount == Numbers.LONG_NaN) {
+        if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
             return;
         }
         long srcPtr = srcValue.getLong(valueIndex + 1);
 
         long destCount = destValue.getLong(valueIndex);
-        if (destCount == 0 || destCount == Numbers.LONG_NaN) {
+        if (destCount == 0 || destCount == Numbers.LONG_NULL) {
             destValue.putLong(valueIndex, srcCount);
             destValue.putLong(valueIndex + 1, srcPtr);
             return;
@@ -153,13 +155,6 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
-    public void pushValueTypes(ArrayColumnTypes columnTypes) {
-        this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG); // count
-        columnTypes.add(ColumnType.LONG); // GroupByIntHashSet pointer
-    }
-
-    @Override
     public void setAllocator(GroupByAllocator allocator) {
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
@@ -167,7 +162,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
 
     @Override
     public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(valueIndex, 0);
         mapValue.putLong(valueIndex + 1, 0);
     }
 
@@ -179,17 +174,12 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NaN);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
         mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
-    public void setValueIndex(int valueIndex) {
-        this.valueIndex = valueIndex;
-    }
-
-    @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
+    public boolean supportsParallelism() {
+        return UnaryFunction.super.supportsParallelism();
     }
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import org.jetbrains.annotations.NotNull;
 public class YearTimestampSampler implements TimestampSampler {
 
     private final int bucket;
+    private long start;
     private int startDay;
     private int startHour;
     private int startMicros;
@@ -41,6 +42,11 @@ public class YearTimestampSampler implements TimestampSampler {
 
     public YearTimestampSampler(int bucket) {
         this.bucket = bucket;
+    }
+
+    @Override
+    public int bucketIndex(long timestamp) {
+        return (int) (Timestamps.getYearsBetween(round(timestamp), round(start)) / bucket);
     }
 
     @Override
@@ -80,6 +86,7 @@ public class YearTimestampSampler implements TimestampSampler {
         this.startSec = Timestamps.getSecondOfMinute(timestamp);
         this.startMillis = Timestamps.getMillisOfSecond(timestamp);
         this.startMicros = Timestamps.getMicrosOfMilli(timestamp);
+        this.start = timestamp;
     }
 
     @Override

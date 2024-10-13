@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,20 +25,23 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.DirectByteSequence;
 
 /**
  * A sequence of UTF-8 bytes stored in native memory.
  */
-public interface DirectUtf8Sequence extends Utf8Sequence, DirectSequence {
+public interface DirectUtf8Sequence extends Utf8Sequence, DirectByteSequence {
 
-    /**
-     * Returns byte at index.
-     * Note: Unchecked bounds.
-     *
-     * @param index byte index
-     * @return byte at index
-     */
+    @Override
     default byte byteAt(int index) {
         return Unsafe.getUnsafe().getByte(ptr() + index);
     }
+
+    @Override
+    default long longAt(int offset) {
+        return Unsafe.getUnsafe().getLong(ptr() + offset);
+    }
+
+    @Override
+    long ptr();
 }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ public class SimpleTableTest extends AbstractCairoTest {
             assertSql(expected1, "select timestamp time from t;");
 
             try {
-                assertException("select timestamp with time zone from t;");
+                assertExceptionNoLeakCheck("select timestamp with time zone from t;");
             } catch (SqlException e) {
                 Assert.assertEquals(31, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "String literal expected after 'timestamp with time zone'");
@@ -69,10 +69,9 @@ public class SimpleTableTest extends AbstractCairoTest {
 
     @Test
     public void testWhereIsColumnNameInsensitive() throws SqlException, NumericException {
-        try (TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE)) {
-            tm.timestamp("ts").col("ID", ColumnType.INT);
-            createPopulateTable(tm, 2, "2020-01-01", 1);
-        }
+        TableModel tm = new TableModel(configuration, "tab1", PartitionBy.NONE);
+        tm.timestamp("ts").col("ID", ColumnType.INT);
+        createPopulateTable(tm, 2, "2020-01-01", 1);
 
         assertSql("ts\n" +
                 "2020-01-01T00:00:00.000000Z\n", "select ts from tab1 where id > 1");

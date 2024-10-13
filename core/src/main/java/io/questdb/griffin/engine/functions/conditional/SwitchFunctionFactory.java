@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,8 +39,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
     private static final IntMethod GET_BYTE = SwitchFunctionFactory::getByte;
     private static final IntMethod GET_CHAR = SwitchFunctionFactory::getChar;
     private static final LongMethod GET_DATE = SwitchFunctionFactory::getDate;
-    private static final DoubleMethod GET_DOUBLE = SwitchFunctionFactory::getDouble;
-    private static final FloatMethod GET_FLOAT = SwitchFunctionFactory::getFloat;
     private static final IntMethod GET_INT = SwitchFunctionFactory::getInt;
     private static final LongMethod GET_LONG = SwitchFunctionFactory::getLong;
     private static final IntMethod GET_SHORT = SwitchFunctionFactory::getShort;
@@ -52,21 +50,37 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         int n = args.size();
-
         final Function keyFunction = args.getQuick(0);
         final int keyType = keyFunction.getType();
-        final Function elseBranch;
+
+        // key function type must be defined, which makes
+        // case $1
+        /// when ...
+        // an unsupported use case
+        if (keyType == ColumnType.UNDEFINED) {
+            throw SqlException.$(argPositions.getQuick(0), "bind variable is not supported here, please use column instead");
+        }
+
+        Function elseBranch;
+        final int elseBranchPosition;
         int returnType = -1;
         if (n % 2 == 0) {
             elseBranch = args.getLast();
+            elseBranchPosition = argPositions.getLast();
             returnType = elseBranch.getType();
             n--;
         } else {
             elseBranch = null;
+            elseBranchPosition = -1;
         }
-
 
         for (int i = 1; i < n; i += 2) {
             final Function keyFunc = args.getQuick(i);
@@ -83,14 +97,14 @@ public class SwitchFunctionFactory implements FunctionFactory {
             }
 
             // determine common return type
-            final Function value = args.getQuick(i + 1);
-            returnType = CaseCommon.getCommonType(returnType, value.getType(), argPositions.getQuick(i + 1));
+            returnType = CaseCommon.getCommonType(returnType, args.getQuick(i + 1).getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
         }
 
         // another loop to create cast functions and replace current value function
         // start with 2 to avoid offsetting each function position
         for (int i = 2; i < n; i += 2) {
-            args.setQuick(i,
+            args.setQuick(
+                    i,
                     CaseCommon.getCastFunction(
                             args.getQuick(i),
                             argPositions.getQuick(i),
@@ -98,6 +112,17 @@ public class SwitchFunctionFactory implements FunctionFactory {
                             configuration,
                             sqlExecutionContext
                     )
+            );
+        }
+
+        // don't forget to cast the else branch function
+        if (elseBranch != null) {
+            elseBranch = CaseCommon.getCastFunction(
+                    elseBranch,
+                    elseBranchPosition,
+                    returnType,
+                    configuration,
+                    sqlExecutionContext
             );
         }
 
@@ -114,9 +139,9 @@ public class SwitchFunctionFactory implements FunctionFactory {
             case ColumnType.LONG:
                 return getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_LONG);
             case ColumnType.FLOAT:
-                return getFloatKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_FLOAT);
+                return getFloatKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.DOUBLE:
-                return getDoubleKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_DOUBLE);
+                return getDoubleKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.DATE:
                 return getLongKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch, GET_DATE);
             case ColumnType.TIMESTAMP:
@@ -125,6 +150,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 return getIfElseFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             case ColumnType.STRING:
             case ColumnType.SYMBOL:
+            case ColumnType.VARCHAR: // varchar is treated as char sequence, this works, but it's suboptimal
                 return getCharSequenceKeyedFunction(args, argPositions, position, n, keyFunction, returnType, elseBranch);
             default:
                 throw SqlException.
@@ -167,7 +193,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     private static CharSequence getString(Function function, Record record) {
-        return function.getStr(record);
+        return function.getStrA(record);
     }
 
     private static long getTimestamp(Function function, Record record) {
@@ -241,14 +267,13 @@ public class SwitchFunctionFactory implements FunctionFactory {
             int n,
             Function keyFunction,
             int valueType,
-            Function elseBranch,
-            DoubleMethod doubleMethod
+            Function elseBranch
     ) throws SqlException {
         final LongObjHashMap<Function> map = new LongObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final long key = Double.doubleToLongBits(doubleMethod.getKey(fun, null));
+            final long key = Double.doubleToLongBits(getDouble(fun, null));
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
@@ -259,7 +284,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
         final Function elseB = getElseFunction(valueType, elseBranch);
         final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(Double.doubleToLongBits(doubleMethod.getKey(keyFunction, record)));
+            final int index = map.keyIndex(Double.doubleToLongBits(getDouble(keyFunction, record)));
             if (index < 0) {
                 return map.valueAtQuick(index);
             }
@@ -282,14 +307,13 @@ public class SwitchFunctionFactory implements FunctionFactory {
             int n,
             Function keyFunction,
             int valueType,
-            Function elseBranch,
-            FloatMethod floatMethod
+            Function elseBranch
     ) throws SqlException {
         final IntObjHashMap<Function> map = new IntObjHashMap<>();
         final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            final int key = Float.floatToIntBits(floatMethod.getKey(fun, null));
+            final int key = Float.floatToIntBits(getFloat(fun, null));
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
@@ -300,7 +324,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
         final Function elseB = getElseFunction(valueType, elseBranch);
         final CaseFunctionPicker picker = record -> {
-            final int index = map.keyIndex(Float.floatToIntBits(floatMethod.getKey(keyFunction, record)));
+            final int index = map.keyIndex(Float.floatToIntBits(getFloat(keyFunction, record)));
             if (index < 0) {
                 return map.valueAtQuick(index);
             }
@@ -442,16 +466,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         argsToPoke.add(keyFunction);
 
         return CaseCommon.getCaseFunction(position, valueType, picker, argsToPoke);
-    }
-
-    @FunctionalInterface
-    private interface DoubleMethod {
-        double getKey(Function function, Record record);
-    }
-
-    @FunctionalInterface
-    private interface FloatMethod {
-        float getKey(Function function, Record record);
     }
 
     @FunctionalInterface

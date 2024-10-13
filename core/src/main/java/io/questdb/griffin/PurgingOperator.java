@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -96,7 +96,7 @@ public final class PurgingOperator {
                                 TableUtils.dFile(path, columnName, columnVersion);
                                 columnPurged = ff.removeQuiet(path.$());
 
-                                if (ColumnType.isVariableLength(columnType)) {
+                                if (ColumnType.isVarSize(columnType)) {
                                     TableUtils.iFile(path.trimTo(pathPartitionLen), columnName, columnVersion);
                                     columnPurged &= ff.removeQuiet(path.$());
                                 }
@@ -143,7 +143,7 @@ public final class PurgingOperator {
                             .$(", updateTxn=").$(txn)
                             .I$();
                 } else {
-                    log.info().$("column complete [table=").utf8(tableToken.getTableName())
+                    log.info().$("column purge complete [table=").utf8(tableToken.getTableName())
                             .$(", column=").utf8(columnName)
                             .$(", newColumnVersion=").$(txn - 1)
                             .I$();

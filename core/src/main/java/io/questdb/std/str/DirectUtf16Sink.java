@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
-public class DirectUtf16Sink implements MutableUtf16Sink, CharSequence, DirectSequence, Closeable, Utf16Sink {
+public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Closeable, Utf16Sink {
     private final long initialCapacity;
     private long capacity;
     private long hi;
@@ -60,7 +60,7 @@ public class DirectUtf16Sink implements MutableUtf16Sink, CharSequence, DirectSe
 
     @Override
     public void close() {
-        Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
+        ptr = Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
     }
 
     @TestOnly
@@ -107,15 +107,25 @@ public class DirectUtf16Sink implements MutableUtf16Sink, CharSequence, DirectSe
     @Override
     public Utf16Sink put(char @NotNull [] chars, int start, int len) {
         int l2 = len * 2;
-
         if (lo + l2 >= hi) {
             resize((int) Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
         }
-
         for (int i = 0; i < len; i++) {
             Unsafe.getUnsafe().putChar(lo + i * 2L, chars[i + start]);
         }
+        this.lo += l2;
+        return this;
+    }
 
+    public Utf16Sink putAscii(@NotNull Utf8Sequence us) {
+        int l = us.size();
+        int l2 = l * 2;
+        if (lo + l2 >= hi) {
+            resize(Math.max(capacity * 2L, (lo - ptr + l2) * 2L));
+        }
+        for (int i = 0; i < l; i++) {
+            Unsafe.getUnsafe().putChar(lo + i * 2L, (char) us.byteAt(i));
+        }
         this.lo += l2;
         return this;
     }
@@ -154,7 +164,6 @@ public class DirectUtf16Sink implements MutableUtf16Sink, CharSequence, DirectSe
     }
 
     private class FloatingCharSequence extends AbstractCharSequence {
-
         private int len;
         private int startIndex;
 

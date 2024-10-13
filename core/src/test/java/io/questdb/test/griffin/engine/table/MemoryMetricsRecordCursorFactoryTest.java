@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,12 +29,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.MemoryMetricsRecordCursorFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
@@ -52,8 +50,7 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractCairoTest {
     public void testSql() throws Exception {
         try (RecordCursorFactory factory = select("select * from memory_metrics()")) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                TestUtils.printCursor(cursor, factory.getMetadata(), true, sink, printer);
-
+                println(factory, cursor);
                 String expected = expectedTableContent();
                 assertTrue(sink.toString().matches(expected));
             }
@@ -72,14 +69,14 @@ public class MemoryMetricsRecordCursorFactoryTest extends AbstractCairoTest {
         cursor.hasNext();
         Record record = cursor.getRecord();
 
-        assertEquals("TOTAL_USED", record.getStr(0));
+        assertEquals("TOTAL_USED", record.getStrA(0));
         assertEquals(Unsafe.getMemUsed(), record.getLong(1));
         cursor.hasNext();
-        assertEquals("RSS", record.getStr(0));
+        assertEquals("RSS", record.getStrA(0));
         assertTrue(record.getLong(1) > 0);
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             assertTrue(cursor.hasNext());
-            assertEquals(MemoryTag.nameOf(i), record.getStr(0));
+            assertEquals(MemoryTag.nameOf(i), record.getStrA(0));
             assertEquals(Unsafe.getMemUsedByTag(i), record.getLong(1));
         }
         assertFalse(cursor.hasNext());

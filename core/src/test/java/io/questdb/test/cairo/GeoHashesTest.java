@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -27,8 +27,8 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.std.*;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -111,11 +111,11 @@ public class GeoHashesTest {
         Assert.assertEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0011", 4));
         Assert.assertNotEquals(GeoHashes.NULL, GeoHashes.fromBitStringNl("0", 0));
         Assert.assertEquals(1, GeoHashes.fromBitStringNl( // same as empty string
-                "##000000000000000000000000000000000000000000000000000000000000" + "1", 60));
+                "##000000000000000000000000000000000000000000000000000000000000" + '1', 60));
         Assert.assertEquals(1, GeoHashes.fromBitStringNl(
-                "##000000000000000000000000000000000000000000000000000000000000" + "1", 59));
+                "##000000000000000000000000000000000000000000000000000000000000" + '1', 59));
         Assert.assertEquals(0, GeoHashes.fromBitStringNl( // truncates
-                "##000000000000000000000000000000000000000000000000000000000000" + "1", 2));
+                "##000000000000000000000000000000000000000000000000000000000000" + '1', 2));
     }
 
     @Test(expected = NumericException.class)
@@ -276,7 +276,7 @@ public class GeoHashesTest {
     public void testFromStringTruncatingNlIgnoreQuotesTruncateBits2() {
         testUnsafeFromStringTruncatingNl("'sp052w92p1p'", (lo, hi) -> {
             try {
-                Assert.assertEquals(807941, GeoHashes.fromStringTruncatingNl(lo + 1, lo + 5, 20));
+                Assert.assertEquals(807941, GeoHashes.fromAsciiTruncatingNl(lo + 1, lo + 5, 20));
             } catch (NumericException e) {
                 Assert.fail();
             }
@@ -290,12 +290,12 @@ public class GeoHashesTest {
             testUnsafeFromStringTruncatingNl("123456789bcdezz", (lo1, hi1) -> {
                 try {
                     Assert.assertEquals(
-                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 4),
-                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 4));
+                            GeoHashes.fromAsciiTruncatingNl(lo0, lo0 + 12, 4),
+                            GeoHashes.fromAsciiTruncatingNl(lo1 + 1, lo1 + 13, 4));
 
                     Assert.assertNotEquals(
-                            GeoHashes.fromStringTruncatingNl(lo0, lo0 + 12, 20),
-                            GeoHashes.fromStringTruncatingNl(lo1 + 1, lo1 + 13, 25));
+                            GeoHashes.fromAsciiTruncatingNl(lo0, lo0 + 12, 20),
+                            GeoHashes.fromAsciiTruncatingNl(lo1 + 1, lo1 + 13, 25));
                 } catch (NumericException e) {
                     Assert.fail();
                 }
@@ -337,7 +337,7 @@ public class GeoHashesTest {
     public void testFromStringTruncatingNlShorterThanRequiredLength2() {
         testUnsafeFromStringTruncatingNl("123", (lo, hi) -> {
             try {
-                Assert.assertEquals(0, GeoHashes.fromStringTruncatingNl(lo, hi + 7, 1));
+                Assert.assertEquals(0, GeoHashes.fromAsciiTruncatingNl(lo, hi + 7, 1));
             } catch (NumericException expected) {
                 // beyond hi we will find whatever, very unlikely that it parses as a geohash char
             }

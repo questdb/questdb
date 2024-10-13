@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -47,12 +48,14 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     public AbstractDeferredTreeSetRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @Transient ObjList<Function> keyValueFuncs,
-            @Transient SymbolMapReader symbolMapReader
+            @Transient SymbolMapReader symbolMapReader,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory, configuration);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         // we need two data structures, int hash set for symbol keys we can resolve here
         // and CharSequence hash set for symbols we cannot resolve
@@ -64,45 +67,50 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
         IntHashSet deferredSymbolKeys = null;
         ObjList<Function> deferredFuncs = null;
 
-        for (int i = 0; i < nKeyValues; i++) {
-            Function symbolFunc = keyValueFuncs.get(i);
-            int symbolKey = symbolFunc.isRuntimeConstant()
-                    ? SymbolTable.VALUE_NOT_FOUND
-                    : symbolMapReader.keyOf(symbolFunc.getStr(null));
-            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                if (deferredFuncs == null) {
-                    deferredFuncs = new ObjList<>();
-                    deferredSymbolKeys = new IntHashSet();
+        try {
+            for (int i = 0; i < nKeyValues; i++) {
+                Function symbolFunc = keyValueFuncs.get(i);
+                int symbolKey = symbolFunc.isRuntimeConstant()
+                        ? SymbolTable.VALUE_NOT_FOUND
+                        : symbolMapReader.keyOf(symbolFunc.getStrA(null));
+                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                    if (deferredFuncs == null) {
+                        deferredFuncs = new ObjList<>();
+                        deferredSymbolKeys = new IntHashSet();
+                    }
+                    deferredFuncs.add(symbolFunc);
+                } else {
+                    symbolKeys.add(TableUtils.toIndexKey(symbolKey));
                 }
-                deferredFuncs.add(symbolFunc);
-            } else {
-                symbolKeys.add(TableUtils.toIndexKey(symbolKey));
             }
-        }
 
-        this.columnIndex = columnIndex;
-        this.symbolKeys = symbolKeys;
-        this.deferredSymbolKeys = deferredSymbolKeys;
-        this.deferredSymbolFuncs = deferredFuncs;
+            this.columnIndex = columnIndex;
+            this.symbolKeys = symbolKeys;
+            this.deferredSymbolKeys = deferredSymbolKeys;
+            this.deferredSymbolFuncs = deferredFuncs;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (deferredSymbolFuncs != null) {
             deferredSymbolKeys.clear();
-            StaticSymbolTable symbolTable = dataFrameCursor.getSymbolTable(cursor.getColumnIndexes().getQuick(columnIndex));
+            StaticSymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
             for (int i = 0, n = deferredSymbolFuncs.size(); i < n; i++) {
                 Function symbolFunc = deferredSymbolFuncs.get(i);
-                final CharSequence symbol = symbolFunc.getStr(null);
+                final CharSequence symbol = symbolFunc.getStrA(null);
                 int symbolKey = symbolTable.keyOf(symbol);
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
                     deferredSymbolKeys.add(TableUtils.toIndexKey(symbolKey));
                 }
             }
         }
-        return super.getCursorInstance(dataFrameCursor, executionContext);
+        return super.initRecordCursor(pageFrameCursor, executionContext);
     }
 }

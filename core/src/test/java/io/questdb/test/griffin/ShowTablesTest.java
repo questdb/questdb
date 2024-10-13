@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -47,6 +47,18 @@ public class ShowTablesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowColumnsWithFunctionAndMissingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            assertException(
+                    "select * from table_columns('balances2')",
+                    14,
+                    "table does not exist"
+            );
+        });
+    }
+
+    @Test
     public void testShowColumnsWithMissingTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");
@@ -77,8 +89,15 @@ public class ShowTablesTest extends AbstractCairoTest {
 
     @Test
     public void testShowStandardConformingStrings() throws Exception {
-        assertMemoryLeak(() -> assertQuery("standard_conforming_strings\n" +
-                "on\n", "show standard_conforming_strings", null, null, false, true));
+        assertMemoryLeak(() -> assertQuery(
+                "standard_conforming_strings\n" +
+                        "on\n",
+                "show standard_conforming_strings",
+                null,
+                null,
+                false,
+                true
+        ));
     }
 
     @Test
@@ -112,13 +131,19 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowTimeZone() throws Exception {
         assertMemoryLeak(() -> assertQuery(
                 "TimeZone\nUTC\n",
-                "show time zone", null, false, true
+                "show time zone",
+                null,
+                false,
+                true
         ));
     }
 
     @Test
     public void testShowTimeZoneWrongSyntax() throws Exception {
-        assertMemoryLeak(() -> assertException("show time", 9,"expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'search_path', 'datestyle', or 'time zone'"
+        assertMemoryLeak(() -> assertException(
+                "show time",
+                9,
+                "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'"
         ));
     }
 
@@ -129,7 +154,7 @@ public class ShowTablesTest extends AbstractCairoTest {
             assertException(
                     "show",
                     4,
-                    "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'search_path', 'datestyle', or 'time zone'"
+                    "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'"
             );
         });
     }

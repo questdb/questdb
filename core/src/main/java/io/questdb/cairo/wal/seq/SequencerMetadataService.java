@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -78,6 +78,11 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
+    public boolean convertPartition(long partitionTimestamp) {
+        return false;
+    }
+
+    @Override
     public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
         metadata.renameColumn(columnName, newName);
     }
@@ -86,5 +91,10 @@ public class SequencerMetadataService implements MetadataServiceStub {
     public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
         metadata.renameTable(toTableName);
         tableToken = metadata.getTableToken();
+    }
+
+    @Override
+    public void changeColumnType(CharSequence name, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+        metadata.changeColumnType(name, newType);
     }
 }

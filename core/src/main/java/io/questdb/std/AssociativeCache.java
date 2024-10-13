@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -24,165 +24,19 @@
 
 package io.questdb.std;
 
-import io.questdb.metrics.Counter;
-import io.questdb.metrics.LongGauge;
-import io.questdb.metrics.NullCounter;
-import io.questdb.metrics.NullLongGauge;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
+/**
+ * Cache for externally created objects, e.g. {@link io.questdb.cairo.sql.RecordCursorFactory}.
+ * <p>
+ * Note: implementations are not necessarily thread-safe.
+ */
+public interface AssociativeCache<V> extends QuietCloseable, Mutable {
 
-public class AssociativeCache<V> implements Closeable, Mutable {
+    int capacity();
 
-    private static final int MIN_BLOCKS = 1;
-    private static final int MIN_ROWS = 1;
-    private static final int NOT_FOUND = -1;
-    private final int blocks;
-    private final int bmask;
-    private final int bshift;
-    private final LongGauge cachedGauge;
-    private final Counter hitCounter;
-    private final CharSequence[] keys;
-    private final Counter missCounter;
-    private final int rmask;
-    private final V[] values;
+    V poll(@NotNull CharSequence key);
 
-    public AssociativeCache(int blocks, int rows) {
-        this(blocks, rows, NullLongGauge.INSTANCE, NullCounter.INSTANCE, NullCounter.INSTANCE);
-    }
-
-    public AssociativeCache(int blocks, int rows, LongGauge cachedGauge) {
-        this(blocks, rows, cachedGauge, NullCounter.INSTANCE, NullCounter.INSTANCE);
-    }
-
-    @SuppressWarnings("unchecked")
-    public AssociativeCache(int blocks, int rows, LongGauge cachedGauge, Counter hitCounter, Counter missCounter) {
-        this.blocks = Math.max(MIN_BLOCKS, Numbers.ceilPow2(blocks));
-        rows = Math.max(MIN_ROWS, Numbers.ceilPow2(rows));
-
-        int size = rows * this.blocks;
-        if (size < 0) {
-            throw new OutOfMemoryError();
-        }
-        this.keys = new CharSequence[size];
-        this.values = (V[]) new Object[size];
-        this.rmask = rows - 1;
-        this.bmask = this.blocks - 1;
-        this.bshift = Numbers.msb(this.blocks);
-        this.cachedGauge = cachedGauge;
-        this.hitCounter = hitCounter;
-        this.missCounter = missCounter;
-    }
-
-    @Override
-    public void clear() {
-        long freed = 0;
-        for (int i = 0, n = keys.length; i < n; i++) {
-            if (keys[i] != null) {
-                keys[i] = null;
-                if (values[i] != null) {
-                    values[i] = Misc.freeIfCloseable(values[i]);
-                    freed++;
-                }
-            }
-        }
-        cachedGauge.add(-freed);
-    }
-
-    @Override
-    public void close() {
-        clear();
-    }
-
-    public V peek(CharSequence key) {
-        int index = getIndex(key);
-        if (index != NOT_FOUND) {
-            return values[index];
-        }
-        return null;
-    }
-
-    public V poll(CharSequence key) {
-        int index = getIndex(key);
-        if (index == NOT_FOUND) {
-            missCounter.inc();
-            return null;
-        }
-        V value = values[index];
-        values[index] = null;
-        if (value != null) {
-            // The value is present, so we're decrementing the gauge.
-            cachedGauge.dec();
-            hitCounter.inc();
-        } else {
-            missCounter.inc();
-        }
-        // We do not null the key reference to avoid creating another immutable key.
-        return value;
-    }
-
-    public CharSequence put(CharSequence key, V value) {
-        final int lo = lo(key);
-
-        if (Chars.equalsNc(key, keys[lo])) {
-            // Present entry case.
-            if (values[lo] != value) {
-                if (values[lo] == null) {
-                    // The value was previously cleared by poll(), so we're inserting.
-                    cachedGauge.inc();
-                } else {
-                    // We're replacing the value with another one, no need to change the gauge.
-                    Misc.freeIfCloseable(values[lo]);
-                }
-                values[lo] = value;
-            }
-            return null;
-        }
-
-        // New entry case.
-
-        final CharSequence outgoingKey = keys[lo + bmask];
-        if (outgoingKey != null) {
-            int idx = lo + bmask;
-            if (values[idx] == null) {
-                // The value for the outgoing key was previously cleared by poll(), so we're inserting.
-                cachedGauge.inc();
-            } else {
-                // We're replacing the value with another one, no need to change the gauge.
-                values[idx] = Misc.freeIfCloseable(values[idx]);
-            }
-        } else {
-            // The block has empty entries, so we're inserting.
-            cachedGauge.inc();
-        }
-
-        System.arraycopy(keys, lo, keys, lo + 1, bmask);
-        System.arraycopy(values, lo, values, lo + 1, bmask);
-        if (value == null) {
-            keys[lo] = null;
-        } else {
-            keys[lo] = Chars.toString(key);
-        }
-        values[lo] = value;
-
-        return outgoingKey;
-    }
-
-    private int getIndex(CharSequence key) {
-        int lo = lo(key);
-        for (int i = lo, hi = lo + blocks; i < hi; i++) {
-            CharSequence k = keys[i];
-            if (k == null) {
-                return NOT_FOUND;
-            }
-
-            if (Chars.equals(k, key)) {
-                return i;
-            }
-        }
-        return NOT_FOUND;
-    }
-
-    private int lo(CharSequence key) {
-        return (Hash.spread(Chars.hashCode(key)) & rmask) << bshift;
-    }
+    void put(@NotNull CharSequence key, @Nullable V value);
 }

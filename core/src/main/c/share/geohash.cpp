@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -49,27 +49,24 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_iota(
 DECLARE_DISPATCHER(filter_with_prefix);
 
 JNIEXPORT void JNICALL
-Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilterPrefix
-        (
-                JNIEnv */*env*/,
-                jclass /*cl*/,
-                jlong keysMemory,
-                jlong keysMemorySize,
-                jlong valuesMemory,
-                jlong valuesMemorySize,
-                jlong argsMemory,
-                jlong unIndexedNullCount,
-                jlong maxValue,
-                jlong minValue,
-                jint partitionIndex,
-                jint blockValueCountMod,
-                jlong hashesAddress,
-                jint hashLength,
-                jlong prefixesAddress,
-                jlong prefixesCount
-        ) {
-
-
+Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilterPrefix(
+        JNIEnv */*env*/,
+        jclass /*cl*/,
+        jlong keysMemory,
+        jlong keysMemorySize,
+        jlong valuesMemory,
+        jlong valuesMemorySize,
+        jlong argsMemory,
+        jlong unIndexedNullCount,
+        jlong maxValue,
+        jlong minValue,
+        jint frameIndex, // inverted frame index
+        jint blockValueCountMod,
+        jlong geoHashColumnAddress,
+        jint geoHashColumnSize,
+        jlong prefixesAddress,
+        jlong prefixesCount
+) {
     auto out_args = reinterpret_cast<out_arguments *>(argsMemory);
     auto rows = reinterpret_cast<int64_t *>(out_args->rows_address);
     auto rows_count_prev = out_args->rows_size;
@@ -83,24 +80,25 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilter
             unIndexedNullCount,
             maxValue,
             minValue,
-            partitionIndex,
-            blockValueCountMod);
+            frameIndex,
+            blockValueCountMod
+    );
 
     auto rows_count_after = out_args->rows_size;
-    const auto hashes = reinterpret_cast<void *>(hashesAddress);
-    const auto hashes_storage_size = static_cast<int32_t>(hashLength);
+    const auto geohash_column_addr = reinterpret_cast<void *>(geoHashColumnAddress);
+    const auto geohash_column_size = static_cast<int32_t>(geoHashColumnSize);
     const auto *prefixes = reinterpret_cast<const int64_t *>(prefixesAddress);
     const auto prefixes_count = static_cast<int64_t>(prefixesCount);
 
     auto found_start = rows + out_args->key_lo;
     auto found_stop = rows + out_args->key_lo + rows_count_after;
 
-    if (hashes && prefixes && prefixes_count) {
+    if (geohash_column_addr && prefixes && prefixes_count) {
         int64_t filtered_count = 0;
         filter_with_prefix(
-                hashes,
+                geohash_column_addr,
                 rows + out_args->key_lo + rows_count_prev,
-                hashes_storage_size,
+                geohash_column_size,
                 rows_count_after - rows_count_prev,
                 prefixes,
                 prefixes_count,

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -85,7 +86,7 @@ public class Unordered8Map implements Map, Reopenable {
     private int initialKeyCapacity;
     private int keyCapacity;
     private long keyMemStart; // Key look-up memory start pointer.
-    private int mask;
+    private long mask;
     private long memLimit; // Hash table memory limit pointer.
     private long memStart; // Hash table memory start pointer.
     private int nResizes;
@@ -112,68 +113,73 @@ public class Unordered8Map implements Map, Reopenable {
     ) {
         assert loadFactor > 0 && loadFactor < 1d;
 
-        this.memoryTag = memoryTag;
-        this.loadFactor = loadFactor;
-        this.keyCapacity = (int) (keyCapacity / loadFactor);
-        this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
-        this.maxResizes = maxResizes;
-        mask = this.keyCapacity - 1;
-        free = (int) (this.keyCapacity * loadFactor);
-        nResizes = 0;
+        try {
+            this.memoryTag = memoryTag;
+            this.loadFactor = loadFactor;
+            this.keyCapacity = (int) (keyCapacity / loadFactor);
+            this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
+            this.maxResizes = maxResizes;
+            mask = this.keyCapacity - 1;
+            free = (int) (this.keyCapacity * loadFactor);
+            nResizes = 0;
 
-        final int keyColumnCount = keyTypes.getColumnCount();
-        long keySize = 0;
-        for (int i = 0; i < keyColumnCount; i++) {
-            final int columnType = keyTypes.getColumnType(i);
-            final int size = ColumnType.sizeOf(columnType);
-            if (size > 0) {
-                keySize += size;
-            } else {
-                keySize = -1;
-                break;
-            }
-        }
-        if (keySize <= 0 || keySize > KEY_SIZE) {
-            throw CairoException.nonCritical().put("unexpected key size: ").put(keySize);
-        }
-
-        long valueOffset = 0;
-        long[] valueOffsets = null;
-        long valueSize = 0;
-        if (valueTypes != null) {
-            int valueColumnCount = valueTypes.getColumnCount();
-            valueOffsets = new long[valueColumnCount];
-
-            for (int i = 0; i < valueColumnCount; i++) {
-                valueOffsets[i] = valueOffset;
-                final int columnType = valueTypes.getColumnType(i);
+            final int keyColumnCount = keyTypes.getColumnCount();
+            long keySize = 0;
+            for (int i = 0; i < keyColumnCount; i++) {
+                final int columnType = keyTypes.getColumnType(i);
                 final int size = ColumnType.sizeOf(columnType);
-                if (size <= 0) {
-                    throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                if (size > 0) {
+                    keySize += size;
+                } else {
+                    keySize = -1;
+                    break;
                 }
-                valueOffset += size;
-                valueSize += size;
             }
+            if (keySize <= 0 || keySize > KEY_SIZE) {
+                throw CairoException.nonCritical().put("unexpected key size: ").put(keySize);
+            }
+
+            long valueOffset = 0;
+            long[] valueOffsets = null;
+            long valueSize = 0;
+            if (valueTypes != null) {
+                int valueColumnCount = valueTypes.getColumnCount();
+                valueOffsets = new long[valueColumnCount];
+
+                for (int i = 0; i < valueColumnCount; i++) {
+                    valueOffsets[i] = valueOffset;
+                    final int columnType = valueTypes.getColumnType(i);
+                    final int size = ColumnType.sizeOf(columnType);
+                    if (size <= 0) {
+                        throw CairoException.nonCritical().put("value type is not supported: ").put(ColumnType.nameOf(columnType));
+                    }
+                    valueOffset += size;
+                    valueSize += size;
+                }
+            }
+
+            this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
+
+            final long sizeBytes = entrySize * this.keyCapacity;
+            memStart = Unsafe.malloc(sizeBytes, memoryTag);
+            Vect.memset(memStart, sizeBytes, 0);
+            memLimit = memStart + sizeBytes;
+            keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
+            Unsafe.getUnsafe().putLong(keyMemStart, 0);
+            zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
+            Vect.memset(zeroMemStart, entrySize, 0);
+
+            value = new Unordered8MapValue(valueSize, valueOffsets);
+            value2 = new Unordered8MapValue(valueSize, valueOffsets);
+            value3 = new Unordered8MapValue(valueSize, valueOffsets);
+
+            record = new Unordered8MapRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
+            cursor = new Unordered8MapCursor(record, this);
+            key = new Key();
+        } catch (Throwable th) {
+            close();
+            throw th;
         }
-
-        this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
-
-        final long sizeBytes = entrySize * this.keyCapacity;
-        memStart = Unsafe.malloc(sizeBytes, memoryTag);
-        Vect.memset(memStart, sizeBytes, 0);
-        memLimit = memStart + sizeBytes;
-        keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
-        Unsafe.getUnsafe().putLong(keyMemStart, 0);
-        zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
-        Vect.memset(zeroMemStart, entrySize, 0);
-
-        value = new Unordered8MapValue(valueSize, valueOffsets);
-        value2 = new Unordered8MapValue(valueSize, valueOffsets);
-        value3 = new Unordered8MapValue(valueSize, valueOffsets);
-
-        record = new Unordered8MapRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
-        cursor = new Unordered8MapCursor(record, this);
-        key = new Key();
     }
 
     @Override
@@ -188,7 +194,7 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     @Override
-    public final void close() {
+    public void close() {
         if (memStart != 0) {
             memLimit = memStart = Unsafe.free(memStart, memLimit - memStart, memoryTag);
             keyMemStart = Unsafe.free(keyMemStart, KEY_SIZE, memoryTag);
@@ -215,6 +221,11 @@ public class Unordered8Map implements Map, Reopenable {
     @Override
     public MapRecord getRecord() {
         return record;
+    }
+
+    @Override
+    public boolean isOpen() {
+        return memStart != 0;
     }
 
     @Override
@@ -251,7 +262,7 @@ public class Unordered8Map implements Map, Reopenable {
                 continue;
             }
 
-            long destAddr = getStartAddress(Hash.hashLong(key) & mask);
+            long destAddr = getStartAddress(Hash.hashLong64(key) & mask);
             for (; ; ) {
                 long k = Unsafe.getUnsafe().getLong(destAddr);
                 if (k == 0) {
@@ -276,7 +287,7 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     @Override
-    public void reopen(int keyCapacity, int pageSize) {
+    public void reopen(int keyCapacity, long heapSize) {
         if (memStart == 0) {
             keyCapacity = (int) (keyCapacity / loadFactor);
             initialKeyCapacity = Math.max(Numbers.ceilPow2(keyCapacity), MIN_KEY_CAPACITY);
@@ -339,7 +350,7 @@ public class Unordered8Map implements Map, Reopenable {
         return key.init();
     }
 
-    private Unordered8MapValue asNew(long startAddress, long key, int hashCode, Unordered8MapValue value) {
+    private Unordered8MapValue asNew(long startAddress, long key, long hashCode, Unordered8MapValue value) {
         Unsafe.getUnsafe().putLong(startAddress, key);
         if (--free == 0) {
             rehash();
@@ -367,15 +378,15 @@ public class Unordered8Map implements Map, Reopenable {
         return memStart;
     }
 
-    private long getStartAddress(long memStart, int index) {
+    private long getStartAddress(long memStart, long index) {
         return memStart + entrySize * index;
     }
 
-    private long getStartAddress(int index) {
+    private long getStartAddress(long index) {
         return memStart + entrySize * index;
     }
 
-    private Unordered8MapValue probe0(long key, long startAddress, int hashCode, Unordered8MapValue value) {
+    private Unordered8MapValue probe0(long key, long startAddress, long hashCode, Unordered8MapValue value) {
         for (; ; ) {
             startAddress = getNextAddress(startAddress);
             long k = Unsafe.getUnsafe().getLong(startAddress);
@@ -426,7 +437,7 @@ public class Unordered8Map implements Map, Reopenable {
                 continue;
             }
 
-            long newAddr = getStartAddress(newMemStart, Hash.hashLong(key) & newMask);
+            long newAddr = getStartAddress(newMemStart, Hash.hashLong64(key) & newMask);
             while (Unsafe.getUnsafe().getLong(newAddr) != 0) {
                 newAddr += entrySize;
                 if (newAddr >= newMemLimit) {
@@ -469,8 +480,8 @@ public class Unordered8Map implements Map, Reopenable {
 
         @Override
         public void copyFrom(MapKey srcKey) {
-            Key srcFastKey = (Key) srcKey;
-            copyFromRawKey(srcFastKey.startAddress());
+            Key src8Key = (Key) srcKey;
+            copyFromRawKey(src8Key.startAddress());
         }
 
         @Override
@@ -479,11 +490,11 @@ public class Unordered8Map implements Map, Reopenable {
             if (key == 0) {
                 return createZeroKeyValue();
             }
-            return createNonZeroKeyValue(key, Hash.hashLong(key));
+            return createNonZeroKeyValue(key, Hash.hashLong64(key));
         }
 
         @Override
-        public MapValue createValue(int hashCode) {
+        public MapValue createValue(long hashCode) {
             long key = Unsafe.getUnsafe().getLong(keyMemStart);
             if (key == 0) {
                 return createZeroKeyValue();
@@ -507,8 +518,8 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         @Override
-        public int hash() {
-            return Hash.hashLong(Unsafe.getUnsafe().getLong(keyMemStart));
+        public long hash() {
+            return Hash.hashLong64(Unsafe.getUnsafe().getLong(keyMemStart));
         }
 
         public Key init() {
@@ -562,9 +573,19 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         @Override
+        public void putIPv4(int value) {
+            putInt(value);
+        }
+
+        @Override
         public void putInt(int value) {
             Unsafe.getUnsafe().putInt(appendAddress, value);
             appendAddress += 4L;
+        }
+
+        @Override
+        public void putInterval(Interval interval) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -615,11 +636,16 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         @Override
+        public void putVarchar(Utf8Sequence value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void skip(int bytes) {
             appendAddress += bytes;
         }
 
-        private MapValue createNonZeroKeyValue(long key, int hashCode) {
+        private MapValue createNonZeroKeyValue(long key, long hashCode) {
             long startAddress = getStartAddress(hashCode & mask);
             long k = Unsafe.getUnsafe().getLong(startAddress);
             if (k == 0) {
@@ -644,7 +670,7 @@ public class Unordered8Map implements Map, Reopenable {
                 return hasZero ? valueOf(zeroMemStart, false, value) : null;
             }
 
-            long startAddress = getStartAddress(Hash.hashLong(key) & mask);
+            long startAddress = getStartAddress(Hash.hashLong64(key) & mask);
             long k = Unsafe.getUnsafe().getLong(startAddress);
             if (k == 0) {
                 return null;

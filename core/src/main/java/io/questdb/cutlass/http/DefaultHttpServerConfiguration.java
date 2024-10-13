@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -35,6 +35,7 @@ import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -130,18 +131,23 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public String getPassword() {
+        return "";
+    }
+
+    @Override
     public String getPoolName() {
         return "http";
     }
 
     @Override
     public int getQueryCacheBlockCount() {
-        return 4;
+        return 2;
     }
 
     @Override
     public int getQueryCacheRowCount() {
-        return 4;
+        return 8;
     }
 
     @Override
@@ -152,6 +158,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     @Override
     public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
         return staticContentProcessorConfiguration;
+    }
+
+    @Override
+    public String getUsername() {
+        return "";
     }
 
     @Override
@@ -195,16 +206,16 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public boolean preAllocateBuffers() {
+        return false;
+    }
+
+    @Override
     public boolean isQueryCacheEnabled() {
         return true;
     }
 
     public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {
-        @Override
-        public MillisecondClock getClock() {
-            return httpContextConfiguration.getClock();
-        }
-
         @Override
         public int getConnectionCheckFrequency() {
             return 1_000_000;
@@ -212,7 +223,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
         @Override
         public int getDoubleScale() {
-            return Numbers.MAX_SCALE;
+            return Numbers.MAX_DOUBLE_SCALE;
         }
 
         @Override
@@ -227,7 +238,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
 
         @Override
         public int getFloatScale() {
-            return 10;
+            return Numbers.MAX_FLOAT_SCALE;
         }
 
         @Override
@@ -239,17 +250,27 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         public long getMaxQueryResponseRowLimit() {
             return Long.MAX_VALUE;
         }
+
+        @Override
+        public MillisecondClock getMillisecondClock() {
+            return httpContextConfiguration.getMillisecondClock();
+        }
+
+        @Override
+        public NanosecondClock getNanosecondClock() {
+            return httpContextConfiguration.getNanosecondClock();
+        }
     }
 
     public class DefaultLineHttpProcessorConfiguration implements LineHttpProcessorConfiguration {
         @Override
         public boolean autoCreateNewColumns() {
-            return lineHttpProcessorConfiguration.isStringAsTagSupported();
+            return lineHttpProcessorConfiguration.autoCreateNewColumns();
         }
 
         @Override
         public boolean autoCreateNewTables() {
-            return lineHttpProcessorConfiguration.isStringAsTagSupported();
+            return lineHttpProcessorConfiguration.autoCreateNewTables();
         }
 
         @Override
@@ -293,18 +314,13 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
         }
 
         @Override
-        public boolean isStringAsTagSupported() {
-            return lineHttpProcessorConfiguration.isSymbolAsFieldSupported();
-        }
-
-        @Override
         public boolean isStringToCharCastAllowed() {
-            return lineHttpProcessorConfiguration.isStringAsTagSupported();
+            return lineHttpProcessorConfiguration.isStringToCharCastAllowed();
         }
 
         @Override
-        public boolean isSymbolAsFieldSupported() {
-            return lineHttpProcessorConfiguration.isSymbolAsFieldSupported();
+        public boolean isUseLegacyStringDefault() {
+            return true;
         }
     }
 }

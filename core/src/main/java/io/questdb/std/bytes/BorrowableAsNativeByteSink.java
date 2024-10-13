@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -30,5 +30,6 @@ import org.jetbrains.annotations.NotNull;
  * Implement to temporarily expose a {@link NativeByteSink} to the caller.
  */
 public interface BorrowableAsNativeByteSink {
-    @NotNull NativeByteSink borrowDirectByteSink();
+    @NotNull
+    NativeByteSink borrowDirectByteSink();
 }

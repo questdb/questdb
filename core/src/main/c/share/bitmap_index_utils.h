@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -50,9 +50,8 @@ struct out_arguments {
     int64_t* rows_address;
     int64_t rows_capacity;
     int64_t rows_size;
-    int64_t hashes_address;
     int64_t filtered_size;
-};
+} __attribute__((packed));
 
 struct key_header {
     int8_t signature;
@@ -199,7 +198,7 @@ int64_t scan_blocks_backward(block<T> &current_block, int64_t value_count, T max
     do {
         // check block range by peeking at first and last value
         auto lo = current_block[0]; // first value in the block
-        stored = (value_count - 1 & static_cast<int64_t>(current_block.capacity()) - 1) + 1;
+        stored = ((value_count - 1) & static_cast<int64_t>(current_block.capacity()) - 1) + 1;
 
         // can we skip this block ?
         if (lo > max_value) {
@@ -264,7 +263,7 @@ void latest_scan_backward(
         int64_t unindexed_null_count,
         int64_t max_value,
         int64_t min_value,
-        int32_t partition_index,
+        int32_t frame_index,
         uint32_t vblock_capacity_mask
 );
 

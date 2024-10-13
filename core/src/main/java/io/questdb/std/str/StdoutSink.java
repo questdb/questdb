@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ public final class StdoutSink implements Utf8Sink, Closeable {
     private final long buffer = Unsafe.malloc(bufferCapacity, MemoryTag.NATIVE_DEFAULT);
     private final long limit = buffer + bufferCapacity;
     private long ptr = buffer;
-    private final int stdout = Files.getStdOutFd();
+    private final long stdout = Files.getStdOutFdInternal();
 
     @Override
     public void close() {
@@ -52,24 +52,6 @@ public final class StdoutSink implements Utf8Sink, Closeable {
             Files.append(stdout, buffer, len);
             ptr = buffer;
         }
-    }
-
-    @Override
-    public Utf8Sink putUtf8(long lo, long hi) {
-        long remaining = hi - lo;
-        while (remaining > 0) {
-            final long avail = limit - ptr;
-            if (avail > 0) {
-                final long chunkSize = Math.min(avail, remaining);
-                Vect.memcpy(ptr, hi - remaining, chunkSize);
-                ptr += chunkSize;
-                remaining -= chunkSize;
-            }
-            if (remaining > 0) {
-                flush();
-            }
-        }
-        return this;
     }
 
     @Override
@@ -88,6 +70,24 @@ public final class StdoutSink implements Utf8Sink, Closeable {
             flush();
         }
         Unsafe.getUnsafe().putByte(ptr++, b);
+        return this;
+    }
+
+    @Override
+    public Utf8Sink putNonAscii(long lo, long hi) {
+        long remaining = hi - lo;
+        while (remaining > 0) {
+            final long avail = limit - ptr;
+            if (avail > 0) {
+                final long chunkSize = Math.min(avail, remaining);
+                Vect.memcpy(ptr, hi - remaining, chunkSize);
+                ptr += chunkSize;
+                remaining -= chunkSize;
+            }
+            if (remaining > 0) {
+                flush();
+            }
+        }
         return this;
     }
 }

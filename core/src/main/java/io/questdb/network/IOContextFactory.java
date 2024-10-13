@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,5 +31,5 @@ public interface IOContextFactory<C extends IOContext<C>> {
         Misc.free(context);
     }
 
-    C newInstance(int fd, IODispatcher<C> dispatcher);
+    C newInstance(long fd, IODispatcher<C> dispatcher);
 }

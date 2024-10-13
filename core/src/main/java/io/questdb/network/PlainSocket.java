@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ import io.questdb.log.Log;
 public class PlainSocket implements Socket {
     private final Log log;
     private final NetworkFacade nf;
-    private int fd = -1;
+    private long fd = -1;
 
     public PlainSocket(NetworkFacade nf, Log log) {
         this.nf = nf;
@@ -45,7 +45,7 @@ public class PlainSocket implements Socket {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return fd;
     }
 
@@ -55,12 +55,17 @@ public class PlainSocket implements Socket {
     }
 
     @Override
+    public boolean isMorePlaintextBuffered() {
+        return false;
+    }
+
+    @Override
     public boolean isTlsSessionStarted() {
         return false;
     }
 
     @Override
-    public void of(int fd) {
+    public void of(long fd) {
         assert this.fd == -1;
         this.fd = fd;
     }

@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -31,7 +31,7 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.tasks.O3CallbackTask;
+import io.questdb.tasks.ColumnTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
@@ -87,7 +87,7 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
         final SOUnboundedCountDownLatch o3DoneLatch = new SOUnboundedCountDownLatch();
         private final int complexity;
         private final CairoEngine engine;
-        private final TableWriter.O3ColumnUpdateMethod o3MoveUncommittedRef = this::o3MoveUncommitted0;
+        private final TableWriter.ColumnTaskHandler o3MoveUncommittedRef = this::o3MoveUncommitted0;
         private final Rnd rnd;
         private final AtomicReference<Throwable> th;
         int columnCount;
@@ -104,8 +104,8 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
             try {
                 o3DoneLatch.reset();
                 int queuedCount = 0;
-                final Sequence pubSeq = engine.getMessageBus().getO3CallbackPubSeq();
-                final RingQueue<O3CallbackTask> queue = engine.getMessageBus().getO3CallbackQueue();
+                final Sequence pubSeq = engine.getMessageBus().getColumnTaskPubSeq();
+                final RingQueue<ColumnTask> queue = engine.getMessageBus().getColumnTaskQueue();
 
                 for (int colIndex = 0; colIndex < columnCount; colIndex++) {
                     long cursor = pubSeq.next();
@@ -113,29 +113,29 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
                     // Pass column index as -1 when it's designated timestamp column to o3 move method
                     if (cursor > -1) {
                         try {
-                            final O3CallbackTask task = queue.get(cursor);
-                            task.of(o3DoneLatch, rnd.nextInt(1000), 1, 1, 1, 1, 1, 1, this.o3MoveUncommittedRef);
+                            final ColumnTask task = queue.get(cursor);
+                            task.of(o3DoneLatch, rnd.nextInt(1000), 1, 0, 1, 1, 1, 1, 1, this.o3MoveUncommittedRef);
                         } finally {
                             queuedCount++;
                             pubSeq.done(cursor);
                         }
                     } else {
-                        o3MoveUncommitted0(rnd.nextInt(1000), 1, 1, 1, 1, 1, 1);
+                        o3MoveUncommitted0(rnd.nextInt(1000), 1, 0, 1, 1, 1, 1, 1);
                     }
                 }
 
-                dispatchO3CallbackQueue(queue, queuedCount);
+                consumeO3CallbackQueue(queue, queuedCount);
             } catch (Throwable e) {
                 e.printStackTrace();
                 th.set(e);
             }
         }
 
-        private void dispatchO3CallbackQueue(RingQueue<O3CallbackTask> queue, int queuedCount) {
+        private void consumeO3CallbackQueue(RingQueue<ColumnTask> queue, int queuedCount) {
             try {
                 // This is work stealing, can run tasks from other table writers
-                final Sequence subSeq = engine.getMessageBus().getO3CallbackSubSeq();
-                TableWriter.dispatchO3CallbackQueue0(queue, queuedCount, subSeq, o3DoneLatch);
+                final Sequence subSeq = engine.getMessageBus().getColumnTaskSubSeq();
+                TableWriter.consumeColumnTasks0(queue, queuedCount, subSeq, o3DoneLatch);
                 assert o3DoneLatch.getCount() == -queuedCount : "o3DoneLatch.getCount()=" + o3DoneLatch.getCount() + ", queuedCount=" + queuedCount;
             } catch (Throwable e) {
                 e.printStackTrace();
@@ -143,7 +143,7 @@ public class O3CallbackFuzzTest extends AbstractCairoTest {
             }
         }
 
-        private void o3MoveUncommitted0(int rndInt, int i1, long l, long l0, long l1, long l2, long l3) {
+        private void o3MoveUncommitted0(int rndInt, int i1, long timestampColumnIndex, long l, long l0, long l1, long l2, long l3) {
             //noinspection unused
             double result = 0;
             for (int i = 0; i < rndInt * complexity; i++) {

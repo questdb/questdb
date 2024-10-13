@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long128;
@@ -32,7 +33,9 @@ import io.questdb.std.Long256;
 import io.questdb.std.Rows;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.wal.WalReader.getPrimaryColumnIndex;
 
@@ -198,17 +201,17 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
-    public CharSequence getStr(int col) {
+    public CharSequence getStrA(int col) {
         final long offset = recordIndex * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getStr(reader.getColumn(absoluteColumnIndex + 1).getLong(offset));
+        return reader.getColumn(absoluteColumnIndex).getStrA(reader.getColumn(absoluteColumnIndex + 1).getLong(offset));
     }
 
     @Override
     public CharSequence getStrB(int col) {
         final long offset = recordIndex * Long.BYTES;
         final int absoluteColumnIndex = getPrimaryColumnIndex(col);
-        return reader.getColumn(absoluteColumnIndex).getStr2(reader.getColumn(absoluteColumnIndex + 1).getLong(offset));
+        return reader.getColumn(absoluteColumnIndex).getStrB(reader.getColumn(absoluteColumnIndex + 1).getLong(offset));
     }
 
     @Override
@@ -219,13 +222,13 @@ public class WalDataRecord implements Record, Sinkable {
     }
 
     @Override
-    public CharSequence getSym(int col) {
+    public CharSequence getSymA(int col) {
         return reader.getSymbolValue(col, getInt(col));
     }
 
     @Override
     public CharSequence getSymB(int col) {
-        return getSym(col);
+        return getSymA(col);
     }
 
     @Override
@@ -236,6 +239,37 @@ public class WalDataRecord implements Record, Sinkable {
     @Override
     public long getUpdateRowId() {
         throw new UnsupportedOperationException("UPDATE is not supported in WAL");
+    }
+
+    @Override
+    public @Nullable Utf8Sequence getVarcharA(int col) {
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return VarcharTypeDriver.getSplitValue(
+                reader.getColumn(absoluteColumnIndex + 1),
+                reader.getColumn(absoluteColumnIndex),
+                recordIndex,
+                1
+        );
+    }
+
+    @Override
+    public @Nullable Utf8Sequence getVarcharB(int col) {
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return VarcharTypeDriver.getSplitValue(
+                reader.getColumn(absoluteColumnIndex + 1),
+                reader.getColumn(absoluteColumnIndex),
+                recordIndex,
+                2
+        );
+    }
+
+    @Override
+    public int getVarcharSize(int col) {
+        final int absoluteColumnIndex = getPrimaryColumnIndex(col);
+        return VarcharTypeDriver.getValueSize(
+                reader.getColumn(absoluteColumnIndex + 1),
+                recordIndex
+        );
     }
 
     public void incrementRecordIndex() {

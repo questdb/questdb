@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -274,7 +274,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                         });
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot lock table");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot lock table");
             }
         });
     }
@@ -294,7 +294,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             AtomicInteger count = new AtomicInteger();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, long opts) {
                     if (Utf8s.containsAscii(name, "str2.i") && count.incrementAndGet() == 14) {
                         return -1;
                     }

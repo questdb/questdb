@@ -6,7 +6,7 @@
  *    \__\_\\__,_|\___||___/\__|____/|____/
  *
  *  Copyright (c) 2014-2019 Appsicle
- *  Copyright (c) 2019-2023 QuestDB
+ *  Copyright (c) 2019-2024 QuestDB
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -41,7 +41,7 @@ final class Mig614 {
     private static final long TX_OFFSET_STRUCT_VERSION = 40;
 
     private static void openFileSafe(MemoryMARW metaMem, FilesFacade ff, Path path, long readOffset) {
-        long fileLen = ff.length(path);
+        long fileLen = ff.length(path.$());
 
         if (fileLen < 0) {
             throw CairoException.critical(ff.errno()).put("cannot read file length: ").put(path);
@@ -53,7 +53,7 @@ final class Mig614 {
 
         metaMem.of(
                 ff,
-                path,
+                path.$(),
                 ff.getPageSize(),
                 fileLen,
                 MemoryTag.NATIVE_MIG_MMAP
