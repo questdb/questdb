@@ -693,48 +693,64 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
-    public void testUpdateWhileConcurrentlyChangingSchema() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            ddl("CREATE TABLE tango AS (SELECT x FROM long_sequence(10)) ");
-            AtomicBoolean stop = new AtomicBoolean();
-            AtomicBoolean started = new AtomicBoolean();
-            Thread t = new Thread(() -> {
-                try {
-                    started.set(true);
-                    while (!stop.get()) {
-                        try (Statement s = connection.createStatement()) {
-                            s.executeUpdate("ALTER TABLE tango ADD COLUMN y INT");
-                            mayDrainWalQueue();
-                            s.executeUpdate("ALTER TABLE tango DROP COLUMN y");
-                        }
-                    }
-                } catch (Exception e) {
-                    LOG.error().$("Error in table-altering thread").$(e).$();
-                } finally {
-                    Path.clearThreadLocals();
-                }
-            });
-            t.start();
-            try {
-                while (!started.get()) { /* retry */ }
-                boolean didUpdate = false;
-                int retryCount = 100;
-                String failMsg = String.format("Failed to update column y after %d retries", retryCount);
-                for (int i = 0; i < retryCount; i++) {
-                    try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET y = 42")) {
-                        s.execute();
-                        didUpdate = true;
-                        mayDrainWalQueue();
-                    } catch (SQLException e) {
-                        assertMessageContains(e, "Invalid column: y");
-                    }
-                }
-                assertTrue(failMsg, didUpdate);
-            } finally {
-                stop.set(true);
-                t.join();
+    public void testUpdateUnaffectedColWhileConcurrentlyChangingSchema_preparedStatement() throws Exception {
+        updateWhileConcurrentlyChangingSchema(connection -> {
+            try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET x = 42")) {
+                s.execute();
+                mayDrainWalQueue();
             }
         });
+    }
+
+    @Test
+    public void testUpdateUnaffectedColWhileConcurrentlyChangingSchema_simpleStatement() throws Exception {
+        updateWhileConcurrentlyChangingSchema(connection -> {
+            try (Statement s = connection.createStatement()) {
+                s.executeUpdate("UPDATE tango SET x = 42");
+                mayDrainWalQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateWhileConcurrentlyChangingSchema_preparedStatement() throws Exception {
+        updateWhileConcurrentlyChangingSchema(connection -> {
+            try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET y = 42")) {
+                s.execute();
+                mayDrainWalQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateWhileConcurrentlyChangingSchema_simpleStatement() throws Exception {
+        updateWhileConcurrentlyChangingSchema(connection -> {
+            try (Statement s = connection.createStatement()) {
+                s.executeUpdate("UPDATE tango SET y = 42");
+                mayDrainWalQueue();
+            }
+        });
+    }
+
+    private Thread addDropColumnY(Connection connection, AtomicBoolean started, AtomicBoolean stop) {
+        Thread t = new Thread(() -> {
+            try {
+                started.set(true);
+                while (!stop.get()) {
+                    try (Statement s = connection.createStatement()) {
+                        s.executeUpdate("ALTER TABLE tango ADD COLUMN y INT");
+                        mayDrainWalQueue();
+                        s.executeUpdate("ALTER TABLE tango DROP COLUMN y");
+                    }
+                }
+            } catch (Exception e) {
+                LOG.error().$("Error in table-altering thread").$(e).$();
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+        t.start();
+        return t;
     }
 
     private void assertMessageContains(Exception e, String expectedSubstring) {
@@ -749,5 +765,37 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
         if (walEnabled) {
             drainWalQueue();
         }
+    }
+
+    private void updateWhileConcurrentlyChangingSchema(LoopBody updateLoopBody) throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            ddl("CREATE TABLE tango AS (SELECT x FROM long_sequence(10)) ");
+            AtomicBoolean stop = new AtomicBoolean();
+            AtomicBoolean started = new AtomicBoolean();
+            Thread t = addDropColumnY(connection, started, stop);
+            try {
+                while (!started.get()) { /* retry */ }
+                boolean didUpdate = false;
+                int retryCount = 100;
+                String failMsg = String.format("Failed to update column y after %d retries", retryCount);
+                for (int i = 0; i < retryCount; i++) {
+                    try {
+                        updateLoopBody.run(connection);
+                        didUpdate = true;
+                    } catch (SQLException e) {
+                        assertMessageContains(e, "Invalid column: y");
+                    }
+                }
+                assertTrue(failMsg, didUpdate);
+            } finally {
+                stop.set(true);
+                t.join();
+            }
+        });
+    }
+
+    @FunctionalInterface
+    interface LoopBody {
+        void run(Connection connection) throws SQLException;
     }
 }
