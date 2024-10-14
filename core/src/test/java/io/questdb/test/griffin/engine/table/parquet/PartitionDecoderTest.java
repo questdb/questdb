@@ -24,13 +24,21 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -97,6 +105,132 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                     Assert.assertEquals("column: " + i, i, partitionDecoder.metadata().columnId(i));
                     Assert.assertEquals("column: " + i, readerMeta.getColumnType(i), partitionDecoder.metadata().getColumnType(i));
                 }
+            } finally {
+                ff.close(fd);
+            }
+        });
+    }
+
+    @Test
+    public void testOutOfMemory() throws Exception {
+        final long rows = 10;
+        final FilesFacade ff = configuration.getFilesFacade();
+
+        // We first set up the table without memory limits.
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select" +
+                    " x id," +
+                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
+        });
+
+        assertMemoryLeak(() -> {
+            final long memInit = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            long fd = -1;
+            try (Path path = new Path();
+                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                 DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                 PartitionDecoder partitionDecoder = new PartitionDecoder()
+            ) {
+                path.of(root).concat("x.parquet").$();
+
+                // Encode
+                try (
+                        TableReader reader = engine.getReader("x");
+                        PartitionDescriptor partitionDescriptor = new PartitionDescriptor()
+                ) {
+                    PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                    PartitionEncoder.encode(partitionDescriptor, path);
+                }
+
+                fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
+                partitionDecoder.of(fd);
+                columns.add(0);
+                columns.add(ColumnType.LONG);
+
+                try {
+                    // prevent more allocs
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                    partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
+                    Assert.fail("Expected CairoException for out of memory");
+                } catch (CairoException e) {
+                    final String msg = e.getMessage();
+                    Assert.assertTrue(e.isOutOfMemory());
+                    TestUtils.assertContains(msg, "could not decode row group 0 with fd ");
+                    TestUtils.assertContains(msg, "memory limit exceeded when allocating");
+                } finally {
+                    // Reset to allow allocs again
+                    Unsafe.setRssMemLimit(0);
+                }
+
+                final long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
+                final long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                // Allocation happened in Rust code, associated to the `RowGroupBuffers` object.
+                Assert.assertTrue(memAfter > memBefore);
+            } finally {
+                ff.close(fd);
+            }
+
+            // Freed memory is tracked.
+            final long memFinal = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            Assert.assertEquals(memFinal, memInit);
+        });
+    }
+
+    /**
+     * Test error handling when we update a row group that does not exist.
+     */
+    @Test
+    public void testUpdateInvalidRowGroup() throws Exception {
+        final long rows = 10;
+        final FilesFacade ff = configuration.getFilesFacade();
+
+        // We first set up the table without memory limits.
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select" +
+                    " x id," +
+                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
+
+            // Convert the partition to parquet via SQL.
+            ddl("alter table x convert partition to parquet where designated_ts >= 0");
+
+            long fd = -1;
+            try (Path path = new Path();
+                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                 RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                 DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                 PartitionDecoder partitionDecoder = new PartitionDecoder()
+            ) {
+                // Check that the partition directory and data.parquet file now exists on disk.
+                path.of(root).concat("x~").concat("1970-01-05.1").slash$();
+                Assert.assertTrue(ff.exists(path.$()));
+                // Assert.assertTrue(ff.isDirOrSoftLinkDir(path.$())); -- see https://github.com/questdb/questdb/issues/5054
+                path.concat("data.parquet").$();
+                Assert.assertTrue(ff.exists(path.$()));
+                Assert.assertFalse(ff.isDirOrSoftLinkDir(path.$()));
+
+                // Open it up.
+                fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
+                partitionDecoder.of(fd);
+                columns.add(0);
+                columns.add(ColumnType.LONG);
+
+                final CairoException badReadRowGroupStats = Assert.assertThrows(CairoException.class, () -> {
+                    partitionDecoder.readRowGroupStats(rowGroupStatBuffers, columns, 1000);
+                });
+                TestUtils.assertContains(
+                        badReadRowGroupStats.getMessage(),
+                        "row group index 1000 out of range [0,1)");
+
+                final CairoException badDecodeRowGroup = Assert.assertThrows(CairoException.class, () -> {
+                    partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 1000, 0, 1);
+                });
+                TestUtils.assertContains(
+                        badDecodeRowGroup.getMessage(),
+                        "row group index 1000 out of range [0,1)");
             } finally {
                 ff.close(fd);
             }

@@ -55,22 +55,20 @@ public class PartitionUpdater implements QuietCloseable {
             long rowGroupSize,
             long dataPageSize
     ) {
+        final long allocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         destroy();
-        try {
-            ptr = create(
-                    Files.detach(TableUtils.openRW(ff, srcPath, LOG, fileOpenOpts)),
-                    fileSize,
-                    timestampIndex,
-                    compressionCodec,
-                    statisticsEnabled,
-                    rowGroupSize,
-                    dataPageSize
-            );
-        } catch (Throwable th) {
-            throw CairoException.nonCritical().put("could not open parquet file for update: [path=").put(srcPath)
-                    .put(", msg=").put(th.getMessage())
-                    .put(']');
-        }
+        ptr = create(  // throws CairoException on error
+                allocator,
+                srcPath.size(),
+                srcPath.ptr(),
+                Files.detach(TableUtils.openRW(ff, srcPath, LOG, fileOpenOpts)),
+                fileSize,
+                timestampIndex,
+                compressionCodec,
+                statisticsEnabled,
+                rowGroupSize,
+                dataPageSize
+        );
     }
 
     public void updateRowGroup(short rowGroupId, PartitionDescriptor descriptor) {
@@ -78,8 +76,10 @@ public class PartitionUpdater implements QuietCloseable {
         final long rowCount = descriptor.getPartitionRowCount();
         try {
             assert ptr != 0;
-            updateRowGroup(
+            updateRowGroup(  // throws CairoException on error
                     ptr,
+                    descriptor.tableName.size(),
+                    descriptor.tableName.ptr(),
                     rowGroupId,
                     columnCount,
                     descriptor.getColumnNamesPtr(),
@@ -88,18 +88,15 @@ public class PartitionUpdater implements QuietCloseable {
                     descriptor.getColumnDataLen(),
                     rowCount
             );
-        } catch (Throwable th) {
-            throw CairoException.critical(0).put("Could not update rowGroup: [table=").put(descriptor.getTableName())
-                    .put(", rowGroup=").put(rowGroupId)
-                    .put(", exception=").put(th.getClass().getSimpleName())
-                    .put(", msg=").put(th.getMessage())
-                    .put(']');
         } finally {
             descriptor.clear();
         }
     }
 
     private static native long create(
+            long allocator,
+            int srcPathLen,
+            long srcPathPtr,
             int fd,
             long fileSize,
             int timestampIndex,
@@ -107,12 +104,14 @@ public class PartitionUpdater implements QuietCloseable {
             boolean statisticsEnabled,
             long rowGroupSize,
             long dataPageSize
-    );
+    ) throws CairoException;
 
     private static native void destroy(long impl);
 
     private static native void updateRowGroup(
             long impl,
+            int tableNameLen,
+            long tableNamePtr,
             short rowGroupId,
             int columnCount,
             long columnNamesPtr,
@@ -120,9 +119,15 @@ public class PartitionUpdater implements QuietCloseable {
             long columnDataPtr,
             long columnDataSize,
             long rowCount
-    );
+    ) throws CairoException;
 
     private void destroy() {
+        // TODO(eugenels): Extract `finish` to a separate public API method.
+        //                 Currently it gets called as part of `close()`, which isn't ideal
+        //                 from an exception handling point of view.
+        //                 This is because `close()` should not throw exceptions or
+        //                 the exception will prevent `destroy()` from being called.
+        //                 In other words, we also have a memory leak here :-)
         if (ptr != 0) {
             try {
                 destroy(ptr);

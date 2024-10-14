@@ -36,8 +36,8 @@ import io.questdb.std.Unsafe;
 
 public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCloseable {
     private final PartitionDecoder partitionDecoder = new PartitionDecoder();
-    private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers();
-    private final RowGroupStatBuffers statBuffers = new RowGroupStatBuffers();
+    private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+    private final RowGroupStatBuffers statBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
     private final DirectIntList timestampIdAndType = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT);
     private int partitionIndex = -1;
     private TableToken tableToken;

@@ -91,7 +91,9 @@ public final class MemoryTag {
     public static final int NATIVE_TABLE_WAL_WRITER = NATIVE_INDEX_READER + 1;
     public static final int NATIVE_METADATA_READER = NATIVE_TABLE_WAL_WRITER + 1;
     public static final int NATIVE_BIT_SET = NATIVE_METADATA_READER + 1;
-    public static final int SIZE = NATIVE_BIT_SET + 1;
+    public static final int NATIVE_PARQUET_PARTITION_DECODER = NATIVE_BIT_SET + 1;
+    public static final int NATIVE_PARQUET_PARTITION_UPDATER = NATIVE_PARQUET_PARTITION_DECODER + 1;
+    public static final int SIZE = NATIVE_PARQUET_PARTITION_UPDATER + 1;
 
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
@@ -164,5 +166,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_TABLE_WAL_WRITER, "NATIVE_TABLE_WAL_WRITER");
         tagNameMap.extendAndSet(NATIVE_METADATA_READER, "NATIVE_METADATA_READER");
         tagNameMap.extendAndSet(NATIVE_BIT_SET, "NATIVE_BIT_SET");
+        tagNameMap.extendAndSet(NATIVE_PARQUET_PARTITION_DECODER, "NATIVE_PARQUET_PARTITION_DECODER");
+        tagNameMap.extendAndSet(NATIVE_PARQUET_PARTITION_UPDATER, "NATIVE_PARQUET_PARTITION_UPDATER");
     }
 }

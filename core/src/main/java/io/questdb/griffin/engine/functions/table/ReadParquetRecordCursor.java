@@ -78,7 +78,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             this.ff = ff;
             this.metadata = metadata;
             this.decoder = new PartitionDecoder();
-            this.rowGroupBuffers = new RowGroupBuffers();
+            this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
             this.record = new ParquetRecord();
         } catch (Throwable th) {
