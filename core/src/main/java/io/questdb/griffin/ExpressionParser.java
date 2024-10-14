@@ -992,6 +992,22 @@ public class ExpressionParser {
                         }
                         processDefaultBranch = true;
                         break;
+                    case 'O':
+                    case 'o':
+                        processDefaultBranch = true;
+                        if (SqlKeywords.isOrderKeyword(tok) && opStack.size() > 2) {
+                            ExpressionNode en = opStack.peek();
+                            if (en.type == ExpressionNode.CONSTANT) {
+                                en = opStack.peek(1);
+                                if (en.type == ExpressionNode.CONTROL && Chars.equals(en.token, '(')) {
+                                    en = opStack.peek(2);
+                                    if (en.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(en.token, "string_distinct_agg")) {
+                                        throw SqlException.$(lastPos, "ORDER BY not supported for string_distinct_agg");
+                                    }
+                                }
+                            }
+                        }
+                        break;
                     case '*':
                         // special case for tab.*
                         if (prevBranch == BRANCH_DOT) {
