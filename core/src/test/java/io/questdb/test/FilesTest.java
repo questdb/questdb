@@ -29,7 +29,17 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -82,45 +92,6 @@ public class FilesTest {
     }
 
     @Test
-    public void testAllocateLoop() throws Exception {
-        assertMemoryLeak(() -> {
-            File temp = temporaryFolder.newFile();
-            TestUtils.writeStringToFile(temp, "abcde");
-            try (Path path = new Path().of(temp.getAbsolutePath())) {
-                Assert.assertTrue(Files.exists(path.$()));
-                Assert.assertEquals(5, Files.length(path.$()));
-                long fd = Files.openRW(path.$());
-
-                long M50 = 100 * 1024L * 1024L;
-                try {
-                    // If allocate tries to allocate by the given size
-                    // instead of to the size this will allocate 2TB and suppose to fail
-                    for (int i = 0; i < 20000; i++) {
-                        Files.allocate(fd, M50 + i);
-                        Assert.assertEquals(M50 + i, Files.length(path.$()));
-                    }
-                } finally {
-                    Files.close(fd);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testDeleteOpenFile() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                File f = temporaryFolder.newFile();
-                long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
-                Assert.assertTrue(Files.exists(fd));
-                Assert.assertTrue(Files.remove(path.$()));
-                Assert.assertFalse(Files.exists(fd));
-                Files.close(fd);
-            }
-        });
-    }
-
-    @Test
     public void testAllocateConcurrent() throws IOException, InterruptedException {
         // This test allocates (but doesn't write to) potentially very large files
         // size of which will depend on free disk space of the host OS.
@@ -145,19 +116,23 @@ public class FilesTest {
     }
 
     @Test
-    public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {
+    public void testAllocateLoop() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
             try (Path path = new Path().of(temp.getAbsolutePath())) {
                 Assert.assertTrue(Files.exists(path.$()));
-                long fd = Files.openRW(path.$());
                 Assert.assertEquals(5, Files.length(path.$()));
+                long fd = Files.openRW(path.$());
 
+                long M50 = 100 * 1024L * 1024L;
                 try {
-                    long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
-                    boolean success = Files.allocate(fd, tb10);
-                    Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
+                    // If allocate tries to allocate by the given size
+                    // instead of to the size this will allocate 2TB and suppose to fail
+                    for (int i = 0; i < 20000; i++) {
+                        Files.allocate(fd, M50 + i);
+                        Assert.assertEquals(M50 + i, Files.length(path.$()));
+                    }
                 } finally {
                     Files.close(fd);
                 }
@@ -329,9 +304,17 @@ public class FilesTest {
     }
 
     @Test
-    public void testLongFd() throws Exception {
-        long unuqFd = Numbers.encodeLowHighInts(1000, -1);
-        Assert.assertTrue(unuqFd < 0);
+    public void testDeleteOpenFile() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                File f = temporaryFolder.newFile();
+                long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
+                Assert.assertTrue(Files.exists(fd));
+                Assert.assertTrue(Files.remove(path.$()));
+                Assert.assertFalse(Files.exists(fd));
+                Files.close(fd);
+            }
+        });
     }
 
     @Test
@@ -469,9 +452,24 @@ public class FilesTest {
     }
 
     @Test
-    public void testLongFd2() throws Exception {
-        long unuqFd = Numbers.encodeLowHighInts(Integer.MAX_VALUE, 1000);
-        Assert.assertTrue(unuqFd > 0);
+    public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            TestUtils.writeStringToFile(temp, "abcde");
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                long fd = Files.openRW(path.$());
+                Assert.assertEquals(5, Files.length(path.$()));
+
+                try {
+                    long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
+                    boolean success = Files.allocate(fd, tb10);
+                    Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
     }
 
     @Test
@@ -542,6 +540,38 @@ public class FilesTest {
     }
 
     @Test
+    public void testIsDirOrSoftLinkDir() throws Exception {
+        final File baseDir = temporaryFolder.newFolder();
+
+        setupPath(baseDir, "empty_dir/");
+        setupPath(baseDir, "file");
+        setupPath(baseDir, "dir_with_a_file/file");
+        setupPath(baseDir, "dir_with_an_empty_dir/dir/");
+        setupPath(baseDir, "link_to_file -> file");
+        setupPath(baseDir, "link_to_empty_dir -> empty_dir/");
+        setupPath(baseDir, "link_to_dir_with_a_file -> dir_with_a_file/");
+        setupPath(baseDir, "link_to_dir_with_an_empty_dir -> dir_with_an_empty_dir/");
+        setupPath(baseDir, "link_to_nonexistent -> nonexistent");
+
+        final File nonexistent = new File(baseDir, "nonexistent");
+        nonexistent.delete();
+        Assert.assertFalse(nonexistent.exists());
+
+        assertMemoryLeak(() -> {
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "something/that/does/not/exist"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/"));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_a_file/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/"));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_empty_dir"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_a_file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_an_empty_dir"));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_nonexistent"));
+        });
+    }
+
+    @Test
     public void testLastModified() throws Exception {
         LogFactory.getLog(FilesTest.class); // so that it is not accounted in assertMemoryLeak
         assertMemoryLeak(() -> {
@@ -590,6 +620,18 @@ public class FilesTest {
                 Assert.assertEquals("failed os=" + Os.errno(), 0, pFind);
             }
         });
+    }
+
+    @Test
+    public void testLongFd() throws Exception {
+        long unuqFd = Numbers.encodeLowHighInts(1000, -1);
+        Assert.assertTrue(unuqFd < 0);
+    }
+
+    @Test
+    public void testLongFd2() throws Exception {
+        long unuqFd = Numbers.encodeLowHighInts(Integer.MAX_VALUE, 1000);
+        Assert.assertTrue(unuqFd > 0);
     }
 
     @Test
@@ -1473,47 +1515,6 @@ public class FilesTest {
         });
     }
 
-    private File setupPath(File baseDir, String scenario) throws IOException {
-        // Under the base dir:
-        //   - create dirs for any scenario ending in /
-        //   - create symlinks for any scenario containing arrows (i.e. "LINK -> TARGET")
-        //   - create files for any other scenario
-        if (scenario.contains(" -> ")) {
-            final String[] parts = scenario.split(" -> ");
-            final String targetPathString = parts[1];
-            final File target = setupPath(baseDir, targetPathString);
-            final File link = new File(baseDir, parts[0]);
-            link.getParentFile().mkdirs();
-            try (
-                    Path targetPath = new Path().of(target.getAbsolutePath());
-                    Path linkPath = new Path().of(link.getAbsolutePath())
-            ) {
-                Files.softLink(targetPath.$(), linkPath.$());
-            }
-            Assert.assertTrue(
-                    "Could not set up scenario: " + scenario,
-                    link.exists());
-            return link;
-        }
-        else if (scenario.endsWith("/")) {
-            final File file = new File(baseDir, scenario);
-            file.mkdirs();
-            Assert.assertTrue(
-                    "Could not set up scenario: " + scenario,
-                    file.exists());
-            return file;
-        }
-        else {
-            final File file = new File(baseDir, scenario);
-            file.getParentFile().mkdirs();
-            touch(file);
-            Assert.assertTrue(
-                    "Could not set up scenario: " + scenario,
-                    file.exists());
-            return file;
-        }
-    }
-
     private boolean isDirOrSoftLinkDir(File basePath, String path) {
         try (Path p = new Path().of(new File(basePath, path).toString())) {
             return Files.isDirOrSoftLinkDir(p.$());
@@ -1538,35 +1539,42 @@ public class FilesTest {
         //    return false;
     }
 
-    @Test
-    public void testIsDirOrSoftLinkDir() throws Exception {
-        final File baseDir = temporaryFolder.newFolder();
-
-        setupPath(baseDir, "empty_dir/");
-        setupPath(baseDir, "file");
-        setupPath(baseDir, "dir_with_a_file/file");
-        setupPath(baseDir, "dir_with_an_empty_dir/dir/");
-        setupPath(baseDir, "link_to_file -> file");
-        setupPath(baseDir, "link_to_empty_dir -> empty_dir/");
-        setupPath(baseDir, "link_to_dir_with_a_file -> dir_with_a_file/");
-        setupPath(baseDir, "link_to_dir_with_an_empty_dir -> dir_with_an_empty_dir/");
-        setupPath(baseDir, "link_to_nonexistent -> nonexistent");
-
-        final File nonexistent = new File(baseDir, "nonexistent");
-        nonexistent.delete();
-        Assert.assertFalse(nonexistent.exists());
-
-        assertMemoryLeak(() -> {
-            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "something/that/does/not/exist"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/"));
-            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "file"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_a_file/"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/"));
-            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_file"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_empty_dir"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_a_file"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_an_empty_dir"));
-            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_nonexistent"));
-        });
+    private File setupPath(File baseDir, String scenario) throws IOException {
+        // Under the base dir:
+        //   - create dirs for any scenario ending in /
+        //   - create symlinks for any scenario containing arrows (i.e. "LINK -> TARGET")
+        //   - create files for any other scenario
+        if (scenario.contains(" -> ")) {
+            final String[] parts = scenario.split(" -> ");
+            final String targetPathString = parts[1];
+            final File target = setupPath(baseDir, targetPathString);
+            final File link = new File(baseDir, parts[0]);
+            link.getParentFile().mkdirs();
+            try (
+                    Path targetPath = new Path().of(target.getAbsolutePath());
+                    Path linkPath = new Path().of(link.getAbsolutePath())
+            ) {
+                Files.softLink(targetPath.$(), linkPath.$());
+            }
+            Assert.assertTrue(
+                    "Could not set up scenario: " + scenario,
+                    link.exists());
+            return link;
+        } else if (scenario.endsWith("/")) {
+            final File file = new File(baseDir, scenario);
+            file.mkdirs();
+            Assert.assertTrue(
+                    "Could not set up scenario: " + scenario,
+                    file.exists());
+            return file;
+        } else {
+            final File file = new File(baseDir, scenario);
+            file.getParentFile().mkdirs();
+            touch(file);
+            Assert.assertTrue(
+                    "Could not set up scenario: " + scenario,
+                    file.exists());
+            return file;
+        }
     }
 }
