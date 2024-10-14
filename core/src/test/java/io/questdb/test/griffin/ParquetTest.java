@@ -79,6 +79,62 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMixedPartitionsNativeLast() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (\n" +
+                            "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
+                            "  from long_sequence(10)\n" +
+                            ") timestamp(ts) partition by hour;"
+            );
+            ddl("alter table x convert partition to parquet where ts = '1970-01-01T02'");
+
+            assertSql(
+                    "id\tts\n" +
+                            "1\t1970-01-01T00:00:00.000000Z\n" +
+                            "2\t1970-01-01T00:16:40.000000Z\n" +
+                            "3\t1970-01-01T00:33:20.000000Z\n" +
+                            "4\t1970-01-01T00:50:00.000000Z\n" +
+                            "5\t1970-01-01T01:06:40.000000Z\n" +
+                            "6\t1970-01-01T01:23:20.000000Z\n" +
+                            "7\t1970-01-01T01:40:00.000000Z\n" +
+                            "8\t1970-01-01T01:56:40.000000Z\n" +
+                            "9\t1970-01-01T02:13:20.000000Z\n" +
+                            "10\t1970-01-01T02:30:00.000000Z\n",
+                    "x"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedPartitionsParquetLast() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (\n" +
+                            "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
+                            "  from long_sequence(10)\n" +
+                            ") timestamp(ts) partition by hour;"
+            );
+            ddl("alter table x convert partition to parquet where ts = '1970-01-01T01'");
+
+            assertSql(
+                    "id\tts\n" +
+                            "1\t1970-01-01T00:00:00.000000Z\n" +
+                            "2\t1970-01-01T00:16:40.000000Z\n" +
+                            "3\t1970-01-01T00:33:20.000000Z\n" +
+                            "4\t1970-01-01T00:50:00.000000Z\n" +
+                            "5\t1970-01-01T01:06:40.000000Z\n" +
+                            "6\t1970-01-01T01:23:20.000000Z\n" +
+                            "7\t1970-01-01T01:40:00.000000Z\n" +
+                            "8\t1970-01-01T01:56:40.000000Z\n" +
+                            "9\t1970-01-01T02:13:20.000000Z\n" +
+                            "10\t1970-01-01T02:30:00.000000Z\n",
+                    "x"
+            );
+        });
+    }
+
+    @Test
     public void testMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
             ddl(

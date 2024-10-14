@@ -28,7 +28,14 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.IntList;
@@ -41,15 +48,11 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     private final int columnCount;
     private final IntList columnIndexes;
     private final LongList columnPageAddresses = new LongList();
-    private final LongList columnPageNextAddress = new LongList();
     private final IntList columnSizeShifts;
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
     private final int pageFrameMaxRows;
     private final int pageFrameMinRows;
-    private final LongList pageRowsRemaining = new LongList();
     private final LongList pageSizes = new LongList();
-    private final IntList pages = new IntList();
-    private final LongList topsRemaining = new LongList();
     private final int workerCount;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
@@ -118,8 +121,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         final PartitionFrame partitionFrame = partitionFrameCursor.next();
         if (partitionFrame != null) {
             if (partitionFrame.getPartitionFormat() == PartitionFormat.PARQUET) {
-                columnPageAddresses.clear();
-                pageSizes.clear();
+                clearAddresses();
 
                 frame.partitionLo = partitionFrame.getRowLo();
                 frame.partitionHi = partitionFrame.getRowHi();
@@ -165,13 +167,13 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     @Override
     public void toTop() {
         partitionFrameCursor.toTop();
-        pages.setAll(columnCount, 0);
-        topsRemaining.setAll(columnCount, 0);
-        columnPageAddresses.setAll(2 * columnCount, 0);
-        columnPageNextAddress.setAll(2 * columnCount, 0);
-        pageRowsRemaining.setAll(columnCount, -1L);
-        pageSizes.setAll(2 * columnCount, -1L);
         reenterPartitionFrame = false;
+        clearAddresses();
+    }
+
+    private void clearAddresses() {
+        columnPageAddresses.setAll(2 * columnCount, 0);
+        pageSizes.setAll(2 * columnCount, -1);
     }
 
     private TableReaderPageFrame computeNativeFrame(final long partitionLo, final long partitionHi) {

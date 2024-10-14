@@ -1,3 +1,4 @@
+use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::col_type::ColumnType;
 use crate::parquet::qdb_metadata::QdbMeta;
 use parquet2::metadata::FileMetaData;
@@ -15,13 +16,14 @@ pub struct ParquetDecoder<R>
 where
     R: Read + Seek,
 {
+    pub allocator: QdbAllocator,
     pub col_count: u32,
     pub row_count: usize,
     pub row_group_count: u32,
     pub row_group_sizes_ptr: *const i32,
-    pub row_group_sizes: Vec<i32>,
+    pub row_group_sizes: AcVec<i32>,
     pub columns_ptr: *const ColumnMeta,
-    pub columns: Vec<ColumnMeta>,
+    pub columns: AcVec<ColumnMeta>,
     reader: R,
     metadata: FileMetaData,
     qdb_meta: Option<QdbMeta>,
@@ -35,20 +37,20 @@ pub struct ColumnMeta {
     pub id: i32,
     pub name_size: i32,
     pub name_ptr: *const u16,
-    pub name_vec: Vec<u16>,
+    pub name_vec: AcVec<u16>,
 }
 
 // The fields are accessed from Java.
 #[repr(C)]
 pub struct RowGroupBuffers {
     column_bufs_ptr: *const ColumnChunkBuffers,
-    column_bufs: Vec<ColumnChunkBuffers>,
+    column_bufs: AcVec<ColumnChunkBuffers>,
 }
 
 #[repr(C)]
 pub struct RowGroupStatBuffers {
     column_chunk_stats_ptr: *const ColumnChunkStats,
-    column_chunk_stats: Vec<ColumnChunkStats>,
+    column_chunk_stats: AcVec<ColumnChunkStats>,
 }
 
 /// QuestDB-format Column Data
@@ -61,25 +63,26 @@ pub struct RowGroupStatBuffers {
 pub struct ColumnChunkBuffers {
     pub data_size: usize,
     pub data_ptr: *mut u8,
-    pub data_vec: Vec<u8>,
+    pub data_vec: AcVec<u8>,
 
     pub aux_size: usize,
     pub aux_ptr: *mut u8,
-    pub aux_vec: Vec<u8>,
+    pub aux_vec: AcVec<u8>,
 }
 
 #[repr(C)]
 pub struct ColumnChunkStats {
     pub min_value_ptr: *mut u8,
     pub min_value_size: usize,
-    pub min_value: Vec<u8>,
+    pub min_value: AcVec<u8>,
     pub max_value_ptr: *mut u8,
     pub max_value_size: usize,
-    pub max_value: Vec<u8>,
+    pub max_value: AcVec<u8>,
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::allocator::TestAllocatorState;
     use crate::parquet::col_type::ColumnTypeTag;
     use crate::parquet::error::ParquetResult;
     use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
@@ -95,6 +98,9 @@ mod tests {
 
     #[test]
     fn fn_load_symbol_without_local_is_global_format_meta() -> ParquetResult<()> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
         let mut qdb_meta = QdbMeta::new();
         qdb_meta.schema.insert(
             0,
@@ -107,8 +113,8 @@ mod tests {
         let (buf, row_count) = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
 
         let reader = Cursor::new(buf);
-        let mut parquet_decoder = ParquetDecoder::read(reader)?;
-        let mut rgb = RowGroupBuffers::new();
+        let mut parquet_decoder = ParquetDecoder::read(allocator.clone(), reader)?;
+        let mut rgb = RowGroupBuffers::new(allocator);
         let res = parquet_decoder.decode_row_group(
             &mut rgb,
             &[(0, ColumnTypeTag::Symbol.into_type())],

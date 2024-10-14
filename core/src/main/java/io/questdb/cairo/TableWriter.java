@@ -1429,7 +1429,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long parquetRowCount = 0;
         try (PartitionDecoder partitionDecoder = new PartitionDecoder();
-             RowGroupBuffers rowGroupBuffers = new RowGroupBuffers();
+             RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
              DirectIntList columns = new DirectIntList(columnCount, MemoryTag.NATIVE_DEFAULT)
         ) {
             partitionDecoder.of(parquetFd);
