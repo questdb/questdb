@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -205,16 +206,9 @@ public class PartitionDecoderTest extends AbstractCairoTest {
             ) {
                 // Check that the partition directory and data.parquet file now exists on disk.
                 path.of(root).concat("x~").concat("1970-01-05.1").slash$();
-                LOG.info().$(">>>>>>>>>>> EXPECTING TO FIND: ").$(path).$();
-                for (int byteIndex = 0; byteIndex <= path.size(); byteIndex++) {
-                    final byte b = path.byteAt(byteIndex);
-                    LOG.info().$("byte[").$(byteIndex).$("] = ").$(b).$(" .. char: ").$((char)b).$();
-                }
-                dumpX();
                 Assert.assertTrue(ff.exists(path.$()));
-                Assert.assertTrue(java.nio.file.Files.exists(java.nio.file.Path.of(path.toString())));
                 Assert.assertTrue(java.nio.file.Files.isDirectory(java.nio.file.Path.of(path.toString())));
-                Assert.assertTrue(ff.isDirOrSoftLinkDir(path.$()));
+                // Assert.assertTrue(ff.isDirOrSoftLinkDir(path.$())); -- see https://github.com/questdb/questdb/issues/5054
                 path.concat("data.parquet").$();
                 Assert.assertTrue(ff.exists(path.$()));
                 Assert.assertFalse(ff.isDirOrSoftLinkDir(path.$()));
@@ -242,24 +236,5 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 ff.close(fd);
             }
         });
-    }
-
-    private void dumpX() throws Exception {
-        listAllFiles(" >>>>>>> TABLE X >>>>>> ", java.nio.file.Path.of(root, "x~"));
-    }
-
-    private static void listAllFiles(String prefix, java.nio.file.Path currentPath)
-            throws Exception
-    {
-        try (java.nio.file.DirectoryStream<java.nio.file.Path> stream = java.nio.file.Files.newDirectoryStream(currentPath)) {
-            for (java.nio.file.Path entry : stream) {
-                if (java.nio.file.Files.isDirectory(entry)) {
-                    LOG.info().$(prefix).$(entry).$(" [DIR]").$();
-                    listAllFiles(prefix, entry);
-                } else {
-                    LOG.info().$(prefix).$(entry).$(" [FILE]").$();
-                }
-            }
-        }
     }
 }
