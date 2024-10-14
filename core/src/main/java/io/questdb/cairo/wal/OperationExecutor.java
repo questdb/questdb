@@ -42,7 +42,7 @@ import java.io.Closeable;
 class OperationExecutor implements Closeable {
     private final BindVariableService bindVariableService;
     private final CairoEngine engine;
-    private final WalApplySqlExecutionContext renameSupportExecutionContext;
+    private final WalApplySqlExecutionContext executionContext;
     private final Rnd rnd;
 
     OperationExecutor(
@@ -52,12 +52,12 @@ class OperationExecutor implements Closeable {
     ) {
         rnd = new Rnd();
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-        renameSupportExecutionContext = new WalApplySqlExecutionContext(
+        executionContext = new WalApplySqlExecutionContext(
                 engine,
                 workerCount,
                 sharedWorkerCount
         );
-        renameSupportExecutionContext.with(
+        executionContext.with(
                 engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
                 bindVariableService,
                 rnd,
@@ -69,16 +69,16 @@ class OperationExecutor implements Closeable {
 
     @Override
     public void close() {
-        Misc.free(renameSupportExecutionContext);
+        Misc.free(executionContext);
     }
 
     public void executeAlter(TableWriter tableWriter, CharSequence alterSql, long seqTxn) throws SqlException {
         final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            renameSupportExecutionContext.remapTableNameResolutionTo(tableToken);
-            final CompiledQuery compiledQuery = compiler.compile(alterSql, renameSupportExecutionContext);
+            executionContext.remapTableNameResolutionTo(tableToken);
+            final CompiledQuery compiledQuery = compiler.compile(alterSql, executionContext);
             try (AlterOperation alterOp = compiledQuery.getAlterOperation()) {
-                alterOp.withContext(renameSupportExecutionContext);
+                alterOp.withContext(executionContext);
                 tableWriter.apply(alterOp, seqTxn);
             }
         } catch (SqlException ex) {
@@ -90,11 +90,11 @@ class OperationExecutor implements Closeable {
     public long executeUpdate(TableWriter tableWriter, CharSequence updateSql, long seqTxn) throws SqlException {
         final TableToken tableToken = tableWriter.getTableToken();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            renameSupportExecutionContext.remapTableNameResolutionTo(tableToken);
-            final CompiledQuery compiledQuery = compiler.compile(updateSql, renameSupportExecutionContext);
+            executionContext.remapTableNameResolutionTo(tableToken);
+            final CompiledQuery compiledQuery = compiler.compile(updateSql, executionContext);
             try (UpdateOperation updateOperation = compiledQuery.getUpdateOperation()) {
                 updateOperation.withSqlStatement(updateSql);
-                updateOperation.withContext(renameSupportExecutionContext);
+                updateOperation.withContext(executionContext);
                 return tableWriter.apply(updateOperation, seqTxn);
             }
         } catch (SqlException ex) {
@@ -112,6 +112,6 @@ class OperationExecutor implements Closeable {
     }
 
     public void setNowAndFixClock(long now) {
-        renameSupportExecutionContext.setNowAndFixClock(now);
+        executionContext.setNowAndFixClock(now);
     }
 }
