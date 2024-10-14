@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -41,8 +42,8 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
 
     public static int breakConnection = -1;
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
+    @Before
+    public void setUp() {
         circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
             public boolean checkConnection() {
@@ -82,13 +83,8 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
                 }
             }
         };
-        AbstractCairoTest.setUpStatic();
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        AbstractCairoTest.tearDownStatic();
-        circuitBreaker = Misc.free(circuitBreaker);
+        ((SqlExecutionContextImpl) sqlExecutionContext).with(circuitBreaker);
+        super.setUp();
     }
 
     @After

@@ -85,6 +85,21 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
+    public long getTimeout() {
+        throw new UnsupportedOperationException("AtomicBooleanCircuitBreaker does not support timeout");
+    }
+
+    @Override
+    public void init(SqlExecutionCircuitBreaker circuitBreaker) {
+        fd = circuitBreaker.getFd();
+    }
+
+    @Override
+    public boolean isThreadsafe() {
+        return true;
+    }
+
+    @Override
     public boolean isTimerSet() {
         return true;
     }
