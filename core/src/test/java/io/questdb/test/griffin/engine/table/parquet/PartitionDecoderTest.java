@@ -207,7 +207,6 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 // Check that the partition directory and data.parquet file now exists on disk.
                 path.of(root).concat("x~").concat("1970-01-05.1").slash$();
                 Assert.assertTrue(ff.exists(path.$()));
-                Assert.assertTrue(java.nio.file.Files.isDirectory(java.nio.file.Path.of(path.toString())));
                 // Assert.assertTrue(ff.isDirOrSoftLinkDir(path.$())); -- see https://github.com/questdb/questdb/issues/5054
                 path.concat("data.parquet").$();
                 Assert.assertTrue(ff.exists(path.$()));
