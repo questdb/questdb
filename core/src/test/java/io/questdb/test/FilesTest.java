@@ -551,6 +551,7 @@ public class FilesTest {
         setupPath(baseDir, "link_to_empty_dir -> empty_dir/");
         setupPath(baseDir, "link_to_dir_with_a_file -> dir_with_a_file/");
         setupPath(baseDir, "link_to_dir_with_an_empty_dir -> dir_with_an_empty_dir/");
+        setupPath(baseDir, "nonexistent"); // deleted later
         setupPath(baseDir, "link_to_nonexistent -> nonexistent");
 
         final File nonexistent = new File(baseDir, "nonexistent");
@@ -1541,7 +1542,7 @@ public class FilesTest {
 //        return false;
     }
 
-    private File setupPath(File baseDir, String scenario) throws IOException {
+    private void setupPath(File baseDir, String scenario) throws IOException {
         // Under the base dir:
         //   - create dirs for any scenario ending in /
         //   - create symlinks for any scenario containing arrows (i.e. "LINK -> TARGET")
@@ -1549,7 +1550,7 @@ public class FilesTest {
         if (scenario.contains(" -> ")) {
             final String[] parts = scenario.split(" -> ");
             final String targetPathString = parts[1];
-            final File target = setupPath(baseDir, targetPathString);
+            final File target = new File(baseDir, targetPathString);
             final File link = new File(baseDir, parts[0]);
             link.getParentFile().mkdirs();
             try (
@@ -1561,14 +1562,12 @@ public class FilesTest {
             Assert.assertTrue(
                     "Could not set up scenario: " + scenario,
                     link.exists());
-            return link;
         } else if (scenario.endsWith("/")) {
             final File file = new File(baseDir, scenario);
             file.mkdirs();
             Assert.assertTrue(
                     "Could not set up scenario: " + scenario,
                     file.exists());
-            return file;
         } else {
             final File file = new File(baseDir, scenario);
             file.getParentFile().mkdirs();
@@ -1576,7 +1575,6 @@ public class FilesTest {
             Assert.assertTrue(
                     "Could not set up scenario: " + scenario,
                     file.exists());
-            return file;
         }
     }
 }
