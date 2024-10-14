@@ -685,8 +685,12 @@ public class PGPipelineEntry implements QuietCloseable {
         this.empty = sqlText == null || sqlText.length() == 0;
         cacheHit = false;
 
-        // todo: this is a hack it does not belong here
-        if (cq.getType() == CompiledQuery.SELECT || cq.getType() == CompiledQuery.EXPLAIN) {
+        // these types must reply with row description message
+        // when used via the simple query protocol
+        if (cq.getType() == CompiledQuery.SELECT
+                || cq.getType() == CompiledQuery.EXPLAIN
+                || cq.getType() == CompiledQuery.PSEUDO_SELECT
+        ) {
             setStateDesc(2); // 2 = portal
         }
         if (!empty) {

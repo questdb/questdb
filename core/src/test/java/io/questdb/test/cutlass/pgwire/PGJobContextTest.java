@@ -6427,8 +6427,6 @@ nodejs code:
 
     @Test
     public void testLocalCopyFrom() throws Exception {
-        // @Ignore("TODO PGWire 2.0")
-        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (
