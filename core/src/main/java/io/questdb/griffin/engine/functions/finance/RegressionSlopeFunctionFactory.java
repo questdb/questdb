@@ -232,8 +232,8 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             long destCount = destValue.getLong(valueIndex + 6);
             long totalCount = srcCount + destCount;
 
-            destMeanX = ((srcMeanX * srcCount) + (destMeanX * destCount))/ totalCount;
-            destMeanY = ((srcMeanY * srcCount) + (destMeanY * destCount))/ totalCount;
+            destMeanX = ((srcMeanX * srcCount) + (destMeanX * destCount)) / totalCount;
+            destMeanY = ((srcMeanY * srcCount) + (destMeanY * destCount)) / totalCount;
 
             double deltaX = srcMeanX - destMeanX;
             double deltaY = srcMeanY - destMeanY;
