@@ -404,12 +404,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
-        int type = ColumnType.tagOf(tok);
-        if (type == -1) {
-            throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
-        }
+        int columnType = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
 
-        if (type == ColumnType.GEOHASH) {
+        if (columnType == ColumnType.GEOHASH) {
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null || tok.charAt(0) != '(') {
                 throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
@@ -428,7 +425,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.position(lexer.getPosition())
                             .put("invalid GEOHASH type literal, expected ')'");
                 }
-                type = ColumnType.getGeoHashTypeWithBits(geoHashBits);
+                columnType = ColumnType.getGeoHashTypeWithBits(geoHashBits);
             } else {
                 throw SqlException.position(lexer.lastTokenPosition())
                         .put("missing GEOHASH precision");
@@ -442,7 +439,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final boolean indexed;
 
         if (
-                ColumnType.isSymbol(type)
+                ColumnType.isSymbol(columnType)
                         && tok != null
                         && !Chars.equals(tok, ',')
                         && !Chars.equals(tok, ';')
@@ -525,7 +522,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         addColumn.addColumnToList(
                 columnName,
                 columnNamePosition,
-                type,
+                columnType,
                 Numbers.ceilPow2(symbolCapacity),
                 cache,
                 indexed,
@@ -533,7 +530,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 false
         );
         lexer.unparseLast();
-        return type;
+        return columnType;
     }
 
     private void alterTable(SqlExecutionContext executionContext) throws SqlException {

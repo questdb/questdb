@@ -324,11 +324,7 @@ public class ServerMain implements Closeable {
                 try {
                     sharedPool.assign(engine.getEngineMaintenanceJob());
 
-                    WorkerPoolUtils.setupQueryJobs(
-                            sharedPool,
-                            engine,
-                            config.getCairoConfiguration().getCircuitBreakerConfiguration()
-                    );
+                    WorkerPoolUtils.setupQueryJobs(sharedPool, engine);
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPool, engine);
