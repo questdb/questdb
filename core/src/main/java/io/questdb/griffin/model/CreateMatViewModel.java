@@ -38,10 +38,10 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     private final CreateTableModel tableModel;
     private String baseTableName;
     private long fromMicros = -1;
-    private char intervalQualifier;
-    private int intervalValue = -1;
     private TableToken matViewToken;
     private String query;
+    private long samplingInterval = -1;
+    private char samplingIntervalUnit;
     private String timeZone;
     private String timeZoneOffset;
     private long toMicros = -1;
@@ -56,8 +56,8 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         matViewToken = null;
         query = null;
         baseTableName = null;
-        intervalValue = -1;
-        intervalQualifier = '\0';
+        samplingInterval = -1;
+        samplingIntervalUnit = '\0';
         fromMicros = -1;
         toMicros = -1;
         timeZone = null;
@@ -65,7 +65,7 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     }
 
     public MaterializedViewDefinition generateDefinition() {
-        return new MaterializedViewDefinition(matViewToken, query, baseTableName, intervalValue, intervalQualifier,
+        return new MaterializedViewDefinition(matViewToken, query, baseTableName, samplingInterval, samplingIntervalUnit,
                 fromMicros, toMicros, timeZone, timeZoneOffset
         );
     }
@@ -101,16 +101,16 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         this.fromMicros = fromMicros;
     }
 
-    public void setIntervalQualifier(char intervalQualifier) {
-        this.intervalQualifier = intervalQualifier;
-    }
-
-    public void setIntervalValue(int intervalValue) {
-        this.intervalValue = intervalValue;
-    }
-
     public void setQuery(String query) {
         this.query = query;
+    }
+
+    public void setSamplingInterval(long samplingInterval) {
+        this.samplingInterval = samplingInterval;
+    }
+
+    public void setSamplingIntervalUnit(char samplingIntervalUnit) {
+        this.samplingIntervalUnit = samplingIntervalUnit;
     }
 
     public void setTableToken(TableToken matViewToken) {

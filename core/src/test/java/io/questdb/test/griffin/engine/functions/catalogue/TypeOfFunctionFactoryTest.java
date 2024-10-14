@@ -72,7 +72,6 @@ public class TypeOfFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testTypeOfAllRegularDataTypes() throws SqlException {
-
         for (int i = ColumnType.BOOLEAN; i < ColumnType.NULL; i++) {
             String name = ColumnType.nameOf(i);
             if (Chars.equals("unknown", name)

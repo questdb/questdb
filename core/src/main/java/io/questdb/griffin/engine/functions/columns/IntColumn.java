@@ -53,7 +53,7 @@ public class IntColumn extends IntFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

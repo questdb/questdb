@@ -1893,7 +1893,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         // 2022-03-29 10:00:00.0
         // 2022-03-30 10:00:00.0
         // 2022-03-31 10:00:00.0
-        currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
+        setCurrentMicros(1649186452792000L); // '2022-04-05T19:20:52.792Z'
         assertQuery("min\tmax\n" +
                 "\t\n", "SELECT min(ts), max(ts)\n" +
                 "FROM tab\n" +
@@ -7482,6 +7482,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         );
     }
 
+    // https://github.com/questdb/questdb/issues/4981
+    @Test
+    public void testStringyTypeIntComparison() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1(c0 INT, c1 SYMBOL, c2 STRING, c3 VARCHAR);");
+            insert("INSERT INTO t1(c0) VALUES (1);");
+
+            assertSql(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 >= t1.c0);"
+            );
+            assertSql(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c2 >= t1.c0);"
+            );
+            assertSql(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c3 >= t1.c0);"
+            );
+        });
+    }
+
     @Test
     public void testStrippingRowId() throws Exception {
         assertMemoryLeak(() -> {
@@ -7752,7 +7774,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testUnionCastTypeSymmetry() {
-        for (int typeA = 0; typeA <= ColumnType.VARCHAR; typeA++) {
+        for (int typeA = 0; typeA <= ColumnType.INTERVAL; typeA++) {
             for (int typeB = 0; typeB <= typeA; typeB++) {
                 Assert.assertEquals(
                         "typeA: " + typeA + ", typeB: " + typeB,

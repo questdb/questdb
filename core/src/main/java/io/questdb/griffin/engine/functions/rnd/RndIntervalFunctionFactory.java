@@ -30,71 +30,53 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
+import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import org.jetbrains.annotations.NotNull;
 
-public class RndUUIDCFunctionFactory implements FunctionFactory {
+public class RndIntervalFunctionFactory implements FunctionFactory {
+    private static final long LO_BOUNDARY = 1999999000000000L; // Wednesday, May 18, 2033 3:16:40 AM
+    private static final long MAX_RANGE = 199999000000000L; // ~6 years
+
     @Override
     public String getSignature() {
-        return "rnd_uuid4(i)";
+        return "rnd_interval()";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RndFunction(args.getQuick(0).getInt(null));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new RndFunction();
     }
 
-    private static class RndFunction extends UuidFunction implements Function {
-        private final int nanRate;
-        private boolean isNull = false;
+    private static class RndFunction extends IntervalFunction implements Function {
+        private final Interval interval = new Interval();
         private Rnd rnd;
 
-        public RndFunction(int nanRate) {
-            this.nanRate = nanRate + 1;
-        }
-
         @Override
-        public long getLong128Hi(Record rec) {
-            if (isNull) {
-                isNull = false;
-                return Numbers.LONG_NULL;
-            }
-            long hi = rnd.nextLong();
-            // set version to 4
-            hi &= 0xffffffffffff0fffL;
-            hi |= 0x0000000000004000L;
-            return hi;
-        }
-
-        @Override
-        public long getLong128Lo(Record rec) {
-            long lo = rnd.nextLong();
-            if ((lo % nanRate) == 1) {
-                isNull = true;
-                return Numbers.LONG_NULL;
-            }
-            // set variant to 1
-            lo &= 0x3fffffffffffffffL;
-            lo |= 0x8000000000000000L;
-            return lo;
+        public @NotNull Interval getInterval(Record rec) {
+            final long lo = rnd.nextLong(LO_BOUNDARY);
+            final long range = rnd.nextLong(MAX_RANGE);
+            return interval.of(lo, lo + range);
         }
 
         @Override
         public String getName() {
-            return "rnd_uuid4";
+            return "rnd_interval";
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
             rnd = executionContext.getRandom();
-        }
-
-        @Override
-        public boolean isNonDeterministic() {
-            return true;
         }
     }
 }

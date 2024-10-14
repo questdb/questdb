@@ -491,12 +491,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertMaterializedViewDefinition(String name, String query, String baseTableName, int intervalValue, char intervalQualifier) {
-        assertMaterializedViewDefinition(name, query, baseTableName, intervalValue, intervalQualifier, -1L, -1L, null, null);
+    private static void assertMaterializedViewDefinition(String name, String query, String baseTableName, int samplingInterval, char samplingIntervalUnit) {
+        assertMaterializedViewDefinition(name, query, baseTableName, samplingInterval, samplingIntervalUnit, -1L, -1L, null, null);
     }
 
     private static void assertMaterializedViewDefinition(
-            String name, String query, String baseTableName, int intervalValue, char intervalQualifier,
+            String name, String query, String baseTableName, long samplingInterval, char samplingIntervalUnit,
             long fromMicros, long toMicros, String timeZone, String timeZoneOffset
     ) {
         final MaterializedViewDefinition matViewDefinition = engine.getMaterializedViewGraph().getView(name);
@@ -504,8 +504,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertTrue(matViewDefinition.getMatViewToken().isWal());
         assertEquals(query, matViewDefinition.getQuery());
         assertEquals(baseTableName, matViewDefinition.getBaseTableName());
-        assertEquals(intervalValue, matViewDefinition.getIntervalValue());
-        assertEquals(intervalQualifier, matViewDefinition.getIntervalQualifier());
+        assertEquals(samplingInterval, matViewDefinition.getSamplingInterval());
+        assertEquals(samplingIntervalUnit, matViewDefinition.getSamplingIntervalUnit());
         assertEquals(fromMicros, matViewDefinition.getFromMicros());
         assertEquals(toMicros, matViewDefinition.getToMicros());
         assertEquals(timeZone, timeZone != null ? matViewDefinition.getTimeZone() : null);

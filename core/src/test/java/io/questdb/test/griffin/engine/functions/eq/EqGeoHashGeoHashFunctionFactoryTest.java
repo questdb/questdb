@@ -331,7 +331,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -343,7 +343,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -355,7 +355,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -368,7 +368,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };

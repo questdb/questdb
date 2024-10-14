@@ -45,6 +45,30 @@ public class CompactCharSequenceHashSetTest {
     }
 
     @Test
+    public void testResetCapacity() {
+        Rnd rnd = new Rnd();
+        CompactCharSequenceHashSet set = new CompactCharSequenceHashSet();
+        int n = 1000;
+
+        for (int i = 0; i < n; i++) {
+            set.add(next(rnd).toString());
+        }
+
+        rnd.reset();
+        Assert.assertEquals(n, set.size());
+        for (int i = 0; i < n; i++) {
+            Assert.assertTrue(set.contains(next(rnd).toString()));
+        }
+
+        rnd.reset();
+        set.resetCapacity();
+        Assert.assertEquals(0, set.size());
+        for (int i = 0; i < n; i++) {
+            Assert.assertFalse(set.contains(next(rnd).toString()));
+        }
+    }
+
+    @Test
     public void testStress() {
         Rnd rnd = new Rnd();
         CompactCharSequenceHashSet set = new CompactCharSequenceHashSet();

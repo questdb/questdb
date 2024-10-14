@@ -128,6 +128,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_USER, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ALTER_USER, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.EMPTY, JsonQueryProcessor::sendEmptyQueryNotice);
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_MAT_VIEW, sendConfirmation);
             // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
             assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
@@ -153,7 +154,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     public void execute0(
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
-
         OperationFuture fut = state.getOperationFuture();
         final HttpConnectionContext context = state.getHttpConnectionContext();
         circuitBreaker.resetTimer();
@@ -164,6 +164,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // do not set random for new request to avoid copying random from previous request into next one
             // the only time we need to copy random from state is when we resume request execution
             sqlExecutionContext.with(context.getSecurityContext(), null, null, context.getFd(), circuitBreaker.of(context.getFd()));
+            sqlExecutionContext.initNow();
             if (state.getStatementTimeout() > 0L) {
                 circuitBreaker.setTimeout(state.getStatementTimeout());
             } else {
@@ -424,6 +425,25 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         readyForNextRequest(context);
     }
 
+    private static void sendEmptyQueryNotice(
+            JsonQueryProcessorState state,
+            CompiledQuery cc,
+            CharSequence keepAliveHeader
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        final HttpConnectionContext context = state.getHttpConnectionContext();
+        final HttpChunkedResponse response = context.getChunkedResponse();
+        header(response, context, keepAliveHeader, 200);
+        response.put('{')
+                .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("empty query")
+                .putAscii(",")
+                .putAsciiQuoted("query").putAscii(':').putAsciiQuoted(state.getQuery())
+                .putAscii(",")
+                .putAsciiQuoted("position").putAscii(':').putAsciiQuoted("0")
+                .putAscii('}');
+        response.sendChunk(true);
+        readyForNextRequest(context);
+    }
+
     private static void sendInsertConfirmation(
             JsonQueryProcessorState state,
             CharSequence keepAliveHeader
@@ -621,6 +641,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         circuitBreaker.resetTimer();
+        sqlExecutionContext.initNow();
         OperationFuture fut = null;
         boolean isAsyncWait = false;
         try {
@@ -692,7 +713,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final DirectUtf8Sequence query = header.getUrlParam(URL_PARAM_QUERY);
         if (query == null || query.size() == 0) {
             state.info().$("Empty query header received. Sending empty reply.").$();
-            sendBadRequestResponse(context.getChunkedResponse(), context, "No query text", query, keepAliveHeader);
+            sendEmptyQueryNotice(state, null, keepAliveHeader);
             return false;
         }
 

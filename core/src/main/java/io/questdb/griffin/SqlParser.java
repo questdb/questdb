@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.cairo.*;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -35,8 +36,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
-import static io.questdb.griffin.engine.groupby.SampleByIntervalExpressionParser.parseIntervalQualifier;
-import static io.questdb.griffin.engine.groupby.SampleByIntervalExpressionParser.parseIntervalValue;
 import static io.questdb.std.GenericLexer.*;
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.DAY_FORMAT;
 
@@ -753,10 +752,13 @@ public class SqlParser {
 
         // parse sampling interval expression
         intervalExpr = unquote(intervalExpr);
-        final int intervalValue = parseIntervalValue(intervalExpr, lexer.lastTokenPosition());
-        matViewModel.setIntervalValue(intervalValue);
-        final char intervalQualifier = parseIntervalQualifier(intervalExpr, lexer.lastTokenPosition());
-        matViewModel.setIntervalQualifier(intervalQualifier);
+        final int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(intervalExpr, lexer.lastTokenPosition());
+        assert samplingIntervalEnd < intervalExpr.length();
+        final long samplingInterval = TimestampSamplerFactory.parseInterval(intervalExpr, samplingIntervalEnd, lexer.lastTokenPosition());
+        assert samplingInterval > 0;
+        final char samplingIntervalUnit = intervalExpr.charAt(samplingIntervalEnd);
+        matViewModel.setSamplingInterval(samplingInterval);
+        matViewModel.setSamplingIntervalUnit(samplingIntervalUnit);
 
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -3073,17 +3075,14 @@ public class SqlParser {
     }
 
     private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {
-        final short type = ColumnType.tagOf(tok);
-        if (type == -1) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unsupported column type: ").put(tok);
-        }
-        if (ColumnType.GEOHASH == type) {
+        final short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        if (ColumnType.GEOHASH == typeTag) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
         }
-        return type;
+        return typeTag;
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {

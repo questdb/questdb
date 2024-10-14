@@ -59,11 +59,15 @@ else
 fi
 
 if [ "$(id -u)" = '0' ] && [ "${QUESTDB_DATA_DIR%/}" != "/root/.questdb" ] && [ "$RUN_AS_ROOT" = "false" ] ; then
-    echo "Running as questdb user"
     if [ "$DO_CHOWN" = "true" ]; then
+        echo "Checking data directory ownership"
         find_and_own_dir $QUESTDB_UID $QUESTDB_GID
     fi
-    exec gosu $QUESTDB_UID:$QUESTDB_GID "$@"
+
+    if [ -x "$(command -v gosu)" ] ; then
+      echo "Running as questdb user"
+      exec gosu $QUESTDB_UID:$QUESTDB_GID "$@"
+    fi
 fi
 
 echo "Running as $(id -un 2>/dev/null) user"

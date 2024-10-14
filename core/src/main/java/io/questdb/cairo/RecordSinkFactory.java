@@ -26,12 +26,16 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.ex.BytecodeException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class RecordSinkFactory {
     private static final int FIELD_POOL_OFFSET = 3;
+    private static final Log LOG = LogFactory.getLog(RecordSinkFactory.class);
 
     public static RecordSink getInstance(
             BytecodeAssembler asm,
@@ -100,6 +104,96 @@ public class RecordSinkFactory {
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar
     ) {
+        final Class<RecordSink> clazz = getInstanceClass(
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar
+        );
+        return getInstance(clazz, keyFunctions);
+    }
+
+    /**
+     * Creates an instance of a record sink class previously generated via the
+     * {@link #getInstanceClass(BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, BitSet)} method.
+     */
+    public static RecordSink getInstance(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
+        try {
+            final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
+            if (keyFunctions != null) {
+                sink.setFunctions(keyFunctions);
+            }
+            return sink;
+        } catch (Exception e) {
+            LOG.critical().$("could not create an instance of RecordSink, cause: ").$(e).$();
+            throw BytecodeException.INSTANCE;
+        }
+    }
+
+    /**
+     * Same as the getInstance() methods, but returns the generated class instead of its instance.
+     * An instance can be later created via the {@link #getInstance(Class, ObjList)} method.
+     * <p>
+     * Used when creating per-worker sinks for parallel GROUP BY.
+     */
+    public static Class<RecordSink> getInstanceClass(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable BitSet writeSymbolAsString
+    ) {
+        return getInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null);
+    }
+
+    /**
+     * Sets function keys to the respective fields.
+     * Generates bytecode equivalent of the following Java code:
+     * <pre>
+     *  public void setFunctions(ObjList<Function> keyFunctions) {
+     *      this.f1 = keyFunctions.get(0);
+     *      this.f2 = keyFunctions.get(1);
+     *      // ...
+     *  }
+     * </pre>
+     */
+    private static void generateSetFunctions(
+            BytecodeAssembler asm,
+            int functionSize,
+            int firstFieldIndex,
+            int setFunctionsIndex,
+            int setFunctionsSigIndex,
+            int getIndex
+    ) {
+        asm.startMethod(setFunctionsIndex, setFunctionsSigIndex, 3, 3);
+        for (int i = 0; i < functionSize; i++) {
+            asm.aload(0);
+            asm.aload(1);
+            asm.iconst(i);
+            asm.invokeVirtual(getIndex);
+            asm.putfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+        }
+        asm.return_();
+        asm.endMethodCode();
+        // exceptions
+        asm.putShort(0);
+        // attributes
+        asm.putShort(0);
+        asm.endMethod();
+    }
+
+    private static Class<RecordSink> getInstanceClass(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar
+    ) {
         asm.init(RecordSink.class);
         asm.setupPool();
         final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/cairo/sink"));
@@ -128,6 +222,7 @@ public class RecordSinkFactory {
         final int rGetSym = asm.poolInterfaceMethod(Record.class, "getSymA", "(I)Ljava/lang/CharSequence;");
         final int rGetBin = asm.poolInterfaceMethod(Record.class, "getBin", "(I)Lio/questdb/std/BinarySequence;");
         final int rGetRecord = asm.poolInterfaceMethod(Record.class, "getRecord", "(I)Lio/questdb/cairo/sql/Record;");
+        final int rGetInterval = asm.poolInterfaceMethod(Record.class, "getInterval", "(I)Lio/questdb/std/Interval;");
 
         final int fGetInt = asm.poolInterfaceMethod(Function.class, "getInt", "(Lio/questdb/cairo/sql/Record;)I");
         final int fGetIPv4 = asm.poolInterfaceMethod(Function.class, "getIPv4", "(Lio/questdb/cairo/sql/Record;)I");
@@ -152,6 +247,7 @@ public class RecordSinkFactory {
         final int fGetSym = asm.poolInterfaceMethod(Function.class, "getSymbol", "(Lio/questdb/cairo/sql/Record;)Ljava/lang/CharSequence;");
         final int fGetBin = asm.poolInterfaceMethod(Function.class, "getBin", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/BinarySequence;");
         final int fGetRecord = asm.poolInterfaceMethod(Function.class, "getRecord", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/cairo/sql/Record;");
+        final int fGetInterval = asm.poolInterfaceMethod(Function.class, "getInterval", "(Lio/questdb/cairo/sql/Record;)Lio/questdb/std/Interval;");
 
         final int wSkip = asm.poolInterfaceMethod(RecordSinkSPI.class, "skip", "(I)V");
         final int wPutInt = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInt", "(I)V");
@@ -172,6 +268,7 @@ public class RecordSinkFactory {
         final int wPutTimestamp = asm.poolInterfaceMethod(RecordSinkSPI.class, "putTimestamp", "(J)V");
         final int wPutBin = asm.poolInterfaceMethod(RecordSinkSPI.class, "putBin", "(Lio/questdb/std/BinarySequence;)V");
         final int wPutRecord = asm.poolInterfaceMethod(RecordSinkSPI.class, "putRecord", "(Lio/questdb/cairo/sql/Record;)V");
+        final int wPutInterval = asm.poolInterfaceMethod(RecordSinkSPI.class, "putInterval", "(Lio/questdb/std/Interval;)V");
 
         int copyNameIndex = asm.poolUtf8("copy");
         int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
@@ -408,6 +505,13 @@ public class RecordSinkFactory {
 
                     asm.invokeInterface(wPutLong128, 4);
                     break;
+                case ColumnType.INTERVAL:
+                    asm.aload(2);
+                    asm.aload(1);
+                    asm.iconst(getSkewedIndex(index, skewIndex));
+                    asm.invokeInterface(rGetInterval, 1);
+                    asm.invokeInterface(wPutInterval, 1);
+                    break;
                 case ColumnType.NULL:
                     break; // ignore
                 default:
@@ -623,6 +727,14 @@ public class RecordSinkFactory {
 
                     asm.invokeInterface(wPutLong128, 4);
                     break;
+                case ColumnType.INTERVAL:
+                    asm.aload(2);
+                    asm.aload(0);
+                    asm.getfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+                    asm.aload(1);
+                    asm.invokeInterface(fGetInterval, 1);
+                    asm.invokeInterface(wPutInterval, 1);
+                    break;
                 default:
                     throw new IllegalArgumentException("Unexpected function type: " + ColumnType.nameOf(type));
             }
@@ -647,47 +759,7 @@ public class RecordSinkFactory {
         // class attribute count
         asm.putShort(0);
 
-        RecordSink sink = asm.newInstance();
-        if (keyFunctions != null) {
-            sink.setFunctions(keyFunctions);
-        }
-        return sink;
-    }
-
-    /**
-     * Sets function keys to the respective fields.
-     * Generates bytecode equivalent of the following Java code:
-     * <pre>
-     *  public void setFunctions(ObjList<Function> keyFunctions) {
-     *      this.f1 = keyFunctions.get(0);
-     *      this.f2 = keyFunctions.get(1);
-     *      // ...
-     *  }
-     * </pre>
-     */
-    private static void generateSetFunctions(
-            BytecodeAssembler asm,
-            int functionSize,
-            int firstFieldIndex,
-            int setFunctionsIndex,
-            int setFunctionsSigIndex,
-            int getIndex
-    ) {
-        asm.startMethod(setFunctionsIndex, setFunctionsSigIndex, 3, 3);
-        for (int i = 0; i < functionSize; i++) {
-            asm.aload(0);
-            asm.aload(1);
-            asm.iconst(i);
-            asm.invokeVirtual(getIndex);
-            asm.putfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-        }
-        asm.return_();
-        asm.endMethodCode();
-        // exceptions
-        asm.putShort(0);
-        // attributes
-        asm.putShort(0);
-        asm.endMethod();
+        return asm.loadClass();
     }
 
     private static int getSkewedIndex(int src, @Transient @Nullable IntList skewIndex) {

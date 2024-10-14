@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.groupby.hyperloglog;
 
+import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLogDenseRepresentation;
 import io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLogSparseRepresentation;
 import io.questdb.std.Hash;
@@ -45,7 +45,7 @@ public class HyperLogLogSparseRepresentationTest extends AbstractTest {
         for (int precision = 11; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+                try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                     HyperLogLogSparseRepresentation hll = new HyperLogLogSparseRepresentation(finalPrecision);
                     hll.setAllocator(allocator);
                     hll.of(0);
@@ -68,7 +68,7 @@ public class HyperLogLogSparseRepresentationTest extends AbstractTest {
         for (int precision = 11; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+                try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                     HyperLogLogSparseRepresentation hll = new HyperLogLogSparseRepresentation(finalPrecision);
                     hll.setAllocator(allocator);
                     hll.of(0);
@@ -98,7 +98,7 @@ public class HyperLogLogSparseRepresentationTest extends AbstractTest {
         for (int precision = 11; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+                try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                     HyperLogLogSparseRepresentation sparse = new HyperLogLogSparseRepresentation(finalPrecision);
                     sparse.setAllocator(allocator);
                     sparse.of(0);

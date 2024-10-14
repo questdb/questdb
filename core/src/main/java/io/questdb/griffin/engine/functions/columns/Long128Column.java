@@ -58,7 +58,7 @@ public class Long128Column extends Long128Function implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

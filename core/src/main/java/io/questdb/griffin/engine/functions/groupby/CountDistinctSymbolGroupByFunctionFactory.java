@@ -50,6 +50,10 @@ public class CountDistinctSymbolGroupByFunctionFactory implements FunctionFactor
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CountDistinctSymbolGroupByFunction(args.getQuick(0), configuration.getCountDistinctCapacity());
+        return new CountDistinctSymbolGroupByFunction(
+                args.getQuick(0),
+                configuration.getCountDistinctCapacity(),
+                configuration.getCountDistinctLoadFactor()
+        );
     }
 }

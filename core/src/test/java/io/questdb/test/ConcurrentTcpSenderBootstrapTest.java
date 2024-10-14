@@ -39,7 +39,6 @@ import java.io.UnsupportedEncodingException;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
-
     private static final int CONCURRENCY_LEVEL = 64;
 
     @Before
@@ -59,6 +58,11 @@ public class ConcurrentTcpSenderBootstrapTest extends AbstractBootstrapTest {
         dbPath.parent().$();
     }
 
+    @Override
+    public void tearDown() throws Exception {
+        super.tearDown();
+        ILP_WORKER_COUNT = 1;
+    }
 
     @Test
     public void testConcurrentAuth() throws Exception {

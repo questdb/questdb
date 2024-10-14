@@ -5,24 +5,24 @@ import io.questdb.cairo.TableToken;
 public class MaterializedViewDefinition {
     private final String baseTableName;
     private final long fromMicros;
-    private final char intervalQualifier;
-    private final int intervalValue;
     private final TableToken matViewToken;
     private final String query;
+    private final long samplingInterval;
+    private final char samplingIntervalUnit;
     private final String timeZone;
     private final String timeZoneOffset;
     private final long toMicros;
 
     public MaterializedViewDefinition(
             TableToken matViewToken, String query, String baseTableName,
-            int intervalValue, char intervalQualifier, long fromMicros, long toMicros,
+            long samplingInterval, char samplingIntervalUnit, long fromMicros, long toMicros,
             String timeZone, String timeZoneOffset
     ) {
         this.matViewToken = matViewToken;
         this.query = query;
         this.baseTableName = baseTableName;
-        this.intervalValue = intervalValue;
-        this.intervalQualifier = intervalQualifier;
+        this.samplingInterval = samplingInterval;
+        this.samplingIntervalUnit = samplingIntervalUnit;
         this.fromMicros = fromMicros;
         this.toMicros = toMicros;
         this.timeZone = timeZone;
@@ -37,20 +37,20 @@ public class MaterializedViewDefinition {
         return fromMicros;
     }
 
-    public char getIntervalQualifier() {
-        return intervalQualifier;
-    }
-
-    public int getIntervalValue() {
-        return intervalValue;
-    }
-
     public TableToken getMatViewToken() {
         return matViewToken;
     }
 
     public String getQuery() {
         return query;
+    }
+
+    public long getSamplingInterval() {
+        return samplingInterval;
+    }
+
+    public char getSamplingIntervalUnit() {
+        return samplingIntervalUnit;
     }
 
     public String getTimeZone() {
