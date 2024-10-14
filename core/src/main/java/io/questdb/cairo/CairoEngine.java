@@ -83,6 +83,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final FunctionFactoryCache ffCache;
     private final MessageBusImpl messageBus;
     private final Metrics metrics;
+    private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
     private final SqlExecutionContext rootExecutionContext;
@@ -126,7 +127,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.metrics = metrics;
             // Message bus and metrics must be initialized before the pools.
             this.writerPool = new WriterPool(configuration, this);
-            this.readerPool = new ReaderPool(configuration, messageBus);
+            this.readerPool = new ReaderPool(configuration, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);
             this.walWriterPool = new WalWriterPool(configuration, this);
@@ -309,6 +310,7 @@ public class CairoEngine implements Closeable, WriterSource {
         boolean b4 = sequencerMetadataPool.releaseAll();
         boolean b5 = walWriterPool.releaseAll();
         boolean b6 = tableMetadataPool.releaseAll();
+        partitionOverwriteControl.clear();
         return b1 & b2 & b3 & b4 & b5 & b6;
     }
 
@@ -519,6 +521,15 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Metrics getMetrics() {
         return metrics;
+    }
+
+    @TestOnly
+    public void enablePartitionOverwriteControl() {
+        partitionOverwriteControl.enable();
+    }
+
+    public PartitionOverwriteControl getPartitionOverwriteControl() {
+        return partitionOverwriteControl;
     }
 
     @TestOnly

@@ -6576,6 +6576,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txn
                     );
                     other.$();
+                    engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestamp, txn, 0);
                     if (!ff.unlinkOrRemove(other, LOG)) {
                         LOG.info()
                                 .$("could not purge partition version, async purge will be scheduled [path=").$substr(pathRootSize, other)
@@ -7635,7 +7636,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (; targetPartitionIndex + 1 < partitionIndexHi; targetPartitionIndex++) {
                 boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
                 if (canOverwrite || force) {
-                    targetPartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo);
+                    targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
                     copyTargetFrame = !canOverwrite;
                     break;
                 }
@@ -7674,6 +7675,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         targetFrame = firstPartitionFrame;
                     }
 
+                    if (squashCount > 0) {
+                        engine.getPartitionOverwriteControl().notifyPartitionMutates(
+                                tableToken,
+                                targetPartition,
+                                targetPartitionNameTxn,
+                                targetFrame.getRowCount()
+                        );
+                    }
                     for (int i = 0; i < squashCount; i++) {
                         long sourcePartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo + 1);
 

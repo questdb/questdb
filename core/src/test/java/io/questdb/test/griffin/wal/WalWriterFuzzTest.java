@@ -145,7 +145,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 118883222366541L, 1728933731599L);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 1.0, 0.05, 0.01, 0.0, 0.01);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         setFuzzProperties(rnd);
@@ -262,7 +262,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     @Test
     public void testWalWriteManyTablesInOrder() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_QUICKSORT_ENABLED, true);
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 118878205841000L, 1728933726583L);
         setRandomAppendPageSize(rnd);
         int tableCount = 3;
         setFuzzProbabilities(0, 0, 0, 0, 0, 0, 0, 1, 0.001, 0.01, 0.0, 0);

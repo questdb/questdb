@@ -109,6 +109,10 @@ public class TxReader implements Closeable, Mutable {
         clear();
     }
 
+    public void dumpPartitionInfo(LongList container) {
+        container.add(attachedPartitions);
+    }
+
     public void dumpTo(MemoryW mem) {
         mem.putLong(TX_BASE_OFFSET_VERSION_64, version);
         boolean isA = (version & 1L) == 0L;

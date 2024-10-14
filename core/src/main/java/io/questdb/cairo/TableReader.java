@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.PartitionOverwriteControl;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.NullMemoryCMR;
@@ -64,6 +65,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final TableReaderMetadata metadata;
     private final LongList openPartitionInfo;
     private final int partitionBy;
+    private final PartitionOverwriteControl partitionOverwriteControl;
     private final Path path;
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
@@ -87,13 +89,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean txnAcquired = false;
 
     public TableReader(CairoConfiguration configuration, TableToken tableToken) {
-        this(configuration, tableToken, null);
+        this(configuration, tableToken, null, null);
     }
 
     public TableReader(
             CairoConfiguration configuration,
             TableToken tableToken,
-            @Nullable MessageBus messageBus
+            @Nullable MessageBus messageBus,
+            @Nullable PartitionOverwriteControl partitionOverwriteControl
     ) {
         this.configuration = configuration;
         this.clock = configuration.getMillisecondClock();
@@ -152,6 +155,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             columnTops = new LongList(capacity / 2);
             columnTops.setPos(capacity / 2);
+
+            this.partitionOverwriteControl = partitionOverwriteControl;
+            if (partitionOverwriteControl != null) {
+                partitionOverwriteControl.acquirePartitions(this);
+            }
         } catch (Throwable e) {
             close();
             throw e;
@@ -191,6 +199,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(columnVersionReader);
             LOG.debug().$("closed '").utf8(tableToken.getTableName()).$('\'').$();
         }
+    }
+
+    public void dumpPartitionInfo(LongList container) {
+        txFile.dumpPartitionInfo(container);
     }
 
     public long floorToPartitionTimestamp(long timestamp) {
@@ -342,9 +354,13 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public void goActive() {
         reload();
+        partitionOverwriteControl.acquirePartitions(this);
     }
 
     public void goPassive() {
+        if (!isActive()) {
+            return;
+        }
         if (releaseTxn() && PartitionBy.isPartitioned(partitionBy)) {
             // check if reader unlocks a transaction in scoreboard
             // to house keep the partition versions
@@ -366,6 +382,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             }
         }
+        partitionOverwriteControl.releasePartitions(this);
     }
 
     public boolean isActive() {
