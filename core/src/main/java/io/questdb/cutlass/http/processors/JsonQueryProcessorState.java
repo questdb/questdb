@@ -93,7 +93,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
-    private byte apiVersion;
+    private byte apiVersion = DEFAULT_API_VERSION;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
@@ -149,6 +149,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     @Override
     public void clear() {
+        apiVersion = DEFAULT_API_VERSION;
         columnCount = 0;
         columnSkewList.clear();
         columnTypesAndFlags.clear();
@@ -199,8 +200,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             long stop
     ) throws Utf8Exception {
         this.query.clear();
-        if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), this.query)) {
-            throw Utf8Exception.INSTANCE;
+        if (query != null) {
+            if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), this.query)) {
+                throw Utf8Exception.INSTANCE;
+            }
         }
         this.skip = skip;
         this.stop = stop;
@@ -212,6 +215,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         explain = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_EXPLAIN));
         quoteLargeNum = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_QUOTE_LARGE_NUM))
                 || Utf8s.equalsNcAscii("con", request.getUrlParam(URL_PARAM_SRC));
+        apiVersion = parseApiVersion(request);
     }
 
     public LogRecord critical() {
@@ -313,6 +317,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
+    }
+
+    private static byte parseApiVersion(HttpRequestHeader header) {
+        DirectUtf8Sequence versionStr = header.getUrlParam(URL_PARAM_VERSION);
+        if (versionStr == null) {
+            return DEFAULT_API_VERSION;
+        } else {
+            try {
+                return (byte) Numbers.parseInt(versionStr);
+            } catch (NumericException e) {
+                return DEFAULT_API_VERSION;
+            }
+        }
     }
 
     private static void putBooleanValue(HttpChunkedResponse response, Record rec, int col) {
@@ -914,17 +931,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
         DirectUtf8Sequence columnNames = header.getUrlParam(URL_PARAM_COLS);
-        DirectUtf8Sequence versionStr = header.getUrlParam(URL_PARAM_VERSION);
-        if (versionStr == null) {
-            apiVersion = DEFAULT_API_VERSION;
-        } else {
-            try {
-                apiVersion = (byte) Numbers.parseInt(versionStr);
-            } catch (NumericException e) {
-                // invalid version, default to 1
-                apiVersion = DEFAULT_API_VERSION;
-            }
-        }
 
         int columnCount;
         columnSkewList.clear();

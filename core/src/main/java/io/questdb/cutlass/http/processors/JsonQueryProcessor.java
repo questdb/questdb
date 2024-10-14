@@ -432,7 +432,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponse response = context.getChunkedResponse();
         header(response, context, keepAliveHeader, 200);
-        String noticeOrError = state.getApiVersion() == 1 ? "error" : "notice";
+        String noticeOrError = state.getApiVersion() >= 2 ? "notice" : "error";
         response.put('{')
                 .putAsciiQuoted(noticeOrError).putAscii(':').putAsciiQuoted("empty query")
                 .putAscii(",")
@@ -712,6 +712,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpRequestHeader header = context.getRequestHeader();
         final DirectUtf8Sequence query = header.getUrlParam(URL_PARAM_QUERY);
         if (query == null || query.size() == 0) {
+            try {
+                state.configure(header, null, 0, Long.MAX_VALUE);
+            } catch (Utf8Exception e) {
+                // This should never happen.
+                // since we are not parsing query text, we should not have any encoding issues.
+            }
             state.info().$("Empty query header received. Sending empty reply.").$();
             sendEmptyQueryNotice(state, null, keepAliveHeader);
             return false;
