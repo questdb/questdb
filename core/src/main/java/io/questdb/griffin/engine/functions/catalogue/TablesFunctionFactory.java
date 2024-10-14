@@ -43,13 +43,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
-
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
 
 public class TablesFunctionFactory implements FunctionFactory {
     private static final int DEDUP_NAME_COLUMN = 8;
@@ -92,7 +89,7 @@ public class TablesFunctionFactory implements FunctionFactory {
     public static class TablesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(TablesCursorFactory.class);
         private final TablesRecordCursor cursor;
-        private final HashMap<CharSequence, CairoTable> tableCache = new HashMap<>();
+        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
         private long tableCacheVersion = -1;
 
         public TablesCursorFactory() {
@@ -104,15 +101,7 @@ public class TablesFunctionFactory implements FunctionFactory {
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             final CairoEngine engine = executionContext.getCairoEngine();
             try (CairoMetadataRO metadataRO = engine.getCairoMetadata().read()) {
-                if (tableCache.isEmpty()) {
-                    // initialise the first time this factory is created
-                    metadataRO.snapshotCreate(tableCache);
-                    tableCacheVersion = metadataRO.getVersion();
-                } else {
-                    // otherwise check if we need to refresh any values
-                    tableCacheVersion = metadataRO.snapshotRefresh(tableCache, tableCacheVersion);
-                }
-                metadataRO.filterVisibleTables(tableCache);
+                tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
             }
             cursor.toTop();
             return cursor;
@@ -135,12 +124,11 @@ public class TablesFunctionFactory implements FunctionFactory {
 
         private static class TablesRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final HashMap<CharSequence, CairoTable> tableCache;
-            private Iterator<Map.Entry<CharSequence, CairoTable>> iterator;
+            private final CharSequenceObjHashMap<CairoTable> tableCache;
+            private int iteratorIdx = -1;
 
-            public TablesRecordCursor(HashMap<CharSequence, CairoTable> tableCache) {
+            public TablesRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
                 this.tableCache = tableCache;
-                this.iterator = tableCache.entrySet().iterator();
             }
 
             @Override
@@ -155,12 +143,11 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                if (iterator.hasNext()) {
-                    record.of(iterator.next().getValue());
-                    return true;
-                }
+                if (iteratorIdx < tableCache.size() - 1) {
+                    record.of(tableCache.getAt(++iteratorIdx));
+                } else return false;
 
-                return false;
+                return true;
             }
 
             @Override
@@ -170,7 +157,7 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public void toTop() {
-                iterator = tableCache.entrySet().iterator();
+                iteratorIdx = -1;
             }
 
             private static class TableListRecord implements Record {

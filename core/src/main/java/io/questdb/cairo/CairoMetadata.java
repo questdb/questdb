@@ -31,6 +31,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
@@ -48,19 +49,17 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Comparator;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
 
 /**
  * A metadata cache for serving SQL requests for basic table info.
  */
 public class CairoMetadata {
     private static final Log LOG = LogFactory.getLog(CairoMetadata.class);
+    private static Comparator<CairoColumn> comparator = Comparator.comparingInt(CairoColumn::getPosition);
     private final CairoEngine engine;
-    private final SimpleReadWriteLock lock = new SimpleReadWriteLock();
-    private final ThreadLocal<CairoMetadataReader> reader = ThreadLocal.withInitial(CairoMetadataReader::new);
-    private final HashMap<CharSequence, CairoTable> tables = new HashMap<>();
+    private final CairoMetadataReader reader = new CairoMetadataReader();
+    private final SimpleReadWriteLock rwlock = new SimpleReadWriteLock();
+    private final CharSequenceObjHashMap<CairoTable> tables = new CharSequenceObjHashMap<>();
     private final ThreadLocal<ColumnVersionReader> tlColumnVersionReader = ThreadLocal.withInitial(ColumnVersionReader::new);
     private final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
     private final CairoMetadataWriter writer = new CairoMetadataWriter();
@@ -77,7 +76,7 @@ public class CairoMetadata {
      * Takes a lock per table to not prevent ongoing probress of the database.
      * Generally completes quickly.
      */
-    public void asyncHydrator() {
+    public void onStartupAsyncHydrator() {
         try {
             final ObjHashSet<TableToken> tableTokensSet = new ObjHashSet<>();
             engine.getTableTokens(tableTokensSet, false);
@@ -95,7 +94,7 @@ public class CairoMetadata {
             }
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
-            l.$(e.getMessage()).$();
+            l.$(e.getFlyweightMessage()).$();
         }
     }
 
@@ -106,8 +105,8 @@ public class CairoMetadata {
      * @return {@link CairoMetadataRO}
      */
     public CairoMetadataRO read() {
-        lock.readLock().lock();
-        return reader.get();
+        rwlock.readLock().lock();
+        return reader;
     }
 
     /**
@@ -121,9 +120,9 @@ public class CairoMetadata {
         sink.put("tableCount=").put(tables.size()).put(']');
         sink.put('\n');
 
-        for (CairoTable table : tables.values()) {
+        for (int i = 0, n = tables.size(); i < n; i++) {
             sink.put('\t');
-            table.toSink(sink);
+            tables.getAt(i).toSink(sink);
             sink.put('\n');
         }
         String s = sink.toString();
@@ -144,7 +143,7 @@ public class CairoMetadata {
      * @return {@link CairoMetadataRW}
      */
     public CairoMetadataRW write() {
-        lock.writeLock().lock();
+        rwlock.writeLock().lock();
         version++;
         return writer;
     }
@@ -155,52 +154,7 @@ public class CairoMetadata {
     private class CairoMetadataReader implements CairoMetadataRO, Closeable, AutoCloseable {
         @Override
         public void close() {
-            lock.readLock().unlock();
-        }
-
-        /**
-         * Takes a snapshot of the cache as an argument, and filters out for visible tables.
-         * This removes sys, telemetry, and temporary tables.
-         *
-         * @param localCache a snapshot of the cache
-         */
-        public void filterVisibleTables(HashMap<CharSequence, CairoTable> localCache) {
-            Iterator<Map.Entry<CharSequence, CairoTable>> iterator = localCache.entrySet().iterator();
-
-            boolean isSys = false;
-            boolean isTel = false;
-            boolean isNotFinal = false;
-
-            while (iterator.hasNext()) {
-                CairoTable table = iterator.next().getValue();
-
-                if (Chars.startsWith(table.getTableName(), engine.getConfiguration().getSystemTableNamePrefix())) {
-                    isSys = true;
-                }
-
-                // telemetry table
-                if (engine.getConfiguration().getTelemetryConfiguration().hideTables()
-                        && (Chars.equals(table.getTableName(), TelemetryTask.TABLE_NAME)
-                        || Chars.equals(table.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))
-                ) {
-                    isTel = true;
-                }
-
-                if (!TableUtils.isFinalTableName(table.getTableName(), engine.getConfiguration().getTempRenamePendingTablePrefix())) {
-                    isNotFinal = true;
-                }
-
-                // if shouldn't be visble, remove it
-                if (isSys || isTel || isNotFinal) {
-                    iterator.remove();
-                }
-
-                // reset
-                isSys = false;
-                isTel = false;
-                isNotFinal = false;
-            }
-
+            rwlock.readLock().unlock();
         }
 
         /**
@@ -209,6 +163,7 @@ public class CairoMetadata {
          * @param tableToken the token for the table
          * @return CairoTable the table, if present in the cache.
          */
+        @Override
         public @Nullable CairoTable getTable(@NotNull TableToken tableToken) {
             return tables.get(tableToken.getTableName());
         }
@@ -229,41 +184,28 @@ public class CairoMetadata {
             return version;
         }
 
-        /**
-         * Gets a table present in the cache, if its visible i.e not system, telemetry or temporary.
-         *
-         * @param tableToken the token for the table
-         * @return CairoTable a visible table in the cache.
-         */
         @Override
-        public @Nullable CairoTable getVisibleTable(@NotNull TableToken tableToken) {
+        public boolean isVisibleTable(@NotNull CharSequence tableName) {
             CairoConfiguration configuration = engine.getConfiguration();
-            if (Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix())) {
-                return null;
+
+            // sys table
+            if (Chars.startsWith(tableName, configuration.getSystemTableNamePrefix())) {
+                return false;
             }
+
             // telemetry table
             if (configuration.getTelemetryConfiguration().hideTables()
-                    && (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME)
-                    || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))
+                    && (Chars.equals(tableName, TelemetryTask.TABLE_NAME)
+                    || Chars.equals(tableName, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))
             ) {
-                return null;
+                return false;
             }
 
-            if (TableUtils.isFinalTableName(tableToken.getTableName(), configuration.getTempRenamePendingTablePrefix())) {
-                return getTable(tableToken);
+            if (TableUtils.isFinalTableName((String) tableName, configuration.getTempRenamePendingTablePrefix())) {
+                return true;
             }
 
-            return null;
-        }
-
-        /**
-         * Copies the current state of the cache into another hashmap.
-         *
-         * @param localCache a hashmap to store the snapshot
-         */
-        @Override
-        public void snapshotCreate(HashMap<CharSequence, CairoTable> localCache) {
-            localCache.putAll(tables);
+            return false;
         }
 
         /**
@@ -275,43 +217,36 @@ public class CairoMetadata {
          * @return the current version of the snapshot
          */
         @Override
-        public long snapshotRefresh(HashMap<CharSequence, CairoTable> localCache, long priorVersion) {
+        public long snapshot(CharSequenceObjHashMap<CairoTable> localCache, long priorVersion) {
             if (priorVersion >= getVersion()) {
                 return priorVersion;
             }
 
-            Iterator<Map.Entry<CharSequence, CairoTable>> iterator = tables.entrySet().iterator();
-
             // pull from cairoTables into localCache
-            while (iterator.hasNext()) {
-                CairoTable latestTable = iterator.next().getValue();
+            for (int i = tables.size() - 1; i >= 0; i--) {
+                CairoTable latestTable = tables.getAt(i);
                 CairoTable cachedTable = localCache.get(latestTable.getTableName());
-                if (cachedTable == null) {
+
+                if (
+                        (cachedTable == null
+                                || cachedTable.getMetadataVersion() < latestTable.getMetadataVersion())
+                                && isVisibleTable(latestTable.getTableName())) {
                     localCache.put(latestTable.getTableName(), latestTable);
-                } else if (cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()) {
-                    localCache.put(cachedTable.getTableName(), latestTable);
-                } else if (cachedTable.getMetadataVersion() > latestTable.getMetadataVersion()) {
-                    throw new RuntimeException("disordered metadata versions");
-                } else {
-                    assert cachedTable.getMetadataVersion() == latestTable.getMetadataVersion();
-                    // otherwise its up to date, so we loop
                 }
             }
 
-            iterator = localCache.entrySet().iterator();
-            while (iterator.hasNext()) {
-                CairoTable cachedTable = iterator.next().getValue();
+            for (int i = localCache.size() - 1; i >= 0; i--) {
+                CairoTable cachedTable = localCache.getAt(i);
                 CairoTable latestTable = tables.get(cachedTable.getTableName());
+
                 if (latestTable == null) {
-                    // if its not in the main cache, removed it from local cache
-                    iterator.remove();
-                } else if (cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()) {
+                    localCache.remove(cachedTable.getTableName());
+                    continue;
+                }
+
+                if (cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()
+                        && isVisibleTable(cachedTable.getTableName())) {
                     localCache.put(cachedTable.getTableName(), latestTable);
-                } else if (cachedTable.getMetadataVersion() > latestTable.getMetadataVersion()) {
-                    throw new RuntimeException("disordered metadata versions");
-                } else {
-                    assert cachedTable.getMetadataVersion() == latestTable.getMetadataVersion();
-                    // otherwise its up to date, so we loop
                 }
             }
 
@@ -328,9 +263,9 @@ public class CairoMetadata {
             sink.put("tableCount=").put(tables.size()).put(']');
             sink.put('\n');
 
-            for (CairoTable table : tables.values()) {
+            for (int i = 0, n = tables.size(); i < n; i++) {
                 sink.put('\t');
-                table.toSink(sink);
+                tables.getAt(i).toSink(sink);
                 sink.put('\n');
             }
             close();
@@ -349,6 +284,7 @@ public class CairoMetadata {
         /**
          * Clears the table cache.
          */
+        @Override
         public void clear() {
             tables.clear();
         }
@@ -358,7 +294,7 @@ public class CairoMetadata {
          */
         @Override
         public void close() {
-            lock.writeLock().unlock();
+            rwlock.writeLock().unlock();
         }
 
         /**
@@ -366,6 +302,7 @@ public class CairoMetadata {
          *
          * @param tableName the table name
          */
+        @Override
         public void dropTable(@NotNull CharSequence tableName) {
             tables.remove(tableName);
             LOG.info().$("dropped metadata [table=").$(tableName).I$();
@@ -376,6 +313,7 @@ public class CairoMetadata {
          *
          * @param tableToken the table token.
          */
+        @Override
         public void dropTable(@NotNull TableToken tableToken) {
             dropTable(tableToken.getTableName());
         }
@@ -400,7 +338,7 @@ public class CairoMetadata {
         /**
          * Rehydrates all tables in the database.
          */
-        @TestOnly
+        @Override
         public void hydrateAllTables() {
             ObjHashSet<TableToken> tableTokensSet = new ObjHashSet<>();
             engine.getTableTokens(tableTokensSet, false);
@@ -419,7 +357,8 @@ public class CairoMetadata {
                     hydrateTable(tableToken, true);
                 }
             } catch (CairoException ex) {
-                LOG.error().$("could not hydrate metadata, exception:  ").$(ex.getMessage()).$(" [table=").$(tableToken.getTableName()).I$();
+                LOG.error().$("could not hydrate metadata, exception:  ").$(ex.getFlyweightMessage()).$(" [table=").$(tableToken.getTableName()).I$();
+                throw ex;
             }
         }
 
@@ -432,10 +371,9 @@ public class CairoMetadata {
             LOG.debug().$("hydrating table using thread-local path and column version reader [table=")
                     .$(token).I$();
             try {
+                // the called function is responsible for closing the passed path/column version reader.
                 hydrateTable(token, tlPath.get(), tlColumnVersionReader.get(), infoLog);
             } finally {
-                tlPath.get().close();
-                tlColumnVersionReader.get().close();
                 tlColumnVersionReader.remove();
                 tlPath.remove();
             }
@@ -532,7 +470,7 @@ public class CairoMetadata {
                 table.upsertColumn(column);
             }
 
-            table.columns.sort(Comparator.comparingInt(CairoColumn::getPosition));
+            table.columns.sort(comparator);
 
             for (int i = 0, n = table.columns.size(); i < n; i++) {
                 table.columnNameIndexMap.put(table.columns.getQuick(i).getName(), i);

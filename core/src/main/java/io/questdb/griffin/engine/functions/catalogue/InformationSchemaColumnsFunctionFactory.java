@@ -42,12 +42,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
 
 public class InformationSchemaColumnsFunctionFactory implements FunctionFactory {
     public static final RecordMetadata METADATA;
@@ -78,7 +75,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
     private static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
         private final ColumnRecordCursor cursor;
-        private final HashMap<CharSequence, CairoTable> tableCache = new HashMap<>();
+        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
         private long tableCacheVersion = -1;
 
         private ColumnsCursorFactory() {
@@ -90,15 +87,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             final CairoEngine engine = executionContext.getCairoEngine();
             try (CairoMetadataRO metadataRO = engine.getCairoMetadata().read()) {
-                if (tableCache.isEmpty()) {
-                    // initialise the first time this factory is created
-                    metadataRO.snapshotCreate(tableCache);
-                    tableCacheVersion = metadataRO.getVersion();
-                } else {
-                    // otherwise check if we need to refresh any values
-                    tableCacheVersion = metadataRO.snapshotRefresh(tableCache, tableCacheVersion);
-                }
-                metadataRO.filterVisibleTables(tableCache);
+                tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
             }
             cursor.toTop();
             return cursor;
@@ -116,19 +105,19 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
         private static class ColumnRecordCursor implements NoRandomAccessRecordCursor {
             private final ColumnsRecord record = new ColumnsRecord();
-            private final HashMap<CharSequence, CairoTable> tableCache;
+            private final CharSequenceObjHashMap<CairoTable> tableCache;
             private int columnIdx;
-            private Iterator<Map.Entry<CharSequence, CairoTable>> iterator;
+            private int iteratorIdx;
             private CairoTable table;
 
-            private ColumnRecordCursor(HashMap<CharSequence, CairoTable> tableCache) {
+            private ColumnRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
                 this.tableCache = tableCache;
-                this.iterator = tableCache.entrySet().iterator();
             }
 
             @Override
             public void close() {
                 columnIdx = -1;
+                iteratorIdx = -1;
             }
 
             @Override
@@ -147,6 +136,10 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
                 assert table != null;
                 // we have a table
+
+                if (table == null) {
+                    throw new RuntimeException();
+                }
 
                 if (columnIdx < table.getColumnCount() - 1) {
                     columnIdx++;
@@ -167,9 +160,9 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             public boolean nextTable() {
                 assert table == null;
 
-                if (iterator.hasNext()) {
-                    table = iterator.next().getValue();
-                } else return columnIdx != -1;
+                if (iteratorIdx < tableCache.size() - 1) {
+                    table = tableCache.getAt(++iteratorIdx);
+                } else return false;
 
                 return true;
             }
@@ -183,7 +176,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             public void toTop() {
                 columnIdx = -1;
                 table = null;
-                iterator = tableCache.entrySet().iterator();
+                iteratorIdx = -1;
             }
 
             private static class ColumnsRecord implements Record {

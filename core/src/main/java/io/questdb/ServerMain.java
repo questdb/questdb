@@ -431,7 +431,7 @@ public class ServerMain implements Closeable {
         }
 
         // metadata hydration
-        Thread hydrateCairoMetadataThread = new Thread(engine.getCairoMetadata()::asyncHydrator);
+        Thread hydrateCairoMetadataThread = new Thread(engine.getCairoMetadata()::onStartupAsyncHydrator);
         hydrateCairoMetadataThread.start();
 
         System.gc(); // GC 1

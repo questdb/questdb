@@ -27,7 +27,6 @@ package io.questdb.cairo;
 
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 public interface CairoMetadataRW extends CairoMetadataRO {
     void clear();
@@ -36,7 +35,6 @@ public interface CairoMetadataRW extends CairoMetadataRO {
 
     void dropTable(@NotNull CharSequence tableName);
 
-    @TestOnly
     void hydrateAllTables();
 
     /**

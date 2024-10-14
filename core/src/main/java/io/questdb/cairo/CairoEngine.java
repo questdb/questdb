@@ -1097,7 +1097,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
 
         securityContext.authorizeTableRename(fromTableToken);
-        TableToken toTableToken = null;
+        TableToken toTableToken;
         if (fromTableToken != null) {
             if (fromTableToken.isWal()) {
                 String toTableNameStr = Chars.toString(toTableName);
