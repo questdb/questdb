@@ -125,6 +125,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         while (!done) {
+            // First check the local task: maybe we were reducing locally and got interrupted by an exception?
+            if (localTask != null && localTask.getFrameSequence() == this && dispatchStartFrameIndex == localTask.getFrameIndex() + 1) {
+                collectedFrameIndex = localTask.getFrameIndex();
+                localTask.collected(true);
+            }
+
             if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                 // We know that all frames were collected. We're almost done.
                 if (!done) {
@@ -138,7 +144,13 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // We were asked to steal work from the reduce queue and beyond, as much as we can.
             boolean nothingProcessed = true;
             try {
-                nothingProcessed = PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, localRecord, circuitBreaker, this);
+                nothingProcessed = PageFrameReduceJob.consumeQueue(
+                        reduceQueue,
+                        pageFrameReduceSubSeq,
+                        localRecord,
+                        circuitBreaker,
+                        this
+                );
             } catch (Throwable th) {
                 LOG.error()
                         .$("await error [id=").$(id)
