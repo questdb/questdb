@@ -354,7 +354,9 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public void goActive() {
         reload();
-        partitionOverwriteControl.acquirePartitions(this);
+        if (partitionOverwriteControl != null) {
+            partitionOverwriteControl.acquirePartitions(this);
+        }
     }
 
     public void goPassive() {
@@ -382,7 +384,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
             }
         }
-        partitionOverwriteControl.releasePartitions(this);
+        if (partitionOverwriteControl != null) {
+            partitionOverwriteControl.releasePartitions(this);
+        }
     }
 
     public boolean isActive() {
