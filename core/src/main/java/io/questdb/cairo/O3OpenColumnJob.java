@@ -30,7 +30,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
@@ -266,8 +270,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long srcVarFd = Math.abs(srcDataVarFd);
         final FilesFacade ff = tableWriter.getFilesFacade();
         final boolean mixedIOFlag = tableWriter.allowMixedIO();
-        final long initialSrcDataTop = srcDataTop;
-
         try {
             pathToNewPartition.trimTo(pplen);
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
@@ -481,8 +483,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 if (!mixedIOFlag) {
                     ff.madvise(dstVarAddr, dstDataSize, Files.POSIX_MADV_RANDOM);
                 }
-            } else {
-                dstVarAddr = 0;
             }
 
             if (mergeType != O3_BLOCK_NONE) {
