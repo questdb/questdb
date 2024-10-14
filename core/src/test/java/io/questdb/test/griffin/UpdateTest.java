@@ -43,7 +43,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -73,8 +73,8 @@ public class UpdateTest extends AbstractCairoTest {
         });
     }
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
+    @Before
+    public void setUp() {
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                 new DefaultSqlExecutionCircuitBreakerConfiguration() {
                     @Override
@@ -86,7 +86,7 @@ public class UpdateTest extends AbstractCairoTest {
         ) {
         };
         circuitBreaker.setTimeout(DEFAULT_CIRCUIT_BREAKER_TIMEOUT);
-        AbstractCairoTest.setUpStatic();
+        super.setUp();
     }
 
     @Test
@@ -3221,7 +3221,7 @@ public class UpdateTest extends AbstractCairoTest {
                     writerConsumer.accept(tableWriter);
                     tableWriter.tick();
                 } catch (Exception e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     Assert.fail();
                 }
             });
