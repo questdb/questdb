@@ -52,6 +52,9 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
+/**
+ * A metadata cache for serving SQL requests for basic table info.
+ */
 public class CairoMetadata {
     private static final Log LOG = LogFactory.getLog(CairoMetadata.class);
     private final CairoEngine engine;
@@ -68,6 +71,12 @@ public class CairoMetadata {
         this.engine = engine;
     }
 
+    /**
+     * Used on a background thread at startup to populate the cache.
+     * Cache is also populated on-demand by SQL metadata functions.
+     * Takes a lock per table to not prevent ongoing probress of the database.
+     * Generally completes quickly.
+     */
     public void asyncHydrator() {
         try {
             final ObjHashSet<TableToken> tableTokensSet = new ObjHashSet<>();
@@ -90,6 +99,12 @@ public class CairoMetadata {
         }
     }
 
+    /**
+     * Begins the read-path by taking a read lock and acquiring a thread-local
+     * {@link CairoMetadataReader}, an implementation of {@link CairoMetadataRO}.
+     *
+     * @return {@link CairoMetadataRO}
+     */
     public CairoMetadataRO read() {
         lock.readLock().lock();
         return reader.get();
@@ -117,18 +132,38 @@ public class CairoMetadata {
         return s;
     }
 
+    /**
+     * Begins the read-path by taking a write lock and acquiring a thread-local
+     * {@link CairoMetadataWriter}, an implementation of {@link CairoMetadataRW}.
+     * Also increments a version counter, used to invalidate the cache.
+     * The version counter does not guarantee a version change for any particular table,
+     * so each {@link CairoTable} has its own metadata version.
+     * Returns a singleton writer, not a thread-local, since there should be one
+     * writer at a time.
+     *
+     * @return {@link CairoMetadataRW}
+     */
     public CairoMetadataRW write() {
         lock.writeLock().lock();
         version++;
         return writer;
     }
 
+    /**
+     * An implementation of {@link CairoMetadataRO }. Provides a read-path into the metadata cache.
+     */
     private class CairoMetadataReader implements CairoMetadataRO, Closeable, AutoCloseable {
         @Override
         public void close() {
             lock.readLock().unlock();
         }
 
+        /**
+         * Takes a snapshot of the cache as an argument, and filters out for visible tables.
+         * This removes sys, telemetry, and temporary tables.
+         *
+         * @param localCache a snapshot of the cache
+         */
         public void filterVisibleTables(HashMap<CharSequence, CairoTable> localCache) {
             Iterator<Map.Entry<CharSequence, CairoTable>> iterator = localCache.entrySet().iterator();
 
@@ -168,19 +203,39 @@ public class CairoMetadata {
 
         }
 
+        /**
+         * Returns a table ONLY if it is already present in the cache.
+         *
+         * @param tableToken the token for the table
+         * @return CairoTable the table, if present in the cache.
+         */
         public @Nullable CairoTable getTable(@NotNull TableToken tableToken) {
             return tables.get(tableToken.getTableName());
         }
 
+        /**
+         * Returns a count of the tables in the cache.
+         */
         @Override
         public int getTableCount() {
             return tables.size();
         }
 
+        /**
+         * Returns the current cache version.
+         */
+        @Override
         public long getVersion() {
             return version;
         }
 
+        /**
+         * Gets a table present in the cache, if its visible i.e not system, telemetry or temporary.
+         *
+         * @param tableToken the token for the table
+         * @return CairoTable a visible table in the cache.
+         */
+        @Override
         public @Nullable CairoTable getVisibleTable(@NotNull TableToken tableToken) {
             CairoConfiguration configuration = engine.getConfiguration();
             if (Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix())) {
@@ -201,11 +256,24 @@ public class CairoMetadata {
             return null;
         }
 
+        /**
+         * Copies the current state of the cache into another hashmap.
+         *
+         * @param localCache a hashmap to store the snapshot
+         */
         @Override
         public void snapshotCreate(HashMap<CharSequence, CairoTable> localCache) {
             localCache.putAll(tables);
         }
 
+        /**
+         * Refreshes a snapshot of the cache by checking versions of the cache,
+         * and inner tables, and copying references to any tables that have changed.
+         *
+         * @param localCache   the snapshot to be refreshed
+         * @param priorVersion the version of the snapshot
+         * @return the current version of the snapshot
+         */
         @Override
         public long snapshotRefresh(HashMap<CharSequence, CairoTable> localCache, long priorVersion) {
             if (priorVersion >= getVersion()) {
@@ -273,28 +341,53 @@ public class CairoMetadata {
         }
     }
 
+    /**
+     * An implementation of {@link CairoMetadataRW }. Provides a read-path into the metadata cache.
+     */
     private class CairoMetadataWriter extends CairoMetadataReader implements Closeable, CairoMetadataRW, AutoCloseable {
 
+        /**
+         * Clears the table cache.
+         */
         public void clear() {
             tables.clear();
         }
 
+        /**
+         * Closes the writer, releasing the global metadata cache write-lock.
+         */
         @Override
         public void close() {
             lock.writeLock().unlock();
         }
 
+        /**
+         * Removes a table from the cache
+         *
+         * @param tableName the table name
+         */
         public void dropTable(@NotNull CharSequence tableName) {
             tables.remove(tableName);
             LOG.info().$("dropped metadata [table=").$(tableName).I$();
         }
 
+        /**
+         * Removes a table from the cache
+         *
+         * @param tableToken the table token.
+         */
         public void dropTable(@NotNull TableToken tableToken) {
             dropTable(tableToken.getTableName());
         }
 
+        /**
+         * Gets a table that is in the cache, or otherwise tries to hydrate one.
+         *
+         * @param tableToken the token for the table
+         * @return CairoTable the table requested, if present or hydratable.
+         */
         @Override
-        public CairoTable getTable(@NotNull TableToken tableToken) {
+        public @Nullable CairoTable getTable(@NotNull TableToken tableToken) {
             CairoTable table = super.getTable(tableToken);
             if (table == null) {
                 // hydrate cache
@@ -305,8 +398,7 @@ public class CairoMetadata {
         }
 
         /**
-         * This is dangerous and may clobber any concurrent metadata changes. This should only be used in last-resort cases,
-         * for example, for testing purposes.
+         * Rehydrates all tables in the database.
          */
         @TestOnly
         public void hydrateAllTables() {
@@ -335,6 +427,7 @@ public class CairoMetadata {
         /**
          * @see CairoMetadataRW#hydrateTable(TableToken, boolean)
          */
+        @Override
         public void hydrateTable(@NotNull TableToken token, boolean infoLog) {
             LOG.debug().$("hydrating table using thread-local path and column version reader [table=")
                     .$(token).I$();
@@ -351,6 +444,7 @@ public class CairoMetadata {
         /**
          * @see CairoMetadataRW#hydrateTable(CharSequence, boolean)
          */
+        @Override
         public void hydrateTable(@NotNull CharSequence tableName, boolean infoLog) throws TableReferenceOutOfDateException {
             final TableToken token = engine.getTableTokenIfExists(tableName);
             if (token == null) {
@@ -362,6 +456,7 @@ public class CairoMetadata {
         /**
          * @see CairoMetadataRW#hydrateTable(TableToken, boolean)
          */
+        @Override
         public void hydrateTable(@NotNull TableWriterMetadata tableMetadata, boolean infoLog) {
             final TableToken tableToken = tableMetadata.getTableToken();
 
@@ -451,6 +546,7 @@ public class CairoMetadata {
 
         }
 
+        @Override
         public void hydrateTable(
                 @NotNull TableToken token,
                 @NotNull Path path,

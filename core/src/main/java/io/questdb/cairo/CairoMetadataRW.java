@@ -39,6 +39,9 @@ public interface CairoMetadataRW extends CairoMetadataRO {
     @TestOnly
     void hydrateAllTables();
 
+    /**
+     * @see CairoMetadataRW#hydrateTable(TableToken, Path, ColumnVersionReader, boolean)
+     */
     void hydrateTable(@NotNull CharSequence tableName, boolean infoLog);
 
     /**
@@ -56,7 +59,13 @@ public interface CairoMetadataRW extends CairoMetadataRO {
      */
     void hydrateTable(@NotNull TableToken token, @NotNull Path path, @NotNull ColumnVersionReader columnVersionReader, boolean infoLog);
 
+    /**
+     * @see CairoMetadataRW#hydrateTable(TableToken, Path, ColumnVersionReader, boolean)
+     */
     void hydrateTable(@NotNull TableWriterMetadata tableMetadata, boolean infoLog);
 
+    /**
+     * @see CairoMetadataRW#hydrateTable(TableToken, Path, ColumnVersionReader, boolean)
+     */
     void hydrateTable(@NotNull TableToken token, boolean infoLog);
 }
