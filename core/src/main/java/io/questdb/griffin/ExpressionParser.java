@@ -994,6 +994,8 @@ public class ExpressionParser {
                         break;
                     case 'O':
                     case 'o':
+                        // PostgreSQL supports an optional ORDER BY for string_distinct_agg(), e.g.: string_distinct_agg('a', ',' ORDER BY 'b')
+                        // We do not support it and this branch exists to give a meaningful error message in this case
                         processDefaultBranch = true;
                         if (SqlKeywords.isOrderKeyword(tok) && opStack.size() > 2) {
                             ExpressionNode en = opStack.peek();
