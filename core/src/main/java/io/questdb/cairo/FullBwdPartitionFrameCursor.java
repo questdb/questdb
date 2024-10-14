@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.MemoryTag;
 
 public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
     protected long rowHi; // used for Parquet frames generation
@@ -97,6 +96,7 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         frame.partitionIndex = partitionIndex;
         frame.format = PartitionFormat.PARQUET;
         frame.parquetFd = parquetDecoder.getFd();
+        frame.rowGroupIndex = rowGroupIndex;
         frame.rowGroupLo = 0;
         frame.rowHi = rowHi;
         frame.rowLo = rowHi - parquetDecoder.metadata().rowGroupSize(rowGroupIndex);
