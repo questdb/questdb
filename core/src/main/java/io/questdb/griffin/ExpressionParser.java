@@ -438,7 +438,7 @@ public class ExpressionParser {
                                     if (!Chars.equals(nextToken, ')')) {
                                         en = opStack.peek(1);
                                         if (en.type == ExpressionNode.LITERAL) {
-                                            if (Chars.equalsIgnoreCase("count", en.token)) {
+                                            if (SqlKeywords.isCountKeyword(en.token)) {
                                                 if (Chars.equals(nextToken, '*')) {
                                                     throw SqlException.$(lastPos, "count(distinct *) is not supported");
                                                 }
