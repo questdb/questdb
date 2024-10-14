@@ -132,7 +132,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
     private boolean freezeRecvBuffer;
-    private Path path;
     // PG wire protocol has two phases:
     // phase 1 - fill up the pipeline. In this case the current entry is the entry being populated
     // phase 2 - "sync" the pipeline. This is the execution phase and the current entry is the one being executed.
@@ -167,7 +166,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         );
 
         try {
-            this.path = new Path();
             this.engine = engine;
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
             this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
@@ -296,7 +294,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         if (sqlExecutionContext != null) {
             sqlExecutionContext.with(DenyAllSecurityContext.INSTANCE, null, null, -1, null);
         }
-        path = Misc.free(path);
         authenticator = Misc.free(authenticator);
         tasCache = Misc.free(tasCache);
         taiCache = Misc.free(taiCache);

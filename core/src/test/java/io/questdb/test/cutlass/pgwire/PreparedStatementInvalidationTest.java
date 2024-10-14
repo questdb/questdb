@@ -39,6 +39,7 @@ import java.util.Collection;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertTrue;
@@ -222,81 +223,6 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
-    public void testPreparedStatement_selectScenario() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            connection.prepareStatement("create table x as" +
-                    " (select 2 id, 'foobar' str, timestamp_sequence(1,10000) ts from long_sequence(1))" +
-                    " timestamp(ts) partition by hour"
-            ).execute();
-            drainWalQueue();
-            try (PreparedStatement ps = connection.prepareStatement("x where id=?")) {
-                ps.setInt(1, 2);
-                try (ResultSet resultSet = ps.executeQuery()) {
-                    sink.clear();
-                    assertResultSet(
-                            "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
-                                    "2,foobar,1970-01-01 00:00:00.000001\n",
-                            sink,
-                            resultSet
-                    );
-                }
-
-                //drop a column
-                try (PreparedStatement stmt = connection.prepareStatement("alter table x drop column str;")) {
-                    stmt.execute();
-                }
-                drainWalQueue();
-                // Query the data once again - this time the schema is different,
-                ps.setInt(1, 2);
-                try (ResultSet rs = ps.executeQuery()) {
-                    sink.clear();
-                    assertResultSet(
-                            "id[INTEGER],ts[TIMESTAMP]\n" +
-                                    "2,1970-01-01 00:00:00.000001\n",
-                            sink, rs
-                    );
-                }
-
-                //add a column
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.execute("alter table x add column str2 varchar");
-                    stmt.execute("update x set str2 = id::varchar");
-                }
-                drainWalQueue();
-
-                ps.setInt(1, 2);
-                try (ResultSet rs = ps.executeQuery()) {
-                    sink.clear();
-                    assertResultSet(
-                            "id[INTEGER],ts[TIMESTAMP],str2[VARCHAR]\n" +
-                                    "2,1970-01-01 00:00:00.000001,2\n",
-                            sink, rs
-                    );
-                }
-
-                //add and remove a column
-                try (Statement stmt = connection.createStatement()) {
-                    stmt.execute("alter table x add column str3 varchar");
-                    stmt.execute("update x set str3 = concat(str2, '_new')");
-                    stmt.execute("alter table x drop column str2");
-                }
-                drainWalQueue();
-
-                // check it does not use a stale column name
-                ps.setInt(1, 2);
-                try (ResultSet rs = ps.executeQuery()) {
-                    sink.clear();
-                    assertResultSet(
-                            "id[INTEGER],ts[TIMESTAMP],str3[VARCHAR]\n" +
-                                    "2,1970-01-01 00:00:00.000001,2_new\n",
-                            sink, rs
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
     public void testSelectAllAfterConcurrentColDropCreate() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
@@ -404,6 +330,81 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                     Assert.fail("id column was dropped, the query should fail");
                 } catch (SQLException e) {
                     assertMessageContains(e, "Invalid column: id");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSelectPreparedStatement_scenario() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.prepareStatement("create table x as" +
+                    " (select 2 id, 'foobar' str, timestamp_sequence(1,10000) ts from long_sequence(1))" +
+                    " timestamp(ts) partition by hour"
+            ).execute();
+            drainWalQueue();
+            try (PreparedStatement ps = connection.prepareStatement("x where id=?")) {
+                ps.setInt(1, 2);
+                try (ResultSet resultSet = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                    "2,foobar,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            resultSet
+                    );
+                }
+
+                //drop a column
+                try (PreparedStatement stmt = connection.prepareStatement("alter table x drop column str;")) {
+                    stmt.execute();
+                }
+                drainWalQueue();
+                // Query the data once again - this time the schema is different,
+                ps.setInt(1, 2);
+                try (ResultSet rs = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],ts[TIMESTAMP]\n" +
+                                    "2,1970-01-01 00:00:00.000001\n",
+                            sink, rs
+                    );
+                }
+
+                //add a column
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("alter table x add column str2 varchar");
+                    stmt.execute("update x set str2 = id::varchar");
+                }
+                drainWalQueue();
+
+                ps.setInt(1, 2);
+                try (ResultSet rs = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],ts[TIMESTAMP],str2[VARCHAR]\n" +
+                                    "2,1970-01-01 00:00:00.000001,2\n",
+                            sink, rs
+                    );
+                }
+
+                //add and remove a column
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("alter table x add column str3 varchar");
+                    stmt.execute("update x set str3 = concat(str2, '_new')");
+                    stmt.execute("alter table x drop column str2");
+                }
+                drainWalQueue();
+
+                // check it does not use a stale column name
+                ps.setInt(1, 2);
+                try (ResultSet rs = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],ts[TIMESTAMP],str3[VARCHAR]\n" +
+                                    "2,1970-01-01 00:00:00.000001,2_new\n",
+                            sink, rs
+                    );
                 }
             }
         });
@@ -684,9 +685,52 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
             try (PreparedStatement stmt = connection.prepareStatement("update update_after_drop set id = ?")) {
                 stmt.setLong(1, 42);
                 stmt.executeUpdate();
-                assertExceptionNoLeakCheck("id column was dropped, the UPDATE should have failed");
+                Assert.fail("id column was dropped, the UPDATE should have failed");
             } catch (PSQLException e) {
                 assertMessageContains(e, "Invalid column: id");
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateWhileConcurrentlyChangingSchema() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            ddl("CREATE TABLE tango AS (SELECT x FROM long_sequence(10)) ");
+            AtomicBoolean stop = new AtomicBoolean();
+            AtomicBoolean started = new AtomicBoolean();
+            Thread t = new Thread(() -> {
+                try {
+                    started.set(true);
+                    while (!stop.get()) {
+                        try (Statement s = connection.createStatement()) {
+                            s.executeUpdate("ALTER TABLE tango ADD COLUMN y INT");
+                            mayDrainWalQueue();
+                            s.executeUpdate("ALTER TABLE tango DROP COLUMN y");
+                        }
+                    }
+                } catch (Exception e) {
+                    LOG.error().$("Error in table-altering thread").$(e).$();
+                }
+            });
+            t.start();
+            try {
+                while (!started.get()) { /* retry */ }
+                boolean didUpdate = false;
+                int retryCount = 100;
+                String failMsg = String.format("Failed to update column y after %d retries", retryCount);
+                for (int i = 0; i < retryCount; i++) {
+                    try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET y = 42")) {
+                        s.execute();
+                        didUpdate = true;
+                        mayDrainWalQueue();
+                    } catch (SQLException e) {
+                        assertMessageContains(e, "Invalid column: y");
+                    }
+                }
+                assertTrue(failMsg, didUpdate);
+            } finally {
+                stop.set(true);
+                t.join();
             }
         });
     }

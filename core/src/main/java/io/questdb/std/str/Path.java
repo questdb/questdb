@@ -59,6 +59,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
 
     public Path() {
         this(255);
+        new Exception("Path constructor").printStackTrace(System.out);
     }
 
     public Path(int capacity) {
@@ -136,6 +137,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         if (headPtr != 0L) {
             Unsafe.free(headPtr, capacity + 1, memoryTag);
             headPtr = tailPtr = 0L;
+            new Exception("Path close").printStackTrace(System.out);
         }
     }
 
