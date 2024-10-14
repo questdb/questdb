@@ -77,7 +77,9 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             mapValue.putDouble(valueIndex + 1, 0);
             mapValue.putDouble(valueIndex + 2, 0);
             mapValue.putDouble(valueIndex + 3, 0);
-            mapValue.putLong(valueIndex + 4, 0);
+            mapValue.putDouble(valueIndex + 4, 0);
+            mapValue.putDouble(valueIndex + 5, 0);
+            mapValue.putLong(valueIndex + 6, 0);
 
             if (Numbers.isFinite(x) && Numbers.isFinite(y)) {
                 aggregate(mapValue, x, y);
@@ -110,6 +112,8 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             columnTypes.add(ColumnType.DOUBLE);
             columnTypes.add(ColumnType.DOUBLE);
             columnTypes.add(ColumnType.DOUBLE);
+            columnTypes.add(ColumnType.DOUBLE);
+            columnTypes.add(ColumnType.DOUBLE);
             columnTypes.add(ColumnType.LONG);
         }
 
@@ -119,7 +123,9 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             mapValue.putDouble(valueIndex + 1, Double.NaN);
             mapValue.putDouble(valueIndex + 2, Double.NaN);
             mapValue.putDouble(valueIndex + 3, Double.NaN);
-            mapValue.putLong(valueIndex + 4, 0);
+            mapValue.putDouble(valueIndex + 4, Double.NaN);
+            mapValue.putDouble(valueIndex + 5, Double.NaN);
+            mapValue.putLong(valueIndex + 6, 0);
         }
 
         @Override
@@ -130,7 +136,7 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            long count = rec.getLong(valueIndex + 4);
+            long count = rec.getLong(valueIndex + 6);
 
             if (count == 0) {
                 return Double.NaN;
@@ -138,6 +144,12 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
 
             double sumXY = rec.getDouble(valueIndex + 3);
             double sumX = rec.getDouble(valueIndex + 2);
+
+            double errorX = rec.getDouble(valueIndex + 4);
+            double errorXY = rec.getDouble(valueIndex + 5);
+
+            sumX += errorX;
+            sumXY += errorXY;
 
             if (sumX == 0) {
                 return Double.NaN;
@@ -171,19 +183,35 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             double meanY = mapValue.getDouble(valueIndex + 1);
             double sumX = mapValue.getDouble(valueIndex + 2);
             double sumXY = mapValue.getDouble(valueIndex + 3);
-            long count = mapValue.getLong(valueIndex + 4) + 1;
+            double errorX = mapValue.getDouble(valueIndex + 4);
+            double errorXY = mapValue.getDouble(valueIndex + 5);
+            long count = mapValue.getLong(valueIndex + 6) + 1;
 
             double oldMeanX = meanX;
             meanX += (x - meanX) / count;
             meanY += (y - meanY) / count;
-            sumX += (x - oldMeanX) * (x - meanX);
-            sumXY += (x - oldMeanX) * (y - meanY);
+
+
+            double deltaX = (x - oldMeanX) * (x - meanX);
+            double correctedDeltaX = deltaX - errorX;
+            double tempSumX = sumX + correctedDeltaX;
+            errorX = (tempSumX - sumX) - correctedDeltaX;
+            sumX = tempSumX;
+
+
+            double deltaXY = (x - oldMeanX) * (y - meanY);
+            double correctedDeltaXY = deltaXY - errorXY;
+            double tempSumXY = sumXY + correctedDeltaXY;
+            errorXY = (tempSumXY - sumXY) - correctedDeltaXY;
+            sumXY = tempSumXY;
 
             mapValue.putDouble(valueIndex, meanX);
             mapValue.putDouble(valueIndex + 1, meanY);
             mapValue.putDouble(valueIndex + 2, sumX);
             mapValue.putDouble(valueIndex + 3, sumXY);
-            mapValue.putLong(valueIndex + 4, count);
+            mapValue.putDouble(valueIndex + 4, errorX);
+            mapValue.putDouble(valueIndex + 5, errorXY);
+            mapValue.putLong(valueIndex + 6, count);
         }
 
         @Override
@@ -192,24 +220,35 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             double srcMeanY = srcValue.getDouble(valueIndex + 1);
             double srcSumX = srcValue.getDouble(valueIndex + 2);
             double srcSumXY = srcValue.getDouble(valueIndex + 3);
-            long srcCount = srcValue.getLong(valueIndex + 4);
+            double srcErrorX = srcValue.getDouble(valueIndex + 4);
+            double srcErrorXY = srcValue.getDouble(valueIndex + 5);
+            long srcCount = srcValue.getLong(valueIndex + 6);
             double destMeanX = destValue.getDouble(valueIndex);
             double destMeanY = destValue.getDouble(valueIndex + 1);
             double destSumX = destValue.getDouble(valueIndex + 2);
             double destSumXY = destValue.getDouble(valueIndex + 3);
-            long destCount = destValue.getLong(valueIndex + 4);
-
+            double destErrorX = destValue.getDouble(valueIndex + 4);
+            double destErrorXY = destValue.getDouble(valueIndex + 5);
+            long destCount = destValue.getLong(valueIndex + 6);
             long totalCount = srcCount + destCount;
-            double srcRatio = (double) srcCount / totalCount;
-            double destRatio = (double) destCount / totalCount;
-            destMeanX = (srcMeanX * srcRatio) + (destMeanX * destRatio);
-            destMeanY = (srcMeanY * srcRatio) + (destMeanY * destRatio);
+
+            destMeanX = ((srcMeanX * srcCount) + (destMeanX * destCount))/ totalCount;
+            destMeanY = ((srcMeanY * srcCount) + (destMeanY * destCount))/ totalCount;
+
+            double deltaX = srcMeanX - destMeanX;
+            double deltaY = srcMeanY - destMeanY;
+            double mergedSumX = srcSumX + destSumX + ((deltaX * deltaX) * srcCount * destCount / totalCount);
+            double mergedSumXY = srcSumXY + destSumXY + ((deltaX * deltaY) * srcCount * destCount / totalCount);
+            double mergedErrorX = srcErrorX + destErrorX;
+            double mergedErrorXY = srcErrorXY + destErrorXY;
 
             destValue.putDouble(valueIndex, destMeanX);
             destValue.putDouble(valueIndex + 1, destMeanY);
-            destValue.putDouble(valueIndex + 2, srcSumX + destSumX);
-            destValue.putDouble(valueIndex + 3, srcSumXY + destSumXY);
-            destValue.putLong(valueIndex + 4, totalCount);
+            destValue.putDouble(valueIndex + 2, mergedSumX);
+            destValue.putDouble(valueIndex + 3, mergedSumXY);
+            destValue.putDouble(valueIndex + 4, mergedErrorX);
+            destValue.putDouble(valueIndex + 5, mergedErrorXY);
+            destValue.putLong(valueIndex + 6, totalCount);
         }
     }
 
