@@ -205,7 +205,7 @@ public class TimestampSamplerFactoryTest {
 
     @Test
     public void testSecondsZero() {
-        assertFailure(120, "zero is not a valid interval value", "0s", 120);
+        assertFailure(120, "zero is not a valid sample value", "0s", 120);
     }
 
     @Test
