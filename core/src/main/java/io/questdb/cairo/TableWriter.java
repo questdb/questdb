@@ -1235,7 +1235,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         if (columnRowCount != 0) {
                             // Do not add the column to the parquet file if there are no rows
-
                             if (ColumnType.isSymbol(columnType)) {
                                 long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
                                 long columnAddr = TableUtils.mapRO(ff, dFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);
@@ -1431,10 +1430,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long parquetRowCount = 0;
         try (PartitionDecoder partitionDecoder = new PartitionDecoder();
-             RowGroupBuffers rowGroupBuffers = new RowGroupBuffers();
+             RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
              DirectIntList columns = new DirectIntList(columnCount, MemoryTag.NATIVE_DEFAULT)
         ) {
-            partitionDecoder.of(parquetFd, readSize);
+            partitionDecoder.of(parquetFd, readSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             final PartitionDecoder.Metadata parquetMetadata = partitionDecoder.metadata();
             parquetMetadata.copyTo(metadata, false);

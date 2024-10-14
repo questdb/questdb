@@ -85,9 +85,9 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
     }
 
     protected static class FullTablePartitionFrame implements PartitionFrame {
+        protected byte format;
         protected long parquetFd;
         protected long parquetReadSize;
-        protected byte partitionFormat;
         protected int partitionIndex;
         protected int rowGroupIndex;
         // we don't need rowGroupLo as it can be calculated as rowGroupLo+(rowHi-rowLo)
@@ -102,7 +102,7 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
         @Override
         public long getParquetReadSize() {
-            assert parquetReadSize > 0 || partitionFormat != PartitionFormat.PARQUET;
+            assert parquetReadSize > 0 || getPartitionFormat() != PartitionFormat.PARQUET;
             return parquetReadSize;
         }
 
@@ -118,7 +118,7 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
         @Override
         public byte getPartitionFormat() {
-            return partitionFormat;
+            return format;
         }
 
         @Override

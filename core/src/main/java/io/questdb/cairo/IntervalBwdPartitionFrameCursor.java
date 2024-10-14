@@ -119,11 +119,11 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 if (lo < hi) {
-                    partitionFrame.partitionIndex = currentPartition;
-                    partitionFrame.rowLo = lo;
-                    partitionFrame.rowHi = hi;
+                    frame.partitionIndex = currentPartition;
+                    frame.rowLo = lo;
+                    frame.rowHi = hi;
                     sizeSoFar += hi - lo;
-                    return partitionFrame;
+                    return frame;
                 }
             } else {
                 // partition was empty, just skip to next

@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -75,23 +76,15 @@ public class PartitionDecoder implements QuietCloseable {
             int rowHi // high row index within the row group, exclusive
     ) {
         assert ptr != 0;
-        try {
-            return decodeRowGroup(
-                    ptr,
-                    rowGroupBuffers.ptr(),
-                    columns.getAddress(),
-                    (int) (columns.size() >>> 1),
-                    rowGroupIndex,
-                    rowLo,
-                    rowHi
-            );
-        } catch (Throwable th) {
-            LOG.error().$("could not decode [fd=").$(fd)
-                    .$(", rowGroup=").$(rowGroupIndex)
-                    .$(", msg=").$(th.getMessage())
-                    .I$();
-            throw CairoException.nonCritical().put(th.getMessage());
-        }
+        return decodeRowGroup(  // throws CairoException on error
+                ptr,
+                rowGroupBuffers.ptr(),
+                columns.getAddress(),
+                (int) (columns.size() >>> 1),
+                rowGroupIndex,
+                rowLo,
+                rowHi
+        );
     }
 
     public long getFd() {
@@ -108,22 +101,17 @@ public class PartitionDecoder implements QuietCloseable {
         return readSize;
     }
 
-    public void of(long fd, long readSize) {
+    public void of(long fd, long readSize, int memoryTag) {
         assert fd != -1;
         assert readSize > 0;
         destroy();
-        try {
-            this.fd = fd;
-            this.readSize = readSize;
-            ptr = create(Files.toOsFd(fd), readSize);
-            columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
-            rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
-            metadata.init();
-        } catch (Throwable th) {
-            throw CairoException.nonCritical().put("could not read parquet file: [fd=").put(fd)
-                    .put(", msg=").put(th.getMessage())
-                    .put(']');
-        }
+        this.fd = fd;
+        this.readSize = readSize;
+        final long allocator = Unsafe.getNativeAllocator(memoryTag);
+        ptr = create(allocator, Files.toOsFd(fd), readSize);  // throws CairoException on error
+        columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
+        rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
+        metadata.init();
     }
 
     public void readRowGroupStats(
@@ -132,35 +120,13 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroupIndex
     ) {
         assert ptr != 0;
-        try {
-            readRowGroupStats(
-                    ptr,
-                    statBuffers.ptr(),
-                    columns.getAddress(),
-                    (int) (columns.size() >>> 1),
-                    rowGroupIndex
-            );
-        } catch (Throwable th) {
-            LOG.error().$("could not read row group stats [fd=").$(fd)
-                    .$(", rowGroup=").$(rowGroupIndex)
-                    .$(", msg=").$(th.getMessage())
-                    .I$();
-            throw CairoException.nonCritical().put(th.getMessage());
-        }
-    }
-
-    public long timestampAt(int columnIndex, long rowIndex) {
-        assert ptr != 0;
-        try {
-            return timestampAt(ptr, columnIndex, rowIndex);
-        } catch (Throwable th) {
-            LOG.error().$("could not read timestamp value [fd=").$(fd)
-                    .$(", columnIndex=").$(columnIndex)
-                    .$(", rowIndex=").$(rowIndex)
-                    .$(", msg=").$(th.getMessage())
-                    .I$();
-            throw CairoException.nonCritical().put(th.getMessage());
-        }
+        readRowGroupStats(  // throws CairoException on error
+                ptr,
+                statBuffers.ptr(),
+                columns.getAddress(),
+                (int) (columns.size() >>> 1),
+                rowGroupIndex
+        );
     }
 
     private static native long columnCountOffset();
@@ -177,7 +143,7 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long columnsPtrOffset();
 
-    private static native long create(int fd, long readSize);
+    private static native long create(long allocator, int fd, long readSize) throws CairoException;
 
     private static native int decodeRowGroup(
             long decoderPtr,
@@ -187,7 +153,7 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroup,
             int rowLo,
             int rowHi
-    );
+    ) throws CairoException;
 
     private static native void destroy(long impl);
 
@@ -197,15 +163,13 @@ public class PartitionDecoder implements QuietCloseable {
             long columnsPtr,
             int columnCount,
             int rowGroup
-    );
+    ) throws CairoException;
 
     private static native long rowCountOffset();
 
     private static native long rowGroupCountOffset();
 
     private static native long rowGroupSizesPtrOffset();
-
-    private static native long timestampAt(long decoderPtr, int columnIndex, long rowIndex);
 
     private void destroy() {
         if (ptr != 0) {

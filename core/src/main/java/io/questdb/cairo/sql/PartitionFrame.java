@@ -37,7 +37,7 @@ package io.questdb.cairo.sql;
  * Partition frame is an internal API and shouldn't be used for data access.
  * Page frames are meant to be used for data access.
  */
-// TODO(puzpuzpuz): rename to data frame
+// TODO(puzpuzpuz): keep partition frames as is and expose partition encoder for parquet partitions
 public interface PartitionFrame {
 
     /**

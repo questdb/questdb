@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -40,9 +41,7 @@ import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.*;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.CustomisableRunnable;
@@ -78,6 +77,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Override
     public void setUp() {
+        // 0 means max timeout (Long.MAX_VALUE millis)
+        node1.setProperty(PropertyKey.QUERY_TIMEOUT_SEC, 0);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
@@ -133,7 +134,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             }
 
             resetTaskCapacities();
-        });
+        }, new AtomicBooleanCircuitBreaker());
     }
 
     @Test
@@ -422,7 +423,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             );
 
             resetTaskCapacities();
-        });
+        }, new AtomicBooleanCircuitBreaker());
     }
 
     @Test
@@ -450,7 +451,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             );
 
             resetTaskCapacities();
-        });
+        }, new AtomicBooleanCircuitBreaker());
     }
 
     @Test
@@ -492,47 +493,55 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPositiveLimit() throws Exception {
-        withPool((engine, compiler, sqlExecutionContext) -> {
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
-            final String sql = "x where a > 0.345747032 and a < 0.34575 limit 5";
-            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
-            }
+        final SqlExecutionCircuitBreakerConfiguration configuration = engine.getConfiguration().getCircuitBreakerConfiguration();
+        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(configuration)) {
+            wrapper.init(new AtomicBooleanCircuitBreaker());
+            withPool((engine, compiler, sqlExecutionContext) -> {
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
+                final String sql = "x where a > 0.345747032 and a < 0.34575 limit 5";
+                try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
+                    Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
+                }
 
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "a\tt\n" +
-                            "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                            "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                            "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                            "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
-                    sql,
-                    "t",
-                    true,
-                    sqlExecutionContext,
-                    false
-            );
-        });
+                assertQueryNoLeakCheck(
+                        compiler,
+                        "a\tt\n" +
+                                "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
+                                "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
+                                "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
+                                "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                        sql,
+                        "t",
+                        true,
+                        sqlExecutionContext,
+                        false
+                );
+            }, wrapper);
+        }
     }
 
     @Test
     public void testPositiveLimitGroupBy() throws Exception {
-        withPool((engine, compiler, sqlExecutionContext) -> {
-            compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
-            final String sql = "select sum(a) from (x where a > 0.345747032 and a < 0.34575 limit 5)";
+        final SqlExecutionCircuitBreakerConfiguration configuration = engine.getConfiguration().getCircuitBreakerConfiguration();
+        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(configuration)) {
+            wrapper.init(new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2));
+            withPool((engine, compiler, sqlExecutionContext) -> {
+                compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
+                final String sql = "select sum(a) from (x where a > 0.345747032 and a < 0.34575 limit 5)";
 
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "sum\n" +
-                            "1.382992963766362\n",
-                    sql,
-                    null,
-                    false,
-                    sqlExecutionContext,
-                    true
-            );
-        });
+                assertQueryNoLeakCheck(
+                        compiler,
+                        "sum\n" +
+                                "1.382992963766362\n",
+                        sql,
+                        null,
+                        false,
+                        sqlExecutionContext,
+                        true
+                );
+            }, wrapper);
+        }
     }
 
     @Test
@@ -555,7 +564,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             "foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813\n" +
                             "foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728\n"
             );
-        });
+        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2));
     }
 
     @Test
@@ -606,7 +615,14 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             );
 
             resetTaskCapacities();
-        });
+        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2));
+    }
+
+    private static Class<?> getClass(SqlExecutionCircuitBreaker circuitBreaker) {
+        if (circuitBreaker instanceof SqlExecutionCircuitBreakerWrapper) {
+            return getClass(((SqlExecutionCircuitBreakerWrapper) circuitBreaker).getDelegate());
+        }
+        return circuitBreaker.getClass();
     }
 
     private void resetTaskCapacities() {
@@ -742,7 +758,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         sqlExecutionContext,
                         false
                 );
-            });
+            }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2));
         } finally {
             sqlExecutionContext.setParallelFilterEnabled(true);
         }
@@ -851,7 +867,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                 });
                             }
                         } catch (Throwable e) {
-                            e.printStackTrace();
+                            e.printStackTrace(System.out);
                             errorCounter.incrementAndGet();
                         } finally {
                             doneLatch.countDown();
@@ -876,19 +892,33 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     private void withPool(CustomisableRunnable runnable) throws Exception {
+        withPool(runnable, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+    }
+
+    private void withPool(CustomisableRunnable runnable, SqlExecutionCircuitBreaker circuitBreaker) throws Exception {
         int workerCount = 4;
-        withPool0(runnable, workerCount, workerCount);
+        withPool0(runnable, workerCount, workerCount, circuitBreaker);
     }
 
     private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount) throws Exception {
+        withPool0(runnable, workerCount, sharedWorkerCount, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+    }
+
+    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount, SqlExecutionCircuitBreaker circuitBreaker) throws Exception {
         assertMemoryLeak(() -> {
-            WorkerPool pool = new TestWorkerPool(workerCount);
+            final TestWorkerPool pool = new TestWorkerPool(workerCount);
             TestUtils.setupWorkerPool(pool, engine);
+            final ObjList<PageFrameReduceJob> pageFrameReduceJobs = pool.getPageFrameReduceJobs();
             pool.start();
 
             try {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
+                        @Override
+                        public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+                            return circuitBreaker;
+                        }
+
                         @Override
                         public int getSharedWorkerCount() {
                             return sharedWorkerCount;
@@ -900,8 +930,15 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         }
                     });
                 }
+
+                for (int i = 0, n = pageFrameReduceJobs.size(); i < n; i++) {
+                    final PageFrameReduceJob job = pageFrameReduceJobs.getQuick(i);
+                    // if the job was never used the circuit breaker is null,
+                    // if the job was used the type of the circuit breaker has to match with the one from SqlExecutionContext
+                    assert job.getCircuitBreaker() == null || getClass(job.getCircuitBreaker()) == getClass(circuitBreaker);
+                }
             } catch (Throwable e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 throw e;
             } finally {
                 pool.halt();

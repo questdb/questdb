@@ -96,14 +96,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         FilesFacade ff = tableWriter.getFilesFacade();
         try (
                 PartitionDecoder partitionDecoder = new PartitionDecoder();
-                RowGroupBuffers rowGroupBuffers = new RowGroupBuffers();
-                RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers();
+                RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+                RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
                 PartitionUpdater partitionUpdater = new PartitionUpdater(ff);
                 DirectIntList columnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_O3);
                 PartitionDescriptor partitionDescriptor = new OwnedMemoryPartitionDescriptor()
         ) {
             parquetFileFd = TableUtils.openRO(ff, path.$(), LOG);
-            partitionDecoder.of(parquetFileFd, partitionParquetFileSize);
+            partitionDecoder.of(
+                    parquetFileFd,
+                    partitionParquetFileSize,
+                    MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
 
             final int rowGroupCount = partitionDecoder.metadata().rowGroupCount();
             final int timestampIndex = tableWriterMetadata.getTimestampIndex();

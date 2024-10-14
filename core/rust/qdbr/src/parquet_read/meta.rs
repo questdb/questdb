@@ -1,3 +1,4 @@
+use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
@@ -28,15 +29,16 @@ fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMet
 }
 
 impl<R: Read + Seek> ParquetDecoder<R> {
-    pub fn read(mut reader: R, read_size: u64) -> ParquetResult<Self> {
+    pub fn read(allocator: QdbAllocator, mut reader: R, read_size: u64) -> ParquetResult<Self> {
         let metadata = read_metadata_with_size(&mut reader, read_size)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
-        let mut row_group_sizes: Vec<i32> = Vec::with_capacity(metadata.row_groups.len());
-        let mut columns = Vec::with_capacity(col_len);
+        let mut row_group_sizes: AcVec<i32> =
+            AcVec::with_capacity_in(metadata.row_groups.len(), allocator.clone())?;
+        let mut columns = AcVec::with_capacity_in(col_len, allocator.clone())?;
 
         for row_group in metadata.row_groups.iter() {
-            row_group_sizes.push(row_group.num_rows() as i32)
+            row_group_sizes.push(row_group.num_rows() as i32)?
         }
 
         for (column_id, f) in metadata.schema_descr.columns().iter().enumerate() {
@@ -45,7 +47,8 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 Self::descriptor_to_column_type(&f.descriptor, column_id, qdb_meta.as_ref())
             {
                 let name_str = &f.descriptor.primitive_type.field_info.name;
-                let name: Vec<u16> = name_str.encode_utf16().collect();
+                let mut name = AcVec::with_capacity_in(name_str.len() * 2, allocator.clone())?;
+                name.extend(name_str.encode_utf16())?;
 
                 columns.push(ColumnMeta {
                     column_type,
@@ -53,12 +56,13 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
                     name_vec: name,
-                });
+                })?;
             }
         }
 
         // TODO: add some validation
         Ok(Self {
+            allocator,
             col_count: columns.len() as u32,
             row_count: metadata.num_rows,
             row_group_count: metadata.row_groups.len() as u32,
@@ -172,6 +176,7 @@ mod tests {
     use std::path::Path;
     use std::ptr::null;
 
+    use crate::allocator::TestAllocatorState;
     use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet_read::meta::ParquetDecoder;
     use crate::parquet_write::file::ParquetWriter;
@@ -183,6 +188,9 @@ mod tests {
 
     #[test]
     fn test_decode_column_type_fixed() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let row_count = 10;
         let mut buffers_columns = Vec::new();
@@ -238,7 +246,7 @@ mod tests {
         let path = temp_file.path().to_str().unwrap();
         let file = File::open(Path::new(path)).unwrap();
         let file_len = file.len();
-        let meta = ParquetDecoder::read(file, file_len).unwrap();
+        let meta = ParquetDecoder::read(allocator, file, file_len).unwrap();
 
         assert_eq!(meta.columns.len(), column_count);
         assert_eq!(meta.row_count, row_count);

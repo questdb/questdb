@@ -171,8 +171,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testClose() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
                     col("a", ColumnType.INT).
                     col("b", ColumnType.INT).
@@ -241,7 +240,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalCursorNoTimestamp() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
                     col("b", ColumnType.SYMBOL).indexed(true, 4);
@@ -359,7 +358,6 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             CharSequence expected2
     ) throws Exception {
         assertMemoryLeak(() -> {
-
             TableToken tableToken;
             TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
@@ -586,11 +584,11 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testIntervals(int partitionBy, long increment, int rowCount, CharSequence expected, long expectedCount) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.SYMBOL).indexed(true, 4).
-                    col("b", ColumnType.SYMBOL).indexed(true, 4).
-                    timestamp();
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", partitionBy)
+                    .col("a", ColumnType.SYMBOL).indexed(true, 4)
+                    .col("b", ColumnType.SYMBOL).indexed(true, 4)
+                    .timestamp();
             AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
@@ -617,11 +615,14 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
+                            new RuntimeIntervalModel(IntervalBwdPartitionFrameCursorTest.intervals),
+                            reader.getMetadata().getTimestampIndex()
+                    )
+            ) {
                 final TestTableReaderRecord record = new TestTableReaderRecord();
-                IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
-                        new RuntimeIntervalModel(IntervalBwdPartitionFrameCursorTest.intervals),
-                        reader.getMetadata().getTimestampIndex());
                 cursor.of(reader, null);
                 record.of(reader);
 

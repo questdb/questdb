@@ -1,36 +1,36 @@
 use std::fs::File;
 use std::slice;
 
+use crate::allocator::QdbAllocator;
 use crate::parquet::col_type::ColumnType;
 use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::io::{FromRawFdI32Ext, NonOwningFile};
 use crate::parquet::qdb_metadata::ParquetFieldId;
 use crate::parquet_read::decode::ParquetColumnIndex;
-use jni::objects::JClass;
-use jni::JNIEnv;
-use std::mem::{offset_of, size_of};
-
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, ParquetDecoder, RowGroupBuffers,
     RowGroupStatBuffers,
 };
-use crate::utils;
+use jni::objects::JClass;
+use jni::JNIEnv;
+use std::mem::{offset_of, size_of};
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_create(
     mut env: JNIEnv,
     _class: JClass,
+    allocator: *const QdbAllocator,
     raw_fd: i32,
     read_size: u64,
 ) -> *mut ParquetDecoder<NonOwningFile> {
     let reader = NonOwningFile::new(unsafe { File::from_raw_fd_i32(raw_fd) });
-    match ParquetDecoder::read(reader, read_size) {
+    let allocator = unsafe { &*allocator }.clone();
+    match ParquetDecoder::read(allocator, reader, read_size) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
         Err(mut err) => {
-            err.add_context(format!(
-                "failed to create ParquetDecoder from file descriptor {raw_fd} and read size {read_size}"
-            ));
-            utils::throw_java_ex(&mut env, "PartitionDecoder.create", &err)
+            err.add_context(format!("could not read parquet file with fd {raw_fd} and read size {read_size}"));
+            err.add_context("error in PartitionDecoder.create");
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }
@@ -93,7 +93,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
     match res {
         Ok(row_count) => row_count as u32,
-        Err(err) => utils::throw_java_ex(&mut env, "decodeRowGroup", &err),
+        Err(mut err) => {
+            let raw_fd = decoder.reader.as_raw_fd_i32();
+            err.add_context(format!(
+                "could not decode row group {row_group_index} with fd {raw_fd}"
+            ));
+            err.add_context("error in PartitionDecoder.decodeRowGroup");
+            err.into_cairo_exception().throw(&mut env)
+        }
     }
 }
 
@@ -124,24 +131,14 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
     match res {
         Ok(_) => {}
-        Err(err) => utils::throw_java_ex(&mut env, "readRowGroupStats", &err),
-    }
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_timestampAt(
-    mut env: JNIEnv,
-    _class: JClass,
-    decoder: *mut ParquetDecoder<NonOwningFile>,
-    column_index: u32,
-    row_index: u64,
-) -> i64 {
-    assert!(!decoder.is_null(), "decoder pointer is null");
-
-    let decoder = unsafe { &mut *decoder };
-    match decoder.timestamp_at(column_index, row_index) {
-        Ok(v) => v,
-        Err(err) => utils::throw_java_ex(&mut env, "timestampAt", &err),
+        Err(mut err) => {
+            let raw_fd = decoder.reader.as_raw_fd_i32();
+            err.add_context(format!(
+                "could not get row group stats with fd {raw_fd} in row group {row_group_index}"
+            ));
+            err.add_context("error in PartitionDecoder.readRowGroupStats");
+            err.into_cairo_exception().throw(&mut env)
+        }
     }
 }
 
@@ -229,8 +226,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_create(
     _env: JNIEnv,
     _class: JClass,
+    allocator: *const QdbAllocator,
 ) -> *mut RowGroupBuffers {
-    Box::into_raw(Box::new(RowGroupBuffers::new()))
+    let allocator = unsafe { &*allocator }.clone();
+    Box::into_raw(Box::new(RowGroupBuffers::new(allocator)))
 }
 
 #[no_mangle]
@@ -301,8 +300,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_create(
     _env: JNIEnv,
     _class: JClass,
+    allocator: *const QdbAllocator,
 ) -> *mut RowGroupStatBuffers {
-    Box::into_raw(Box::new(RowGroupStatBuffers::new()))
+    let allocator = unsafe { &*allocator }.clone();
+    Box::into_raw(Box::new(RowGroupStatBuffers::new(allocator)))
 }
 
 #[no_mangle]

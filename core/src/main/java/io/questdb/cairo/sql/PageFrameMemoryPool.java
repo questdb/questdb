@@ -250,7 +250,7 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
         final long fd = addressCache.getParquetFd(frameIndex);
         final long readSize = addressCache.getParquetReadSize(frameIndex);
         if ((parquetDecoder.getFd() != fd) || (parquetDecoder.getReadSize() != readSize)) {
-            parquetDecoder.of(fd, readSize);
+            parquetDecoder.of(fd, readSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
         final PartitionDecoder.Metadata metadata = parquetDecoder.metadata();
         // Prepare table reader to parquet column index mapping.
@@ -274,7 +274,7 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
         private final LongList auxPageSizes = new LongList();
         private final LongList pageAddresses = new LongList();
         private final LongList pageSizes = new LongList();
-        private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers();
+        private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         private int frameIndex = -1;
         // Contains bits FRAME_MEMORY_MASK, RECORD_A_MASK and RECORD_B_MASK.
         private byte usageFlags;

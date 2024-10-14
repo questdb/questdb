@@ -6,8 +6,8 @@ use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResul
 use crate::parquet_write::file::ParquetWriter;
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
-use crate::utils;
 
+use crate::allocator::QdbAllocator;
 use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
 use jni::sys::{jboolean, jint, jlong, jshort};
@@ -20,6 +20,9 @@ use parquet2::write::Version;
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_create(
     mut env: JNIEnv,
     _class: JClass,
+    allocator: *const QdbAllocator,
+    src_path_len: u32,
+    src_path_ptr: *const u8,
     raw_fd: i32,
     file_size: u64,
     timestamp_index: jint,
@@ -31,6 +34,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     let create = || -> ParquetResult<ParquetUpdater> {
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
+        let allocator = unsafe { &*allocator }.clone();
 
         let statistics_enabled = statistics_enabled != 0;
 
@@ -53,6 +57,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         };
 
         ParquetUpdater::new(
+            allocator,
             unsafe { File::from_raw_fd_i32(raw_fd) },
             file_size,
             sorting_columns,
@@ -65,7 +70,16 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
     match create() {
         Ok(updater) => Box::into_raw(Box::new(updater)),
-        Err(err) => utils::throw_java_ex(&mut env, "PartitionUpdater.create", &err),
+        Err(mut err) => {
+            let src_path = unsafe { slice::from_raw_parts(src_path_ptr, src_path_len as usize) };
+            let src_path = std::str::from_utf8(src_path).unwrap_or("!!invalid path utf8!!");
+            err.add_context(format!(
+                "could not open parquet file for update from path {}",
+                src_path
+            ));
+            err.add_context("error in PartitionUpdater.create");
+            err.into_cairo_exception().throw(&mut env)
+        }
     }
 }
 
@@ -84,7 +98,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         Ok(_) => (),
         Err(mut err) => {
             err.add_context("could not update partition");
-            utils::throw_java_ex(&mut env, "PartitionUpdater.destroy", &err)
+            err.add_context("error in PartitionUpdater.destroy");
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }
@@ -94,6 +109,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     mut env: JNIEnv,
     _class: JClass,
     parquet_updater: *mut ParquetUpdater,
+    table_name_len: u32,
+    table_name_ptr: *const u8,
     row_group_id: jshort,
     col_count: jint,
     col_names_ptr: *const u8,
@@ -102,6 +119,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     col_data_len: jlong,
     row_count: jlong,
 ) {
+    let orig_row_group_id = row_group_id;
     let row_group_id = Some(row_group_id);
 
     assert!(
@@ -132,8 +150,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     match update() {
         Ok(_) => (),
         Err(mut err) => {
-            err.add_context("could not update partition");
-            utils::throw_java_ex(&mut env, "PartitionUpdater.updateRowGroup", &err)
+            let table_name =
+                unsafe { slice::from_raw_parts(table_name_ptr, table_name_len as usize) };
+            let table_name =
+                std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
+            err.add_context(format!(
+                "could not update row group {orig_row_group_id} for table {table_name}"
+            ));
+            err.add_context("error in PartitionUpdater.updateRowGroup");
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }
@@ -218,13 +243,20 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 
     match encode() {
         Ok(_) => (),
-        Err(err) => {
-            let msg = format!(
-                "Failed to encode partition: {}",
-                err.display_with_backtrace()
-            );
-            env.throw_new("java/lang/RuntimeException", msg)
-                .expect("failed to throw exception");
+        Err(mut err) => {
+            let table_name = unsafe {
+                std::str::from_utf8(slice::from_raw_parts(
+                    table_name_ptr,
+                    table_name_size as usize,
+                ))
+                .expect("invalid table name utf8")
+            };
+            err.add_context(format!(
+                "could not encode partition for table {} and timestamp index {}",
+                table_name, timestamp_index
+            ));
+            err.add_context("error in PartitionEncoder.encodePartition");
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }

@@ -28,27 +28,19 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
-import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
-import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Mutable;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
+    protected final IntervalPartitionFrame frame = new IntervalPartitionFrame();
     protected final RuntimeIntrinsicIntervalModel intervalModel;
-    protected final IntervalPartitionFrame partitionFrame = new IntervalPartitionFrame();
     protected final int timestampIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder = new ParquetTimestampFinder();
@@ -73,10 +65,6 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         assert timestampIndex > -1;
         this.intervalModel = intervalModel;
         this.timestampIndex = timestampIndex;
-    }
-
-    public static long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
-        return Vect.binarySearch64Bit(column.getPageAddress(0), value, low, high, scanDir);
     }
 
     @Override
@@ -290,29 +278,9 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     protected TimestampFinder initTimestampFinder(int partitionIndex, long rowCount) {
         if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
-            return parquetTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);
+            return parquetTimestampFinder.of(reader, partitionIndex, timestampIndex);
         }
         return nativeTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);
-    }
-
-    protected interface TimestampFinder {
-
-        /**
-         * Performs search on timestamp column.
-         *
-         * @param value   timestamp value to find, the found value is equal or less than this value
-         * @param rowLo   row low index for the search boundary, inclusive
-         * @param rowHi   row high index for the search boundary, inclusive
-         * @param scanDir scan direction {@link Vect#BIN_SEARCH_SCAN_DOWN} (1) or {@link Vect#BIN_SEARCH_SCAN_UP} (-1)
-         * @return TODO(puzpuzpuz): document me
-         */
-        long findTimestamp(long value, long rowLo, long rowHi, int scanDir);
-
-        long maxTimestamp();
-
-        long minTimestamp();
-
-        long timestampAt(long rowIndex);
     }
 
     protected static class IntervalPartitionFrame implements PartitionFrame {
@@ -363,132 +331,6 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         @Override
         public long getRowLo() {
             return rowLo;
-        }
-    }
-
-    private static class NativeTimestampFinder implements TimestampFinder, Mutable {
-        private MemoryR column;
-        private long rowCount;
-
-        @Override
-        public void clear() {
-            column = null;
-            rowCount = 0;
-        }
-
-        @Override
-        public long findTimestamp(long value, long rowLo, long rowHi, int scanDir) {
-            long idx = binarySearch(column, value, rowLo, rowHi, scanDir);
-            if (idx < 0) {
-                if (scanDir == BIN_SEARCH_SCAN_UP) {
-                    idx = -idx - 1;
-                } else if (scanDir == BIN_SEARCH_SCAN_DOWN) {
-                    idx = -idx - 2;
-                }
-            }
-            return idx;
-        }
-
-        @Override
-        public long maxTimestamp() {
-            return column.getLong((rowCount - 1) * 8);
-        }
-
-        @Override
-        public long minTimestamp() {
-            return column.getLong(0);
-        }
-
-        public NativeTimestampFinder of(TableReader reader, int partitionIndex, int timestampIndex, long rowCount) {
-            this.column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), timestampIndex));
-            this.rowCount = rowCount;
-            return this;
-        }
-
-        @Override
-        public long timestampAt(long rowIndex) {
-            return column.getLong(rowIndex * 8);
-        }
-    }
-
-    private static class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCloseable {
-        private final PartitionDecoder partitionDecoder = new PartitionDecoder();
-        private final RowGroupStatBuffers statBuffers = new RowGroupStatBuffers();
-        private final DirectIntList timestampIdAndType = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT);
-        private long maxTimestamp;
-        private long minTimestamp;
-        private int timestampIndex = -1; // timestamp column index in Parquet file
-
-        @Override
-        public void clear() {
-            timestampIndex = -1;
-            minTimestamp = 0;
-            maxTimestamp = 0;
-        }
-
-        @Override
-        public void close() {
-            Misc.free(partitionDecoder);
-            Misc.free(statBuffers);
-            Misc.free(timestampIdAndType);
-            clear();
-        }
-
-        @Override
-        public long findTimestamp(long value, long rowLo, long rowHi, int scanDir) {
-            // TODO(puzpuzpuz): implement me
-            return 0;
-        }
-
-        @Override
-        public long maxTimestamp() {
-            return maxTimestamp;
-        }
-
-        @Override
-        public long minTimestamp() {
-            return minTimestamp;
-        }
-
-        public ParquetTimestampFinder of(TableReader reader, int partitionIndex, int timestampIndex, long rowCount) {
-            partitionDecoder.of(reader.getParquetFd(partitionIndex), reader.getParquetReadSize(partitionIndex));
-            this.timestampIndex = findTimestampIndex(partitionDecoder, timestampIndex);
-            if (this.timestampIndex == -1) {
-                throw CairoException.critical(0).put("missing timestamp column in parquet partition [table=").put(reader.getTableToken())
-                        .put(", partitionIndex=").put(partitionIndex)
-                        .put(", timestampIndex=").put(timestampIndex)
-                        .put(']');
-            }
-            readMinMaxTimestamps();
-            return this;
-        }
-
-        @Override
-        public long timestampAt(long rowIndex) {
-            return partitionDecoder.timestampAt(timestampIndex, rowIndex);
-        }
-
-        private static int findTimestampIndex(PartitionDecoder partitionDecoder, int timestampIndex) {
-            final PartitionDecoder.Metadata metadata = partitionDecoder.metadata();
-            for (int i = 0, n = metadata.columnCount(); i < n; i++) {
-                if (metadata.columnId(i) == timestampIndex) {
-                    return i;
-                }
-            }
-            return -1;
-        }
-
-        private void readMinMaxTimestamps() {
-            timestampIdAndType.reopen();
-            timestampIdAndType.clear();
-            timestampIdAndType.add(timestampIndex);
-            timestampIdAndType.add(ColumnType.TIMESTAMP);
-
-            final int rowGroupCount = partitionDecoder.metadata().rowGroupCount();
-            partitionDecoder.readRowGroupStats(statBuffers, timestampIdAndType, 0);
-            minTimestamp = statBuffers.getMinValueLong(0);
-            partitionDecoder.readRowGroupStats(statBuffers, timestampIdAndType, rowGroupCount - 1);
-            maxTimestamp = statBuffers.getMaxValueLong(0);
         }
     }
 }
