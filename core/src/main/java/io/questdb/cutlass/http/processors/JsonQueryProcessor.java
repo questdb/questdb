@@ -26,47 +26,19 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.TelemetryOrigin;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoError;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.EntryUnavailableException;
-import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cutlass.http.HttpChunkedResponse;
-import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpConstants;
-import io.questdb.cutlass.http.HttpException;
-import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.http.HttpRequestProcessor;
-import io.questdb.cutlass.http.LocalValue;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.ex.RetryOperationException;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.SqlTimeoutException;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.NoSpaceLeftInResponseBufferException;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.network.QueryPausedException;
-import io.questdb.network.ServerDisconnectException;
-import io.questdb.std.Chars;
-import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
+import io.questdb.network.*;
+import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
@@ -460,8 +432,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpConnectionContext context = state.getHttpConnectionContext();
         final HttpChunkedResponse response = context.getChunkedResponse();
         header(response, context, keepAliveHeader, 200);
+        String noticeOrError = state.getApiVersion() == 1 ? "error" : "notice";
         response.put('{')
-                .putAsciiQuoted("notice").putAscii(':').putAsciiQuoted("empty query")
+                .putAsciiQuoted(noticeOrError).putAscii(':').putAsciiQuoted("empty query")
                 .putAscii(",")
                 .putAsciiQuoted("query").putAscii(':').putAsciiQuoted(state.getQuery())
                 .putAscii(",")
