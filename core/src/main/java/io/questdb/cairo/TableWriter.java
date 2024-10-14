@@ -7619,24 +7619,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
+    private void squashSplitPartitions(final int partitionLo, final int partitionHi, final int optimalPartitionCount, boolean force) {
         if (checkpointStatus.isInProgress()) {
             LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], checkpoint in progress").$();
             return;
         }
 
-        assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
-        int targetPartitionIndex = partitionIndexLo;
+        assert partitionHi >= 0 && partitionHi <= txWriter.getPartitionCount() && partitionLo >= 0;
+        int partitionIndexLo = partitionLo;
 
-        if (partitionIndexHi > partitionIndexLo + 1) {
+        if (partitionHi > partitionIndexLo + 1) {
             long targetPartition = Long.MIN_VALUE;
             boolean copyTargetFrame = false;
 
             // Move partitionIndexLo to the first unlocked partition in the range
-            for (; targetPartitionIndex + 1 < partitionIndexHi; targetPartitionIndex++) {
-                boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
+            for (int n = partitionHi - 1; partitionIndexLo < n; partitionIndexLo++) {
+                boolean canOverwrite = canSquashOverwritePartitionTail(partitionIndexLo);
                 if (canOverwrite || force) {
-                    targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
+                    targetPartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo);
                     copyTargetFrame = !canOverwrite;
                     break;
                 }
@@ -7646,7 +7646,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             boolean lastPartitionSquashed = false;
-            int squashCount = partitionIndexHi - partitionIndexLo - optimalPartitionCount;
+            int squashCount = partitionHi - partitionIndexLo - optimalPartitionCount;
 
             if (squashCount > 0) {
                 long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
@@ -7675,14 +7675,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         targetFrame = firstPartitionFrame;
                     }
 
-                    if (squashCount > 0) {
-                        engine.getPartitionOverwriteControl().notifyPartitionMutates(
-                                tableToken,
-                                targetPartition,
-                                targetPartitionNameTxn,
-                                targetFrame.getRowCount()
-                        );
-                    }
+                    engine.getPartitionOverwriteControl().notifyPartitionMutates(
+                            tableToken,
+                            targetPartition,
+                            targetPartitionNameTxn,
+                            targetFrame.getRowCount()
+                    );
                     for (int i = 0; i < squashCount; i++) {
                         long sourcePartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo + 1);
 
