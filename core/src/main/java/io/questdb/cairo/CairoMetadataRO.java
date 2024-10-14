@@ -37,7 +37,7 @@ public interface CairoMetadataRO extends AutoCloseable, QuietCloseable {
     int getTableCount();
 
     long getVersion();
-    
+
     boolean isVisibleTable(@NotNull CharSequence tableName);
 
     long snapshot(CharSequenceObjHashMap<CairoTable> localCache, long priorVersion);
@@ -45,3 +45,4 @@ public interface CairoMetadataRO extends AutoCloseable, QuietCloseable {
     String toString0();
 
 }
+

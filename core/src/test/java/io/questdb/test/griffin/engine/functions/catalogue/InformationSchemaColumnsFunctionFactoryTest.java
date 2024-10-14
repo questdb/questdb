@@ -47,10 +47,10 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                             "C\t0\tcol0\tDOUBLE\n" +
                             "C\t1\tcol1\tCHAR\n" +
                             "C\t2\tcol2\tBYTE\n",
-                    "SELECT * FROM information_schema.columns()",
+                    "SELECT * FROM information_schema.columns() ORDER BY table_name",
                     null,
                     null,
-                    false
+                    true
             );
         });
     }
