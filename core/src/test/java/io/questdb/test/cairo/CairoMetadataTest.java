@@ -34,7 +34,6 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.IOException;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -129,7 +128,6 @@ public class CairoMetadataTest extends AbstractCairoTest {
         if (tableToken != null) {
             try (CairoMetadataRO metadataRO = engine.getCairoMetadata().read()) {
                 cairoTable = metadataRO.getTable(tableToken);
-            } catch (IOException ignore) {
             }
 
             if (engine.isTableDropped(tableToken)) {
