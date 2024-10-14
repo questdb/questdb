@@ -128,7 +128,6 @@ public class AllTablesFunctionFactory implements FunctionFactory {
             private final HashMap<CharSequence, CairoTable> tableCache;
             private Iterator<Map.Entry<CharSequence, CairoTable>> iterator;
 
-
             public AllTablesRecordCursor(HashMap<CharSequence, CairoTable> tableCache) {
                 this.tableCache = tableCache;
                 this.iterator = tableCache.entrySet().iterator();
@@ -186,7 +185,6 @@ public class AllTablesFunctionFactory implements FunctionFactory {
                 public void of(CairoTable table) {
                     this.table = table;
                 }
-
             }
         }
     }

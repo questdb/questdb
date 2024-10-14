@@ -75,12 +75,14 @@ public class CairoMetadata {
             final ObjList<TableToken> tableTokens = tableTokensSet.getList();
 
             LOG.info().$("metadata hydration started [tables=").$(tableTokens.size()).I$();
-
-            try (CairoMetadataRW metadataRW = write()) {
-                for (int i = 0, n = tableTokens.size(); i < n; i++) {
+            for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                try (CairoMetadataRW metadataRW = write()) {
                     metadataRW.hydrateTable(tableTokens.getQuick(i), false);
                 }
-                LOG.info().$("metadata hydration completed [tables=").$(metadataRW.getTableCount()).I$();
+            }
+
+            try (CairoMetadataRO metadataRO = read()) {
+                LOG.info().$("metadata hydration completed [tables=").$(metadataRO.getTableCount()).I$();
             }
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
@@ -428,7 +430,6 @@ public class CairoMetadata {
 
                 if (ColumnType.isSymbol(column.getType())) {
                     LOG.debug().$("hydrating symbol metadata [table=").$(tableToken).$(", column=").$(columnName).I$();
-
                     column.setSymbolCapacity(tableMetadata.getSymbolCapacity(i));
                     column.setSymbolCached(tableMetadata.getSymbolCacheFlag(i));
                 }
