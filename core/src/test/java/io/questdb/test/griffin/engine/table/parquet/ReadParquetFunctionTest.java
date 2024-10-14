@@ -41,6 +41,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
+
 public class ReadParquetFunctionTest extends AbstractCairoTest {
 
     @Before
@@ -81,7 +83,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
             engine.releaseInactive();
             try (Path path = new Path()) {
-                path.concat(engine.verifyTableName("x")).concat("2015.1").concat("data.parquet");
+                path.concat(engine.verifyTableName("x")).concat("2015.1").concat(PARQUET_PARTITION_NAME);
 
                 sink.clear();
                 sink.put("select * from read_parquet('").put(path).put("')");

@@ -40,6 +40,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
+
 public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     @Test
@@ -422,7 +424,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         int tablePathLen = path.size();
 
         path.trimTo(tablePathLen);
-        path.concat(partition).concat("data.parquet");
+        path.concat(partition).concat(PARQUET_PARTITION_NAME);
 
         if (rev) {
             Assert.assertFalse(ff.exists(path.$()));
