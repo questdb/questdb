@@ -436,7 +436,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         response.put('{')
                 .putAsciiQuoted(noticeOrError).putAscii(':').putAsciiQuoted("empty query")
                 .putAscii(",")
-                .putAsciiQuoted("query").putAscii(':').putAsciiQuoted(state.getQuery())
+                .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(state.getQuery()).putQuote()
                 .putAscii(",")
                 .putAsciiQuoted("position").putAscii(':').putAsciiQuoted("0")
                 .putAscii('}');
