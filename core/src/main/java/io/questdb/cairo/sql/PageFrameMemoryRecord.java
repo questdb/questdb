@@ -31,8 +31,21 @@ import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.StableStringSource;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -96,8 +109,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         if (dataPageAddress != 0) {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
-            final long pageLimit = pageSizes.getQuick(columnIndex);
-            return getBin(dataPageAddress, offset, pageLimit, bsView(columnIndex));
+            final long dataPageLim = pageSizes.getQuick(columnIndex);
+            return getBin(dataPageAddress, offset, dataPageLim, bsView(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getBin(0);
     }
@@ -108,7 +121,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         if (dataPageAddress != 0) {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
-            return Unsafe.getUnsafe().getLong(dataPageAddress + offset);
+            final long dataPageLim = pageSizes.getQuick(columnIndex);
+            final long address = dataPageAddress + offset;
+            if (dataPageLim < address) {
+                throw CairoException.critical(0)
+                        .put("binary is outside of file boundary [offset=")
+                        .put(offset)
+                        .put(", dataPageLim=")
+                        .put(dataPageLim)
+                        .put(']');
+            }
+            return Unsafe.getUnsafe().getLong(address);
         }
         return NullMemoryCMR.INSTANCE.getBinLen(0);
     }
@@ -296,8 +319,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         if (dataPageAddress != 0) {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
-            final long pageLimit = pageSizes.getQuick(columnIndex);
-            return getStrA(dataPageAddress, offset, pageLimit, csViewA(columnIndex));
+            final long dataPageLim = pageSizes.getQuick(columnIndex);
+            return getStr(dataPageAddress, offset, dataPageLim, csViewA(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getStrA(0);
     }
@@ -308,8 +331,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         if (dataPageAddress != 0) {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
-            final long pageLimit = pageSizes.getQuick(columnIndex);
-            return getStrA(dataPageAddress, offset, pageLimit, csViewB(columnIndex));
+            final long dataPageLim = pageSizes.getQuick(columnIndex);
+            return getStr(dataPageAddress, offset, dataPageLim, csViewB(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getStrB(0);
     }
@@ -320,6 +343,16 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         if (dataPageAddress != 0) {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
+            final long dataPageLim = pageSizes.getQuick(columnIndex);
+            final long address = dataPageAddress + offset;
+            if (dataPageLim < address) {
+                throw CairoException.critical(0)
+                        .put("string is outside of file boundary [offset=")
+                        .put(offset)
+                        .put(", dataPageLim=")
+                        .put(dataPageLim)
+                        .put(']');
+            }
             return Unsafe.getUnsafe().getInt(dataPageAddress + offset);
         }
         return NullMemoryCMR.INSTANCE.getStrLen(0);
@@ -412,21 +445,29 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         return csViewsB.getQuick(columnIndex);
     }
 
-    private BinarySequence getBin(long base, long offset, long pageLimit, MemoryCR.ByteSequenceView view) {
+    private BinarySequence getBin(long base, long offset, long dataLim, MemoryCR.ByteSequenceView view) {
         final long address = base + offset;
+        if (dataLim < address) {
+            throw CairoException.critical(0)
+                    .put("binary is outside of file boundary [offset=")
+                    .put(offset)
+                    .put(", dataLim=")
+                    .put(dataLim)
+                    .put(']');
+        }
         final long len = Unsafe.getUnsafe().getLong(address);
         if (len != TableUtils.NULL_LEN) {
-            if (len + Long.BYTES + offset <= pageLimit) {
-                return view.of(address + Long.BYTES, len);
+            if (dataLim < len + Long.BYTES + offset) {
+                throw CairoException.critical(0)
+                        .put("binary is outside of file boundary [offset=")
+                        .put(offset)
+                        .put(", len=")
+                        .put(len)
+                        .put(", pageLimit=")
+                        .put(dataLim)
+                        .put(']');
             }
-            throw CairoException.critical(0)
-                    .put("Bin is outside of file boundary [offset=")
-                    .put(offset)
-                    .put(", len=")
-                    .put(len)
-                    .put(", pageLimit=")
-                    .put(pageLimit)
-                    .put(']');
+            return view.of(address + Long.BYTES, len);
         }
         return null;
     }
@@ -450,21 +491,29 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         Numbers.appendLong256(a, b, c, d, sink);
     }
 
-    private DirectString getStrA(long base, long offset, long size, DirectString view) {
+    private DirectString getStr(long base, long offset, long dataLim, DirectString view) {
         final long address = base + offset;
+        if (dataLim < address) {
+            throw CairoException.critical(0)
+                    .put("string is outside of file boundary [offset=")
+                    .put(offset)
+                    .put(", dataLim=")
+                    .put(dataLim)
+                    .put(']');
+        }
         final int len = Unsafe.getUnsafe().getInt(address);
         if (len != TableUtils.NULL_LEN) {
-            if (len + 4 + offset <= size) {
-                return view.of(address + Vm.STRING_LENGTH_BYTES, len);
+            if (dataLim < len + 4 + offset) {
+                throw CairoException.critical(0)
+                        .put("string is outside of file boundary [offset=")
+                        .put(offset)
+                        .put(", len=")
+                        .put(len)
+                        .put(", dataLim=")
+                        .put(dataLim)
+                        .put(']');
             }
-            throw CairoException.critical(0)
-                    .put("String is outside of file boundary [offset=")
-                    .put(offset)
-                    .put(", len=")
-                    .put(len)
-                    .put(", size=")
-                    .put(size)
-                    .put(']');
+            return view.of(address + Vm.STRING_LENGTH_BYTES, len);
         }
         return null; // Column top.
     }
@@ -482,12 +531,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     private Utf8Sequence getVarchar(int columnIndex, Utf8SplitString utf8View) {
         final long auxPageAddress = auxPageAddresses.getQuick(columnIndex);
         if (auxPageAddress != 0) {
-            final long varcharAuxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
+            final long auxPageLim = auxPageAddress + auxPageSizes.getQuick(columnIndex);
             final long dataPageAddress = pageAddresses.getQuick(columnIndex);
             final long dataPageLim = dataPageAddress + pageSizes.getQuick(columnIndex);
             return VarcharTypeDriver.getSplitValue(
                     auxPageAddress,
-                    varcharAuxPageLim,
+                    auxPageLim,
                     dataPageAddress,
                     dataPageLim,
                     rowIndex,
