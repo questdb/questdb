@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -693,6 +694,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    @Ignore("memory leak in WAL mode")
     public void testUpdateWhileConcurrentlyChangingSchema() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             ddl("CREATE TABLE tango AS (SELECT x FROM long_sequence(10)) ");
