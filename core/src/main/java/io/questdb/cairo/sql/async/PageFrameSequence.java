@@ -602,6 +602,13 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
                 PageFrameReduceJob.reduce(localRecord, circuitBreaker, localTask, this, this);
             }
         } catch (Throwable th) {
+            LOG.error()
+                    .$("local reduce error [error=").$(th)
+                    .$(", id=").$(id)
+                    .$(", taskType=").$(taskType)
+                    .$(", frameIndex=").$(localTask.getFrameIndex())
+                    .$(", frameCount=").$(frameCount)
+                    .I$();
             int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
             if (th instanceof CairoException) {
                 CairoException e = (CairoException) th;
