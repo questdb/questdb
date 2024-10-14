@@ -1451,7 +1451,7 @@ public final class TestUtils {
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, null);
+        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
     }
 
@@ -1794,7 +1794,6 @@ public final class TestUtils {
         ObjObjHashMap<String, Long> sizes = TestUtils.findPartitionSizes(root, tableName, engine, sink);
         String[] lines = expected.split("\n");
         sink.clear();
-        StringSink auxSink = new StringSink();
         long size = 0L;
         String line = lines[0];
         for (int i = 0; i < partitionColumnNames.size(); i++) {
