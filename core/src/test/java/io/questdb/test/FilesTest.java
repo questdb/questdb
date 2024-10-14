@@ -560,9 +560,11 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "something/that/does/not/exist"));
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/."));
             Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "file"));
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_a_file/"));
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/dir/.."));
             Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_file"));
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_empty_dir"));
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_a_file"));
@@ -1520,23 +1522,23 @@ public class FilesTest {
             return Files.isDirOrSoftLinkDir(p.$());
         }
 
-        // Standard Java Reference impl:
-        //    final File file = new File(basePath, path);
-        //    if (!file.exists())
-        //        return false;
-        //
-        //    if (file.isDirectory())
-        //        return true;
-        //
-        //    if (java.nio.file.Files.isSymbolicLink(file.toPath())) {
-        //        try {
-        //            return java.nio.file.Files.isDirectory(java.nio.file.Files.readSymbolicLink(file.toPath()));
-        //        } catch (IOException e) {
-        //            return false;
-        //        }
-        //    }
-        //
-        //    return false;
+////         Standard Java Reference impl:
+//        final File file = new File(basePath, path);
+//        if (!file.exists())
+//            return false;
+//
+//        if (file.isDirectory())
+//            return true;
+//
+//        if (java.nio.file.Files.isSymbolicLink(file.toPath())) {
+//            try {
+//                return java.nio.file.Files.isDirectory(java.nio.file.Files.readSymbolicLink(file.toPath()));
+//            } catch (IOException e) {
+//                return false;
+//            }
+//        }
+//
+//        return false;
     }
 
     private File setupPath(File baseDir, String scenario) throws IOException {
