@@ -135,7 +135,7 @@ public class SecurityTest extends AbstractCairoTest {
 
             @Override
             public long getFd() {
-                return -1;
+                return -1L;
             }
 
             @Override
@@ -146,6 +146,20 @@ public class SecurityTest extends AbstractCairoTest {
             @Override
             public int getState(long millis, long fd) {
                 return SqlExecutionCircuitBreaker.STATE_OK;
+            }
+
+            @Override
+            public long getTimeout() {
+                return -1L;
+            }
+
+            @Override
+            public void init(SqlExecutionCircuitBreaker circuitBreaker) {
+            }
+
+            @Override
+            public boolean isThreadsafe() {
+                return true;
             }
 
             @Override

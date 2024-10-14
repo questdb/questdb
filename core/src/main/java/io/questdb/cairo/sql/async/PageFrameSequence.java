@@ -77,7 +77,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final AtomicBoolean valid = new AtomicBoolean(true);
     private final WorkStealingStrategy workStealingStrategy;
     public volatile boolean done;
-    private SqlExecutionCircuitBreaker circuitBreaker;
+    private SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private long circuitBreakerFd;
     private SCSequence collectSubSeq;
     private int collectedFrameIndex = -1;
@@ -112,6 +112,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.localTaskFactory = localTaskFactory;
         this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedWorkerCount);
         this.taskType = taskType;
+        this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(configuration.getCircuitBreakerConfiguration());
     }
 
     /**
@@ -202,7 +203,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     public void close() {
         clear();
         localRecord = Misc.free(localRecord);
-        circuitBreaker = Misc.freeIfCloseable(circuitBreaker);
+        circuitBreaker = Misc.free(circuitBreaker);
         localTask = Misc.free(localTask);
         Misc.free(atom);
     }
@@ -226,6 +227,10 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public int getCancelReason() {
         return cancelReason.get();
+    }
+
+    public SqlExecutionCircuitBreakerWrapper getCircuitBreaker() {
+        return circuitBreaker;
     }
 
     public long getCircuitBreakerFd() {
@@ -553,25 +558,16 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     private void initRecord(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
         if (localRecord == null) {
-            final SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration = executionContextCircuitBreaker.getConfiguration();
             localRecord = new PageFrameMemoryRecord();
-            if (sqlExecutionCircuitBreakerConfiguration != null) {
-                circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_CB2);
-            } else if (executionContextCircuitBreaker instanceof AtomicBooleanCircuitBreaker) {
-                circuitBreaker = executionContextCircuitBreaker;
-            } else {
-                circuitBreaker = NetworkSqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
-            }
         }
-
-        circuitBreaker.setFd(executionContextCircuitBreaker.getFd());
+        circuitBreaker.init(executionContextCircuitBreaker);
     }
 
     private boolean stealWork(
             RingQueue<PageFrameReduceTask> queue,
             MCSequence reduceSubSeq,
             PageFrameMemoryRecord record,
-            SqlExecutionCircuitBreaker circuitBreaker
+            SqlExecutionCircuitBreakerWrapper circuitBreaker
     ) {
         if (PageFrameReduceJob.consumeQueue(queue, reduceSubSeq, record, circuitBreaker, this)) {
             Os.pause();
