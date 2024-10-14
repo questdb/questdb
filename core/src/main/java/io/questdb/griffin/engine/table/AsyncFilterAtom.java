@@ -26,13 +26,22 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -169,10 +178,8 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                         break;
                     case ColumnType.LONG256:
                         Long256 l256 = record.getLong256A(i);
+                        // Touch only the first part of Long256.
                         sum += l256.getLong0();
-                        sum += l256.getLong1();
-                        sum += l256.getLong2();
-                        sum += l256.getLong3();
                         break;
                     case ColumnType.GEOBYTE:
                         sum += record.getGeoByte(i);
@@ -208,7 +215,7 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                         }
                         break;
                     case ColumnType.UUID:
-                        sum += record.getLong128Hi(i);
+                        // Touch only the first part of UUID.
                         sum += record.getLong128Lo(i);
                         break;
                 }
