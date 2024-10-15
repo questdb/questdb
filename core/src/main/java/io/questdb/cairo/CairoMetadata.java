@@ -569,6 +569,8 @@ public class CairoMetadata {
                         column.setName(columnName);
                         table.upsertColumn(column);
 
+                        // this corresponds to either the latest entry
+                        // or to the slot of a tombstoned entry (a column altered)
                         int existingIndex = TableUtils.getReplacingColumnIndex(metaMem, writerIndex);
                         int position = existingIndex > -1 ? existingIndex : (int) (table.getColumnCount() - 1);
 
