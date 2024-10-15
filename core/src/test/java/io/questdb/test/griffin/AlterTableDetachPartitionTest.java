@@ -911,7 +911,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     renameDetachedToAttachable(tableName, "2022-06-01");
                     ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
-                    assertContent(expected, tableName); //FIXME: mixed partition format query
+                    assertContent(expected, tableName);
                 });
     }
 

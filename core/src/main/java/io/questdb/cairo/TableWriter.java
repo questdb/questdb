@@ -6920,8 +6920,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long parquetFileFd = -1L;
         try (
                 PartitionDecoder partitionDecoder = new PartitionDecoder();
-                RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers();
-                DirectIntList columnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_O3)
+                RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_TABLE_WRITER);
+                DirectIntList columnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_TABLE_WRITER)
         ) {
             parquetFileFd = TableUtils.openRO(ff, partitionPath.concat(PARQUET_PARTITION_NAME).$(), LOG);
             partitionDecoder.of(parquetFileFd);
@@ -6980,8 +6980,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long parquetFileFd = -1L;
         try (
                 PartitionDecoder partitionDecoder = new PartitionDecoder();
-                RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers();
-                DirectIntList columnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_O3)
+                RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_TABLE_WRITER);
+                DirectIntList columnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_TABLE_WRITER)
         ) {
             parquetFileFd = TableUtils.openRO(ff, filePath.$(), LOG);
             partitionDecoder.of(parquetFileFd);
