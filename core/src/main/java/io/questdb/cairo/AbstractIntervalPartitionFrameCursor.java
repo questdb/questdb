@@ -284,38 +284,40 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     protected static class IntervalPartitionFrame implements PartitionFrame {
+        protected byte format;
+        protected long parquetFd;
+        protected long parquetReadSize;
         protected int partitionIndex;
+        protected int rowGroupIndex;
+        // we don't need rowGroupLo as it can be calculated as rowGroupLo+(rowHi-rowLo)
+        protected int rowGroupLo;
         protected long rowHi;
         protected long rowLo;
 
         @Override
         public long getParquetFd() {
-            // TODO(amunra): Add support for parquet interval intrinsics.
-            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
+            return parquetFd;
         }
 
         @Override
         public long getParquetReadSize() {
-            // TODO(amunra): Add support for parquet interval intrinsics.
-            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
+            assert parquetReadSize > -1 || format != PartitionFormat.PARQUET;
+            return parquetReadSize;
         }
 
         @Override
         public int getParquetRowGroup() {
-            // TODO(amunra): Add support for parquet interval intrinsics.
-            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
+            return rowGroupIndex;
         }
 
         @Override
         public int getParquetRowGroupLo() {
-            // TODO(amunra): Add support for parquet interval intrinsics.
-            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
+            return rowGroupLo;
         }
 
         @Override
         public byte getPartitionFormat() {
-            // TODO(amunra): Add support for parquet interval intrinsics.
-            return PartitionFormat.NATIVE;
+            return format;
         }
 
         @Override

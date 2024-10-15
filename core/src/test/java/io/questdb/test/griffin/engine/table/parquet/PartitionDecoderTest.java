@@ -35,7 +35,6 @@ import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.std.DirectIntList;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -93,7 +92,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
 
                 fd = TableUtils.openRO(ff, path.$(), LOG);
                 final long readSize = ff.length(fd);
-                partitionDecoder.of(fd, readSize);
+                partitionDecoder.of(fd, readSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 Assert.assertEquals(reader.getMetadata().getColumnCount(), partitionDecoder.metadata().columnCount());
                 Assert.assertEquals(rows, partitionDecoder.metadata().rowCount());
                 Assert.assertEquals(1, partitionDecoder.metadata().rowGroupCount());
@@ -145,7 +144,8 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 }
 
                 fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
-                partitionDecoder.of(fd);
+                final long readSize = ff.length(fd);
+                partitionDecoder.of(fd, readSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 columns.add(0);
                 columns.add(ColumnType.LONG);
 
@@ -215,7 +215,8 @@ public class PartitionDecoderTest extends AbstractCairoTest {
 
                 // Open it up.
                 fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
-                partitionDecoder.of(fd);
+                final long readSize = ff.length(fd);
+                partitionDecoder.of(fd, readSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 columns.add(0);
                 columns.add(ColumnType.LONG);
 

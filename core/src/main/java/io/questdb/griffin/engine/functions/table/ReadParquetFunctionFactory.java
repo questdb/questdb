@@ -40,6 +40,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -78,7 +79,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             final long fd = TableUtils.openRO(ff, path.$(), LOG);
             try (PartitionDecoder decoder = new PartitionDecoder()) {
                 final long readSize = ff.length(fd);
-                decoder.of(fd, readSize);
+                decoder.of(fd, readSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
                 decoder.metadata().copyTo(metadata, true);
