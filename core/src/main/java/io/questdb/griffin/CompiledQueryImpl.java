@@ -206,6 +206,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(COPY_REMOTE);
     }
 
+    public void ofCreateMatView(TableToken tableToken) {
+        of(CREATE_MAT_VIEW, null, tableToken);
+    }
+
     public void ofCreateTable(TableToken tableToken) {
         of(CREATE_TABLE, null, tableToken);
     }

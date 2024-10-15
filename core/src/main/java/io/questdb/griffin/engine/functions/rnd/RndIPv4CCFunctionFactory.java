@@ -84,10 +84,14 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_ipv4(").val(lo).val(',').val(range + lo - 1).val(nullRate - 1).val(')');
         }
-
     }
 }
 

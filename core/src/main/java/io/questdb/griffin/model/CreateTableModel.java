@@ -56,7 +56,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private boolean walEnabled;
 
     private CreateTableModel() {
-
     }
 
     public void addColumn(CharSequence name, int type, int symbolCapacity) throws SqlException {
@@ -193,6 +192,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return name.token;
     }
 
+    @Override
+    public ExpressionNode getTableNameExpr() {
+        return name;
+    }
+
     public ExpressionNode getTimestamp() {
         return timestamp;
     }
@@ -222,6 +226,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     @Override
     public boolean isIndexed(int index) {
         return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
+    }
+
+    @Override
+    public boolean isMatView() {
+        return false;
     }
 
     @Override
@@ -290,7 +299,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     public void setVolumeAlias(CharSequence volumeAlias) {
-        // set if the create table statement contains IN VOLUME 'volumeAlias'.
+        // set if the CREATE TABLE statement contains IN VOLUME 'volumeAlias'.
         // volumePath will be resolved by the compiler
         this.volumeAlias = Chars.toString(volumeAlias);
     }

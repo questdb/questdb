@@ -24,34 +24,15 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.SecurityContext;
-import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpMinServerConfiguration;
-import io.questdb.cutlass.http.HttpServerConfiguration;
-import io.questdb.cutlass.http.MimeTypesCache;
-import io.questdb.cutlass.http.WaitProcessorConfiguration;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
-import io.questdb.cutlass.line.LineHourTimestampAdapter;
-import io.questdb.cutlass.line.LineMicroTimestampAdapter;
-import io.questdb.cutlass.line.LineMilliTimestampAdapter;
-import io.questdb.cutlass.line.LineMinuteTimestampAdapter;
-import io.questdb.cutlass.line.LineNanoTimestampAdapter;
-import io.questdb.cutlass.line.LineSecondTimestampAdapter;
-import io.questdb.cutlass.line.LineTcpTimestampAdapter;
-import io.questdb.cutlass.line.LineTimestampAdapter;
+import io.questdb.cutlass.line.*;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
@@ -64,43 +45,12 @@ import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.EpollFacade;
-import io.questdb.network.EpollFacadeImpl;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.KqueueFacade;
-import io.questdb.network.KqueueFacadeImpl;
-import io.questdb.network.Net;
-import io.questdb.network.NetworkError;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.network.SelectFacade;
-import io.questdb.network.SelectFacadeImpl;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.LowerCaseCharSequenceIntHashMap;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.NanosecondClock;
-import io.questdb.std.NanosecondClockImpl;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.ObjObjHashMap;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
-import io.questdb.std.StationaryMillisClock;
-import io.questdb.std.StationaryNanosClock;
-import io.questdb.std.Unsafe;
+import io.questdb.network.*;
+import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
-import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.TimestampFormatFactory;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.microtime.*;
 import io.questdb.std.datetime.millitime.DateFormatFactory;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -112,13 +62,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Properties;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 
@@ -179,6 +123,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final String confRoot;
     private final boolean configReloadEnabled;
     private final int createAsSelectRetryCount;
+    private final int createMatViewRetryCount;
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
     private final int defaultSeqPartTxnCount;
@@ -257,6 +202,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final Log log;
     private final boolean logLevelVerbose;
     private final boolean logSqlQueryProgressExe;
+    private final boolean matViewEnabled;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -333,6 +279,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlCopyModelPoolCapacity;
     private final int sqlCountDistinctCapacity;
     private final double sqlCountDistinctLoadFactor;
+    private final int sqlCreateMatViewModelPoolCapacity;
     private final long sqlCreateTableModelBatchSize;
     private final int sqlCreateTableModelPoolCapacity;
     private final int sqlDistinctTimestampKeyCapacity;
@@ -576,7 +523,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerYieldThreshold;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitUsBeforeReload;
-
 
     public PropServerConfiguration(
             String root,
@@ -1094,6 +1040,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.walApplyWorkerSleepThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_THRESHOLD, 10_000);
             this.walApplySleepTimeout = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_SLEEP_TIMEOUT, 10);
             this.walApplyWorkerYieldThreshold = getLong(properties, env, PropertyKey.WAL_APPLY_WORKER_YIELD_THRESHOLD, 1000);
+
+            this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, false);
+            this.sqlCreateMatViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_CREATE_MAT_VIEW_MODEL_POOL_CAPACITY, 8);
+            this.createMatViewRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_MAT_VIEW_RETRY_COUNT, 5);
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
@@ -2288,6 +2238,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getCreateMatViewModelPoolCapacity() {
+            return sqlCreateMatViewModelPoolCapacity;
+        }
+
+        @Override
+        public int getCreateMatViewRetryCount() {
+            return createMatViewRetryCount;
+        }
+
+        @Override
         public long getCreateTableModelBatchSize() {
             return sqlCreateTableModelBatchSize;
         }
@@ -3199,6 +3159,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isIOURingEnabled() {
             return ioURingEnabled;
+        }
+
+        @Override
+        public boolean isMatViewEnabled() {
+            return matViewEnabled;
         }
 
         @Override

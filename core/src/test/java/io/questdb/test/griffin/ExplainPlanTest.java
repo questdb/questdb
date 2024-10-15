@@ -146,10 +146,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.Arrays;
 
@@ -160,6 +157,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        engine.getMaterializedViewGraph().clear();
     }
 
     @Test
@@ -1333,6 +1337,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                Frame forward scan on: a\n"
             );
         });
+    }
+
+    @Test
+    public void testExplainCreateMatView() throws Exception {
+        assertPlan(
+                "create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal",
+                "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
+                "Create materialized table: test\n" +
+                        "    Radix sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [ts,k]\n" +
+                        "          values: [avg(v)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tab\n"
+        );
     }
 
     @Test
