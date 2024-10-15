@@ -65,6 +65,21 @@ public class CountDistinctIntGroupByFunctionFactoryTest extends AbstractCairoTes
     }
 
     @Test
+    public void testCountDistinctMultipleColNotSupported() throws Exception {
+        assertException(
+                "select count(distinct(x::varchar, x+1::varchar)) from long_sequence(1)",
+                46,
+                "count distinct aggregation supports a single column only"
+        );
+
+        assertException(
+                "select count(distinct(x::varchar, foo(bar))) from long_sequence(1)",
+                42,
+                "count distinct aggregation supports a single column only"
+        );
+    }
+
+    @Test
     public void testExpression() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = "a\tcount_distinct\n" +

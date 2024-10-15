@@ -593,6 +593,9 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail("count(distinct *)", 6, "count(distinct *) is not supported");
         assertFail("count(distinct ", 6, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"distinct\"");
         assertFail("notcount(distinct foo)", 18, "dangling literal");
+        assertFail("count(distinct(foo, bar))", 23, "count distinct aggregation supports a single column only");
+        assertFail("count(distinct(foo, bar, foobar))", 31, "count distinct aggregation supports a single column only");
+        assertFail("count(distinct(foo, bar, foobar, 1+1))", 36, "count distinct aggregation supports a single column only");
     }
 
     @Test

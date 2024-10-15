@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
+
 public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test

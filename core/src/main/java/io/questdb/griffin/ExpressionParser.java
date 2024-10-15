@@ -635,7 +635,19 @@ public class ExpressionParser {
                         // enable operation or literal absorb parameters
                         if ((node = opStack.peek()) != null) {
                             if (localParamCount > 1 && node.token.charAt(0) == '(') {
+                                // sensible error for count(distinct(col1, col...)) case
+                                // this is supported by postgresql -> we want to give a clear error message QuestDB does not support it
+                                if (opStack.size() > 1) {
+                                    ExpressionNode en = opStack.peek();
+                                    if (en.type == ExpressionNode.CONTROL && Chars.equals(en.token, '(')) {
+                                        en = opStack.peek(1);
+                                        if (en.type == ExpressionNode.LITERAL && Chars.equals(en.token, "count_distinct")) {
+                                            throw SqlException.$(lastPos, "count distinct aggregation supports a single column only");
+                                        }
+                                    }
+                                }
                                 throw SqlException.$(lastPos, "no function or operator?");
+
                             } else if (node.type == ExpressionNode.LITERAL) {
                                 node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
                                 node.type = ExpressionNode.FUNCTION;
