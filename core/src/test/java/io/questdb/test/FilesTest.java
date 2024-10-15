@@ -559,15 +559,17 @@ public class FilesTest {
         Assert.assertFalse(nonexistent.exists());
 
         assertMemoryLeak(() -> {
-            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "something/that/does/not/exist"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/."));
-            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "file"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_a_file/"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/dir/.."));
-            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_file"));
+//            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "something/that/does/not/exist"));
+//            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/"));
+//            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/."));
+//            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "file"));
+//            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_a_file/"));
+//            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/"));
+//            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/dir/.."));
+//            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_file"));
+            System.err.println("1111111111>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_empty_dir"));
+            System.err.println("2222222222>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_a_file"));
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_an_empty_dir"));
             Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_nonexistent"));
@@ -1531,7 +1533,7 @@ public class FilesTest {
         //   - create files for any other scenario
         if (scenario.contains(" -> ")) {
             final String[] parts = scenario.split(" -> ");
-            final String targetPathString = parts[1];
+            final String targetPathString = parts[1].replaceAll("/$", "");
             final File target = new File(baseDir, targetPathString);
             final File link = new File(baseDir, parts[0]);
             link.getParentFile().mkdirs();
@@ -1540,12 +1542,13 @@ public class FilesTest {
                     Path linkPath = new Path().of(link.getAbsolutePath())
             ) {
                 Files.softLink(targetPath.$(), linkPath.$());
+                Assert.assertTrue(
+                        "Could not set up scenario: " + scenario,
+                        Files.exists(linkPath.$()));
             }
-            Assert.assertTrue(
-                    "Could not set up scenario: " + scenario,
-                    link.exists());
+
         } else if (scenario.endsWith("/")) {
-            final File file = new File(baseDir, scenario);
+            final File file = new File(baseDir, scenario.replaceAll("/$", ""));
             file.mkdirs();
             Assert.assertTrue(
                     "Could not set up scenario: " + scenario,

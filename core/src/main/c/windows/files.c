@@ -34,6 +34,8 @@
 #include "errno.h"
 #include "files.h"
 
+#include <stdio.h>
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
 
@@ -460,6 +462,65 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, 
 
     SaveLastError();
     return -1;
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isDir(JNIEnv *e, jclass cl, jlong lpszName) {
+    const size_t len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCCH) lpszName, -1, NULL, 0);
+    fwprintf(stderr, L"isDir :: (A) len: %d, lpszName: %s\n", len, lpszName);
+    if (len > 0) {
+        wchar_t buf[len];
+        MultiByteToWideChar(
+                CP_UTF8,
+                0, (LPCCH) lpszName,
+                -1,
+                buf,
+                (int) len);
+
+        DWORD attrs = GetFileAttributesW(buf);
+        fprintf(stderr, "isDir :: (C) attrs: %d\n", attrs);
+
+        if (attrs == INVALID_FILE_ATTRIBUTES) {
+            fprintf(stderr, "isDir :: (C1)\n");
+            return FALSE;
+        }
+
+        if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
+            fprintf(stderr, "isDir :: (D)\n");
+            attrs = INVALID_FILE_ATTRIBUTES;
+            // Resolve the symlink or junction
+            HANDLE hFile = CreateFileW(
+                    buf,
+                    GENERIC_READ,
+                    FILE_SHARE_READ,
+                    NULL,
+                    OPEN_EXISTING,
+                    FILE_FLAG_BACKUP_SEMANTICS,
+                    NULL);
+            if (hFile != INVALID_HANDLE_VALUE) {
+                fprintf(stderr, "isDir :: (E)\n");
+                BY_HANDLE_FILE_INFORMATION fileInfo;
+                if (GetFileInformationByHandle(hFile, &fileInfo)) {
+                    fprintf(stderr, "isDir :: (F)\n");
+                    CloseHandle(hFile);
+                    attrs = fileInfo.dwFileAttributes;
+                } else {
+                    fprintf(stderr, "isDir :: (G)\n");
+                    CloseHandle(hFile);
+                }
+                fprintf(stderr, "isDir :: (H)\n");
+            }
+            fprintf(stderr, "isDir :: (I)\n");
+        }
+
+        fprintf(stderr, "isDir :: (J)\n");
+        if ((attrs != INVALID_FILE_ATTRIBUTES) && (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
+            fprintf(stderr, "isDir :: (K)\n");
+            return TRUE;
+        }
+    }
+    fprintf(stderr, "isDir :: (L)\n");
+
+    return FALSE;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
