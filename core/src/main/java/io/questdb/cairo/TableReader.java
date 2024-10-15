@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.PartitionOverwriteControl;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.NullMemoryCMR;
@@ -201,8 +200,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    public void dumpPartitionInfo(LongList container) {
-        txFile.dumpPartitionInfo(container);
+    public void dumpRawTxPartitionInfo(LongList container) {
+        txFile.dumpRawTxPartitionInfo(container);
     }
 
     public long floorToPartitionTimestamp(long timestamp) {

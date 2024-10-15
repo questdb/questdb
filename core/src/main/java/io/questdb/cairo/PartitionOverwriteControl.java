@@ -22,20 +22,17 @@
  *
  ******************************************************************************/
 
-package io.questdb;
+package io.questdb.cairo;
 
-import io.questdb.cairo.BinarySearch;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
-import static io.questdb.cairo.TableUtils.LONGS_PER_TX_ATTACHED_PARTITION_MSB;
-
+// When enabled, this class tracks TableReader usage of partitions.
+// The TableWriter and O3PartitionPurgeJob check if the particular partition version is in use to prevent partition overwrite bugs.
+// This is supposed to be disabled in production runs and only enabled in tests or on special debugging occasions via configuration.
 public class PartitionOverwriteControl {
     private static final Log LOG = LogFactory.getLog(PartitionOverwriteControl.class);
     boolean enabled;
@@ -49,7 +46,7 @@ public class PartitionOverwriteControl {
             assert reader.isActive();
 
             LongList partitions = new LongList();
-            reader.dumpPartitionInfo(partitions);
+            reader.dumpRawTxPartitionInfo(partitions);
 
             ReaderPartitionUsage readerPartitionUsage = new ReaderPartitionUsage();
             readerPartitionUsage.owner = reader;
@@ -85,10 +82,10 @@ public class PartitionOverwriteControl {
                 synchronized (usages) {
                     for (int i = 0, n = usages.size(); i < n; i++) {
                         ReaderPartitionUsage readerPartitionUsage = usages.get(i);
-                        int partitionBlockIndex = readerPartitionUsage.partitionsList.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+                        int partitionBlockIndex = TxReader.findPartitionRawIndex(readerPartitionUsage.partitionsList, partitionTimestamp);
                         if (partitionBlockIndex >= 0) {
-                            long usedPartitionNameTxn = readerPartitionUsage.partitionsList.getQuick(partitionBlockIndex + 2);
-                            long visibleRows = readerPartitionUsage.partitionsList.getQuick(partitionBlockIndex + 1);
+                            long usedPartitionNameTxn = TxReader.getPartitionNameTxnByRawIndex(readerPartitionUsage.partitionsList, partitionBlockIndex);
+                            long visibleRows = TxReader.getPartitionSizeByRawIndex(readerPartitionUsage.partitionsList, partitionBlockIndex);
 
                             if (usedPartitionNameTxn == partitionNameTxn && visibleRows > mutateFromRow) {
                                 throw CairoException.critical(0).put("partition is overwritten while being in use by a reader [table=").put(tableToken.getTableName())

@@ -25,7 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.MessageBus;
-import io.questdb.PartitionOverwriteControl;
+import io.questdb.cairo.PartitionOverwriteControl;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
