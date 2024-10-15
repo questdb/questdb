@@ -992,24 +992,6 @@ public class ExpressionParser {
                         }
                         processDefaultBranch = true;
                         break;
-                    case 'O':
-                    case 'o':
-                        // PostgreSQL supports an optional ORDER BY for string_distinct_agg(), e.g.: string_distinct_agg('a', ',' ORDER BY 'b')
-                        // We do not support it and this branch exists to give a meaningful error message in this case
-                        processDefaultBranch = true;
-                        if (SqlKeywords.isOrderKeyword(tok) && opStack.size() > 2) {
-                            ExpressionNode en = opStack.peek();
-                            if (en.type == ExpressionNode.CONSTANT) {
-                                en = opStack.peek(1);
-                                if (en.type == ExpressionNode.CONTROL && Chars.equals(en.token, '(')) {
-                                    en = opStack.peek(2);
-                                    if (en.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(en.token, "string_distinct_agg")) {
-                                        throw SqlException.$(lastPos, "ORDER BY not supported for string_distinct_agg");
-                                    }
-                                }
-                            }
-                        }
-                        break;
                     case '*':
                         // special case for tab.*
                         if (prevBranch == BRANCH_DOT) {
@@ -1388,6 +1370,19 @@ public class ExpressionParser {
                                         throw SqlException.$(member.position, "we expect timestamp part here");
                                     }
 
+                                }
+                            } else if (SqlKeywords.isOrderKeyword(tok) && opStack.size() > 2) {
+                                // PostgreSQL supports an optional ORDER BY for string_distinct_agg(), e.g.: string_distinct_agg('a', ',' ORDER BY 'b')
+                                // We do not support it and this branch exists to give a meaningful error message in this case
+                                ExpressionNode en = opStack.peek();
+                                if (en.type == ExpressionNode.CONSTANT) {
+                                    en = opStack.peek(1);
+                                    if (en.type == ExpressionNode.CONTROL && Chars.equals(en.token, '(')) {
+                                        en = opStack.peek(2);
+                                        if (en.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(en.token, "string_distinct_agg")) {
+                                            throw SqlException.$(lastPos, "ORDER BY not supported for string_distinct_agg");
+                                        }
+                                    }
                                 }
                             }
                         }
