@@ -158,42 +158,44 @@ public class WorkerPoolManagerTest {
         int events = 20;
         AtomicInteger count = new AtomicInteger();
         SOCountDownLatch endLatch = new SOCountDownLatch(events);
-        AtomicReference<DirectUtf8Sink> sink = new AtomicReference<>(new DirectUtf8Sink(32));
+        try (DirectUtf8Sink directUtf8Sink = new DirectUtf8Sink(32)) {
+            AtomicReference<DirectUtf8Sink> sink = new AtomicReference<>(directUtf8Sink);
 
-        final ServerConfiguration config = createServerConfig(1); // shared pool
-        final WorkerPoolManager workerPoolManager = new WorkerPoolManager(config, METRICS) {
-            @Override
-            protected void configureSharedPool(WorkerPool sharedPool) {
-                sharedPool.assign(scrapeIntoPrometheusJob(sink));
+            final ServerConfiguration config = createServerConfig(1); // shared pool
+            final WorkerPoolManager workerPoolManager = new WorkerPoolManager(config, METRICS) {
+                @Override
+                protected void configureSharedPool(WorkerPool sharedPool) {
+                    sharedPool.assign(scrapeIntoPrometheusJob(sink));
+                }
+            };
+            WorkerPool p0 = workerPoolManager.getInstance(
+                    workerPoolConfiguration("UP", 30L),
+                    METRICS,
+                    WorkerPoolManager.Requester.OTHER
+            );
+            WorkerPool p1 = workerPoolManager.getInstance(
+                    workerPoolConfiguration("DOWN", 10L),
+                    METRICS,
+                    WorkerPoolManager.Requester.OTHER
+            );
+            p0.assign(slowCountUpJob(count));
+            p1.assign(fastCountDownJob(endLatch));
+            workerPoolManager.start(null);
+            if (!endLatch.await(TimeUnit.SECONDS.toNanos(60L))) {
+                Assert.fail("timeout");
             }
-        };
-        WorkerPool p0 = workerPoolManager.getInstance(
-                workerPoolConfiguration("UP", 30L),
-                METRICS,
-                WorkerPoolManager.Requester.OTHER
-        );
-        WorkerPool p1 = workerPoolManager.getInstance(
-                workerPoolConfiguration("DOWN", 10L),
-                METRICS,
-                WorkerPoolManager.Requester.OTHER
-        );
-        p0.assign(slowCountUpJob(count));
-        p1.assign(fastCountDownJob(endLatch));
-        workerPoolManager.start(null);
-        if (!endLatch.await(TimeUnit.SECONDS.toNanos(60L))) {
-            Assert.fail("timeout");
-        }
-        workerPoolManager.halt();
+            workerPoolManager.halt();
 
-        Assert.assertEquals(0, endLatch.getCount());
-        WorkerMetrics metrics = METRICS.workerMetrics();
-        long min = metrics.getMinElapsedMicros();
-        long max = metrics.getMaxElapsedMicros();
-        Assert.assertTrue(min > 0L);
-        Assert.assertTrue(max > min);
-        String metricsAsStr = sink.get().toString();
-        TestUtils.assertContains(metricsAsStr, "questdb_workers_job_start_micros_min");
-        TestUtils.assertContains(metricsAsStr, "questdb_workers_job_start_micros_max");
+            Assert.assertEquals(0, endLatch.getCount());
+            WorkerMetrics metrics = METRICS.workerMetrics();
+            long min = metrics.getMinElapsedMicros();
+            long max = metrics.getMaxElapsedMicros();
+            Assert.assertTrue(min > 0L);
+            Assert.assertTrue(max > min);
+            String metricsAsStr = sink.get().toString();
+            TestUtils.assertContains(metricsAsStr, "questdb_workers_job_start_micros_min");
+            TestUtils.assertContains(metricsAsStr, "questdb_workers_job_start_micros_max");
+        }
     }
 
     @Test

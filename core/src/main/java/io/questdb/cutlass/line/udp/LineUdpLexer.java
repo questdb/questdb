@@ -408,7 +408,7 @@ public class LineUdpLexer implements Mutable, Closeable {
             if (dstPos == bufferHi) {
                 extend();
             }
-            Unsafe.getUnsafe().putChar(dstPos, c);
+            Unsafe.putChar(dstPos, c);
             return this;
         }
 

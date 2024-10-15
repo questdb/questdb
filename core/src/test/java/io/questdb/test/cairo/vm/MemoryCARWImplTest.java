@@ -85,7 +85,7 @@ public class MemoryCARWImplTest {
             try {
                 // supply length of our buffer
                 // blob content would be shorter
-                Vect.memset(buffer, 1024, 5);
+                Vect.memsetChecked(buffer, 1024, 5);
                 actual.copyTo(buffer, 0, 1024);
 
                 for (int i = 0; i < N; i++) {
@@ -98,7 +98,7 @@ public class MemoryCARWImplTest {
                 }
 
                 // copy from middle
-                Vect.memset(buffer, 1024, 5);
+                Vect.memsetChecked(buffer, 1024, 5);
                 actual.copyTo(buffer, O, 1024);
 
                 for (int i = 0; i < N - O; i++) {

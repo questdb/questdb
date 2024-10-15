@@ -62,6 +62,7 @@ public class TextMetadataParserTest {
     public static void tearDown() {
         LEXER.close();
         utf16Sink.close();
+        utf8Sink.close();
         textMetadataParser.close();
     }
 

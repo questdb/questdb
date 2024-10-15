@@ -790,7 +790,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final long tableIndexMem = TableUtils.mapRWOrClose(ff, tableIndexFd, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
             Rnd rnd = new Rnd(cairoConfiguration.getMicrosecondClock().getTicks(), cairoConfiguration.getMillisecondClock().getTicks());
             if (Os.compareAndSwap(tableIndexMem + Long.BYTES, 0, rnd.nextLong()) == 0) {
-                Unsafe.getUnsafe().putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
+                Unsafe.putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
             }
             this.instanceHashLo = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES);
             this.instanceHashHi = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES * 2);

@@ -101,7 +101,7 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         final int size = us.size();
         final long dest = sink.checkCapacity(size);
         for (int i = 0; i < size; i++) {
-            Unsafe.getUnsafe().putByte(dest + i, us.byteAt(i));
+            Unsafe.putByte(dest + i, us.byteAt(i));
         }
         sink.advance(size);
         return this;

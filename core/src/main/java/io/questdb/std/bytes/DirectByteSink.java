@@ -105,6 +105,11 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     public @NotNull NativeByteSink borrowDirectByteSink() {
         assert impl != 0;
         lastAllocatedCapacity = allocatedCapacity();
+
+        // we are borrowing out the buffer to native code, so we stop tracking it
+        // since the buffer is not in our control anymore, native code might resize it
+        // and the old address might be used for something else
+        AllocationsTracker.onFree(getImplLo());
         return byteSink;
     }
 
@@ -121,8 +126,12 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             return p;
         }
         final long initCapacity = allocatedCapacity();
+        long oldLo = getImplLo();
+        AllocationsTracker.onFree(oldLo);
         p = implBook(impl, required);
         if (p == 0) {
+            // realloc failed, the old address remains valid
+            AllocationsTracker.onMalloc(oldLo, initCapacity);
             if (getImplOverflow()) {
                 throw CairoException.critical(0).put("buffer overflow, buffer capacity is requested to be over 2 GiB");
             } else {
@@ -130,6 +139,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             }
         }
         final long newCapacity = allocatedCapacity();
+        AllocationsTracker.onMalloc(getImplLo(), newCapacity);
         if (newCapacity > initCapacity) {
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag());
@@ -173,7 +183,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
 
     public DirectByteSink put(byte b) {
         final long dest = checkCapacity(1);
-        Unsafe.getUnsafe().putByte(dest, b);
+        Unsafe.putByte(dest, b);
         advance(1);
         return this;
     }
@@ -183,7 +193,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             final int bsSize = bs.size();
             final long dest = checkCapacity(bsSize);
             for (int i = 0; i < bsSize; i++) {
-                Unsafe.getUnsafe().putByte(dest + i, bs.byteAt(i));
+                Unsafe.putByte(dest + i, bs.byteAt(i));
             }
             advance(bsSize);
         }
@@ -232,7 +242,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     }
 
     public void setAscii(boolean ascii) {
-        Unsafe.getUnsafe().putByte(impl + BYTE_SINK_ASCII_OFFSET, (byte) (ascii ? 1 : 0));
+        Unsafe.putByte(impl + BYTE_SINK_ASCII_OFFSET, (byte) (ascii ? 1 : 0));
     }
 
     /**
@@ -247,12 +257,17 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         return getImplHi() - getImplPtr();
     }
 
+    // called after native code has finished using the buffer
+    // should be paired with borrowDirectByteSink
     private void closeByteSink() {
         final long capacityChange = allocatedCapacity() - lastAllocatedCapacity;
         if (capacityChange != 0) {
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(capacityChange, memoryTag());
         }
+
+        // starting tracking again
+        AllocationsTracker.onMalloc(getImplLo(), this.allocatedCapacity());
     }
 
     private void deflate() {
@@ -260,6 +275,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             return;
         }
         final long capAdjustment = -1 * allocatedCapacity();
+        AllocationsTracker.onFree(impl);
+        AllocationsTracker.onFree(getImplLo());
         implDestroy(impl);
         Unsafe.incrFreeCount();
         Unsafe.recordMemAlloc(capAdjustment, memoryTag());
@@ -289,12 +306,14 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         if (impl == 0) {
             throw CairoException.nonCritical().setOutOfMemory(true).put("could not allocate direct byte sink [maxCapacity=").put(initialCapacity).put(']');
         }
+        AllocationsTracker.onMalloc(getImplLo(), this.allocatedCapacity());
+        AllocationsTracker.onMalloc(impl, 29);
         Unsafe.recordMemAlloc(this.allocatedCapacity(), memoryTag());
         Unsafe.incrMallocCount();
     }
 
     private void setImplPtr(long ptr) {
-        Unsafe.getUnsafe().putLong(impl + BYTE_SINK_PTR_OFFSET, ptr);
+        Unsafe.putLong(impl + BYTE_SINK_PTR_OFFSET, ptr);
     }
 
     protected int memoryTag() {

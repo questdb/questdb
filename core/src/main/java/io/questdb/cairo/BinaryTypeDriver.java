@@ -51,7 +51,7 @@ public class BinaryTypeDriver extends StringTypeDriver {
             long dstDataAddr,
             long dstDataOffset
     ) {
-        Vect.oooMergeCopyBinColumn(
+        Vect.oooMergeCopyBinColumnChecked(
                 timestampMergeIndexAddr,
                 timestampMergeIndexCount,
                 srcAuxAddr1,
@@ -66,7 +66,7 @@ public class BinaryTypeDriver extends StringTypeDriver {
 
     @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
-        Vect.memset(dataMemAddr, rowCount * Long.BYTES, -1);
+        Vect.memsetChecked(dataMemAddr, rowCount * Long.BYTES, -1);
     }
 
     @Override

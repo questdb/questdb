@@ -26,8 +26,6 @@ package io.questdb.test.std.str;
 
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryAR;
-import io.questdb.cairo.vm.api.MemoryCA;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
@@ -633,9 +631,10 @@ public class Utf8sTest {
             TestUtils.assertEquals(strSink, str);
 
             // test with DirectUtf8Sink too
-            DirectUtf8Sink directSink = new DirectUtf8Sink(size);
-            Utf8s.strCpy(mem, mem + size, directSink);
-            TestUtils.assertEquals(strSink, directSink);
+            try (DirectUtf8Sink directSink = new DirectUtf8Sink(size)) {
+                Utf8s.strCpy(mem, mem + size, directSink);
+                TestUtils.assertEquals(strSink, directSink);
+            }
         } finally {
             Unsafe.free(mem, size, MemoryTag.NATIVE_DEFAULT);
         }

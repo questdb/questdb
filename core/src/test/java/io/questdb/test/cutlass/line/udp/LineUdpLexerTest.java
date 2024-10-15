@@ -29,23 +29,30 @@ import io.questdb.cutlass.line.udp.CachedCharSequence;
 import io.questdb.cutlass.line.udp.CharSequenceCache;
 import io.questdb.cutlass.line.udp.LineUdpLexer;
 import io.questdb.cutlass.line.udp.LineUdpParser;
-import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.HashMap;
 import java.util.Map;
 
 public class LineUdpLexerTest {
 
-    private final static LineUdpLexer lexer = new LineUdpLexer(4096);
+    private static LineUdpLexer lexer;
     protected final StringSink sink = new StringSink();
     private final TestLineUdpParser lineAssemblingParser = new TestLineUdpParser();
+
+    @BeforeClass
+    public static void setUpStatic() {
+        lexer = new LineUdpLexer(4096);
+    }
+
+    @AfterClass
+    public static void tearDown() {
+        Misc.free(lexer);
+        AllocationsTracker.dumpNewAllocationsStacktraces(null);
+    }
 
     @Before
     public void setUp() {
@@ -342,11 +349,12 @@ public class LineUdpLexerTest {
             }
 
             // assert small buffer
-            LineUdpLexer smallBufLexer = new LineUdpLexer(64);
-            lineAssemblingParser.clear();
-            smallBufLexer.withParser(lineAssemblingParser);
-            smallBufLexer.parse(mem, mem + len);
-            smallBufLexer.parseLast();
+            try (LineUdpLexer smallBufLexer = new LineUdpLexer(64)) {
+                lineAssemblingParser.clear();
+                smallBufLexer.withParser(lineAssemblingParser);
+                smallBufLexer.parse(mem, mem + len);
+                smallBufLexer.parseLast();
+            }
             TestUtils.assertEquals(expected, sink);
         } finally {
             Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);

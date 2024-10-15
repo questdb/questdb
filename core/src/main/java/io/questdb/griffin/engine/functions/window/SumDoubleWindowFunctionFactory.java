@@ -419,7 +419,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
         }
     }
 
@@ -481,7 +481,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 
         @Override
@@ -551,7 +551,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), sum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
         }
 
         @Override
@@ -606,7 +606,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
 
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 
         @Override
@@ -665,7 +665,7 @@ public class SumDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 
         @Override
