@@ -354,14 +354,65 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
     pub fn find_row_group_by_timestamp(
         &mut self,
-        _timestamp: i64,
-        _row_lo: usize,
-        _row_hi: usize,
-        _timestamp_column_index: usize,
+        timestamp: i64,
+        row_lo: usize,
+        row_hi: usize,
+        timestamp_column_index: u32,
         _scan_direction: ScanDirection,
-    ) -> ParquetResult<u32> {
-        // TODO(puzpuzpuz): implement me
-        Ok(0)
+    ) -> ParquetResult<i32> {
+        let timestamp_column_index = timestamp_column_index as usize;
+        let column_type = self.columns[timestamp_column_index].column_type;
+        if column_type.tag() != ColumnTypeTag::Timestamp {
+            return Err(fmt_err!(
+                Invalid,
+                "expected timestamp column, but got {}, column index: {}",
+                column_type,
+                timestamp_column_index
+            ));
+        }
+
+        let row_group_count = self.row_group_count;
+        let mut row_count = 0usize;
+        for (row_group_idx, row_group_meta) in self.metadata.row_groups.iter().enumerate() {
+            let columns_meta = row_group_meta.columns();
+            let column_metadata = &columns_meta[timestamp_column_index];
+            let column_chunk = column_metadata.column_chunk();
+            let column_chunk_meta = column_chunk.meta_data.as_ref().ok_or_else(|| {
+                fmt_err!(
+                    Invalid,
+                    "metadata not found for timestamp column, column index: {}",
+                    timestamp_column_index
+                )
+            })?;
+
+            let column_chunk_size = column_chunk_meta.num_values as usize;
+            if row_hi < row_count - 1 {
+                break;
+            }
+            if row_lo < row_count + column_chunk_size {
+                let column_chunk_stats =
+                    column_chunk_meta.statistics.as_ref().ok_or_else(|| {
+                        fmt_err!(
+                            Invalid,
+                            "statistics not found for timestamp column, column index: {}",
+                            timestamp_column_index
+                        )
+                    })?;
+
+                let min_value = long_stat_value(&column_chunk_stats.min_value)?;
+                let max_value = long_stat_value(&column_chunk_stats.max_value)?;
+
+                if timestamp >= min_value && timestamp <= max_value {
+                    return Ok(row_group_idx as i32);
+                }
+                if timestamp < min_value {
+                    return Ok((row_group_idx - 1) as i32);
+                }
+            }
+            row_count += column_chunk_size;
+        }
+
+        Ok(row_group_count as i32)
     }
 }
 
@@ -1195,6 +1246,22 @@ pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
         .iter()
         .copied()
         .collect()
+}
+
+fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
+    let value = value
+        .as_ref()
+        .ok_or_else(|| fmt_err!(Invalid, "missing statistics value"))?;
+    if value.len() != 8 {
+        return Err(fmt_err!(
+            Invalid,
+            "unexpected value byte array size of {}",
+            value.len()
+        ));
+    }
+    Ok(i64::from_le_bytes(
+        value[0..8].try_into().expect("unexpected vec length"),
+    ))
 }
 
 #[cfg(test)]

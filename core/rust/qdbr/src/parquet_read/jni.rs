@@ -151,19 +151,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     row_hi: usize,
     timestamp_column_index: u32,
     scan_direction: i32,
-) -> u32 {
+) -> i32 {
     assert!(!decoder.is_null(), "decoder pointer is null");
 
     let decoder = unsafe { &mut *decoder };
 
     let res = ScanDirection::try_from(scan_direction).and_then(|dir| {
-        decoder.find_row_group_by_timestamp(
-            timestamp,
-            row_lo,
-            row_hi,
-            timestamp_column_index as usize,
-            dir,
-        )
+        decoder.find_row_group_by_timestamp(timestamp, row_lo, row_hi, timestamp_column_index, dir)
     });
 
     match res {
