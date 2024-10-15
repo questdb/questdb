@@ -7621,7 +7621,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
         if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
-            // Noting to do
+            // Nothing to do
             return;
         }
 

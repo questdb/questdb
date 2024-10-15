@@ -73,7 +73,6 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         private final ReaderListener readerListener;
         private Entry<R> entry;
         private AbstractMultiTenantPool<R> pool;
-        boolean active;
 
         public R(
                 AbstractMultiTenantPool<R> pool,
@@ -89,14 +88,12 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
             this.entry = entry;
             this.index = index;
             this.readerListener = readerListener;
-            this.active = true;
         }
 
         @Override
         public void close() {
             if (isOpen()) {
                 goPassive();
-                this.active = false;
                 final AbstractMultiTenantPool<R> pool = this.pool;
                 if (pool == null || entry == null || !pool.returnToPool(this)) {
                     super.close();

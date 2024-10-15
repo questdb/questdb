@@ -35,8 +35,8 @@ import io.questdb.std.ObjList;
 // This is supposed to be disabled in production runs and only enabled in tests or on special debugging occasions via configuration.
 public class PartitionOverwriteControl {
     private static final Log LOG = LogFactory.getLog(PartitionOverwriteControl.class);
-    boolean enabled;
     ConcurrentHashMap<ObjList<ReaderPartitionUsage>> readerPartitionUsageMap = new ConcurrentHashMap<>();
+    private boolean enabled;
 
     public void acquirePartitions(TableReader reader) {
         if (enabled) {
@@ -129,9 +129,9 @@ public class PartitionOverwriteControl {
         }
     }
 
-    static class ReaderPartitionUsage {
-        TableReader owner;
-        long ownerTxn;
-        LongList partitionsList;
+    private static class ReaderPartitionUsage {
+        private TableReader owner;
+        private long ownerTxn;
+        private LongList partitionsList;
     }
 }
