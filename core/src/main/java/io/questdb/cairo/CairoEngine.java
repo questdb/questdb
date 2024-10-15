@@ -151,7 +151,9 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.reload();
 
             this.sqlCompilerPool = new SqlCompilerPool(this);
-
+            if (configuration.getPartitionO3OverwriteControlEnabled()) {
+                enablePartitionOverwriteControl();
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -440,6 +442,11 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void enablePartitionOverwriteControl() {
+        LOG.info().$("partition overwrite control is enabled");
+        partitionOverwriteControl.enable();
+    }
+
     public TableWriter getBackupWriter(TableToken tableToken, CharSequence backupDirName) {
         verifyTableToken(tableToken);
         // There is no point in pooling/caching these writers since they are only used once, backups are not incremental
@@ -521,11 +528,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Metrics getMetrics() {
         return metrics;
-    }
-
-    @TestOnly
-    public void enablePartitionOverwriteControl() {
-        partitionOverwriteControl.enable();
     }
 
     public PartitionOverwriteControl getPartitionOverwriteControl() {

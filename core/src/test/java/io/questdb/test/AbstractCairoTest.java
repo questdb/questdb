@@ -421,7 +421,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         metrics = node1.getMetrics();
         engine = node1.getEngine();
         engine.metadataCacheClear();
-        engine.enablePartitionOverwriteControl();
         messageBus = node1.getMessageBus();
 
         node1.initGriffin(circuitBreaker);
