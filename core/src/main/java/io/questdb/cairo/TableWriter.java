@@ -1197,21 +1197,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
 
-        final boolean isActivePartition = partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp());
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0 || isActivePartition) {
-            formatPartitionForTimestamp(partitionTimestamp, -1);
-            throw CairoException.nonCritical()
-                    .put("cannot convert ")
-                    .put(isActivePartition ? "active partition" : "partition")
-                    .put(" to parquet")
-                    .put(isActivePartition ? " [table=" : ", partition does not exist [table=")
-                    .put(tableToken.getTableName())
-                    .put(", partition=")
-                    .put(utf8Sink)
-                    .put(']');
-
+        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
+            return true; // The partition is active; conversion is currently unsupported.
         }
+
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.nonCritical().put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink).put(']');
+        }
+
 
         if (txWriter.isPartitionParquet(partitionIndex)) {
             return true; // Partition is already in Parquet format.
