@@ -28,7 +28,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     match ParquetDecoder::read(allocator, reader, read_size) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
         Err(mut err) => {
-            err.add_context(format!("could not read parquet file with fd {raw_fd} and read size {read_size}"));
+            err.add_context(format!(
+                "could not read parquet file with fd {raw_fd} and read size {read_size}"
+            ));
             err.add_context("error in PartitionDecoder.create");
             err.into_cairo_exception().throw(&mut env)
         }
