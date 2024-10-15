@@ -443,7 +443,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void enablePartitionOverwriteControl() {
-        LOG.info().$("partition overwrite control is enabled");
+        LOG.info().$("partition overwrite control is enabled").$();
         partitionOverwriteControl.enable();
     }
 
