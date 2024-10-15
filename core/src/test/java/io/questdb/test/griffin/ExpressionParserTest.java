@@ -577,10 +577,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         x("bar foo count_distinct varchar cast", "cast (count_distinct(foo(bar)) as varchar)");
         x("bar foo count_distinct varchar cast", "cast (count(distinct foo(bar)) as varchar)");
 
-        // 'distinct' on its own is treated as a column name. technically, it should have been in double quotes
-        // since it is a reserved word. but that's a compatibility issue. so let's check it's not rewritten
-        x("distinct count varchar cast", "cast (count(distinct) as varchar)");
-        // check it works even if quoted
+        // check distinct works as a column name when quoted
         x("distinct count varchar cast", "cast (count(\"distinct\") as varchar)");
         // it works with multiple arguments too
         x("distinct foo count", "count(\"distinct\", foo)");
@@ -596,6 +593,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail("count(distinct(foo, bar))", 23, "count distinct aggregation supports a single column only");
         assertFail("count(distinct(foo, bar, foobar))", 31, "count distinct aggregation supports a single column only");
         assertFail("count(distinct(foo, bar, foobar, 1+1))", 36, "count distinct aggregation supports a single column only");
+        assertFail("count(distinct))", 6, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"distinct\"");
     }
 
     @Test
@@ -1174,32 +1172,28 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testStringAggDistinctRewrites() throws SqlException {
-        x("foo string_distinct_agg", "string_distinct_agg(foo)");
-        x("foo string_distinct_agg", "string_agg(distinct foo)");
+        x("foo ',' string_distinct_agg", "string_distinct_agg(foo, ',')");
+        x("foo ',' string_distinct_agg", "string_agg(distinct foo, ',')");
 
-        x("1 1 + string_distinct_agg", "string_distinct_agg(1+1)");
-        x("1 1 + string_distinct_agg", "string_agg(distinct 1+1)");
+        x("1 1 + ',' string_distinct_agg", "string_distinct_agg(1+1, ',')");
+        x("1 1 + ',' string_distinct_agg", "string_agg(distinct 1+1, ',')");
 
-        x("bar foo string_distinct_agg", "string_distinct_agg(foo(bar))");
-        x("bar foo string_distinct_agg", "string_agg(distinct foo(bar))");
+        x("bar foo ',' string_distinct_agg", "string_distinct_agg(foo(bar), ',')");
+        x("bar foo ',' string_distinct_agg", "string_agg(distinct foo(bar), ',')");
 
-        x("bar foo string_distinct_agg varchar cast", "cast (string_distinct_agg(foo(bar)) as varchar)");
-        x("bar foo string_distinct_agg varchar cast", "cast (string_agg(distinct foo(bar)) as varchar)");
+        x("bar foo ',' string_distinct_agg varchar cast", "cast (string_distinct_agg(foo(bar), ',') as varchar)");
+        x("bar foo ',' string_distinct_agg varchar cast", "cast (string_agg(distinct foo(bar), ',') as varchar)");
 
-        // 'distinct' on its own is treated as a column name. technically, it should have been in double quotes
-        // since it is a reserved word. but that's a compatibility issue. so let's check it's not rewritten
-        x("distinct string_agg varchar cast", "cast (string_agg(distinct) as varchar)");
-        // check it works even if quoted
-        x("distinct string_agg varchar cast", "cast (string_agg(\"distinct\") as varchar)");
-        // it works with multiple arguments too
-        x("distinct foo string_agg", "string_agg(\"distinct\", foo)");
-        // not written when string_agg is not a function
+        // check 'distinct' as a column name works when quoted
+        x("distinct ',' string_agg varchar cast", "cast (string_agg(\"distinct\", ',') as varchar)");
+        // not re-written when string_agg is not a function
         x("string_agg distinct foo", "foo(string_agg, distinct)");
         x("distinctnot string_agg", "string_agg(distinctnot)");
         x("bar string_agg distinct foo", "foo(bar, string_agg, distinct)");
         x("string_agg bar distinct foo", "foo(bar(string_agg), distinct)");
 
-        assertFail("string_agg(distinct ", 11, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"distinct\"");
+        assertFail("string_agg(distinct)", 11, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"distinct\"");
+        assertFail("notcount(distinct foo, ',')", 18, "dangling literal");
         assertFail("notcount(distinct foo)", 18, "dangling literal");
     }
 

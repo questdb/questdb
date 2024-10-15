@@ -431,11 +431,12 @@ public class ExpressionParser {
                                 CharSequence tokenStash = GenericLexer.immutableOf(tok);
                                 CharSequence nextToken = SqlUtil.fetchNext(lexer);
                                 if (nextToken != null) {
-                                    // if distinct is the only argument then we treat it as a column name
-                                    // and not a keyword. strictly speaking, keywords used as column names
-                                    // should be quoted, but for now we are not enforcing it here for backwards compatibility reasons.
-                                    // it's something we could/should consider in the future
-                                    if (!Chars.equals(nextToken, ')')) {
+                                    if (Chars.equals(nextToken, ')') || Chars.equals(nextToken, ',') || Chars.equals(nextToken, "::")) {
+                                        // this means 'distinct' is meant to be used as a column name and not as a keyword.
+                                        // at this point we also know 'distinct' is not in double-quotes since otherwise the CASE wouldn't match
+                                        // we call assertTableNameIsQuotedOrNotAKeyword() to ensure a consistent error message
+                                        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tokenStash, lastPos);
+                                    } else {
                                         en = opStack.peek(1);
                                         if (en.type == ExpressionNode.LITERAL) {
                                             if (SqlKeywords.isCountKeyword(en.token)) {
