@@ -31,6 +31,7 @@ import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoMetadataRO;
 import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
@@ -818,7 +819,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertCairoMetadata(String expected) {
-        TestUtils.assertEquals(expected, engine.getCairoMetadata().read().toString0());
+        try (CairoMetadataRO ro = engine.getCairoMetadata().read()) {
+            sink.clear();
+            ro.toSink(sink);
+            TestUtils.assertEquals(expected, sink);
+        }
     }
 
     protected static void assertCursor(
@@ -2020,14 +2025,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics, MessageBus messageBus) {
         return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, messageBus, engine);
-    }
-
-    protected String printSqlToString(CharSequence sql) throws SqlException {
-        return TestUtils.printSqlToString(engine, sqlExecutionContext, sql, sink);
-    }
-
-    protected String printSqlToString(CharSequence sql, StringSink stringSink) throws SqlException {
-        return TestUtils.printSqlToString(engine, sqlExecutionContext, sql, stringSink);
     }
 
     protected TableToken registerTableName(CharSequence tableName) {

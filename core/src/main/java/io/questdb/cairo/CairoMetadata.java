@@ -39,13 +39,12 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Comparator;
@@ -55,7 +54,7 @@ import java.util.Comparator;
  */
 public class CairoMetadata {
     private static final Log LOG = LogFactory.getLog(CairoMetadata.class);
-    private static Comparator<CairoColumn> comparator = Comparator.comparingInt(CairoColumn::getPosition);
+    private static final Comparator<CairoColumn> comparator = Comparator.comparingInt(CairoColumn::getPosition);
     private final CairoEngine engine;
     private final CairoMetadataReader reader = new CairoMetadataReader();
     private final SimpleReadWriteLock rwlock = new SimpleReadWriteLock();
@@ -63,7 +62,6 @@ public class CairoMetadata {
     private final ThreadLocal<ColumnVersionReader> tlColumnVersionReader = ThreadLocal.withInitial(ColumnVersionReader::new);
     private final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
     private final CairoMetadataWriter writer = new CairoMetadataWriter();
-    ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);
     private long version;
 
     public CairoMetadata(CairoEngine engine) {
@@ -107,28 +105,6 @@ public class CairoMetadata {
     public CairoMetadataRO read() {
         rwlock.readLock().lock();
         return reader;
-    }
-
-    /**
-     * Thread unsafe function for debug printing the metadata object, doesn't require manual closing.
-     */
-    @SuppressWarnings("unused")
-    @TestOnly
-    public String toString0Unsafe() {
-        StringSink sink = tlSink.get();
-        sink.put("CairoMetadata [");
-        sink.put("tableCount=").put(tables.size()).put(']');
-        sink.put('\n');
-
-        for (int i = 0, n = tables.size(); i < n; i++) {
-            sink.put('\t');
-            tables.getAt(i).toSink(sink);
-            sink.put('\n');
-        }
-        String s = sink.toString();
-        sink.clear();
-        tlSink.remove();
-        return s;
     }
 
     /**
@@ -201,11 +177,7 @@ public class CairoMetadata {
                 return false;
             }
 
-            if (TableUtils.isFinalTableName((String) tableName, configuration.getTempRenamePendingTablePrefix())) {
-                return true;
-            }
-
-            return false;
+            return TableUtils.isFinalTableName((String) tableName, configuration.getTempRenamePendingTablePrefix());
         }
 
         /**
@@ -253,12 +225,8 @@ public class CairoMetadata {
             return version;
         }
 
-        /**
-         * For debug printing the metadata object, doesn't require manual closing.
-         */
-        @TestOnly
-        public String toString0() {
-            StringSink sink = tlSink.get();
+        @Override
+        public void toSink(@NotNull CharSink<?> sink) {
             sink.put("CairoMetadata [");
             sink.put("tableCount=").put(tables.size()).put(']');
             sink.put('\n');
@@ -268,11 +236,6 @@ public class CairoMetadata {
                 tables.getAt(i).toSink(sink);
                 sink.put('\n');
             }
-            close();
-            String s = sink.toString();
-            sink.clear();
-            tlSink.remove();
-            return s;
         }
     }
 

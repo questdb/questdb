@@ -27,10 +27,11 @@ package io.questdb.cairo;
 
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public interface CairoMetadataRO extends AutoCloseable, QuietCloseable {
+public interface CairoMetadataRO extends QuietCloseable, Sinkable {
     @Nullable
     CairoTable getTable(@NotNull TableToken tableToken);
 
@@ -41,8 +42,5 @@ public interface CairoMetadataRO extends AutoCloseable, QuietCloseable {
     boolean isVisibleTable(@NotNull CharSequence tableName);
 
     long snapshot(CharSequenceObjHashMap<CairoTable> localCache, long priorVersion);
-
-    String toString0();
-
 }
 

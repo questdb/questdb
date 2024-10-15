@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -39,7 +40,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 
 public class CairoMetadataTest extends AbstractCairoTest {
-
     private static final String xMetaString = "CairoMetadata [tableCount=1]\n" +
             "\tCairoTable [name=x, id=1, directoryName=x~, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=NONE, timestampIndex=3, timestampName=timestamp, walEnabled=false, columnCount=16]\n" +
             "\t\tCairoColumn [name=i, position=0, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
@@ -104,7 +104,7 @@ public class CairoMetadataTest extends AbstractCairoTest {
         droppingThread.start();
 
         TableToken tableToken;
-        CairoTable cairoTable = null;
+        CairoTable cairoTable;
 
         Thread.sleep(2_000);
 
@@ -176,9 +176,9 @@ public class CairoMetadataTest extends AbstractCairoTest {
         // should only ever contain one or the other
         // check that `tables()` gives consistent view
         while (Instant.now().getEpochSecond() - i.getEpochSecond() < 2) {
-            s = printSqlToString("tables()", ss);
+            s = dumpTables(ss);
             Assert.assertTrue(
-                    engine.getCairoMetadata().read().toString0(),
+                    TestUtils.dumpMetadataCache(engine),
                     s.contains("foo\t") ^ s.contains("bah\t"));
             Thread.sleep(50);
         }
@@ -199,7 +199,7 @@ public class CairoMetadataTest extends AbstractCairoTest {
         // one should be null
         Assert.assertNotSame(fooToken, bahToken);
 
-        String cacheString = engine.getCairoMetadata().read().toString0();
+        String cacheString = TestUtils.dumpMetadataCache(engine);
 
         if (fooToken == null) {
             Assert.assertFalse(cacheString.contains("name=foo"));
@@ -275,7 +275,7 @@ public class CairoMetadataTest extends AbstractCairoTest {
         // one should be null
         Assert.assertNotSame(fooToken, bahToken);
 
-        String cacheString = engine.getCairoMetadata().read().toString0();
+        String cacheString = TestUtils.dumpMetadataCache(engine);
 
         if (fooToken == null) {
             Assert.assertFalse(cacheString.contains("name=foo"));
@@ -660,14 +660,14 @@ public class CairoMetadataTest extends AbstractCairoTest {
         );
     }
 
+    private void createY() throws SqlException {
+        ddl("create table y ( ts timestamp ) timestamp(ts) partition by day wal;");
+    }
+
 
     // todo: ALTER TABLE SET TYPE
     // more complicated since it requires a database restart
     // maybe fuzzer is best place to check this
-
-    private void createY() throws SqlException {
-        ddl("create table y ( ts timestamp ) timestamp(ts) partition by day wal;");
-    }
 
     private void createZ() throws SqlException {
         ddl(
@@ -714,6 +714,10 @@ public class CairoMetadataTest extends AbstractCairoTest {
             counter.incrementAndGet();
             Thread.sleep(50);
         }
+    }
+
+    protected String dumpTables(StringSink stringSink) throws SqlException {
+        return TestUtils.printSqlToString(engine, sqlExecutionContext, "tables()", stringSink);
     }
 
 }

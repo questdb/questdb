@@ -31,6 +31,7 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoMetadataRO;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DefaultDdlListener;
@@ -117,7 +118,6 @@ import java.nio.file.Paths;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -981,6 +981,14 @@ public final class TestUtils {
         }
     }
 
+    public static String dumpMetadataCache(CairoEngine engine) {
+        try (CairoMetadataRO ro = engine.getCairoMetadata().read()) {
+            StringSink sink = new StringSink();
+            ro.toSink(sink);
+            return sink.toString();
+        }
+    }
+
     public static boolean equals(CharSequence expected, CharSequence actual) {
         if (expected == null && actual == null) {
             return true;
@@ -1445,11 +1453,6 @@ public final class TestUtils {
         return sink.toString();
     }
 
-    public static String replaceSizeToMatchPartitionSumInOS(String expected, String tableName, List<String> partitionColumnNames,
-                                                            CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
-        return replaceSizeToMatchPartitionSumInOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink, partitionColumnNames);
-    }
-
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
@@ -1780,29 +1783,6 @@ public final class TestUtils {
                 sink.put('\t');
             }
         }
-        return sink.toString();
-    }
-
-    private static String replaceSizeToMatchPartitionSumInOS(
-            String expected,
-            Utf8Sequence root,
-            String tableName,
-            CairoEngine engine,
-            StringSink sink,
-            List<String> partitionColumnNames
-    ) {
-        ObjObjHashMap<String, Long> sizes = TestUtils.findPartitionSizes(root, tableName, engine, sink);
-        String[] lines = expected.split("\n");
-        sink.clear();
-        long size = 0L;
-        String line = lines[0];
-        for (int i = 0; i < partitionColumnNames.size(); i++) {
-            Long s = sizes.get(partitionColumnNames.get(i));
-            long pSize = s != null ? s : 0L;
-            size += pSize;
-        }
-        line = line.replaceAll("SIZE", String.valueOf(size));
-        sink.put(line).put('\n');
         return sink.toString();
     }
 
