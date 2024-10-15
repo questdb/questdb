@@ -34,12 +34,14 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
@@ -1093,6 +1095,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                     "from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
+                    drainWalQueue();
 
                     final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
                     final SOCountDownLatch haltLatch = new SOCountDownLatch(numOfThreads);
@@ -1106,9 +1109,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 for (int j = 0; j < numOfIterations; j++) {
                                     assertQueries(engine, sqlExecutionContext, sink, query, expected);
                                 }
-                            } catch (Throwable e) {
-                                e.printStackTrace();
-                                errors.put(threadId, e);
+                            } catch (Throwable th) {
+                                th.printStackTrace();
+                                errors.put(threadId, th);
                             } finally {
                                 haltLatch.countDown();
                             }
@@ -1905,6 +1908,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                     "from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
+                    drainWalQueue();
 
                     final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
                     final SOCountDownLatch haltLatch = new SOCountDownLatch(numOfThreads);
@@ -1918,9 +1922,75 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 for (int j = 0; j < numOfIterations; j++) {
                                     assertQueries(engine, sqlExecutionContext, sink, query, expected);
                                 }
-                            } catch (Throwable e) {
-                                e.printStackTrace();
-                                errors.put(threadId, e);
+                            } catch (Throwable th) {
+                                th.printStackTrace();
+                                errors.put(threadId, th);
+                            } finally {
+                                haltLatch.countDown();
+                            }
+                        }).start();
+                    }
+                    haltLatch.await();
+                },
+                configuration,
+                LOG
+        );
+
+        if (!errors.isEmpty()) {
+            for (Map.Entry<Integer, Throwable> entry : errors.entrySet()) {
+                LOG.error().$("Error in thread [id=").$(entry.getKey()).$("] ").$(entry.getValue()).$();
+            }
+            fail("Error in threads");
+        }
+    }
+
+    @Test
+    public void testParallelStringKeyGroupByConcurrentNpeInReduce() throws Exception {
+        // This query validates parallel processing and doesn't use JIT.
+        Assume.assumeTrue(enableParallelGroupBy);
+        Assume.assumeFalse(enableJitCompiler);
+        // We'll need npe() function.
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+
+        final int numOfThreads = 8;
+        final int numOfIterations = 50;
+        final String query = "SELECT key, avg(value) FROM tab WHERE npe();";
+
+        final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
+        final WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    ddl(
+                            compiler,
+                            "CREATE TABLE tab (" +
+                                    "  ts TIMESTAMP," +
+                                    "  key STRING," +
+                                    "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    insert(
+                            compiler,
+                            "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
+                            sqlExecutionContext
+                    );
+                    drainWalQueue();
+
+                    final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
+                    final SOCountDownLatch haltLatch = new SOCountDownLatch(numOfThreads);
+
+                    for (int i = 0; i < numOfThreads; i++) {
+                        final int threadId = i;
+                        new Thread(() -> {
+                            TestUtils.await(barrier);
+                            // We expect an NPE (work stealing) or a CairoException (NPE caught by a worker)
+                            try {
+                                for (int j = 0; j < numOfIterations; j++) {
+                                    assertCairoException(engine, query, "unexpected filter error", sqlExecutionContext);
+                                }
+                            } catch (NullPointerException npe) {
+                                // NPE is expected
+                            } catch (Throwable th) {
+                                th.printStackTrace();
+                                errors.put(threadId, th);
                             } finally {
                                 haltLatch.countDown();
                             }
@@ -2642,6 +2712,30 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertCairoException(
+            CairoEngine engine,
+            CharSequence sql,
+            CharSequence contains,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        try {
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = CairoEngine.select(compiler, sql, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                cursor.hasNext();
+            }
+            Assert.fail();
+        } catch (Throwable th) {
+            if (th instanceof FlyweightMessageContainer) {
+                TestUtils.assertContains(((FlyweightMessageContainer) th).getFlyweightMessage(), contains);
+            } else {
+                throw th;
+            }
+        }
+    }
+
     private static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws SqlException {
         assertQueries(engine, sqlExecutionContext, sink, queriesAndExpectedResults);
     }
@@ -2810,8 +2904,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                     Assert.fail();
                                 }
                             }
-                        } catch (Throwable e) {
-                            TestUtils.assertContains(e.getMessage(), "unexpected filter error");
+                        } catch (Throwable th) {
+                            TestUtils.assertContains(th.getMessage(), "unexpected filter error");
                         }
                     },
                     configuration,
@@ -2937,6 +3031,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        drainWalQueue();
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
@@ -2974,6 +3069,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        drainWalQueue();
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
@@ -3065,6 +3161,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        drainWalQueue();
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
 
                         // now drop the String table and recreate it with a Varchar key
@@ -3090,6 +3187,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        drainWalQueue();
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
@@ -3129,6 +3227,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        drainWalQueue();
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,

@@ -27,7 +27,15 @@ package io.questdb.cairo.sql.async;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
+import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
@@ -36,7 +44,10 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.*;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.io.Closeable;
@@ -114,6 +125,12 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         while (!done) {
+            // First check the local task: maybe we were reducing locally and got interrupted by an exception?
+            if (localTask != null && localTask.getFrameSequence() == this && dispatchStartFrameIndex == localTask.getFrameIndex() + 1) {
+                collectedFrameIndex = localTask.getFrameIndex();
+                localTask.collected(true);
+            }
+
             if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                 // We know that all frames were collected. We're almost done.
                 if (!done) {
@@ -127,11 +144,17 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             // We were asked to steal work from the reduce queue and beyond, as much as we can.
             boolean nothingProcessed = true;
             try {
-                nothingProcessed = PageFrameReduceJob.consumeQueue(reduceQueue, pageFrameReduceSubSeq, localRecord, circuitBreaker, this);
-            } catch (Throwable e) {
+                nothingProcessed = PageFrameReduceJob.consumeQueue(
+                        reduceQueue,
+                        pageFrameReduceSubSeq,
+                        localRecord,
+                        circuitBreaker,
+                        this
+                );
+            } catch (Throwable th) {
                 LOG.error()
                         .$("await error [id=").$(id)
-                        .$(", ex=").$(e)
+                        .$(", ex=").$(th)
                         .I$();
             }
 
@@ -583,13 +606,21 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             if (isActive()) {
                 PageFrameReduceJob.reduce(localRecord, circuitBreaker, localTask, this, this);
             }
-        } catch (Throwable e) {
+        } catch (Throwable th) {
+            LOG.error()
+                    .$("local reduce error [error=").$(th)
+                    .$(", id=").$(id)
+                    .$(", taskType=").$(taskType)
+                    .$(", frameIndex=").$(localTask.getFrameIndex())
+                    .$(", frameCount=").$(frameCount)
+                    .I$();
             int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
-            if (e instanceof CairoException) {
-                interruptReason = ((CairoException) e).getInterruptionReason();
+            if (th instanceof CairoException) {
+                CairoException e = (CairoException) th;
+                interruptReason = e.getInterruptionReason();
             }
             cancel(interruptReason);
-            throw e;
+            throw th;
         } finally {
             reduceFinishedCounter.incrementAndGet();
         }

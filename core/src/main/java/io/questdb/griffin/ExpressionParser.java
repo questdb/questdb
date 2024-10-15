@@ -28,7 +28,15 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntStack;
+import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjStack;
+import io.questdb.std.ObjectPool;
 
 import static io.questdb.griffin.OperatorExpression.UNARY;
 
@@ -410,7 +418,49 @@ public class ExpressionParser {
                         }
 
                         break;
-
+                    case 'd':
+                    case 'D':
+                        if (prevBranch == BRANCH_LEFT_PARENTHESIS && SqlKeywords.isDistinctKeyword(tok)) {
+                            // rewrite count(distinct x) to count_distinct(x)
+                            // and string_agg(distinct x) to string_distinct_agg(x)
+                            if (opStack.size() > 1) {
+                                ExpressionNode en = opStack.peek();
+                                // we are in the BRANCH_LEFT_PARENTHESIS, so the previous token must be
+                                // a control token '('
+                                assert Chars.equals(en.token, '(') && en.type == ExpressionNode.CONTROL;
+                                CharSequence tokenStash = GenericLexer.immutableOf(tok);
+                                CharSequence nextToken = SqlUtil.fetchNext(lexer);
+                                if (nextToken != null) {
+                                    if (Chars.equals(nextToken, ')') || Chars.equals(nextToken, ',') || Chars.equals(nextToken, "::")) {
+                                        // this means 'distinct' is meant to be used as a column name and not as a keyword.
+                                        // at this point we also know 'distinct' is not in double-quotes since otherwise the CASE wouldn't match
+                                        // we call assertTableNameIsQuotedOrNotAKeyword() to ensure a consistent error message
+                                        SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tokenStash, lastPos);
+                                    } else {
+                                        en = opStack.peek(1);
+                                        if (en.type == ExpressionNode.LITERAL) {
+                                            if (SqlKeywords.isCountKeyword(en.token)) {
+                                                if (Chars.equals(nextToken, '*')) {
+                                                    throw SqlException.$(lastPos, "count(distinct *) is not supported");
+                                                }
+                                                en.token = "count_distinct";
+                                                lexer.unparseLast();
+                                                continue;
+                                            } else if (Chars.equalsIgnoreCase("string_agg", en.token)) {
+                                                en.token = "string_distinct_agg";
+                                                lexer.unparseLast();
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                    lexer.unparseLast();
+                                }
+                                // unparsing won't set `tok` to the previous token, so we need to do it manually
+                                tok = tokenStash;
+                            }
+                        }
+                        processDefaultBranch = true;
+                        break;
                     case 'g':
                     case 'G':
                         // this code ensures that "geohash(6c)" type will be converted to single "geohash6c" node (not two nodes)
@@ -586,7 +636,19 @@ public class ExpressionParser {
                         // enable operation or literal absorb parameters
                         if ((node = opStack.peek()) != null) {
                             if (localParamCount > 1 && node.token.charAt(0) == '(') {
+                                // sensible error for count(distinct(col1, col...)) case
+                                // this is supported by postgresql -> we want to give a clear error message QuestDB does not support it
+                                if (opStack.size() > 1) {
+                                    ExpressionNode en = opStack.peek();
+                                    if (en.type == ExpressionNode.CONTROL && Chars.equals(en.token, '(')) {
+                                        en = opStack.peek(1);
+                                        if (en.type == ExpressionNode.LITERAL && Chars.equals(en.token, "count_distinct")) {
+                                            throw SqlException.$(lastPos, "count distinct aggregation supports a single column only");
+                                        }
+                                    }
+                                }
                                 throw SqlException.$(lastPos, "no function or operator?");
+
                             } else if (node.type == ExpressionNode.LITERAL) {
                                 node.paramCount = localParamCount + Math.max(0, node.paramCount - 1);
                                 node.type = ExpressionNode.FUNCTION;
@@ -1322,6 +1384,19 @@ public class ExpressionParser {
                                     }
 
                                 }
+                            } else if (SqlKeywords.isOrderKeyword(tok) && opStack.size() > 2) {
+                                // PostgreSQL supports an optional ORDER BY for string_distinct_agg(), e.g.: string_distinct_agg('a', ',' ORDER BY 'b')
+                                // We do not support it and this branch exists to give a meaningful error message in this case
+                                ExpressionNode en = opStack.peek();
+                                if (en.type == ExpressionNode.CONSTANT) {
+                                    en = opStack.peek(1);
+                                    if (en.type == ExpressionNode.CONTROL && Chars.equals(en.token, '(')) {
+                                        en = opStack.peek(2);
+                                        if (en.type == ExpressionNode.LITERAL && Chars.equalsIgnoreCase(en.token, "string_distinct_agg")) {
+                                            throw SqlException.$(lastPos, "ORDER BY not supported for string_distinct_agg");
+                                        }
+                                    }
+                                }
                             }
                         }
                         // literal can be at start of input, after a bracket or part of an operator
@@ -1340,7 +1415,6 @@ public class ExpressionParser {
             }
 
             while ((node = opStack.pop()) != null) {
-
                 if (node.token.length() != 0 && node.token.charAt(0) == '(') {
                     throw SqlException.$(node.position, "unbalanced (");
                 }

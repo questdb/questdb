@@ -30,8 +30,13 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.ShardedMapCursor;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
@@ -280,9 +285,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     }
                 }
             }
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             mergeCircuitBreaker.cancel();
-            throw e;
+            throw th;
         } finally {
             // All done? Great, start consuming the queue we just published.
             // How do we get to the end? If we consume our own queue there is chance we will be consuming

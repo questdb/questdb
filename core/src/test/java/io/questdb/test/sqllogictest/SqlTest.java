@@ -22,44 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine;
+package io.questdb.test.sqllogictest;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
-public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
+import java.util.Collection;
 
-    public EmptyTableRecordCursorFactory(RecordMetadata metadata) {
-        super(metadata);
+@RunWith(Parameterized.class)
+public class SqlTest extends AbstractSqllogicTestRunner {
+    public SqlTest(String testFile) {
+        super(testFile);
     }
 
-    @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return EmptyTableRecordCursor.INSTANCE;
-    }
-
-    @Override
-    public boolean recordCursorSupportsRandomAccess() {
-        return false;
-    }
-
-    @Override
-    public boolean supportsUpdateRowId(TableToken tableToken) {
-        return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("Empty table");
-    }
-
-    @Override
-    protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> files() {
+        return files("sql");
     }
 }

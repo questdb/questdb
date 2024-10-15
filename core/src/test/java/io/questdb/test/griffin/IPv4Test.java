@@ -2141,9 +2141,10 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4CountDistinct() throws Exception {
+        String expected = "count_distinct\n" +
+                "20\n";
         assertQuery(
-                "count_distinct\n" +
-                        "20\n",
+                expected,
                 "select count_distinct(ip) from test",
                 "create table test as " +
                         "(" +
@@ -2157,6 +2158,7 @@ public class IPv4Test extends AbstractCairoTest {
                 false,
                 true
         );
+        assertSql(expected, "select count(distinct ip) from test");
     }
 
     @Test
