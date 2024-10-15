@@ -1209,6 +1209,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getPartitionO3OverwriteControlEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean useFastAsOfJoin() {
         return true;
     }

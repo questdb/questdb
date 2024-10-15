@@ -284,6 +284,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long o3PartitionSplitMinSize;
     private final int o3PurgeDiscoveryQueueCapacity;
     private final boolean o3QuickSortEnabled;
+    private final boolean o3partitionOverwriteControlEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
     private final int partitionEncoderParqeutRowGroupSize;
@@ -1299,6 +1300,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoMaxCrashFiles = getInt(properties, env, PropertyKey.CAIRO_MAX_CRASH_FILES, 100);
             this.o3LastPartitionMaxSplits = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20));
             this.o3PartitionSplitMinSize = getLongSize(properties, env, PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 50 * Numbers.SIZE_1MB);
+            this.o3partitionOverwriteControlEnabled = getBoolean(properties, env, PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED, false);
 
             parseBindTo(properties, env, PropertyKey.LINE_UDP_BIND_TO, "0.0.0.0:9009", (a, p) -> {
                 this.lineUdpBindIPV4Address = a;
@@ -2635,6 +2637,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPartitionEncoderParquetVersion() {
             return partitionEncoderParquetVersion;
+        }
+
+        @Override
+        public boolean getPartitionO3OverwriteControlEnabled() {
+            return o3partitionOverwriteControlEnabled;
         }
 
         @Override
