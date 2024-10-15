@@ -1522,24 +1522,6 @@ public class FilesTest {
         try (Path p = new Path().of(new File(basePath, path).toString())) {
             return Files.isDirOrSoftLinkDir(p.$());
         }
-
-////         Standard Java Reference impl:
-//        final File file = new File(basePath, path);
-//        if (!file.exists())
-//            return false;
-//
-//        if (file.isDirectory())
-//            return true;
-//
-//        if (java.nio.file.Files.isSymbolicLink(file.toPath())) {
-//            try {
-//                return java.nio.file.Files.isDirectory(java.nio.file.Files.readSymbolicLink(file.toPath()));
-//            } catch (IOException e) {
-//                return false;
-//            }
-//        }
-//
-//        return false;
     }
 
     private void setupPath(File baseDir, String scenario) throws IOException {
