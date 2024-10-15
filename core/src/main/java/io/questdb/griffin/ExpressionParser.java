@@ -28,7 +28,15 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntStack;
+import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjStack;
+import io.questdb.std.ObjectPool;
 
 import static io.questdb.griffin.OperatorExpression.UNARY;
 
@@ -1340,7 +1348,6 @@ public class ExpressionParser {
             }
 
             while ((node = opStack.pop()) != null) {
-
                 if (node.token.length() != 0 && node.token.charAt(0) == '(') {
                     throw SqlException.$(node.position, "unbalanced (");
                 }
