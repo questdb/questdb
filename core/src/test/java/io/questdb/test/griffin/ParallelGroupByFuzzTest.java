@@ -1560,6 +1560,42 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelRegressionSlope() throws Exception {
+        Assume.assumeTrue(enableJitCompiler);
+
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        ddl(
+                                compiler,
+                                "create table tbl1 as (select rnd_double() x, rnd_double() y, rnd_symbol('a', 'b', 'c') sym from long_sequence(100000))",
+                                sqlExecutionContext
+                        );
+
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "select round(regr_slope(x, y), 5), sym from tbl1 WHERE x > 0.5 ORDER BY sym",
+                                sink,
+                                "round\tsym\n" +
+                                        "-0.00317\ta\n" +
+                                        "-0.00402\tb\n" +
+                                        "0.00476\tc\n"
+                        );
+                    },
+                    configuration,
+
+                    LOG
+            );
+        });
+
+    }
+
+    @Test
     public void testParallelRostiAvg() throws Exception {
         testParallelRostiGroupBy(
                 "SELECT key, avg(s) avg_s, avg(i) avg_i, avg(l) avg_l, round(avg(d)) avg_d " +
