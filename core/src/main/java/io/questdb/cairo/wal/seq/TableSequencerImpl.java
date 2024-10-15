@@ -184,7 +184,7 @@ public class TableSequencerImpl implements TableSequencer {
                 0, 0, timestamp, 0, 0, 0);
         metadata.dropTable();
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.dropTable(tableToken);
         }
 

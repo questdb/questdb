@@ -482,8 +482,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
-            metadataRW.clear();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.clearCache();
         }
         messageBus = node1.getMessageBus();
 
@@ -510,8 +510,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         factoryProvider = null;
         engineFactory = null;
         configurationFactory = null;
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
-            metadataRW.clear();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.clearCache();
         }
         AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
@@ -527,8 +527,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         SharedRandom.RANDOM.set(new Rnd());
         forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
-            metadataRW.clear();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.clearCache();
         }
         refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
@@ -550,8 +550,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         forEachNode(node -> node.tearDownCairo(removeDir));
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
-            metadataRW.clear();
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.clearCache();
         }
         sink.clear();
         memoryUsage = -1;
@@ -819,7 +819,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertCairoMetadata(String expected) {
-        try (MetadataCacheReader ro = engine.getMetadataCache().read()) {
+        try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
             sink.clear();
             ro.toSink(sink);
             TestUtils.assertEquals(expected, sink);

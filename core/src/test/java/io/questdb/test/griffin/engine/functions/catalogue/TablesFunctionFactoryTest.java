@@ -108,7 +108,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             );
 
             // trying to rehydrate all tables
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateAllTables();
             }
 

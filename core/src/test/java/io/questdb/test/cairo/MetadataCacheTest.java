@@ -126,7 +126,7 @@ public class MetadataCacheTest extends AbstractCairoTest {
         tableToken = engine.getTableTokenIfExists("foo");
 
         if (tableToken != null) {
-            try (MetadataCacheReader metadataRO = engine.getMetadataCache().read()) {
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 cairoTable = metadataRO.getTable(tableToken);
             }
 

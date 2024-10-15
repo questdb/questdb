@@ -99,7 +99,7 @@ public class CreateTableTestUtils {
             }
         }
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable("x");
         }
 

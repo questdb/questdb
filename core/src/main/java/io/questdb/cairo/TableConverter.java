@@ -128,8 +128,8 @@ public class TableConverter {
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
                                 convertedTables.add(token);
 
-                                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
-                                    metadataRW.hydrateTable(token, true);
+                                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                                    metadataRW.hydrateTable(token);
                                 }
                             }
 

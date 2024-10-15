@@ -25,40 +25,46 @@
 package io.questdb.cairo;
 
 
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
 public interface MetadataCacheWriter extends QuietCloseable {
-    void clear();
+    void clearCache();
 
     void dropTable(@NotNull TableToken tableToken);
 
-    void dropTable(@NotNull CharSequence tableName);
-
+    /**
+     * Updates the entire cache sourcing table names from the Engine. The previous
+     * state of the cache is discarded
+     */
     void hydrateAllTables();
 
     /**
-     * @see MetadataCacheWriter#hydrateTable(TableToken, boolean)
+     * Updates the metadata cache using table name. If name is invalid
+     * the method will throw TableReferenceOutOfDateException.
+     *
+     * @param tableName The name of the table to read metadata.
+     * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the table name is invalid
      */
-    void hydrateTable(@NotNull CharSequence tableName);
+    void hydrateTable(@NotNull CharSequence tableName) throws TableReferenceOutOfDateException;
 
     /**
-     * Hydrates table metadata, bypassing TableWriter/Reader. Uses a thread-local Path/ColumnVersionReader
-     * <p>
-     * This function reads the table metadata from file directly, bypassing TableReader/Writer. This ensures that it is
-     * non-blocking.
-     * <p>
-     * One must be careful on the setting of the `blindUpsert` value. When set to true, the data will be blindly
-     * upserted to the tables list, which could clobber any concurrent metadata update, leading to inconsistent state.
-     * <p>
-     * In general, any metadata change that does not originate from TableWriter (or friends) should use `blindUpsert=false`.
+     * Updates the metadata cache with new entry for the given table. The entry values are
+     * read from the _meta file.
      *
      * @param token The table token for the table to read metadata.
      */
-    void hydrateTable(@NotNull TableToken token, boolean infoLog);
+    void hydrateTable(@NotNull TableToken token);
 
     /**
-     * @see MetadataCacheWriter#hydrateTable(TableToken, boolean)
+     * Updates the metadata cache with new entry, which content is provided by
+     * the given {@link TableWriterMetadata} instance. This metadata is typically sourced from
+     * a TableWriter instance, which is the source of truth for table metadata.
+     *
+     * @param tableMetadata The metadata to update the cache with.
      */
     void hydrateTable(@NotNull TableWriterMetadata tableMetadata);
+
+    void renameTable(@NotNull TableToken fromTableToken, @NotNull TableToken toTableToken);
 }

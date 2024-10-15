@@ -673,8 +673,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 throw CairoException.critical(ff.errno())
                         .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
             }
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
-                metadataRW.clear();
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateAllTables();
             }
         } finally {

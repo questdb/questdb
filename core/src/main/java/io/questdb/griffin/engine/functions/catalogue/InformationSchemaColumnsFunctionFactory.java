@@ -86,7 +86,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             final CairoEngine engine = executionContext.getCairoEngine();
-            try (MetadataCacheReader metadataRO = engine.getMetadataCache().read()) {
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
                 tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
             }
             cursor.toTop();

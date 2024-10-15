@@ -648,7 +648,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
     }
@@ -693,7 +693,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
@@ -902,7 +902,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnMetadata.setSymbolCached(cache);
             updateMetaStructureVersion();
             txWriter.bumpTruncateVersion();
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
             }
         }
@@ -1014,7 +1014,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // commit transaction to _txn file
                 bumpMetadataAndColumnStructureVersion();
 
-                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                     metadataRW.hydrateTable(metadata);
                 }
             } finally {
@@ -1561,7 +1561,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
         updateMetadataWithDeduplicationUpsertKeys(false, null);
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
     }
@@ -1617,7 +1617,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishColumnPurge();
             LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).$();
 
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
             }
 
@@ -1663,7 +1663,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             logRec.I$();
         }
         updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
     }
@@ -2426,7 +2426,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         finishColumnPurge();
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
         LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
@@ -2517,7 +2517,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnRenamed(securityContext, tableToken, currentName, newName);
         }
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
 
@@ -2600,7 +2600,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishMetaSwapUpdate();
             metadata.setMaxUncommittedRows(maxUncommittedRows);
 
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
             }
 
@@ -2626,7 +2626,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishMetaSwapUpdate();
             metadata.setO3MaxLag(o3MaxLagUs);
 
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
             }
         } finally {
@@ -7958,7 +7958,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
 
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
     }

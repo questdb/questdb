@@ -982,7 +982,7 @@ public final class TestUtils {
     }
 
     public static String dumpMetadataCache(CairoEngine engine) {
-        try (MetadataCacheReader ro = engine.getMetadataCache().read()) {
+        try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
             StringSink sink = new StringSink();
             ro.toSink(sink);
             return sink.toString();
