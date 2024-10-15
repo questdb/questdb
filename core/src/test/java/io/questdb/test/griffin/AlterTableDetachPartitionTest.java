@@ -2090,7 +2090,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'",
-                    "cannot read min, max timestamp from the column"
+                    "cannot read min, max timestamp from the"
             );
         });
     }
@@ -2134,7 +2134,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             assertFailure(
                     "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampWrongDay2 + "'",
-                    "invalid timestamp column data in detached partition, data does not match partition directory name"
+                    "invalid timestamp data in detached partition, data does not match partition directory name"
             );
         });
     }

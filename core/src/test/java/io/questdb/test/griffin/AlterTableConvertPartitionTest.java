@@ -31,6 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
@@ -63,7 +64,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionExists(tableName, "2024-06-10.8");
             assertPartitionExists(tableName, "2024-06-11.7");
             assertPartitionExists(tableName, "2024-06-12.6");
-            assertPartitionExists(tableName, "2024-06-15.9");
+            // last partition is not converted
         });
     }
 
@@ -86,13 +87,11 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionExists(tableName, "2024-06-10.8");
             assertPartitionExists(tableName, "2024-06-11.7");
             assertPartitionExists(tableName, "2024-06-12.6");
-            assertPartitionExists(tableName, "2024-06-15.9");
 
             ddl("alter table " + tableName + " convert partition to native where timestamp > 0");
             assertPartitionDoesNotExist(tableName, "2024-06-10.12");
             assertPartitionDoesNotExist(tableName, "2024-06-11.11");
             assertPartitionDoesNotExist(tableName, "2024-06-12.10");
-            assertPartitionDoesNotExist(tableName, "2024-06-15.13");
             assertSql("id\tstr\ttimestamp\n" +
                             "1\tabc\t2024-06-10T00:00:00.000000Z\n" +
                             "2\tedf\t2024-06-11T00:00:00.000000Z\n" +
@@ -119,14 +118,11 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             );
 
             ddl("alter table x convert partition to parquet list '2024-06'");
-            assertPartitionExists("x", "2024-06.1");
-
-            // RO partition, should be ignored
-            insert("insert into x(designated_ts) values('2024-06-20')");
+            assertPartitionDoesNotExist("x", "2024-06.1");
 
             insert("insert into x(designated_ts) values('1970-01')");
             ddl("alter table x convert partition to parquet list '1970-01'");
-            assertPartitionExists("x", "1970-01.4");
+            assertPartitionExists("x", "1970-01.2");
         });
     }
 
@@ -163,8 +159,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " from long_sequence(1)) timestamp (a_ts) partition by MONTH"
             );
 
+            insert("insert into x(a_varchar, a_ts) values('', '2024-08')");
             ddl("alter table x convert partition to parquet where a_ts > 0");
-            assertPartitionExists("x", "2024-07.1");
+            assertPartitionExists("x", "2024-07.2");
         });
     }
 
@@ -197,14 +194,16 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                             " timestamp_sequence(500000000000, 600) a_ts," +
-                            " timestamp_sequence(400000000000, 500) designated_ts" +
+                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ") designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
             assertException("alter table x convert partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
 
-            ddl("alter table x convert partition to parquet list '1970-01'");
+            ddl("alter table x convert partition to parquet list '1970-01', '1970-02'");
             assertPartitionExists("x", "1970-01.1");
+            assertPartitionExists("x", "1970-02.2");
+            assertPartitionDoesNotExist("x", "1970-03.3");
         });
     }
 
@@ -217,7 +216,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "create table " + tableName + " as (select" +
                             " x id," +
                             " rnd_symbol('a','b','c') a_symbol," +
-                            " timestamp_sequence(400000000000, 500) designated_ts" +
+                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS * 5 + ") designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
@@ -273,7 +272,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " to_long128(rnd_long(), rnd_long()) a_long128," +
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                             " timestamp_sequence(500000000000, 600) a_ts," +
-                            " timestamp_sequence(400000000000, 500) designated_ts" +
+                            " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ") designated_ts" +
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
@@ -357,12 +356,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " from long_sequence(10)) timestamp (a_ts) partition by MONTH"
             );
 
+            insert("insert into x(a_long, a_ts) values('42', '2024-08')");
             ddl("alter table x convert partition to parquet where a_ts > 0");
-            assertPartitionExists("x", "2024-07.1");
+            assertPartitionExists("x", "2024-07.2");
 
             // Second call should be ignored
             ddl("alter table x convert partition to parquet where a_ts > 0");
-            assertPartitionExists("x", "2024-07.1");
+            assertPartitionExists("x", "2024-07.2");
         });
     }
 
