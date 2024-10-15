@@ -7668,6 +7668,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexLo * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
                             partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
+                            targetPartitionNameTxn = txWriter.txn;
                         } finally {
                             Misc.free(firstPartitionFrame);
                         }

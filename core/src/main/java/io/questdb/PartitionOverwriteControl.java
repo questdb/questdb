@@ -90,7 +90,7 @@ public class PartitionOverwriteControl {
                             long usedPartitionNameTxn = readerPartitionUsage.partitionsList.getQuick(partitionBlockIndex + 2);
                             long visibleRows = readerPartitionUsage.partitionsList.getQuick(partitionBlockIndex + 1);
 
-                            if (usedPartitionNameTxn == partitionNameTxn && visibleRows >= mutateFromRow) {
+                            if (usedPartitionNameTxn == partitionNameTxn && visibleRows > mutateFromRow) {
                                 throw CairoException.critical(0).put("partition is overwritten while being in use by a reader [table=").put(tableToken.getTableName())
                                         .put(", partition=").ts(partitionTimestamp)
                                         .put(", partitionNameTxn=").put(partitionNameTxn)
