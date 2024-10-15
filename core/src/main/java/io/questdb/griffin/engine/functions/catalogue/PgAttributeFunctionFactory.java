@@ -24,16 +24,28 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoColumn;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
@@ -73,10 +85,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         return new CursorFunction(
-                new AttributeCatalogueCursorFactory(
-                        sqlExecutionContext.getCairoEngine(),
-                        METADATA
-                )
+                new AttributeCatalogueCursorFactory()
         ) {
             @Override
             public boolean isRuntimeConstant() {
@@ -86,16 +95,22 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
     }
 
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
-
         private final AttributeClassCatalogueCursor cursor;
+        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
+        private long tableCacheVersion = -1;
 
-        public AttributeCatalogueCursorFactory(CairoEngine engine, RecordMetadata metadata) {
-            super(metadata);
-            this.cursor = new AttributeClassCatalogueCursor(engine);
+        public AttributeCatalogueCursorFactory() {
+            super(METADATA);
+            this.cursor = new AttributeClassCatalogueCursor(tableCache);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            final CairoEngine engine = executionContext.getCairoEngine();
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
+            }
+
             cursor.toTop();
             return cursor;
         }
@@ -114,18 +129,16 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
         private final PgAttributeRecord record = new PgAttributeRecord();
-        private final ObjHashSet<TableToken> tableTokenSet;
-        CairoEngine engine;
-        private int columnCount;
-        private int columnIndex = 0;
-        private CairoTable nextTable;
-        private int pos = -1;
-        private int tableId = 1000;
-        private ObjList<TableToken> tableTokens;
+        private final CharSequenceObjHashMap<CairoTable> tableCache;
+        private int columnIdx = -1;
+        private int iteratorIdx = -1;
+        private CairoTable table;
+        private int tableId;
 
-        public AttributeClassCatalogueCursor(CairoEngine engine) {
-            this.engine = engine;
-            tableTokenSet = new ObjHashSet<>(engine.getTableTokenCount(false));
+
+        public AttributeClassCatalogueCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
+            super();
+            this.tableCache = tableCache;
         }
 
         @Override
@@ -141,37 +154,45 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
-            if (columnIndex == columnCount) {
-                nextTable = null;
-                columnIndex = 0;
-            }
-
-            if (nextTable == null) {
-                if (pos < tableTokens.size() - 1) {
-                    do {
-                        pos++;
-                        nextTable = engine.metadataCacheGetTable(tableTokens.getQuiet(pos));
-                    } while (nextTable == null);
-                    columnCount = (int) nextTable.getColumnCount();
-                    tableId = nextTable.getId();
+            if (table == null) {
+                if (!nextTable()) {
+                    return false;
                 }
+                tableId = table.getId();
             }
 
-            if (nextTable != null) {
-                if (columnIndex < columnCount) {
-                    final CairoColumn nextColumn = nextTable.columns.getQuick(columnIndex);
-                    final int type = PGOids.getTypeOid(nextColumn.getType());
-                    record.intValues[N_ATTTYPID_COL] = type;
-                    record.name = nextColumn.getName();
-                    record.shortValues[N_ATTNUM_COL] = (short) (columnIndex + 1);
-                    record.shortValues[N_ATTLEN_COL] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
-                    record.intValues[N_ATTRELID_COL] = tableId;
-                    columnIndex++;
-                    return true;
-                }
+            assert table != null;
+            // we have a table
+
+            if (columnIdx < table.getColumnCount() - 1) {
+                columnIdx++;
+            } else {
+                columnIdx = -1;
+                table = null;
+                return hasNext();
             }
 
-            return false;
+            CairoColumn column = table.getColumnQuiet(columnIdx);
+            assert column != null;
+
+            final int type = PGOids.getTypeOid(column.getType());
+            record.intValues[N_ATTTYPID_COL] = type;
+            record.name = column.getName();
+            record.shortValues[N_ATTNUM_COL] = (short) (columnIdx + 1);
+            record.shortValues[N_ATTLEN_COL] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
+            record.intValues[N_ATTRELID_COL] = tableId;
+
+            return true;
+        }
+
+        public boolean nextTable() {
+            assert table == null;
+
+            if (iteratorIdx < tableCache.size() - 1) {
+                table = tableCache.getAt(++iteratorIdx);
+            } else return false;
+
+            return true;
         }
 
         @Override
@@ -181,12 +202,9 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            engine.getTableTokens(tableTokenSet, false);
-            tableTokens = tableTokenSet.getList();
-            pos = -1;
-            nextTable = null;
-            columnCount = 0;
-            columnIndex = 0;
+            columnIdx = -1;
+            table = null;
+            iteratorIdx = -1;
         }
 
         static class PgAttributeRecord implements Record {
