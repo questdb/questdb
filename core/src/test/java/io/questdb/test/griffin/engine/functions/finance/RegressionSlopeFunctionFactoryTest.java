@@ -24,7 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.finance;
 
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
@@ -51,7 +53,7 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
             assertSql(
-                    "regr_slope\nnull\n", "select regr_slope(x, y) from tbl1"
+                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
             );
         });
     }
@@ -117,11 +119,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRegrSlopeOverflow() throws Exception {
+    public void testRegrSlopeNoOverflow() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
             assertSql(
-                    "regr_slope\nnull\n", "select regr_slope(x, y) from tbl1"
+                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
             );
         });
     }
@@ -136,4 +138,5 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
             );
         });
     }
+
 }

@@ -1568,22 +1568,31 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
                         ddl(
                                 compiler,
-                                "create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))",
+                                "create table tbl1 as (select rnd_double() x, rnd_double() y, rnd_symbol('a', 'b', 'c') sym from long_sequence(100000))",
                                 sqlExecutionContext
                         );
-                        assertQueries(
+
+                        TestUtils.assertSql(
                                 engine,
                                 sqlExecutionContext,
-                                "select regr_slope(x, y) from tbl1",
-                                "regr_slope\n1.0\n"
+                                "select round(regr_slope(x, y), 5), sym from tbl1 WHERE x > 0.5 ORDER BY sym",
+                                sink,
+                                "round\tsym\n" +
+                                        "-0.00317\ta\n" +
+                                        "-0.00402\tb\n" +
+                                        "0.00476\tc\n"
                         );
                     },
                     configuration,
+
                     LOG
             );
         });
+
     }
 
     @Test
