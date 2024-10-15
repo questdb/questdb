@@ -116,14 +116,14 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     if (reader.getPartitionFormat(partitionLo) == PartitionFormat.PARQUET) {
                         frame.format = PartitionFormat.PARQUET;
                         frame.parquetFd = reader.getParquetFd(partitionLo);
-                        frame.parquetReadSize = reader.getParquetReadSize(partitionLo);
+                        frame.parquetFileSize = reader.getParquetFileSize(partitionLo);
                         // TODO(puzpuzpuz): this is broken
                         frame.rowGroupIndex = 0;
                         frame.rowGroupLo = 0;
                     } else {
                         frame.format = PartitionFormat.NATIVE;
                         frame.parquetFd = -1;
-                        frame.parquetReadSize = -1;
+                        frame.parquetFileSize = -1;
                         frame.rowGroupIndex = -1;
                         frame.rowGroupLo = -1;
                     }

@@ -106,7 +106,7 @@ public interface PageFrame {
      * (rather than the end of the file) should we have performed an O3 operation that extended
      * the file size.
      */
-    long getParquetReadSize();
+    long getParquetFileSize();
 
     /**
      * Returns row group index corresponding to the Parquet page frame.

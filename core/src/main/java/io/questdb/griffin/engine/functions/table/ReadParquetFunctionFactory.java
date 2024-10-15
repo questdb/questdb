@@ -78,8 +78,8 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             final FilesFacade ff = config.getFilesFacade();
             final long fd = TableUtils.openRO(ff, path.$(), LOG);
             try (PartitionDecoder decoder = new PartitionDecoder()) {
-                final long readSize = ff.length(fd);
-                decoder.of(fd, readSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                final long fileSize = ff.length(fd);
+                decoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
                 decoder.metadata().copyTo(metadata, true);

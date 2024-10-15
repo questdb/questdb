@@ -127,7 +127,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
                 frame.partitionHi = partitionFrame.getRowHi();
                 frame.format = PartitionFormat.PARQUET;
                 frame.parquetFd = partitionFrame.getParquetFd();
-                frame.parquetReadSize = partitionFrame.getParquetReadSize();
+                frame.parquetFileSize = partitionFrame.getParquetFileSize();
                 frame.rowGroupIndex = partitionFrame.getParquetRowGroup();
                 frame.rowGroupLo = partitionFrame.getParquetRowGroupLo();
                 frame.rowGroupHi = frame.rowGroupLo + (int) (frame.partitionHi - frame.partitionLo);
@@ -263,7 +263,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     private class TableReaderPageFrame implements PageFrame {
         private byte format;
         private long parquetFd;
-        private long parquetReadSize;
+        private long parquetFileSize;
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
@@ -313,9 +313,9 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         }
 
         @Override
-        public long getParquetReadSize() {
-            assert parquetReadSize > 0 || format != PartitionFormat.PARQUET;
-            return parquetReadSize;
+        public long getParquetFileSize() {
+            assert parquetFileSize > 0 || format != PartitionFormat.PARQUET;
+            return parquetFileSize;
         }
 
         @Override

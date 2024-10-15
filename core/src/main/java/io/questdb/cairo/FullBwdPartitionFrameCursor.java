@@ -60,9 +60,9 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 if (format == PartitionFormat.PARQUET) {
                     final long fd = reader.getParquetFd(partitionIndex);
                     assert fd != -1;
-                    final long readSize = reader.getParquetReadSize(partitionIndex);
-                    assert readSize > 0;
-                    parquetDecoder.of(fd, readSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    final long fileSize = reader.getParquetFileSize(partitionIndex);
+                    assert fileSize > 0;
+                    parquetDecoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                     rowGroupCount = parquetDecoder.metadata().rowGroupCount();
                     rowGroupIndex = rowGroupCount - 1;
                     rowHi = hi;
@@ -99,7 +99,7 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         frame.partitionIndex = partitionIndex;
         frame.format = PartitionFormat.PARQUET;
         frame.parquetFd = parquetDecoder.getFd();
-        frame.parquetReadSize = parquetDecoder.getReadSize();
+        frame.parquetFileSize = parquetDecoder.getFileSize();
         frame.rowGroupIndex = rowGroupIndex;
         frame.rowGroupLo = 0;
         frame.rowHi = rowHi;

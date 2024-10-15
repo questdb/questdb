@@ -33,7 +33,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -58,14 +57,14 @@ public class PartitionDecoder implements QuietCloseable {
     private long columnsPtr;
     private long fd; // kept around for logging purposes
     private long ptr;
-    private long readSize;
+    private long fileSize;
     private long rowGroupSizesPtr;
 
     @Override
     public void close() {
         destroy();
         fd = -1;
-        readSize = -1;
+        fileSize = -1;
     }
 
     public int decodeRowGroup(
@@ -96,19 +95,19 @@ public class PartitionDecoder implements QuietCloseable {
         return metadata;
     }
 
-    public long getReadSize() {
-        assert readSize > 0 || fd == -1;
-        return readSize;
+    public long getFileSize() {
+        assert fileSize > 0 || fd == -1;
+        return fileSize;
     }
 
-    public void of(long fd, long readSize, int memoryTag) {
+    public void of(long fd, long fileSize, int memoryTag) {
         assert fd != -1;
-        assert readSize > 0;
+        assert fileSize > 0;
         destroy();
         this.fd = fd;
-        this.readSize = readSize;
+        this.fileSize = fileSize;
         final long allocator = Unsafe.getNativeAllocator(memoryTag);
-        ptr = create(allocator, Files.toOsFd(fd), readSize);  // throws CairoException on error
+        ptr = create(allocator, Files.toOsFd(fd), fileSize);  // throws CairoException on error
         columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
         rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
         metadata.init();
@@ -143,7 +142,7 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long columnsPtrOffset();
 
-    private static native long create(long allocator, int fd, long readSize) throws CairoException;
+    private static native long create(long allocator, int fd, long fileSize) throws CairoException;
 
     private static native int decodeRowGroup(
             long decoderPtr,

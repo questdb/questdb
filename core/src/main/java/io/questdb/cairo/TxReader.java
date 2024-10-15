@@ -287,9 +287,9 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionParquetFileSize(int partitionIndex) {
-        final long readSize = getPartitionParquetFileSizeByIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
-        assert readSize > 0 || !isPartitionParquet(partitionIndex);
-        return readSize;
+        final long fileSize = getPartitionParquetFileSizeByIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+        assert fileSize > 0 || !isPartitionParquet(partitionIndex);
+        return fileSize;
     }
 
     public long getPartitionRowCountByTimestamp(long ts) {

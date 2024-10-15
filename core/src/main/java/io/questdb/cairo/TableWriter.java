@@ -1421,7 +1421,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // other is pointing to the new partition folder
         LOG.info().$("converting parquet partition to native [path=").$substr(pathRootSize, path).I$();
         final long parquetFd = TableUtils.openRO(ff, path.$(), LOG);
-        final long readSize = ff.length(parquetFd);
+        final long fileSize = ff.length(parquetFd);
         final int columnCount = metadata.getColumnCount();
 
         // packed as [auxFd, dataFd, dataVecBytesWritten]
@@ -1433,7 +1433,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
              RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
              DirectIntList columns = new DirectIntList(columnCount, MemoryTag.NATIVE_DEFAULT)
         ) {
-            partitionDecoder.of(parquetFd, readSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+            partitionDecoder.of(parquetFd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             final PartitionDecoder.Metadata parquetMetadata = partitionDecoder.metadata();
             parquetMetadata.copyTo(metadata, false);

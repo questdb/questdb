@@ -83,7 +83,7 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
         tableToken = reader.getTableToken();
         partitionDecoder.of(
                 reader.getParquetFd(partitionIndex),
-                reader.getParquetReadSize(partitionIndex),
+                reader.getParquetFileSize(partitionIndex),
                 MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
         int parquetTimestampIndex = findTimestampIndex(partitionDecoder, timestampIndex);

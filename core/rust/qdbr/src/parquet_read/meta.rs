@@ -29,8 +29,8 @@ fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMet
 }
 
 impl<R: Read + Seek> ParquetDecoder<R> {
-    pub fn read(allocator: QdbAllocator, mut reader: R, read_size: u64) -> ParquetResult<Self> {
-        let metadata = read_metadata_with_size(&mut reader, read_size)?;
+    pub fn read(allocator: QdbAllocator, mut reader: R, file_size: u64) -> ParquetResult<Self> {
+        let metadata = read_metadata_with_size(&mut reader, file_size)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
         let mut row_group_sizes: AcVec<i32> =
