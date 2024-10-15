@@ -31,7 +31,7 @@ import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public interface CairoMetadataRO extends QuietCloseable, Sinkable {
+public interface MetadataCacheReader extends QuietCloseable, Sinkable {
     @Nullable
     CairoTable getTable(@NotNull TableToken tableToken);
 

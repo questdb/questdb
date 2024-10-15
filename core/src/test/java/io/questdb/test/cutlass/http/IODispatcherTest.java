@@ -9212,12 +9212,6 @@ public class IODispatcherTest extends AbstractTest {
         return testJsonQuery0(2, engine -> {
             // create table with all column types
             createTableX(engine, recordCount);
-
-//            try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
-//                metadataRW.hydrateAllTables();
-//            } catch (IOException ignore) {
-//            }
-
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     request,

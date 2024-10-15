@@ -25,8 +25,8 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
@@ -108,7 +108,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             );
 
             // trying to rehydrate all tables
-            try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
                 metadataRW.hydrateAllTables();
             }
 

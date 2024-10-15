@@ -31,10 +31,10 @@ import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoMetadataRO;
-import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -482,7 +482,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
-        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
             metadataRW.clear();
         }
         messageBus = node1.getMessageBus();
@@ -510,7 +510,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         factoryProvider = null;
         engineFactory = null;
         configurationFactory = null;
-        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
             metadataRW.clear();
         }
         AbstractTest.tearDownStatic();
@@ -527,7 +527,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         SharedRandom.RANDOM.set(new Rnd());
         forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
-        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
             metadataRW.clear();
         }
         refreshTablesInBaseEngine();
@@ -550,7 +550,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         forEachNode(node -> node.tearDownCairo(removeDir));
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
-        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
             metadataRW.clear();
         }
         sink.clear();
@@ -819,7 +819,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertCairoMetadata(String expected) {
-        try (CairoMetadataRO ro = engine.getCairoMetadata().read()) {
+        try (MetadataCacheReader ro = engine.getMetadataCache().read()) {
             sink.clear();
             ro.toSink(sink);
             TestUtils.assertEquals(expected, sink);

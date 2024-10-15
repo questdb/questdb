@@ -27,11 +27,10 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoMetadataRO;
-import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -109,23 +108,13 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
-            CairoTable table;
-            try (CairoMetadataRO metadataRO = executionContext.getCairoEngine().getCairoMetadata().write()) {
-                table = metadataRO.getTable(tableToken);
-            }
-
-            if (table == null) {
-                // try the auto hydrate version
-                try (CairoMetadataRW metadataRW = executionContext.getCairoEngine().getCairoMetadata().write()) {
-                    table = metadataRW.getTable(tableToken);
+            try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().read()) {
+                final CairoTable table = metadataRO.getTable(tableToken);
+                if (table != null) {
+                    return of(table);
                 }
             }
-
-            if (table == null) {
-                throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
-            } else {
-                return of(table);
-            }
+            throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
         }
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, CharSequence tableName) throws CairoException {

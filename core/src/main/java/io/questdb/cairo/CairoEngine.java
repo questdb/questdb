@@ -113,7 +113,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private static final int MAX_SLEEP_MILLIS = 250;
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
-    private final CairoMetadata cairoMetadata;
+    private final MetadataCache metadataCache;
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyContext copyContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
@@ -185,7 +185,7 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.reload();
 
             this.sqlCompilerPool = new SqlCompilerPool(this);
-            this.cairoMetadata = new CairoMetadata(this);
+            this.metadataCache = new MetadataCache(this);
         } catch (Throwable th) {
             close();
             throw th;
@@ -362,11 +362,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(telemetryWal);
         Misc.free(tableNameRegistry);
         Misc.free(checkpointAgent);
-        if (cairoMetadata != null) {
-            try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
-                metadataRW.clear();
-            }
-        }
+        Misc.free(metadataCache);
     }
 
     @TestOnly
@@ -438,7 +434,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
-                    try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
+                    try (MetadataCacheWriter metadataRW = getMetadataCache().write()) {
                         metadataRW.dropTable(tableToken);
                     }
                 }
@@ -507,8 +503,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.getBusyCount();
     }
 
-    public CairoMetadata getCairoMetadata() {
-        return cairoMetadata;
+    public MetadataCache getMetadataCache() {
+        return metadataCache;
     }
 
     public DatabaseCheckpointStatus getCheckpointStatus() {
@@ -1058,7 +1054,7 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void reloadTableNames(@Nullable ObjList<TableToken> convertedTables) {
         tableNameRegistry.reload(convertedTables);
-        try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
+        try (MetadataCacheWriter metadataRW = getMetadataCache().write()) {
             metadataRW.clear();
             metadataRW.hydrateAllTables();
         }
@@ -1122,10 +1118,10 @@ public class CairoEngine implements Closeable, WriterSource {
                         );
                     } finally {
                         if (renamed) {
-                            try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
+                            try (MetadataCacheWriter metadataRW = getMetadataCache().write()) {
                                 tableNameRegistry.rename(fromTableToken, toTableToken);
                                 metadataRW.dropTable(fromTableName);
-                                metadataRW.hydrateTable(toTableName, true);
+                                metadataRW.hydrateTable(toTableName);
                             }
                         } else {
                             LOG.info()
@@ -1145,10 +1141,10 @@ public class CairoEngine implements Closeable, WriterSource {
             } else {
                 String lockedReason = lockAll(fromTableToken, "renameTable", false);
                 if (lockedReason == null) {
-                    try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
+                    try (MetadataCacheWriter metadataRW = getMetadataCache().write()) {
                         try {
                             toTableToken = rename0(fromPath, fromTableToken, toPath, toTableName);
-                            metadataRW.hydrateTable(toTableName, true);
+                            metadataRW.hydrateTable(toTableName);
                             TableUtils.overwriteTableNameFile(
                                     fromPath.of(configuration.getRoot()).concat(toTableToken),
                                     memory,
@@ -1440,7 +1436,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
 
-            try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
+            try (MetadataCacheWriter metadataRW = getMetadataCache().write()) {
                 metadataRW.hydrateTable(tableToken, true);
             }
 

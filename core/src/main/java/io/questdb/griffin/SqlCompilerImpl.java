@@ -33,7 +33,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntityColumnFilter;
@@ -3776,10 +3775,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     securityContext.authorizeTableDrop(tableToken);
                     try {
                         engine.drop(path, tableToken);
-
-                        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
-                            metadataRW.dropTable(tableToken);
-                        }
                     } catch (CairoException report) {
                         // it will fail when there are readers/writers and lock cannot be acquired
                         dropTablesFailedList.put(tableToken.getTableName(), report.getMessage());

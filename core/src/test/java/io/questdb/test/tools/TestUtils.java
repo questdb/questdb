@@ -31,12 +31,12 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoMetadataRO;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DefaultDdlListener;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.LogRecordSinkAdapter;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -982,7 +982,7 @@ public final class TestUtils {
     }
 
     public static String dumpMetadataCache(CairoEngine engine) {
-        try (CairoMetadataRO ro = engine.getCairoMetadata().read()) {
+        try (MetadataCacheReader ro = engine.getMetadataCache().read()) {
             StringSink sink = new StringSink();
             ro.toSink(sink);
             return sink.toString();

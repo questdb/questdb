@@ -28,10 +28,10 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MapWriter;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableStructure;
@@ -1450,7 +1450,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     targetTableCreated = true;
                     writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
 
-                    try (CairoMetadataRW metadataRW = cairoEngine.getCairoMetadata().write()) {
+                    try (MetadataCacheWriter metadataRW = cairoEngine.getMetadataCache().write()) {
                         metadataRW.hydrateTable(tableToken, true);
                     }
 

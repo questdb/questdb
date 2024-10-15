@@ -25,10 +25,10 @@
 package io.questdb.cairo;
 
 
-import io.questdb.std.str.Path;
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
-public interface CairoMetadataRW extends CairoMetadataRO {
+public interface MetadataCacheWriter extends QuietCloseable {
     void clear();
 
     void dropTable(@NotNull TableToken tableToken);
@@ -38,9 +38,9 @@ public interface CairoMetadataRW extends CairoMetadataRO {
     void hydrateAllTables();
 
     /**
-     * @see CairoMetadataRW#hydrateTable(TableToken, Path, ColumnVersionReader, boolean)
+     * @see MetadataCacheWriter#hydrateTable(TableToken, boolean)
      */
-    void hydrateTable(@NotNull CharSequence tableName, boolean infoLog);
+    void hydrateTable(@NotNull CharSequence tableName);
 
     /**
      * Hydrates table metadata, bypassing TableWriter/Reader. Uses a thread-local Path/ColumnVersionReader
@@ -55,15 +55,10 @@ public interface CairoMetadataRW extends CairoMetadataRO {
      *
      * @param token The table token for the table to read metadata.
      */
-    void hydrateTable(@NotNull TableToken token, @NotNull Path path, @NotNull ColumnVersionReader columnVersionReader, boolean infoLog);
-
-    /**
-     * @see CairoMetadataRW#hydrateTable(TableToken, Path, ColumnVersionReader, boolean)
-     */
-    void hydrateTable(@NotNull TableWriterMetadata tableMetadata, boolean infoLog);
-
-    /**
-     * @see CairoMetadataRW#hydrateTable(TableToken, Path, ColumnVersionReader, boolean)
-     */
     void hydrateTable(@NotNull TableToken token, boolean infoLog);
+
+    /**
+     * @see MetadataCacheWriter#hydrateTable(TableToken, boolean)
+     */
+    void hydrateTable(@NotNull TableWriterMetadata tableMetadata);
 }

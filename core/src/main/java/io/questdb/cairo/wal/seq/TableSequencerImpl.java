@@ -28,8 +28,8 @@ import io.questdb.cairo.BinaryAlterSerializer;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.IDGenerator;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
@@ -184,7 +184,7 @@ public class TableSequencerImpl implements TableSequencer {
                 0, 0, timestamp, 0, 0, 0);
         metadata.dropTable();
 
-        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().write()) {
             metadataRW.dropTable(tableToken);
         }
 

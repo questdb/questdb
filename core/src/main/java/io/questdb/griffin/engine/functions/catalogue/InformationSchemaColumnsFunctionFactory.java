@@ -28,10 +28,10 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoMetadataRO;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -86,7 +86,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             final CairoEngine engine = executionContext.getCairoEngine();
-            try (CairoMetadataRO metadataRO = engine.getCairoMetadata().read()) {
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().read()) {
                 tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
             }
             cursor.toTop();
