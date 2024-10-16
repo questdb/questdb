@@ -564,6 +564,43 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountDistinctRewrites() throws SqlException {
+        x("foo count_distinct", "count_distinct(foo)");
+        x("foo count_distinct", "count(distinct foo)");
+
+        x("1 1 + count_distinct", "count_distinct(1+1)");
+        x("1 1 + count_distinct", "count(distinct 1+1)");
+
+        x("bar foo count_distinct", "count_distinct(foo(bar))");
+        x("bar foo count_distinct", "count(distinct foo(bar))");
+
+        x("bar foo count_distinct varchar cast", "cast (count_distinct(foo(bar)) as varchar)");
+        x("bar foo count_distinct varchar cast", "cast (count(distinct foo(bar)) as varchar)");
+
+        // check distinct works as a column name when quoted
+        x("distinct count varchar cast", "cast (count(\"distinct\") as varchar)");
+        // it works with multiple arguments too
+        x("distinct foo count", "count(\"distinct\", foo)");
+        // not written when count is not a function
+        x("count distinct foo", "foo(count, distinct)");
+        x("distinctnot count", "count(distinctnot)");
+        x("bar count distinct foo", "foo(bar, count, distinct)");
+        x("count bar distinct foo", "foo(bar(count), distinct)");
+
+        assertFail("count(distinct *)", 6, "count(distinct *) is not supported");
+        assertFail("count(distinct ", 6, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"distinct\"");
+        assertFail("notcount(distinct foo)", 18, "dangling literal");
+        assertFail("count(distinct(foo, bar))", 23, "count distinct aggregation supports a single column only");
+        assertFail("count(DISTINCT(foo, bar))", 23, "count distinct aggregation supports a single column only");
+        assertFail("count(distinct (foo, bar))", 24, "count distinct aggregation supports a single column only"); // with an extra space
+        assertFail("count(DiSTiNcT (foo, bar))", 24, "count distinct aggregation supports a single column only"); // with an extra space
+        assertFail("count(distinct(foo, bar, foobar))", 31, "count distinct aggregation supports a single column only");
+        assertFail("count(distinct(foo, bar, foobar, 1+1))", 36, "count distinct aggregation supports a single column only");
+        assertFail("count(Distinct(foo, bar, foobar, 1+1))", 36, "count distinct aggregation supports a single column only");
+        assertFail("count(distinct))", 6, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"distinct\"");
+    }
+
+    @Test
     public void testCountStar() throws SqlException {
         x("* count", "count(*)");
     }
@@ -1135,6 +1172,38 @@ public class ExpressionParserTest extends AbstractCairoTest {
     @Test
     public void testSimpleLiteralExit() throws Exception {
         x("a", "a lit");
+    }
+
+    @Test
+    public void testStringAggDistinctRewrites() throws SqlException {
+        x("foo ',' string_distinct_agg", "string_distinct_agg(foo, ',')");
+        x("foo ',' string_distinct_agg", "string_agg(distinct foo, ',')");
+
+        x("1 1 + ',' string_distinct_agg", "string_distinct_agg(1+1, ',')");
+        x("1 1 + ',' string_distinct_agg", "string_agg(distinct 1+1, ',')");
+
+        x("bar foo ',' string_distinct_agg", "string_distinct_agg(foo(bar), ',')");
+        x("bar foo ',' string_distinct_agg", "string_agg(distinct foo(bar), ',')");
+
+        x("bar foo ',' string_distinct_agg varchar cast", "cast (string_distinct_agg(foo(bar), ',') as varchar)");
+        x("bar foo ',' string_distinct_agg varchar cast", "cast (string_agg(distinct foo(bar), ',') as varchar)");
+
+        // check 'distinct' as a column name works when quoted
+        x("distinct ',' string_agg varchar cast", "cast (string_agg(\"distinct\", ',') as varchar)");
+        // not re-written when string_agg is not a function
+        x("string_agg distinct foo", "foo(string_agg, distinct)");
+        x("distinctnot string_agg", "string_agg(distinctnot)");
+        x("bar string_agg distinct foo", "foo(bar, string_agg, distinct)");
+        x("string_agg bar distinct foo", "foo(bar(string_agg), distinct)");
+
+        assertFail("string_agg(distinct)", 11, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"distinct\"");
+        assertFail("notcount(distinct foo, ',')", 18, "dangling literal");
+        assertFail("notcount(distinct foo)", 18, "dangling literal");
+    }
+
+    @Test
+    public void testStringAggDistinct_orderByNotSupported() throws SqlException {
+        assertFail("string_agg(distinct foo, ',' order by bar)", 29, "ORDER BY not supported for string_distinct_agg");
     }
 
     @Test

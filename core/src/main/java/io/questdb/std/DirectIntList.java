@@ -143,7 +143,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     }
 
     public long size() {
-        return (int) ((pos - address) >>> 2);
+        return (pos - address) >>> 2;
     }
 
     @Override
