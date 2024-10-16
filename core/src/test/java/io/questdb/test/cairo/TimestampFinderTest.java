@@ -38,21 +38,31 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
-import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
-
 public class TimestampFinderTest extends AbstractCairoTest {
 
     @Override
     public void setUp() {
         super.setUp();
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
     }
 
     @Test
-    public void testFuzz() throws Exception {
+    public void testFuzzAllDuplicates() throws Exception {
+        testFuzz(1000, 1000);
+    }
+
+    @Test
+    public void testFuzzFewDuplicates() throws Exception {
+        testFuzz(1000, 1);
+    }
+
+    @Test
+    public void testFuzzSomeDuplicates() throws Exception {
+        testFuzz(1000, 100);
+    }
+
+    private void testFuzz(int rowCount, int duplicatesPerTick) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        final int rowCount = 10_000;
         assertMemoryLeak(() -> {
             TableModel oracleModel = new TableModel(configuration, "oracle", PartitionBy.YEAR).timestamp();
             AbstractCairoTest.create(oracleModel);
@@ -66,11 +76,21 @@ public class TimestampFinderTest extends AbstractCairoTest {
                     TableWriter oracleWriter = newOffPoolWriter(configuration, "oracle", metrics);
                     TableWriter writer = newOffPoolWriter(configuration, "x", metrics)
             ) {
+                int ticks = duplicatesPerTick;
                 for (int i = 0; i < rowCount; i++) {
                     oracleWriter.newRow(timestamp).append();
                     writer.newRow(timestamp).append();
                     maxTimestamp = timestamp;
-                    timestamp += rnd.nextLong(2) * Timestamps.MINUTE_MICROS;
+                    if (--ticks == 0) {
+                        if (duplicatesPerTick > 1) {
+                            // we want to be in control of the number of duplicates
+                            timestamp += (rnd.nextLong(1) + 1) * Timestamps.MINUTE_MICROS;
+                        } else {
+                            // extra duplicates are fine
+                            timestamp += rnd.nextLong(2) * Timestamps.MINUTE_MICROS;
+                        }
+                        ticks = duplicatesPerTick;
+                    }
                 }
                 oracleWriter.commit();
                 writer.commit();
@@ -105,45 +125,29 @@ public class TimestampFinderTest extends AbstractCairoTest {
 
                 final long start = System.nanoTime();
                 long calls = 0;
-                for (long ts = minTimestamp - 1; ts < maxTimestamp + 1; ts += Timestamps.MINUTE_MICROS) {
+                for (long ts = minTimestamp - Timestamps.MINUTE_MICROS; ts < maxTimestamp + Timestamps.MINUTE_MICROS; ts += Timestamps.MINUTE_MICROS) {
                     // full partition
                     Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, 0, rowCount - 1, BIN_SEARCH_SCAN_UP),
-                            finder.findTimestamp(ts, 0, rowCount - 1, BIN_SEARCH_SCAN_UP)
-                    );
-                    Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, 0, rowCount - 1, BIN_SEARCH_SCAN_DOWN),
-                            finder.findTimestamp(ts, 0, rowCount - 1, BIN_SEARCH_SCAN_DOWN)
+                            oracleFinder.findTimestamp(ts, 0, rowCount - 1),
+                            finder.findTimestamp(ts, 0, rowCount - 1)
                     );
 
                     // first partition half
                     Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_UP),
-                            finder.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_UP)
-                    );
-                    Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_DOWN),
-                            finder.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_DOWN)
+                            oracleFinder.findTimestamp(ts, 0, rowCount / 2),
+                            finder.findTimestamp(ts, 0, rowCount / 2)
                     );
 
                     // second partition half
                     Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, rowCount / 2, rowCount - 1, BIN_SEARCH_SCAN_UP),
-                            finder.findTimestamp(ts, rowCount / 2, rowCount - 1, BIN_SEARCH_SCAN_UP)
-                    );
-                    Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, rowCount / 2, rowCount - 1, BIN_SEARCH_SCAN_DOWN),
-                            finder.findTimestamp(ts, rowCount / 2, rowCount - 1, BIN_SEARCH_SCAN_DOWN)
+                            oracleFinder.findTimestamp(ts, rowCount / 2, rowCount - 1),
+                            finder.findTimestamp(ts, rowCount / 2, rowCount - 1)
                     );
 
                     // partition middle
                     Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_UP),
-                            finder.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_UP)
-                    );
-                    Assert.assertEquals(
-                            oracleFinder.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_DOWN),
-                            finder.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_DOWN)
+                            oracleFinder.findTimestamp(ts, rowCount / 3, 2L * rowCount / 3),
+                            finder.findTimestamp(ts, rowCount / 3, 2L * rowCount / 3)
                     );
 
                     calls += 8;

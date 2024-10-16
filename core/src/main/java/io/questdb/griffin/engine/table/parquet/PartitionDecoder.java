@@ -39,6 +39,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 
 public class PartitionDecoder implements QuietCloseable {
@@ -59,6 +60,14 @@ public class PartitionDecoder implements QuietCloseable {
     private long fd; // kept around for logging purposes
     private long ptr;
     private long rowGroupSizesPtr;
+
+    public static boolean decodeNoNeedToDecodeFlag(long encodedIndex) {
+        return (encodedIndex & 1) == 1;
+    }
+
+    public static int decodeRowGroupIndex(long encodedIndex) {
+        return (int) ((encodedIndex >> 1) - 1);
+    }
 
     @Override
     public void close() {
@@ -85,13 +94,26 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
-    // scanDirection is either Vect.BIN_SEARCH_SCAN_DOWN (1) or Vect.BIN_SEARCH_SCAN_UP (-1)
-    public int findRowGroupByTimestamp(
+    /**
+     * Searches for the row group holding the given timestamp.
+     * Scan direction is always {@link Vect#BIN_SEARCH_SCAN_DOWN}.
+     * <p>
+     * The row group index can be calculated on the returned value
+     * via a {@link #decodeRowGroupIndex(long)} call. In case if the located
+     * position is at the end of a row group or between two row groups, the
+     * {@link #decodeNoNeedToDecodeFlag(long)} method will return true.
+     *
+     * @param timestamp            timestamp value to search for
+     * @param rowLo                row lo, inclusive
+     * @param rowHi                row hi, inclusive
+     * @param timestampColumnIndex timestamp column index within the Parquet file
+     * @return encoded row group index and "no need to decode" flag
+     */
+    public long findRowGroupByTimestamp(
             long timestamp,
             long rowLo,
             long rowHi,
-            int timestampColumnIndex,
-            int scanDirection
+            int timestampColumnIndex
     ) {
         assert ptr != 0;
         try {
@@ -100,8 +122,7 @@ public class PartitionDecoder implements QuietCloseable {
                     timestamp,
                     rowLo,
                     rowHi,
-                    timestampColumnIndex,
-                    scanDirection
+                    timestampColumnIndex
             );
         } catch (Throwable th) {
             LOG.error().$("could not find row group by timestamp [fd=").$(fd)
@@ -179,13 +200,12 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native void destroy(long impl);
 
-    private static native int findRowGroupByTimestamp(
+    private static native long findRowGroupByTimestamp(
             long decoderPtr,
             long rowLo,
             long rowHi,
             long timestamp,
-            int timestampColumnIndex,
-            int scanDirection
+            int timestampColumnIndex
     );
 
     private static native long readRowGroupStats(

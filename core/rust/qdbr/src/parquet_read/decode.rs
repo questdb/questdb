@@ -124,24 +124,6 @@ const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
 /// Not to be confused with the field_id in the parquet metadata.
 pub type ParquetColumnIndex = i32;
 
-// Should match Java's Vect.BIN_SEARCH_SCAN_DOWN and Vect.BIN_SEARCH_SCAN_UP.
-pub enum ScanDirection {
-    Down = 1,
-    Up = -1,
-}
-
-impl TryFrom<i32> for ScanDirection {
-    type Error = ParquetError;
-
-    fn try_from(scan_dir: i32) -> Result<Self, Self::Error> {
-        match scan_dir {
-            1 => Ok(ScanDirection::Down),
-            -1 => Ok(ScanDirection::Up),
-            _ => Err(fmt_err!(Invalid, "unknown scan direction: {}", scan_dir)),
-        }
-    }
-}
-
 impl<R: Read + Seek> ParquetDecoder<R> {
     pub fn decode_row_group(
         &mut self,
@@ -358,8 +340,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         row_lo: usize,
         row_hi: usize,
         timestamp_column_index: u32,
-        _scan_direction: ScanDirection,
-    ) -> ParquetResult<i32> {
+    ) -> ParquetResult<u64> {
         let timestamp_column_index = timestamp_column_index as usize;
         let column_type = self.columns[timestamp_column_index].column_type;
         if column_type.tag() != ColumnTypeTag::Timestamp {
@@ -373,6 +354,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
         let row_group_count = self.row_group_count;
         let mut row_count = 0usize;
+        let mut matched_prev_max = false;
         for (row_group_idx, row_group_meta) in self.metadata.row_groups.iter().enumerate() {
             let columns_meta = row_group_meta.columns();
             let column_metadata = &columns_meta[timestamp_column_index];
@@ -386,7 +368,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             })?;
 
             let column_chunk_size = column_chunk_meta.num_values as usize;
-            if row_hi < row_count - 1 {
+            if row_hi + 1 < row_count {
                 break;
             }
             if row_lo < row_count + column_chunk_size {
@@ -402,17 +384,30 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 let min_value = long_stat_value(&column_chunk_stats.min_value)?;
                 let max_value = long_stat_value(&column_chunk_stats.max_value)?;
 
-                if timestamp >= min_value && timestamp <= max_value {
-                    return Ok(row_group_idx as i32);
+                // left boundary
+                if timestamp == min_value && min_value != max_value {
+                    // have to decode the group and search in it
+                    return Ok(2 * (row_group_idx + 1) as u64);
                 }
+                // to the left of the row group
                 if timestamp < min_value {
-                    return Ok((row_group_idx - 1) as i32);
+                    if matched_prev_max {
+                        // right boundary of the previous row group
+                        return Ok((2 * row_group_idx + 1) as u64);
+                    }
+                    // between previous and current row groups
+                    return Ok((2 * row_group_idx + 1) as u64);
                 }
+                // within the row group
+                if timestamp > min_value && timestamp < max_value {
+                    return Ok(2 * (row_group_idx + 1) as u64);
+                }
+                matched_prev_max = timestamp == max_value;
             }
             row_count += column_chunk_size;
         }
 
-        Ok(row_group_count as i32)
+        Ok((2 * row_group_count + 1) as u64)
     }
 }
 

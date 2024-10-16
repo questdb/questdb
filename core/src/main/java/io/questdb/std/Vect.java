@@ -25,9 +25,9 @@
 package io.questdb.std;
 
 public final class Vect {
-    // Down is increasing direction
+    // Down is increasing scan direction
     public static final int BIN_SEARCH_SCAN_DOWN = 1;
-    // Up is decreasing direction
+    // Up is decreasing scan direction
     public static final int BIN_SEARCH_SCAN_UP = -1;
 
     public static native double avgDoubleAcc(long pInt, long count, long pCount);

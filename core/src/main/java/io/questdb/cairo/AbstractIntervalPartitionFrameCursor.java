@@ -35,7 +35,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
@@ -198,11 +197,11 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
                 if (partitionTimestampLo >= intervalLo) {
                     lo = 0;
                 } else {
-                    lo = timestampFinder.findTimestamp(intervalLo, partitionLimit == -1 ? 0 : partitionLimit, rowCount, BIN_SEARCH_SCAN_UP);
+                    lo = timestampFinder.findTimestamp(intervalLo - 1, partitionLimit == -1 ? 0 : partitionLimit, rowCount - 1) + 1;
                 }
 
                 // Interval is inclusive of edges, and we have to bump to high bound because it is non-inclusive.
-                long hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1, BIN_SEARCH_SCAN_DOWN) + 1;
+                long hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1) + 1;
                 if (lo < hi) {
                     size += (hi - lo);
 

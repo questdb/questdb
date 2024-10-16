@@ -36,7 +36,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
-import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCloseable {
     private final PartitionDecoder partitionDecoder = new PartitionDecoder();
@@ -62,28 +61,42 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
     }
 
     @Override
-    public long findTimestamp(long value, long rowLo, long rowHi, int scanDir) {
-        // TODO(puzpuzpuz): optimize me
+    public long findTimestamp(long value, long rowLo, long rowHi) {
         final PartitionDecoder.Metadata metadata = partitionDecoder.metadata();
         final int rowGroupCount = metadata.rowGroupCount();
+
         // First, find row group containing the timestamp.
-        int rowGroupIndex = partitionDecoder.findRowGroupByTimestamp(value, rowLo, rowHi, timestampIdAndType.get(0), scanDir);
-        if (rowGroupIndex == -1) {
-            return scanDir == BIN_SEARCH_SCAN_DOWN ? rowLo - 1 : rowLo;
+        final long encodedIndex = partitionDecoder.findRowGroupByTimestamp(value, rowLo, rowHi, timestampIdAndType.get(0));
+        final int rowGroupIndex = PartitionDecoder.decodeRowGroupIndex(encodedIndex);
+        final boolean noNeedToDecode = PartitionDecoder.decodeNoNeedToDecodeFlag(encodedIndex);
+        if (rowGroupIndex == -1 && noNeedToDecode) {
+            // timestamp is to the left of the first row group
+            return rowLo - 1;
         }
-        if (rowGroupIndex == rowGroupCount) {
-            return scanDir == BIN_SEARCH_SCAN_DOWN ? rowHi : rowHi + 1;
+        if (rowGroupIndex == rowGroupCount - 1 && noNeedToDecode) {
+            // timestamp is at the end of the last row group
+            // or between the last group and the previous one
+            return rowHi;
         }
+
         // Next, decode it and do binary search.
         long offset = 0;
         for (int i = 0; i < rowGroupCount; i++) {
             if (i == rowGroupIndex) {
+                if (noNeedToDecode) {
+                    // right boundary of row group rowGroupIndex
+                    // or between row groups rowGroupIndex and rowGroupIndex+1
+                    return Math.max(rowLo, offset + metadata.rowGroupSize(i)) - 1;
+                }
                 break;
             }
             offset += metadata.rowGroupSize(i);
         }
-        final long rowGroupRowLo = rowLo - offset;
+
+        // Looks like we have to decode the row group.
+        final long rowGroupRowLo = Math.max(rowLo - offset, 0);
         final long rowGroupRowHi = Math.min(rowHi - offset, metadata.rowGroupSize(rowGroupIndex) - 1);
+        assert rowGroupRowLo <= rowGroupRowHi;
         partitionDecoder.decodeRowGroup(
                 rowGroupBuffers,
                 timestampIdAndType,
@@ -91,19 +104,17 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
                 (int) rowGroupRowLo,
                 (int) (rowGroupRowHi + 1) // exclusive
         );
+
+        // At last, we can do binary search.
         long idx = Vect.binarySearch64Bit(
                 rowGroupBuffers.getChunkDataPtr(0),
                 value,
                 0,
                 rowGroupRowHi - rowGroupRowLo,
-                scanDir
+                BIN_SEARCH_SCAN_DOWN
         );
         if (idx < 0) {
-            if (scanDir == BIN_SEARCH_SCAN_UP) {
-                idx = -idx - 1;
-            } else if (scanDir == BIN_SEARCH_SCAN_DOWN) {
-                idx = -idx - 2;
-            }
+            idx = -idx - 2;
         }
         return idx + rowGroupRowLo + offset;
     }

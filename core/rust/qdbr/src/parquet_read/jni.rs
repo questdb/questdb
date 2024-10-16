@@ -6,7 +6,7 @@ use crate::parquet::col_type::ColumnType;
 use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::io::{FromRawFdI32Ext, NonOwningFile};
 use crate::parquet::qdb_metadata::ParquetFieldId;
-use crate::parquet_read::decode::{ParquetColumnIndex, ScanDirection};
+use crate::parquet_read::decode::ParquetColumnIndex;
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, ParquetDecoder, RowGroupBuffers,
     RowGroupStatBuffers,
@@ -141,6 +141,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     }
 }
 
+// See PartitionDecoder for more info on the returned value format.
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_findRowGroupByTimestamp(
     mut env: JNIEnv,
@@ -150,17 +151,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     row_lo: usize,
     row_hi: usize,
     timestamp_column_index: u32,
-    scan_direction: i32,
-) -> i32 {
+) -> u64 {
     assert!(!decoder.is_null(), "decoder pointer is null");
 
     let decoder = unsafe { &mut *decoder };
 
-    let res = ScanDirection::try_from(scan_direction).and_then(|dir| {
-        decoder.find_row_group_by_timestamp(timestamp, row_lo, row_hi, timestamp_column_index, dir)
-    });
-
-    match res {
+    match decoder.find_row_group_by_timestamp(timestamp, row_lo, row_hi, timestamp_column_index) {
         Ok(row_group_index) => row_group_index,
         Err(mut err) => {
             let raw_fd = decoder.reader.as_raw_fd_i32();

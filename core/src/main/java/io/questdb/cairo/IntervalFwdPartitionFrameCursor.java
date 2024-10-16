@@ -30,8 +30,6 @@ import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 
-import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
-
 public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFrameCursor {
     private static final Log LOG = LogFactory.getLog(IntervalFwdPartitionFrameCursor.class);
 
@@ -95,14 +93,14 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     // and then do index + 1 to skip to top of where we need to be.
                     // We are not scanning up on the exact value of intervalLo because it may not exist. In which case
                     // the search function will scan up to top of the lower value.
-                    lo = timestampFinder.findTimestamp(intervalLo - 1, partitionLimit, rowCount - 1, BIN_SEARCH_SCAN_DOWN) + 1;
+                    lo = timestampFinder.findTimestamp(intervalLo - 1, partitionLimit, rowCount - 1) + 1;
                 } else {
                     lo = 0;
                 }
 
                 final long hi;
                 if (partitionTimestampHi > intervalHi) {
-                    hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1, BIN_SEARCH_SCAN_DOWN) + 1;
+                    hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1) + 1;
                 } else {
                     hi = rowCount;
                 }
