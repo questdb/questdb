@@ -3440,6 +3440,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByFromToWithCTEs() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table foo (ts timestamp, x int, y int) timestamp(ts) partition by day wal;");
+            assertPlanNoLeakCheck("WITH inner AS (SELECT ts, avg(x) as x FROM foo WHERE ts >= '2024-09-17T22:00:00.000000Z'\n" +
+                    "AND ts <= '2024-09-18T22:00:00.000000Z'\n" +
+                    "SAMPLE BY 15m FILL(PREV)\n" +
+                    ")\n" +
+                    "SELECT ts, avg(x) FROM inner\n" +
+                    " WHERE ts >=  '2024-09-17T22:00:00.000000Z'\n" +
+                    " AND ts <= '2024-09-18T22:00:00.000000Z' SAMPLE BY 15m\n" +
+                    "                FROM\n" +
+                    "        '2024-09-17T22:00:00.000000Z' TO '2024-09-18T22:00:00.000000Z' FILL(0)\n" +
+                    "        ORDER BY\n" +
+                    "        ts;", "Sample By\n" +
+                    "  fill: value\n" +
+                    "  range: ('2024-09-17T22:00:00.000000Z','2024-09-18T22:00:00.000000Z')\n" +
+                    "  values: [avg(x)]\n" +
+                    "    Filter filter: (ts>=1726610400000000 and 1726696800000000>=ts)\n" +
+                    "        Sample By\n" +
+                    "          fill: prev\n" +
+                    "          values: [avg(x)]\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: foo\n" +
+                    "                  intervals: [(\"2024-09-17T22:00:00.000000Z\",\"2024-09-18T22:00:00.000000Z\")]\n");
+        });
+    }
+
+    @Test
     public void testSampleByGroupByFillNone() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE 'trades' (\n" +
