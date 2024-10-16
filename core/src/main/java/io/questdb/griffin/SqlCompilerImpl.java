@@ -114,7 +114,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
-    private final ExecutableMethod createTableMethod = this::execute;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
@@ -395,14 +394,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 try (final RecordCursor cursor = factory.getCursor(executionContext)) {
                     typeCast.clear();
                     final RecordMetadata metadata = factory.getMetadata();
+                    createTableOp.updateMetadataFromSelect(metadata);
                     boolean keepLock = !createTableOp.isWalEnabled();
 
+                    // todo: test create table if exists with select
                     tableToken = engine.createTable(
                             executionContext.getSecurityContext(),
                             mem,
                             path,
-                            false,
-                            tableStructureAdapter.of(m, metadata),
+                            createTableOp.ignoreIfExists(),
+                            createTableOp,
                             keepLock,
                             volumeAlias != null
                     );
@@ -2474,33 +2475,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    /**
-     * Creates new table.
-     * <p>
-     * Table name must not exist. Existence check relies on directory existence followed by attempt to clarify what
-     * that directory is. Sometimes it can be just empty directory, which prevents new table from being created.
-     * <p>
-     * Table name can be utf8 encoded but must not contain '.' (dot). Dot is used to separate table and field name,
-     * where table is uses as an alias.
-     * <p>
-     * Creating table from column definition looks like:
-     * <code>
-     * create table x (column_name column_type, ...) [timestamp(column_name)] [partition by ...]
-     * </code>
-     * For non-partitioned table partition by value would be NONE. For any other type of partition timestamp
-     * has to be defined as reference to TIMESTAMP (type) column.
-     *
-     * @param executionModel   created from parsed sql.
-     * @param executionContext provides access to bind variables and authorization module
-     * @throws SqlException contains text of error and error position in SQL text.
-     */
-    private void createTableWithRetries(
-            ExecutionModel executionModel,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        executeWithRetries(createTableMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
-    }
-
     private void executeWithRetries(
             ExecutableMethod method,
             ExecutionModel executionModel,
@@ -3176,113 +3150,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         public static final int CONVERT = 4;
         public static final int DETACH = 3;
         public static final int DROP = 1;
-    }
-
-    private static class TableStructureAdapter implements TableStructure {
-        private CreateTableOperation createTableOp;
-        private RecordMetadata metadata;
-        private int timestampIndex;
-        private IntIntHashMap typeCast;
-
-        @Override
-        public int getColumnCount() {
-            return createTableOp.getColumnCount();
-        }
-
-        @Override
-        public CharSequence getColumnName(int columnIndex) {
-            return createTableOp.getColumnName(columnIndex);
-        }
-
-        @Override
-        public int getColumnType(int columnIndex) {
-            int castIndex = typeCast.keyIndex(columnIndex);
-            if (castIndex < 0) {
-                return typeCast.valueAt(castIndex);
-            }
-            return metadata.getColumnType(columnIndex);
-        }
-
-        @Override
-        public int getIndexBlockCapacity(int columnIndex) {
-            return createTableOp.getIndexBlockCapacity(columnIndex);
-        }
-
-        @Override
-        public int getMaxUncommittedRows() {
-            return createTableOp.getMaxUncommittedRows();
-        }
-
-        @Override
-        public long getO3MaxLag() {
-            return createTableOp.getO3MaxLag();
-        }
-
-        @Override
-        public int getPartitionBy() {
-            return createTableOp.getPartitionBy();
-        }
-
-        @Override
-        public boolean getSymbolCacheFlag(int columnIndex) {
-            // todo: inline the value
-           final ColumnCastModel ccm = createTableOp.getColumnCastModels().get(metadata.getColumnName(columnIndex));
-           if (ccm != null) {
-               return ccm.getSymbolCacheFlag();
-            }
-            return createTableOp.getSymbolCacheFlag(columnIndex);
-        }
-
-        @Override
-        public int getSymbolCapacity(int columnIndex) {
-            final ColumnCastModel ccm = createTableOp.getColumnCastModels().get(metadata.getColumnName(columnIndex));
-            if (ccm != null) {
-               return ccm.getSymbolCapacity();
-            }
-            return createTableOp.getSymbolCapacity(columnIndex);
-        }
-
-        @Override
-        public CharSequence getTableName() {
-            return createTableOp.getTableName();
-        }
-
-        @Override
-        public int getTimestampIndex() {
-            return timestampIndex;
-        }
-
-        @Override
-        public boolean isDedupKey(int columnIndex) {
-            return createTableOp.isDedupKey(columnIndex);
-        }
-
-        @Override
-        public boolean isIndexed(int columnIndex) {
-            return createTableOp.isIndexed(columnIndex);
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return createTableOp.isSequential(columnIndex);
-        }
-
-        @Override
-        public boolean isWalEnabled() {
-            return createTableOp.isWalEnabled();
-        }
-
-        TableStructureAdapter of(CreateTableOperation createTableOp, RecordMetadata metadata) {
-            if (createTableOp.getTimestampIndex() != -1) {
-                timestampIndex = createTableOp.getTimestampIndex();
-            } else {
-                timestampIndex = metadata.getTimestampIndex();
-            }
-            this.createTableOp = createTableOp;
-            this.metadata = metadata;
-            this.typeCast = createTableOp.getTypeCasts();
-            return this;
-        }
     }
 
     private static class TimestampValueRecord implements Record {

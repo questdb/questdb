@@ -35,10 +35,11 @@ import org.jetbrains.annotations.Nullable;
 
 public interface SqlParserCallback {
 
+    // todo: rename to parseCreateTableEx
     default void createTableExt(
             GenericLexer lexer,
             SecurityContext securityContext,
-            CreateTableOperationBuilder model,
+            CreateTableOperationBuilder opBuilder,
             @Nullable CharSequence tok
     ) throws SqlException {
         if (tok != null) {

@@ -66,7 +66,7 @@ public class EmbeddedApiTest {
                         final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                         final SqlCompiler compiler = engine.getSqlCompiler()
                 ) {
-                    compiler.compile("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
+                    engine.ddl("create table if not exists abc (a int, b byte, ts timestamp) timestamp(ts)", ctx);
                 }
 
                 // Now start single reader and writer
@@ -106,7 +106,7 @@ public class EmbeddedApiTest {
                             SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 2)
                     ) {
 
-                        compiler.compile("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
+                        engine.ddl("create table abc (g double, ts timestamp) timestamp(ts) partition by DAY", ctx);
 
                         long timestamp = 0;
                         try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
@@ -147,7 +147,7 @@ public class EmbeddedApiTest {
                     final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                     final SqlCompiler compiler = engine.getSqlCompiler()
             ) {
-                compiler.compile("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp) timestamp(ts)", ctx);
+                engine.ddl("create table abc (a int, b byte, c short, d long, e float, g double, h date, i symbol, j string, k boolean, ts timestamp) timestamp(ts)", ctx);
                 try (TableWriter writer = TestUtils.getWriter(engine, "abc")) {
                     for (int i = 0; i < 10; i++) {
                         TableWriter.Row row = writer.newRow(Os.currentTimeMicros());

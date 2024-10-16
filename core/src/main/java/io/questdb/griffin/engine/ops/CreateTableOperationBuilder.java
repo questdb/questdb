@@ -116,6 +116,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             likeTableName = null;
             likeTableNamePos = -1;
         }
+
         return new CreateTableOperation(
                 Chars.toString(tableNameExpr.token),
                 tableNameExpr.position,
@@ -132,7 +133,8 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                 o3MaxLag,
                 maxUncommittedRows,
                 Chars.toString(volumeAlias),
-                walEnabled
+                walEnabled,
+                columnCastModels
         );
     }
 

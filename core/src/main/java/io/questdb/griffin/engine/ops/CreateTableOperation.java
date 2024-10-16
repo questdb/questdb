@@ -4,18 +4,23 @@ import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.ColumnCastModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
-public class CreateTableOperation implements TableStructure {
+import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.COLUMN_FLAG_CACHED;
+
+public class CreateTableOperation implements TableStructure, QuietCloseable {
     private final long batchO3MaxLag;
     private final long batchSize;
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final CharSequenceIntHashMap columnTypeMap = new CharSequenceIntHashMap();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
     private final boolean ignoreIfExists;
     private final String likeTableName;
@@ -23,12 +28,28 @@ public class CreateTableOperation implements TableStructure {
     private final int maxUncommittedRows;
     private final long o3MaxLag;
     private final int partitionBy;
-    private final RecordCursorFactory recordCursorFactory;
+    // two cast maps, one for symbol cache flag and the other for symbol capacity
+    // those values come from "cast models", the extra syntax to augment
+    // "create as select" semantic. These maps are keyed on column names
+    //
+    // One thing to note about these maps is that they are unused for non-create-as-select,
+    // this is because column types, capacities and flags can be specified without
+    // extra syntax. At the same time, "columnBits" are unused for create-as-select.
+    // For create-as-select we should move the information from these maps onto
+    // columnBit after column indexes are known. E.g. after "select" part is executed.
+    // Note that we must not hardcode "cast" parameters to the column indexes. These indexes
+    // are liable to change every time "select" is recompiled, for example in case of wildcard
+    // usage, e.g. create x as select * from y. When "y" changes, such as via drop column,
+    // column indexes will shift.
+    // todo: when all test pass, we can consolidate these maps into 1, e.g. text-to-long64
+    private final CharSequenceBoolHashMap symbolCacheFlagMap = new CharSequenceBoolHashMap();
+    private final CharSequenceIntHashMap symbolCapacityMap = new CharSequenceIntHashMap();
     private final String tableName;
     private final int tableNamePosition;
     private final int timestampIndex;
     private final String volumeAlias;
     private final boolean walEnabled;
+    private RecordCursorFactory recordCursorFactory;
 
     public CreateTableOperation(
             String tableName,
@@ -46,10 +67,23 @@ public class CreateTableOperation implements TableStructure {
             long o3MaxLag,
             int maxUncommittedRows,
             String volumeAlias,
-            boolean walEnabled
+            boolean walEnabled,
+            @Transient CharSequenceObjHashMap<ColumnCastModel> columnCastModeMap
     ) {
+        // At this point we're creating immutable column names for the operation.
+        // We take this opportunity to capture immutable column names for the cast models
+        // that could be optionally provided
         for (int i = 0, n = columnNames.size(); i < n; i++) {
-            this.columnNames.add(Chars.toString(columnNames.getQuick(i)));
+            CharSequence columnName = columnNames.getQuick(i);
+            String columnNameStr = Chars.toString(columnName);
+            this.columnNames.add(columnNameStr);
+            int index = columnCastModeMap.keyIndex(columnName);
+            if (index < 0) {
+                ColumnCastModel ccm = columnCastModeMap.valueAt(index);
+                this.symbolCacheFlagMap.put(columnNameStr, ccm.getSymbolCacheFlag());
+                this.symbolCapacityMap.put(columnNameStr, ccm.getSymbolCapacity());
+                this.columnTypeMap.put(columnNameStr, ccm.getColumnType());
+            }
         }
         this.columnBits.add(columnBits);
         this.likeTableName = likeTableName;
@@ -68,11 +102,16 @@ public class CreateTableOperation implements TableStructure {
         this.walEnabled = walEnabled;
     }
 
+    @Override
+    public void close() {
+        recordCursorFactory = Misc.free(recordCursorFactory);
+    }
+
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
             compiler.execute(this, sqlExecutionContext);
         }
-        return null;
+        return getFuture();
     }
 
     public long getBatchO3MaxLag() {
@@ -141,7 +180,7 @@ public class CreateTableOperation implements TableStructure {
 
     @Override
     public boolean getSymbolCacheFlag(int index) {
-        return (getLowAt(index * 2 + 1) & CreateTableOperationBuilder.COLUMN_FLAG_CACHED) != 0;
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_CACHED) != 0;
     }
 
     @Override
@@ -196,6 +235,45 @@ public class CreateTableOperation implements TableStructure {
     @Override
     public boolean isWalEnabled() {
         return walEnabled;
+    }
+
+    public void updateMetadataFromSelect(RecordMetadata metadata) {
+        // This method must only be called in case of "create-as-select".
+        // Here we remap data keyed on  column names (from cast maps) to
+        // data keyed on column index. We assume that "columnBits" are free to use
+        // in case of "create-as-select" because they don't capture any useful data
+        // at SQL parse time.
+        columnBits.clear();
+
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int columnType;
+            int index = columnTypeMap.keyIndex(metadata.getColumnName(i));
+            if (index < 0) {
+                columnType = columnTypeMap.valueAt(index);
+            } else {
+                columnType = metadata.getColumnType(i);
+            }
+
+            final int symbolCapacity;
+            index = symbolCapacityMap.keyIndex(metadata.getColumnName(i));
+            if (index < 0) {
+                symbolCapacity = symbolCapacityMap.valueAt(index);
+            } else {
+                symbolCapacity = 0;
+            }
+
+            final int symbolCacheFlag;
+            index = symbolCacheFlagMap.keyIndex(metadata.getColumnName(i));
+            if (index < 0) {
+                symbolCacheFlag = symbolCacheFlagMap.valueAt(index) ? COLUMN_FLAG_CACHED : 0;
+            } else {
+                symbolCacheFlag = 0;
+            }
+            columnBits.add(
+                    Numbers.encodeLowHighInts(columnType, symbolCapacity),
+                    Numbers.encodeLowHighInts(symbolCacheFlag, 0)
+            );
+        }
     }
 
     /**

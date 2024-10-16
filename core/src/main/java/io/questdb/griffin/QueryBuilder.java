@@ -24,6 +24,8 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.TableToken;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.StringSink;
 
@@ -40,6 +42,11 @@ public final class QueryBuilder implements Mutable {
         return this;
     }
 
+    public QueryBuilder $(char value) {
+        sink.put(value);
+        return this;
+    }
+
     public QueryBuilder $(int value) {
         sink.put(value);
         return this;
@@ -52,6 +59,16 @@ public final class QueryBuilder implements Mutable {
 
     public CompiledQuery compile(SqlExecutionContext executionContext) throws SqlException {
         return compiler.compile(sink, executionContext);
+    }
+
+    public TableToken createTable(SqlExecutionContext executionContext) throws SqlException {
+        try (
+                CreateTableOperation op = compiler.compile(sink, executionContext).getCreateTableOperation();
+                CreateTableOperation.CreateTableOperationFuture fut = (CreateTableOperation.CreateTableOperationFuture) op.execute(executionContext, null)
+        ) {
+            fut.await();
+            return fut.getTableToken();
+        }
     }
 
     @Override

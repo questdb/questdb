@@ -43,6 +43,8 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
     private AlterOperation alterOp;
+    private CreateTableOperation createTableOp;
+    private DropOperation dropOp;
     private InsertOperation insertOp;
     private RecordCursorFactory recordCursorFactory;
     private SqlExecutionContext sqlExecutionContext;
@@ -52,8 +54,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private TableToken tableToken;
     private short type;
     private UpdateOperation updateOp;
-    private DropOperation dropOp;
-    private CreateTableOperation createTableOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
         // type inference fails on java 8 if <UpdateOperation> is removed
@@ -126,6 +126,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
+    public CreateTableOperation getCreateTableOperation() {
+        return createTableOp;
+    }
+
+    @Override
     public InsertOperation getInsertOperation() {
         return insertOp;
     }
@@ -169,10 +174,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.alterOp = alterOp;
     }
 
-    public void ofSelect(RecordCursorFactory recordCursorFactory) {
-        of(SELECT, recordCursorFactory);
-    }
-
     public void ofAlterUser() {
         of(ALTER_USER);
     }
@@ -187,6 +188,14 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofCancelQuery() {
         of(CANCEL_QUERY);
+    }
+
+    public void ofCheckpointCreate() {
+        of(CHECKPOINT_CREATE);
+    }
+
+    public void ofCheckpointRelease() {
+        of(CHECKPOINT_RELEASE);
     }
 
     public void ofCommit() {
@@ -255,16 +264,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(ROLLBACK);
     }
 
+    public void ofSelect(RecordCursorFactory recordCursorFactory) {
+        of(SELECT, recordCursorFactory);
+    }
+
     public void ofSet() {
         of(SET);
-    }
-
-    public void ofCheckpointRelease() {
-        of(CHECKPOINT_RELEASE);
-    }
-
-    public void ofCheckpointCreate() {
-        of(CHECKPOINT_CREATE);
     }
 
     public void ofTableResume() {

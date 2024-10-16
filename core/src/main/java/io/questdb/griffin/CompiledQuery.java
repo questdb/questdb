@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Transient;
@@ -96,6 +97,8 @@ public interface CompiledQuery {
     AlterOperation getAlterOperation();
 
     InsertOperation getInsertOperation();
+
+    CreateTableOperation getCreateTableOperation();
 
     RecordCursorFactory getRecordCursorFactory();
 

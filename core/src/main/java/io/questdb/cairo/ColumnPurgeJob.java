@@ -108,8 +108,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                                 "completed timestamp" + // 11
                                 ") timestamp(ts) partition by MONTH BYPASS WAL"
                         )
-                        .compile(sqlExecutionContext)
-                        .getTableToken();
+                        .createTable(sqlExecutionContext);
             }
 
             this.writer = engine.getWriter(tableToken, "QuestDB system");

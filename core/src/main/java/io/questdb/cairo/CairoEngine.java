@@ -207,7 +207,11 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public static void insert(SqlCompiler compiler, CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public static void insert(
+            SqlCompiler compiler,
+            CharSequence insertSql,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         CompiledQuery cq = compiler.compile(insertSql, sqlExecutionContext);
         switch (cq.getType()) {
             case INSERT:
@@ -584,7 +588,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
+    public TableMetadata getSequencerMetadata(TableToken tableToken) {
         return getSequencerMetadata(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
 

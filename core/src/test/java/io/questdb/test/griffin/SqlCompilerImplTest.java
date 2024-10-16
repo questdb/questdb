@@ -6696,9 +6696,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        public void createTableExt(GenericLexer lexer, SecurityContext securityContext, CreateTableOperationBuilder model, CharSequence tok) throws SqlException {
+        public void createTableExt(GenericLexer lexer, SecurityContext securityContext, CreateTableOperationBuilder opBuilder, CharSequence tok) throws SqlException {
             createTableSuffixCalled = true;
-            super.createTableExt(lexer, securityContext, model, tok);
+            super.createTableExt(lexer, securityContext, opBuilder, tok);
         }
 
         @Override
