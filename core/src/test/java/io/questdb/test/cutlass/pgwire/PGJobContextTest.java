@@ -10399,11 +10399,6 @@ create table tab as (
 
     @Test
     public void testUpdateNoAutoCommit() throws Exception {
-        // @Ignore("
-        // WAL: comparison failure
-        // NO_WAL: ERROR: Timeout expired on waiting for the async command execution result [instance=1] Position: 1
-        // ")
-        Assume.assumeTrue(legacyMode);
         assertMemoryLeak(() -> {
             try (
                     final IPGWireServer server = createPGServer(1);

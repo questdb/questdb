@@ -34,6 +34,7 @@ import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.cutlass.pgwire.PGResponseSink;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.QueryPausedException;
@@ -434,10 +435,21 @@ public class PGPipelineEntry implements QuietCloseable {
                             taiPool
                     );
                     break;
+                case CompiledQuery.UPDATE:
+                    msgExecuteUpdate(
+                            sqlExecutionContext,
+                            transactionState,
+                            pendingWriters,
+                            characterStore,
+                            utf8String,
+                            binarySequenceParamsPool,
+                            tempSequence,
+                            taiPool
+                    );
+                    break;
                 case CompiledQuery.ALTER:
                 case CompiledQuery.ALTER_USER:
                 case CompiledQuery.CREATE_USER:
-                case CompiledQuery.UPDATE:
                     msgExecuteDDL(
                             sqlExecutionContext,
                             transactionState,
@@ -1211,6 +1223,54 @@ public class PGPipelineEntry implements QuietCloseable {
                 tas = Misc.free(tas);
                 factory = null;
                 throw e;
+            }
+        }
+    }
+
+    private void msgExecuteUpdate(
+            SqlExecutionContext sqlExecutionContext,
+            int transactionState,
+            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
+            CharacterStore characterStore,
+            DirectUtf8String utf8String,
+            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
+            SCSequence tempSequence,
+            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
+    ) throws SqlException, BadProtocolException {
+        if (transactionState != ERROR_TRANSACTION) {
+            copyParameterValuesToBindVariableService(
+                    sqlExecutionContext,
+                    characterStore,
+                    utf8String,
+                    binarySequenceParamsPool
+            );
+            // execute against writer from the engine, synchronously (null sequence)
+            for (int attempt = 1; ; attempt++) {
+                try {
+                    UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
+                    TableToken tableToken = updateOperation.getTableToken();
+                    final int index = pendingWriters.keyIndex(tableToken);
+                    if (index < 0) {
+                        updateOperation.withContext(sqlExecutionContext);
+                        TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
+                        // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
+                        tableWriterAPI.commit();
+                        sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
+                    } else {
+                        try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
+                            // todo: is waiting a good idea here? it's blocking threads
+                            fut.await();
+                            sqlAffectedRowCount = fut.getAffectedRowsCount();
+                        }
+                    }
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    Misc.free(compiledQuery.getUpdateOperation());
+                    if (attempt == maxRecompileAttempts) {
+                        throw e;
+                    }
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                }
             }
         }
     }
@@ -2030,8 +2090,11 @@ public class PGPipelineEntry implements QuietCloseable {
                 break;
             case CompiledQuery.UPDATE:
                 // copy contents of the mutable CompiledQuery into our cache
-                compiledQuery.ofUpdate(cq.getUpdateOperation());
-                compiledQuery.withSqlText(cq.getSqlText());
+                String sqlText = cq.getSqlText();
+                UpdateOperation updateOperation = cq.getUpdateOperation();
+                updateOperation.withSqlStatement(sqlText);
+                compiledQuery.ofUpdate(updateOperation);
+                compiledQuery.withSqlText(sqlText);
                 sqlTag = TAG_UPDATE;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
