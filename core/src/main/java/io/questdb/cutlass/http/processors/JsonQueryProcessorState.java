@@ -541,7 +541,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             case ColumnType.INTERVAL:
                 break;
             default:
-                throw CairoException.nonCritical().put("Column type not supported by JSON REST API. Please open a feature request at https://github.com/questdb/questdb/issues/new/ [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+                throw CairoException.nonCritical().put("column type not supported [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');
         }
 
         int flags = GeoHashes.getBitFlags(columnType);
@@ -682,8 +682,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 case ColumnType.NULL:
                     response.putAscii("null");
                     break;
-                case ColumnType.LONG128:
-                    throw new UnsupportedOperationException();
                 case ColumnType.UUID:
                     putUuidValue(response, record, columnIdx);
                     break;
@@ -695,7 +693,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 default:
                     // this should never happen since metadata are already validated
-                    throw CairoException.nonCritical().put("Unsupported column type. This is a bug, please report. [type=").put(ColumnType.nameOf(columnType)).put(']');
+                    throw CairoException.nonCritical().put("column type not supported [type=").put(ColumnType.nameOf(columnType)).put(']');
             }
         }
     }

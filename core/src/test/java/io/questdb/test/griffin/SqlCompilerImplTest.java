@@ -25,7 +25,17 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -40,7 +50,18 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -49,7 +70,12 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
@@ -3520,6 +3546,52 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.assertEquals(250000, tableMetadata.getO3MaxLag());
             }
         });
+    }
+
+    @Test
+    public void testCursorFunctionCannotBeUsedAsColumn() throws Exception {
+        assertExceptionNoLeakCheck(
+                "select query_activity() from long_sequence(100L);",
+                7,
+                "cursor function cannot be used as a column [column=query_activity]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select 1 from long_sequence(1)\n" +
+                        "UNION ALL\n" +
+                        "select query_activity() from long_sequence(100L);",
+                48,
+                "cursor function cannot be used as a column [column=query_activity]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1 as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select a, n from q;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1L as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select q.a from long_sequence(10) ls \n" +
+                        "inner join q on ls.x = q.n;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1L as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select q.* from long_sequence(10) ls \n" +
+                        "inner join q on ls.x = q.n;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
     }
 
     @Test
