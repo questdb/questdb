@@ -3,7 +3,8 @@ trigger: none
 pr:
   branches:
     include:
-      - '*'
+      - master
+  drafts: false
 
 variables:
   QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"

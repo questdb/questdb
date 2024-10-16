@@ -35,6 +35,35 @@ import org.junit.Test;
 public class ParquetTest extends AbstractCairoTest {
 
     @Test
+    public void testColTops() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (id long, ts timestamp) timestamp(ts) partition by month;");
+            insert("insert into x values(1, '2024-06-10T00:00:00.000000Z');");
+            insert("insert into x values(2, '2024-06-11T00:00:00.000000Z');");
+            insert("insert into x values(3, '2024-06-12T00:00:00.000000Z');");
+            insert("insert into x values(4, '2024-06-12T00:00:01.000000Z');");
+            insert("insert into x values(5, '2024-06-15T00:00:00.000000Z');");
+            insert("insert into x values(6, '2024-06-12T00:00:02.000000Z');");
+
+            ddl("alter table x add column a int;");
+            insert("insert into x values(7, '2024-06-10T00:00:00.000000Z', 1);");
+
+            ddl("alter table x convert partition to parquet where ts >= 0");
+            assertSql(
+                    "id\tts\ta\n" +
+                            "1\t2024-06-10T00:00:00.000000Z\tnull\n" +
+                            "7\t2024-06-10T00:00:00.000000Z\t1\n" +
+                            "2\t2024-06-11T00:00:00.000000Z\tnull\n" +
+                            "3\t2024-06-12T00:00:00.000000Z\tnull\n" +
+                            "4\t2024-06-12T00:00:01.000000Z\tnull\n" +
+                            "6\t2024-06-12T00:00:02.000000Z\tnull\n" +
+                            "5\t2024-06-15T00:00:00.000000Z\tnull\n",
+                    "x"
+            );
+        });
+    }
+
+    @Test
     public void testFilterAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             ddl(

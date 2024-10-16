@@ -1159,6 +1159,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionO3OverwriteControlEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isReadOnlyInstance() {
         return false;
     }

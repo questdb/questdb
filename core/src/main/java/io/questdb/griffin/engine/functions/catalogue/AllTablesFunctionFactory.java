@@ -24,17 +24,27 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
 public class AllTablesFunctionFactory implements FunctionFactory {
@@ -68,17 +78,22 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
     public static class AllTablesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(AllTablesCursorFactory.class);
-        public static final String TABLE_NAME_COLUMN_NAME = "table_name";
-        public static final TableColumnMetadata TABLE_NAME_COLUMN_META = new TableColumnMetadata(TABLE_NAME_COLUMN_NAME, ColumnType.STRING);
-        private final AllTablesRecordCursor cursor = new AllTablesRecordCursor();
+        private final AllTablesRecordCursor cursor;
+        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
+        private long tableCacheVersion = -1;
 
         public AllTablesCursorFactory() {
             super(METADATA);
+            cursor = new AllTablesRecordCursor(tableCache);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.of(executionContext);
+            final CairoEngine engine = executionContext.getCairoEngine();
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
+            }
+            cursor.toTop();
             return cursor;
         }
 
@@ -99,13 +114,16 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
         private static class AllTablesRecordCursor implements NoRandomAccessRecordCursor {
             private final AllTablesRecord record = new AllTablesRecord();
-            private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
-            private SqlExecutionContext executionContext;
-            private int tableIndex = -1;
+            private final CharSequenceObjHashMap<CairoTable> tableCache;
+            private int iteratorIdx = -1;
+
+            public AllTablesRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
+                this.tableCache = tableCache;
+            }
 
             @Override
             public void close() {
-                tableIndex = -1;
+
             }
 
             @Override
@@ -115,13 +133,11 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                tableIndex++;
-                int n = tableBucket.size();
-                for (; tableIndex < n; tableIndex++) {
-                    if (record.open(tableBucket.get(tableIndex))) {
-                        return true;
-                    }
+                if (iteratorIdx < tableCache.size() - 1) {
+                    record.of(tableCache.getAt(++iteratorIdx));
+                    return true;
                 }
+
                 return false;
             }
 
@@ -132,16 +148,11 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public void toTop() {
-                tableIndex = -1;
+                iteratorIdx = -1;
             }
 
-            private void of(SqlExecutionContext executionContext) {
-                this.executionContext = executionContext;
-                executionContext.getCairoEngine().getTableTokens(tableBucket, false);
-                toTop();
-            }
 
-            private class AllTablesRecord implements Record {
+            private static class AllTablesRecord implements Record {
                 private CairoTable table;
 
                 @Override
@@ -159,9 +170,8 @@ public class AllTablesFunctionFactory implements FunctionFactory {
                     return getStrA(col).length();
                 }
 
-                private boolean open(TableToken tableToken) {
-                    table = executionContext.getCairoEngine().metadataCacheGetVisibleTable(tableToken);
-                    return table != null;
+                public void of(CairoTable table) {
+                    this.table = table;
                 }
             }
         }
@@ -169,7 +179,7 @@ public class AllTablesFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(AllTablesCursorFactory.TABLE_NAME_COLUMN_META);
+        metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));
         METADATA = metadata;
     }
 }
