@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -87,61 +88,62 @@ public class MetadataCacheTest extends AbstractCairoTest {
             "\t\tCairoColumn [name=n, position=15, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=15]\n";
 
     @Test
-    public void fuzzConcurrentCreatesAndDrops() throws InterruptedException {
+    public void fuzzConcurrentCreatesAndDrops() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger creatorInteger = new AtomicInteger();
+            AtomicInteger dropperInteger = new AtomicInteger();
 
-        AtomicInteger creatorInteger = new AtomicInteger();
-        AtomicInteger dropperInteger = new AtomicInteger();
+            Thread creatingThread = new Thread(() -> {
+                try {
+                    fuzzConcurrentCreatesAndDropsCreatorThread(creatorInteger);
+                } catch (Throwable ignore) {
+                }
+            });
 
-        Thread creatingThread = new Thread(() -> {
-            try {
-                fuzzConcurrentCreatesAndDropsCreatorThread(creatorInteger);
-            } catch (Exception ignore) {
+            Thread droppingThread = new Thread(() -> {
+                try {
+                    fuzzConcurrentCreatesAndDropsDropperThread(dropperInteger);
+                } catch (Throwable ignore) {
+                }
+            });
+
+            creatingThread.start();
+            droppingThread.start();
+
+            Os.sleep(2_000);
+
+            creatingThread.interrupt();
+            droppingThread.interrupt();
+
+            creatingThread.join();
+            droppingThread.join();
+
+            int creatorCounter = creatorInteger.get();
+            int dropperCounter = dropperInteger.get();
+
+            LOG.infoW().$("[creator=").$(creatorCounter).$(", dropper=").$(dropperCounter).I$();
+
+            drainWalQueue();
+
+            LOG.infoW().$("unpublished_wal_txn_count:").$(engine.getUnpublishedWalTxnCount()).$();
+
+            TableToken tableToken;
+            CairoTable cairoTable;
+            tableToken = engine.getTableTokenIfExists("foo");
+
+            if (tableToken != null) {
+                try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                    cairoTable = metadataRO.getTable(tableToken);
+                }
+
+                if (engine.isTableDropped(tableToken)) {
+                    Assert.assertNull(cairoTable);
+                } else {
+                    Assert.assertNotNull(cairoTable);
+                }
             }
+
         });
-
-        Thread droppingThread = new Thread(() -> {
-            try {
-                fuzzConcurrentCreatesAndDropsDropperThread(dropperInteger);
-            } catch (Exception ignore) {
-            }
-        });
-
-        creatingThread.start();
-        droppingThread.start();
-
-        TableToken tableToken;
-        CairoTable cairoTable;
-
-        Thread.sleep(2_000);
-
-        creatingThread.interrupt();
-        droppingThread.interrupt();
-
-        creatingThread.join();
-        droppingThread.join();
-
-        int creatorCounter = creatorInteger.get();
-        int dropperCounter = dropperInteger.get();
-
-        LOG.infoW().$("[creator=").$(creatorCounter).$(", dropper=").$(dropperCounter).I$();
-
-        drainWalQueue();
-
-        LOG.infoW().$("unpublished_wal_txn_count:").$(engine.getUnpublishedWalTxnCount()).$();
-
-        tableToken = engine.getTableTokenIfExists("foo");
-
-        if (tableToken != null) {
-            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                cairoTable = metadataRO.getTable(tableToken);
-            }
-
-            if (engine.isTableDropped(tableToken)) {
-                Assert.assertNull(cairoTable);
-            } else {
-                Assert.assertNotNull(cairoTable);
-            }
-        }
     }
 
     @SuppressWarnings("BusyWait")
@@ -741,10 +743,12 @@ public class MetadataCacheTest extends AbstractCairoTest {
     private void fuzzConcurrentCreatesAndDropsCreatorThread(AtomicInteger counter) throws SqlException, InterruptedException {
         String createDdl = "CREATE TABLE IF NOT EXISTS foo ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );";
 
-        while (true) {
-            ddl(createDdl);
-            counter.incrementAndGet();
-            Thread.sleep(50);
+        try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+            while (true) {
+                engine.ddl(createDdl, sqlExecutionContext);
+                counter.incrementAndGet();
+                Thread.sleep(50);
+            }
         }
     }
 
