@@ -26,7 +26,11 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Mutable;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
@@ -151,7 +155,7 @@ public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
             return u8view.of(addr, addr + size, ascii);
         }
         throw CairoException.critical(0)
-                .put("String is outside of file boundary [offset=")
+                .put("varchar is outside of file boundary [offset=")
                 .put(offset)
                 .put(", size=")
                 .put(size)

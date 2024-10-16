@@ -24,17 +24,27 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
@@ -44,8 +54,8 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int DIRECTORY_NAME_COLUMN = 7;
     private static final int ID_COLUMN = 0;
     private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 4;
-    private static final int O3_MAX_LAG_COLUMN = 5;
     private static final RecordMetadata METADATA;
+    private static final int O3_MAX_LAG_COLUMN = 5;
     private static final int PARTITION_BY_COLUMN = 3;
     private static final int TABLE_NAME = 1;
     private static final int WAL_ENABLED_COLUMN = 6;
@@ -78,17 +88,22 @@ public class TablesFunctionFactory implements FunctionFactory {
 
     public static class TablesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(TablesCursorFactory.class);
-        public static final String TABLE_NAME_COLUMN_NAME = "table_name";
-        public static final TableColumnMetadata TABLE_NAME_COLUMN_META = new TableColumnMetadata(TABLE_NAME_COLUMN_NAME, ColumnType.STRING);
-        private final TablesRecordCursor cursor = new TablesRecordCursor();
+        private final TablesRecordCursor cursor;
+        private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
+        private long tableCacheVersion = -1;
 
         public TablesCursorFactory() {
             super(METADATA);
+            cursor = new TablesRecordCursor(tableCache);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.of(executionContext);
+            final CairoEngine engine = executionContext.getCairoEngine();
+            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                tableCacheVersion = metadataRO.snapshot(tableCache, tableCacheVersion);
+            }
+            cursor.toTop();
             return cursor;
         }
 
@@ -109,13 +124,16 @@ public class TablesFunctionFactory implements FunctionFactory {
 
         private static class TablesRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
-            private SqlExecutionContext executionContext;
-            private int tableIndex = -1;
+            private final CharSequenceObjHashMap<CairoTable> tableCache;
+            private int iteratorIdx = -1;
+
+            public TablesRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
+                this.tableCache = tableCache;
+            }
 
             @Override
             public void close() {
-                tableIndex = -1;
+
             }
 
             @Override
@@ -125,14 +143,11 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                tableIndex++;
-                int n = tableBucket.size();
-                for (; tableIndex < n; tableIndex++) {
-                    if (record.open(tableBucket.get(tableIndex))) {
-                        return true;
-                    }
-                }
-                return false;
+                if (iteratorIdx < tableCache.size() - 1) {
+                    record.of(tableCache.getAt(++iteratorIdx));
+                } else return false;
+
+                return true;
             }
 
             @Override
@@ -142,16 +157,10 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public void toTop() {
-                tableIndex = -1;
+                iteratorIdx = -1;
             }
 
-            private void of(SqlExecutionContext executionContext) {
-                this.executionContext = executionContext;
-                executionContext.getCairoEngine().getTableTokens(tableBucket, false);
-                toTop();
-            }
-
-            private class TableListRecord implements Record {
+            private static class TableListRecord implements Record {
                 private StringSink lazyStringSink = null;
                 private CairoTable table;
 
@@ -217,9 +226,8 @@ public class TablesFunctionFactory implements FunctionFactory {
                     return str != null ? str.length() : -1;
                 }
 
-                private boolean open(TableToken tableToken) {
-                    table = executionContext.getCairoEngine().metadataCacheGetVisibleTable(tableToken);
-                    return table != null;
+                private void of(CairoTable table) {
+                    this.table = table;
                 }
             }
         }
@@ -228,7 +236,7 @@ public class TablesFunctionFactory implements FunctionFactory {
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("id", ColumnType.INT));
-        metadata.add(TablesCursorFactory.TABLE_NAME_COLUMN_META);
+        metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));

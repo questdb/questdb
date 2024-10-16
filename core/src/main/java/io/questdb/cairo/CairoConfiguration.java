@@ -612,6 +612,8 @@ public interface CairoConfiguration {
 
     boolean isParallelIndexingEnabled();
 
+    boolean getPartitionO3OverwriteControlEnabled();
+
     boolean isPartitionEncoderParquetStatisticsEnabled();
 
     boolean isReadOnlyInstance();

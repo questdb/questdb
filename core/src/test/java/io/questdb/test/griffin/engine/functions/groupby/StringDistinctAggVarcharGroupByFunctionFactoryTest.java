@@ -157,6 +157,13 @@ public class StringDistinctAggVarcharGroupByFunctionFactoryTest extends Abstract
     }
 
     @Test
+    public void testOrderByNotSupported() throws Exception {
+        ddl("create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))");
+        assertException("select string_distinct_agg(ts, ',' ORDER BY ts) from x", 35, "ORDER BY not supported for string_distinct_agg");
+        assertException("select string_distinct_agg(ts, ',' order by ts) from x", 35, "ORDER BY not supported for string_distinct_agg");
+    }
+
+    @Test
     public void testSkipNull() throws Exception {
         assertQuery(
                 "string_distinct_agg\n" +

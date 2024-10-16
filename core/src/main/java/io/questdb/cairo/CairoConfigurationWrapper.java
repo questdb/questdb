@@ -1146,8 +1146,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isPartitionEncoderParquetStatisticsEnabled() {
-        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
+    public boolean getPartitionO3OverwriteControlEnabled() {
+        return getDelegate().getPartitionO3OverwriteControlEnabled();
     }
 
     @Override
@@ -1202,6 +1202,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return getDelegate().mangleTableDirNames();
+    }
+
+    @Override
+    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
     }
 
     @Override

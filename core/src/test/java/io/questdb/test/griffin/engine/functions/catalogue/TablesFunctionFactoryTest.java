@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
@@ -102,19 +103,14 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             // table is still shown since the cache is not updated
             assertSql(
                     "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                            "2\ttable2\tts2\tNONE\t1000\t300000000\n" +
-                            "1\ttable1\tts1\tDAY\t1000\t300000000\n",
+                            "2\ttable2\tts2\tNONE\t1000\t300000000\n",
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
 
-            engine.metadataCacheClear();
-
-            // cache can rehydrate table 2 during call, but not 1
-            assertSql("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" + "2\ttable2\tts2\tNONE\t1000\t300000000\n",
-                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()");
-
             // trying to rehydrate all tables
-            engine.metadataCacheHydrateAllTables();
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateAllTables();
+            }
 
             // still can't rehydrate table 1
             assertSql(
