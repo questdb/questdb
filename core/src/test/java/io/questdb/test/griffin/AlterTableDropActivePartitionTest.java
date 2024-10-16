@@ -361,7 +361,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                             dropPartition(tableName, LastPartitionTs);
                         } catch (CairoException |
                                  SqlException ex) { // the latter is due to an assertion in SqlException.position
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "invalid timestamp column data in detached partition");
+                            TestUtils.assertContains(ex.getFlyweightMessage(), "invalid timestamp data in detached partition");
                             TestUtils.assertContains(ex.getFlyweightMessage(), "timestamp.d, minTimestamp=1970-01-01T00:00:00.000Z, maxTimestamp=1970-01-01T00:00:00.000Z]");
                         }
                     } finally {
@@ -396,7 +396,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                             dropPartition(tableName, LastPartitionTs);
                         } catch (CairoException |
                                  SqlException ex) { // the latter is due to an assertion in SqlException.position
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "cannot read min, max timestamp from the column");
+                            TestUtils.assertContains(ex.getFlyweightMessage(), "cannot read min, max timestamp from the");
                         }
                     } finally {
                         Misc.free(workerPool);
