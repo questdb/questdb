@@ -4377,10 +4377,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata,
                         executionContext
                 );
-                int columnType = function.getType();
-                if (columnType == ColumnType.CURSOR) {
-                    throw SqlException.$(node.position, "cursor function cannot be used as a column [column=").put(column.getAlias()).put(']');
-                }
 
                 int targetColumnType = -1;
                 if (model.isUpdate()) {
@@ -4397,6 +4393,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // Set bind variable the type of the column
                         function.assignType(targetColumnType, executionContext.getBindVariableService());
                     }
+                }
+
+                int columnType = function.getType();
+                if (columnType == ColumnType.CURSOR) {
+                    throw SqlException.$(node.position, "cursor function cannot be used as a column [column=").put(column.getAlias()).put(']');
                 }
 
                 if (targetColumnType != -1 && targetColumnType != columnType) {
