@@ -3448,7 +3448,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SAMPLE BY 15m FILL(PREV)\n" +
                     ")\n" +
                     "SELECT ts, avg(x) FROM inner\n" +
-                    " WHERE ts >=  '2024-09-17T22:00:00.000000Z'\n" +
+                    " WHERE ts >= '2024-09-17T22:00:00.000000Z'\n" +
                     " AND ts <= '2024-09-18T22:00:00.000000Z' SAMPLE BY 15m\n" +
                     "                FROM\n" +
                     "        '2024-09-17T22:00:00.000000Z' TO '2024-09-18T22:00:00.000000Z' FILL(0)\n" +

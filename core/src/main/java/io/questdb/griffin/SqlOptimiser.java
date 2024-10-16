@@ -4882,14 +4882,26 @@ public class SqlOptimiser implements Mutable {
                 curr = curr.getNestedModel();
             }
 
+            ExpressionNode whereTimestamp = null;
+
             if (whereModel != null) {
                 // check if designated timestamp appears
+                whereTimestamp = whereModel.getTimestamp();
+                if (whereTimestamp == null) {
+                    // try to locate a timestamp and see if it matches
 
-                if (whereModel.getTimestamp() == null) {
-                    return;
+                    QueryModel next = whereModel.getNestedModel();
+                    while (next != null && next.getTimestamp() == null) {
+                        next = next.getNestedModel();
+                    }
+                    if (next == null || next.getTimestamp() == null) {
+                        return;
+                    }
+
+                    whereTimestamp = next.getTimestamp();
                 }
 
-                traversalAlgo.traverse(whereClause, rewriteSampleByFromToVisitor.of(whereModel.getTimestamp()));
+                traversalAlgo.traverse(whereClause, rewriteSampleByFromToVisitor.of(whereTimestamp));
                 // if it already considers the timestamp, then we do nothing
                 if (rewriteSampleByFromToVisitor.timestampAppears) {
                     return;
@@ -4908,8 +4920,13 @@ public class SqlOptimiser implements Mutable {
                 // we probably need to check for a where clause
                 if (whereClause != null) {
                     toAddWhereClause = whereModel;
-                    timestamp = whereModel.getTimestamp();
+                    timestamp = whereTimestamp;
                 }
+            }
+
+            if (timestamp == null) {
+                // drop out
+                return;
             }
 
             assert timestamp != null;
