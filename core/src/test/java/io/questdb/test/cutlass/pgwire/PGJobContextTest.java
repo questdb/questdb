@@ -10329,7 +10329,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("Update not observed on both modern and legacy")
     public void testUpdateAsyncWithReaderOutOfDateException() throws Exception {
         skipOnWalRun();
         SOCountDownLatch queryScheduledCount = new SOCountDownLatch(1);
