@@ -31,7 +31,11 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -123,7 +127,10 @@ public class TableConverter {
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
                                 convertedTables.add(token);
-                                engine.metadataCacheHydrateTable(token, true, true);
+
+                                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                                    metadataRW.hydrateTable(token);
+                                }
                             }
 
                             path.trimTo(rootLen).concat(dirNameSink).concat(CONVERT_FILE_NAME);
