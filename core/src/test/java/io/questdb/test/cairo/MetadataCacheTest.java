@@ -747,11 +747,6 @@ public class MetadataCacheTest extends AbstractCairoTest {
         ddl("create table y ( ts timestamp ) timestamp(ts) partition by day wal;");
     }
 
-
-    // todo: ALTER TABLE SET TYPE
-    // more complicated since it requires a database restart
-    // maybe fuzzer is best place to check this
-
     private void createZ() throws SqlException {
         ddl(
                 "create table z as (" +
