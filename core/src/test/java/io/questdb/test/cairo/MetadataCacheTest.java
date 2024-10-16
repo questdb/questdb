@@ -148,79 +148,105 @@ public class MetadataCacheTest extends AbstractCairoTest {
 
     @SuppressWarnings("BusyWait")
     @Test
-    public void fuzzRenames() throws Exception {
+    public void fuzzRenamesOnlyOneTablePresentAtATime() throws Exception {
+        assertMemoryLeak(() -> {
 
-        ddl("create table foo ( ts timestamp, x int ) timestamp(ts) partition by day wal;");
+            ddl("create table foo ( ts timestamp, x int ) timestamp(ts) partition by day wal;");
+            AtomicReference<Throwable> exception = new AtomicReference<>();
 
-        Thread fooToBahThread = new Thread(() -> {
+            Thread fooToBahThread = new Thread(() -> {
+                try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    while (true) {
+                        engine.ddl("rename table foo to bah", sqlExecutionContext);
+                        assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from bah",
+                                engine, sqlExecutionContext, new StringSink());
+                    }
+                } catch (SqlException | CairoException ignore) {
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    exception.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            Thread bahToFooThread = new Thread(() -> {
+                try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    while (true) {
+                        engine.ddl("rename table bah to foo", sqlExecutionContext);
+                        assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from foo",
+                                engine, sqlExecutionContext, new StringSink()
+                        );
+                    }
+                } catch (SqlException | CairoException ignore) {
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    exception.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            fooToBahThread.start();
+            bahToFooThread.start();
+
+            Instant i = Instant.now();
+
+            String s;
+            StringSink ss = new StringSink();
+            // should only ever contain one or the other
+            // check that `tables()` gives consistent view
+            while (Instant.now().getEpochSecond() - i.getEpochSecond() < 2) {
+                s = dumpTables(ss);
+                Assert.assertTrue(
+                        TestUtils.dumpMetadataCache(engine),
+                        s.contains("foo\t") ^ s.contains("bah\t"));
+                Thread.sleep(50);
+            }
+
+            ss.clear();
+
+            fooToBahThread.interrupt();
+            bahToFooThread.interrupt();
+
+            fooToBahThread.join();
+            bahToFooThread.join();
+
+            if (exception.get() != null) {
+                throw new RuntimeException(exception.get());
+            }
+
             try {
-                ddl("rename table foo to bah");
-//                assertException("show columns from foo", 18, "table does not exist");
-                assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from bah");
-            } catch (Exception ignore) {
+                drainWalQueue();
+            } catch (TableReferenceOutOfDateException e) {
+                LOG.infoW().$(e).$();
+            }
+
+            TableToken fooToken = engine.getTableTokenIfExists("foo");
+            TableToken bahToken = engine.getTableTokenIfExists("bah");
+
+            // one should be null
+            Assert.assertNotSame(fooToken, bahToken);
+
+            String cacheString = TestUtils.dumpMetadataCache(engine);
+
+            if (fooToken == null) {
+                Assert.assertFalse(cacheString.contains("name=foo"));
+                Assert.assertTrue(cacheString.contains("name=bah"));
+                assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
+                        "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
+            }
+            if (bahToken == null) {
+                Assert.assertFalse(cacheString.contains("name=bah"));
+                Assert.assertTrue(cacheString.contains("name=foo"));
+                assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
+                        "1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
             }
         });
-
-        Thread bahToFooThread = new Thread(() -> {
-            try {
-                ddl("rename table bah to foo");
-//                assertException("show columns from bah", 18, "table does not exist");
-                assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from foo");
-            } catch (Exception ignore) {
-            }
-        });
-
-        fooToBahThread.start();
-        bahToFooThread.start();
-
-        Instant i = Instant.now();
-
-        String s;
-        StringSink ss = new StringSink();
-        // should only ever contain one or the other
-        // check that `tables()` gives consistent view
-        while (Instant.now().getEpochSecond() - i.getEpochSecond() < 2) {
-            s = dumpTables(ss);
-            Assert.assertTrue(
-                    TestUtils.dumpMetadataCache(engine),
-                    s.contains("foo\t") ^ s.contains("bah\t"));
-            Thread.sleep(50);
-        }
-
-        ss.clear();
-
-        fooToBahThread.interrupt();
-        bahToFooThread.interrupt();
-
-        fooToBahThread.join();
-        bahToFooThread.join();
-
-        drainWalQueue();
-
-        TableToken fooToken = engine.getTableTokenIfExists("foo");
-        TableToken bahToken = engine.getTableTokenIfExists("bah");
-
-        // one should be null
-        Assert.assertNotSame(fooToken, bahToken);
-
-        String cacheString = TestUtils.dumpMetadataCache(engine);
-
-        if (fooToken == null) {
-            Assert.assertFalse(cacheString.contains("name=foo"));
-            Assert.assertTrue(cacheString.contains("name=bah"));
-            assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
-                    "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
-        }
-        if (bahToken == null) {
-            Assert.assertFalse(cacheString.contains("name=bah"));
-            Assert.assertTrue(cacheString.contains("name=foo"));
-            assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
-                    "1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
-        }
     }
 
     @Test
@@ -232,17 +258,19 @@ public class MetadataCacheTest extends AbstractCairoTest {
 
             Thread fooToBahThread = new Thread(() -> {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
-                    engine.ddl("rename table foo to bah", sqlExecutionContext);
-                    assertExceptionNoLeakCheck("show columns from foo", 18, "table does not exist", false, sqlExecutionContext);
-                    assertSql(
-                            "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                                    "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n",
-                            "show columns from bah",
-                            engine,
-                            sqlExecutionContext,
-                            new StringSink()
-                    );
+                    while (true) {
+                        engine.ddl("rename table foo to bah", sqlExecutionContext);
+                        assertExceptionNoLeakCheck("show columns from foo", 18, "table does not exist", false, sqlExecutionContext);
+                        assertSql(
+                                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n",
+                                "show columns from bah",
+                                engine,
+                                sqlExecutionContext,
+                                new StringSink()
+                        );
+                    }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
                     e.printStackTrace();
@@ -254,15 +282,17 @@ public class MetadataCacheTest extends AbstractCairoTest {
 
             Thread bahToFooThread = new Thread(() -> {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
-                    engine.ddl("rename table bah to foo", sqlExecutionContext);
-                    assertException("show columns from bah", 18, "table does not exist", sqlExecutionContext);
-                    assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                                    "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from foo",
-                            engine,
-                            sqlExecutionContext,
-                            new StringSink()
-                    );
+                    while (true) {
+                        engine.ddl("rename table bah to foo", sqlExecutionContext);
+                        assertException("show columns from bah", 18, "table does not exist", sqlExecutionContext);
+                        assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from foo",
+                                engine,
+                                sqlExecutionContext,
+                                new StringSink()
+                        );
+                    }
                 } catch (InterruptedException | SqlException | CairoException ignore) {
                 } catch (Throwable e) {
                     e.printStackTrace();
@@ -275,7 +305,9 @@ public class MetadataCacheTest extends AbstractCairoTest {
 
             Thread adderThread = new Thread(() -> {
                 try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
-                    engine.ddl("alter table foo add column y symbol", sqlExecutionContext);
+                    while (true) {
+                        engine.ddl("alter table foo add column y symbol", sqlExecutionContext);
+                    }
                 } catch (SqlException | CairoException ignored) {
                 } catch (Throwable e) {
                     e.printStackTrace();
@@ -288,6 +320,12 @@ public class MetadataCacheTest extends AbstractCairoTest {
             fooToBahThread.start();
             bahToFooThread.start();
             adderThread.start();
+
+            Thread.sleep(2000);
+
+            fooToBahThread.interrupt();
+            bahToFooThread.interrupt();
+            adderThread.interrupt();
 
             fooToBahThread.join();
             bahToFooThread.join();
