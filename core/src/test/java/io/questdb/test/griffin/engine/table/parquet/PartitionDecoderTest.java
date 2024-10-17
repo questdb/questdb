@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
@@ -35,12 +36,12 @@ import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.std.DirectIntList;
-import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -184,15 +185,20 @@ public class PartitionDecoderTest extends AbstractCairoTest {
      */
     @Test
     public void testUpdateInvalidRowGroup() throws Exception {
-        final long rows = 10;
+        final long rows = 1000;
         final FilesFacade ff = configuration.getFilesFacade();
 
         // We first set up the table without memory limits.
         assertMemoryLeak(() -> {
-            ddl("create table x as (select" +
-                    " x id," +
-                    " timestamp_sequence(400000000000, 500) designated_ts" +
-                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
+            TableModel src = new TableModel(configuration, "x", PartitionBy.DAY);
+            createPopulateTable(
+                    1,
+                    src.timestamp("designated_ts")
+                            .col("id", ColumnType.LONG),
+                    100,
+                    "1970-01-05",
+                    2
+            ); // generate 2 partitions
 
             // Convert the partition to parquet via SQL.
             ddl("alter table x convert partition to parquet where designated_ts >= 0");

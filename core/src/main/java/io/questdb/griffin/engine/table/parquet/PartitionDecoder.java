@@ -28,8 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
@@ -50,7 +48,6 @@ public class PartitionDecoder implements QuietCloseable {
     private static final long COLUMN_RECORD_NAME_SIZE_OFFSET;
     private static final long COLUMN_RECORD_TYPE_OFFSET;
     private static final long COLUMN_STRUCT_SIZE;
-    private static final Log LOG = LogFactory.getLog(PartitionDecoder.class);
     private static final long ROW_COUNT_OFFSET;
     private static final long ROW_GROUP_COUNT_OFFSET;
     private static final long ROW_GROUP_SIZES_PTR_OFFSET;
