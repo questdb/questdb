@@ -386,6 +386,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (!isActive()) {
             return;
         }
+        if (partitionOverwriteControl != null) {
+            // Mark partitions as unused before releasing txn in scoreboard
+            // to avoid false positives in partition overwrite control
+            partitionOverwriteControl.releasePartitions(this);
+        }
         if (releaseTxn() && PartitionBy.isPartitioned(partitionBy)) {
             // check if reader unlocks a transaction in scoreboard
             // to house keep the partition versions
@@ -406,9 +411,6 @@ public class TableReader implements Closeable, SymbolTableSource {
                     }
                 }
             }
-        }
-        if (partitionOverwriteControl != null) {
-            partitionOverwriteControl.releasePartitions(this);
         }
     }
 
