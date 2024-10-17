@@ -31,40 +31,45 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
 
     @Test
     public void testConstantNull() throws Exception {
+        String expected = "string_distinct_agg\n" +
+                "\n";
         assertQuery(
-                "string_distinct_agg\n" +
-                        "\n",
+                expected,
                 "select string_distinct_agg(null, ',') from x",
                 "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
                 false,
                 true
         );
+        assertSql(expected, "select string_agg(distinct null, ',') from x");
     }
 
     @Test
     public void testConstantString() throws Exception {
+        String expected = "string_distinct_agg\n" +
+                "aaa\n";
         assertQuery(
-                "string_distinct_agg\n" +
-                        "aaa\n",
+                expected,
                 "select string_distinct_agg('aaa', ',') from x",
                 "create table x as (select * from (select timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
                 false,
                 true
         );
+        assertSql(expected, "select string_agg(distinct 'aaa', ',') from x");
     }
 
     @Test
     public void testGroupKeyed() throws Exception {
+        String expected = "a\tstring_distinct_agg\n" +
+                "a\tbbb,abc,aaa\n" +
+                "b\tccc,abc,bbb\n" +
+                "c\tccc,abc,aaa\n" +
+                "d\tbbb,abc\n" +
+                "e\tabc,ccc\n" +
+                "f\tccc,abc,bbb\n";
         assertQuery(
-                "a\tstring_distinct_agg\n" +
-                        "a\tbbb,abc,aaa\n" +
-                        "b\tccc,abc,bbb\n" +
-                        "c\tccc,abc,aaa\n" +
-                        "d\tbbb,abc\n" +
-                        "e\tabc,ccc\n" +
-                        "f\tccc,abc,bbb\n",
+                expected,
                 "select a, string_distinct_agg(s, ',') from x order by a",
                 "create table x as (" +
                         "select * from (" +
@@ -78,15 +83,17 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 true,
                 true
         );
+        assertSql(expected, "select a, string_agg(distinct s, ',') from x group by a order by a");
     }
 
     @Test
     public void testGroupKeyedAllNulls() throws Exception {
+        String expected = "a\tstring_distinct_agg\n" +
+                "a\t\n" +
+                "b\t\n" +
+                "c\t\n";
         assertQuery(
-                "a\tstring_distinct_agg\n" +
-                        "a\t\n" +
-                        "b\t\n" +
-                        "c\t\n",
+                expected,
                 "select a, string_distinct_agg(s, ',') from x order by a",
                 "create table x as (" +
                         "select * from (" +
@@ -100,13 +107,15 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 true,
                 true
         );
+        assertSql(expected, "select a, string_agg(distinct s, ',') from x group by a order by a");
     }
 
     @Test
     public void testGroupKeyedManyRows() throws Exception {
+        String expected = "max\n" +
+                "15\n";
         assertQuery(
-                "max\n" +
-                        "15\n",
+                expected,
                 "select max(length(agg)) from (select a, string_distinct_agg(s, ',') agg from x)",
                 "create table x as (" +
                         "select * from (" +
@@ -120,14 +129,16 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 false,
                 true
         );
+        assertSql(expected, "select max(length(agg)) from (select a, string_agg(distinct s, ',') agg from x)");
     }
 
     @Test
     public void testGroupKeyedSomeNulls() throws Exception {
+        String expected = "a\tstring_distinct_agg\n" +
+                "\taaa\n" +
+                "a\taaa\n";
         assertQuery(
-                "a\tstring_distinct_agg\n" +
-                        "\taaa\n" +
-                        "a\taaa\n",
+                expected,
                 "select a, string_distinct_agg(s, ',') from x",
                 "create table x as (" +
                         "select * from (" +
@@ -141,32 +152,53 @@ public class StringDistinctAggGroupByFunctionFactoryTest extends AbstractCairoTe
                 true,
                 true
         );
+        assertSql(expected, "select a, string_agg(distinct s, ',') from x");
     }
 
     @Test
     public void testGroupNotKeyed() throws Exception {
+        String expected = "string_distinct_agg\n" +
+                "abc,bbb,aaa,ccc\n";
         assertQuery(
-                "string_distinct_agg\n" +
-                        "abc,bbb,aaa,ccc\n",
+                expected,
                 "select string_distinct_agg(s, ',') from x",
                 "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
                 null,
                 false,
                 true
         );
+        assertSql(expected, "select string_agg(distinct s, ',') from x");
     }
 
     @Test
     public void testSkipNull() throws Exception {
+        String ddl = "create table x as (select * from (select cast(null as string) s from long_sequence(5)))";
+        String expected = "string_distinct_agg\n" +
+                "\n";
+        String ddl2 = "insert into x select 'abc' from long_sequence(1)";
+        String expected2 = "string_distinct_agg\n" +
+                "abc\n";
         assertQuery(
-                "string_distinct_agg\n" +
-                        "\n",
+                expected,
                 "select string_distinct_agg(s, ',') from x",
-                "create table x as (select * from (select cast(null as string) s from long_sequence(5)))",
+                ddl,
                 null,
-                "insert into x select 'abc' from long_sequence(1)",
-                "string_distinct_agg\n" +
-                        "abc\n",
+                ddl2,
+                expected2,
+                false,
+                true,
+                false
+        );
+
+        drop("drop table x");
+
+        assertQuery(
+                expected,
+                "select string_agg(distinct s, ',') from x",
+                ddl,
+                null,
+                ddl2,
+                expected2,
                 false,
                 true,
                 false

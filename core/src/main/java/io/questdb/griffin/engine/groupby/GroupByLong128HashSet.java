@@ -45,7 +45,7 @@ import io.questdb.std.Vect;
  */
 public class GroupByLong128HashSet {
     private static final long HEADER_SIZE = 4 * Integer.BYTES;
-    private static final int MIN_INITIAL_CAPACITY = 4;
+    private static final int MIN_INITIAL_CAPACITY = 2;
     private static final long SIZE_LIMIT_OFFSET = 2 * Integer.BYTES;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private final int initialCapacity;
@@ -114,20 +114,6 @@ public class GroupByLong128HashSet {
     }
 
     public void merge(GroupByLong128HashSet srcSet) {
-        final int size = size();
-        // Math.max is here for overflow protection.
-        final int newSize = Math.max(size + srcSet.size(), size);
-        final int sizeLimit = sizeLimit();
-        if (sizeLimit < newSize) {
-            int newSizeLimit = sizeLimit;
-            int newCapacity = capacity();
-            while (newSizeLimit < newSize) {
-                newSizeLimit *= 2;
-                newCapacity *= 2;
-            }
-            rehash(newCapacity, newSizeLimit);
-        }
-
         for (long p = srcSet.ptr + HEADER_SIZE, lim = srcSet.ptr + HEADER_SIZE + 16L * srcSet.capacity(); p < lim; p += 16L) {
             long lo = Unsafe.getUnsafe().getLong(p);
             long hi = Unsafe.getUnsafe().getLong(p + 8L);

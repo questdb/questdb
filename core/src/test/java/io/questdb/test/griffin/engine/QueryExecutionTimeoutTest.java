@@ -43,9 +43,8 @@ import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
-
 
 /**
  * This test verifies that various factories use circuit breaker and thus can time out or detect broken connection.
@@ -53,8 +52,8 @@ import org.junit.Test;
 @SuppressWarnings("SameParameterValue")
 public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
+    @Before
+    public void setUp() {
         SqlExecutionCircuitBreakerConfiguration config = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
             public int getCircuitBreakerThrottle() {
@@ -66,7 +65,6 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 return NetworkSqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
             }
         };
-
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(config, MemoryTag.NATIVE_CB5) {
             @Override
             protected boolean testConnection(long fd) {
@@ -77,7 +75,8 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                 setTimeout(-1000); // fail on first check
             }
         };
-        AbstractCairoTest.setUpStatic();
+        ((SqlExecutionContextImpl) sqlExecutionContext).with(circuitBreaker);
+        super.setUp();
     }
 
     @Test
@@ -526,21 +525,21 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         );
     }
 
-    private void assertTimeout(String ddl, String query) throws Exception {
+    private void assertTimeout(String ddl, String query) {
         assertTimeout(ddl, null, query);
     }
 
-    private void assertTimeout(String ddl, String query, SqlCompiler compiler, SqlExecutionContext context) throws Exception {
+    private void assertTimeout(String ddl, String query, SqlCompiler compiler, SqlExecutionContext context) {
         assertTimeout(ddl, null, query, compiler, context);
     }
 
-    private void assertTimeout(String ddl, String dml, String query) throws Exception {
+    private void assertTimeout(String ddl, String dml, String query) {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             assertTimeout(ddl, dml, query, compiler, sqlExecutionContext);
         }
     }
 
-    private void assertTimeout(String ddl, String dml, String query, SqlCompiler compiler, SqlExecutionContext context) throws Exception {
+    private void assertTimeout(String ddl, String dml, String query, SqlCompiler compiler, SqlExecutionContext context) {
         try {
             if (dml != null || query != null) {
                 unsetTimeout();
@@ -636,7 +635,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         circuitBreaker.setTimeout(-1000);
     }
 
-    private void testTimeoutInLatestByAllIndexed(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) throws Exception {
+    private void testTimeoutInLatestByAllIndexed(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) {
         assertTimeout(
                 "create table x as " +
                         "(" +
@@ -655,7 +654,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         );
     }
 
-    private void testTimeoutInParallelKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) throws Exception {
+    private void testTimeoutInParallelKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) {
         assertTimeout(
                 "create table grouptest as (select cast(x%1000000 as int) as i, (x%100) as price, (x%1000) as quantity from long_sequence(10000) );",
                 "select i, vwap(price, quantity) from grouptest group by i order by i",
@@ -664,7 +663,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         );
     }
 
-    private void testTimeoutInParallelNonKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) throws Exception {
+    private void testTimeoutInParallelNonKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) {
         assertTimeout(
                 "create table grouptest as (select (x%100) as price, (x%1000) as quantity from long_sequence(10000) );",
                 "select vwap(price, quantity) from grouptest",
@@ -673,7 +672,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         );
     }
 
-    private void testTimeoutInVectorizedKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) throws Exception {
+    private void testTimeoutInVectorizedKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) {
         assertTimeout(
                 "create table grouptest as (select cast(x%1000000 as int) as i, x as l from long_sequence(10000) );",
                 "select i, avg(l), max(l) from grouptest group by i",
@@ -682,7 +681,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         );
     }
 
-    private void testTimeoutInVectorizedNonKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) throws Exception {
+    private void testTimeoutInVectorizedNonKeyedGroupBy(SqlCompiler compiler, @SuppressWarnings("unused") SqlExecutionContext context) {
         assertTimeout(
                 "create table grouptest as (select cast(x%1000000 as int) as i, x as l from long_sequence(10000) );",
                 "select avg(l), max(l) from grouptest",
@@ -707,7 +706,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         ) {
             sqlExecutionContext.with(circuitBreaker);
             if (pool != null) {
-                WorkerPoolUtils.setupQueryJobs(pool, engine, null);
+                WorkerPoolUtils.setupQueryJobs(pool, engine);
                 pool.start(LOG);
             }
 

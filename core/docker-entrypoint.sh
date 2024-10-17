@@ -15,7 +15,6 @@ DEFAULT_LOCAL_DIRS=${DEFAULT_LOCAL_DIRS:-"/conf /public /db /.checkpoint /snapsh
 array=( ${DEFAULT_LOCAL_DIRS} )
 read -ra LOCALDIRS < <( echo -n "( "; printf -- "-ipath ${QUESTDB_DATA_DIR}%s* -o " "${array[@]:0:$((${#array[@]} - 1))}"; echo -n "-ipath ${QUESTDB_DATA_DIR}${array[@]: -1}*"; echo " )";)
 
-
 # backwards compatibility with previous versions
 if [ ${IGNORE_FIND_AND_OWN_DIR+x} ]
 then
@@ -28,7 +27,6 @@ find_and_own_dir() {
     [ $(stat --format '%u:%g' ${QUESTDB_DATA_DIR}) == "$USER:$GROUP" ] || chown "$USER:$GROUP" ${QUESTDB_DATA_DIR}
     find ${QUESTDB_DATA_DIR} "${LOCALDIRS[@]}" \( ! -user $USER -o ! -group $GROUP \) -exec chown $USER:$GROUP '{}' \;
 }
-
 
 # Temporary only
 # Most of the users will have the data mounted under /root/.questdb as default
@@ -47,7 +45,7 @@ fi
 # Check if arguments are provided in the configuration file
 if [ $# -eq 0 ]; then
     echo "No arguments found in the configuration, start with default arguments"
-    set -- $JAVA_COMMAND -XX:+UseParallelGC -XX:ErrorFile=${QUESTDB_DATA_DIR}/db/hs_err_pid+%p.log -Dout=${QUESTDB_DATA_DIR}/conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
+    set -- $JAVA_COMMAND -ea -Dnoebug -XX:+UseParallelGC -XX:ErrorFile=${QUESTDB_DATA_DIR}/db/hs_err_pid+%p.log -Dout=${QUESTDB_DATA_DIR}/conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
 else
     if [ "${1:0:1}" = '-' ]; then
         echo "Found config arguments $@"
@@ -59,11 +57,15 @@ else
 fi
 
 if [ "$(id -u)" = '0' ] && [ "${QUESTDB_DATA_DIR%/}" != "/root/.questdb" ] && [ "$RUN_AS_ROOT" = "false" ] ; then
-    echo "Running as questdb user"
     if [ "$DO_CHOWN" = "true" ]; then
+        echo "Checking data directory ownership"
         find_and_own_dir $QUESTDB_UID $QUESTDB_GID
     fi
-    exec gosu $QUESTDB_UID:$QUESTDB_GID "$@"
+
+    if [ -x "$(command -v gosu)" ] ; then
+      echo "Running as questdb user"
+      exec gosu $QUESTDB_UID:$QUESTDB_GID "$@"
+    fi
 fi
 
 echo "Running as $(id -un 2>/dev/null) user"

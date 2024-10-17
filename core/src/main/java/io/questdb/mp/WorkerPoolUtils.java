@@ -26,7 +26,6 @@ package io.questdb.mp;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
@@ -35,14 +34,12 @@ import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.std.NanosecondClock;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import org.jetbrains.annotations.Nullable;
 
 public class WorkerPoolUtils {
 
     public static void setupQueryJobs(
             WorkerPool workerPool,
-            CairoEngine cairoEngine,
-            @Nullable SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration
+            CairoEngine cairoEngine
     ) {
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
         final MessageBus messageBus = cairoEngine.getMessageBus();
@@ -63,7 +60,7 @@ public class WorkerPoolUtils {
                 final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
                         messageBus,
                         new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
-                        sqlExecutionCircuitBreakerConfiguration
+                        configuration.getCircuitBreakerConfiguration()
                 );
                 workerPool.assign(i, pageFrameReduceJob);
                 workerPool.freeOnExit(pageFrameReduceJob);

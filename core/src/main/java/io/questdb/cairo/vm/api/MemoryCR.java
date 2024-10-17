@@ -27,7 +27,12 @@ package io.questdb.cairo.vm.api;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 
@@ -113,9 +118,9 @@ public interface MemoryCR extends MemoryC, MemoryR {
     default DirectString getStr(long offset, DirectString view) {
         long addr = addressOf(offset);
         assert addr > 0;
-        if (Vm.PARANOIA_MODE && !checkOffsetMapped(offset + 4)) {
+        if (!checkOffsetMapped(offset + 4)) {
             throw CairoException.critical(0)
-                    .put("String is outside of file boundary [offset=")
+                    .put("string is outside of file boundary [offset=")
                     .put(offset)
                     .put(", size=")
                     .put(size())
@@ -128,7 +133,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
                 return view.of(addr + Vm.STRING_LENGTH_BYTES, len);
             }
             throw CairoException.critical(0)
-                    .put("String is outside of file boundary [offset=")
+                    .put("string is outside of file boundary [offset=")
                     .put(offset)
                     .put(", len=")
                     .put(len)
