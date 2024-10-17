@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.bool;
 
-import io.questdb.cairo.BinarySearch;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
@@ -39,7 +38,12 @@ import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.IntervalUtils;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
 import static io.questdb.griffin.model.IntervalUtils.parseAndApplyIntervalEx;
@@ -175,7 +179,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long ts = tsFunc.getTimestamp(rec);
-            return negated != inList.binarySearch(ts, BinarySearch.SCAN_UP) >= 0;
+            return negated != inList.binarySearch(ts, Vect.BIN_SEARCH_SCAN_UP) >= 0;
         }
 
         @Override

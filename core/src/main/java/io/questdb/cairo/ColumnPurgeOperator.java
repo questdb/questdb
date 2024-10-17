@@ -381,7 +381,7 @@ public class ColumnPurgeOperator implements Closeable {
         path.trimTo(pathRootLen);
         path.concat(purgeLogWriter.getTableToken());
         long partitionNameTxn = purgeLogWriter.getPartitionNameTxn(partitionIndex);
-        TableUtils.setPathForPartition(
+        TableUtils.setPathForNativePartition(
                 path,
                 purgeLogWriter.getPartitionBy(),
                 partitionTimestamp,
@@ -440,7 +440,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private void setUpPartitionPath(int partitionBy, long partitionTimestamp, long partitionTxnName) {
         path.trimTo(pathTableLen);
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionTxnName);
+        TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionTxnName);
     }
 
     private enum ScoreboardUseMode {

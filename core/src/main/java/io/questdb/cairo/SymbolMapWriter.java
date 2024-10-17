@@ -188,16 +188,6 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     @Override
-    public MemoryR getSymbolOffsetsMemory() {
-        return offsetMem;
-    }
-
-    @Override
-    public MemoryR getSymbolValuesMemory() {
-        return charMem;
-    }
-
-    @Override
     public boolean getNullFlag() {
         return offsetMem.getBool(HEADER_NULL_FLAG);
     }
@@ -209,6 +199,16 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
     public int getSymbolCount() {
         return offsetToKey(offsetMem.getAppendOffset() - Long.BYTES);
+    }
+
+    @Override
+    public MemoryR getSymbolOffsetsMemory() {
+        return offsetMem;
+    }
+
+    @Override
+    public MemoryR getSymbolValuesMemory() {
+        return charMem;
     }
 
     public boolean isCached() {

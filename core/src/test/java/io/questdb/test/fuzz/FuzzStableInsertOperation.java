@@ -32,10 +32,10 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
 
 public class FuzzStableInsertOperation implements FuzzTransactionOperation {
+    private final int columnType;
     private final int commit;
     private final String symbol;
     private final long timestamp;
-    private final int columnType;
     private final Utf8StringSink utf8String;
 
     public FuzzStableInsertOperation(long timestamp, int commit) {

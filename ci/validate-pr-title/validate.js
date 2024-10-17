@@ -23,6 +23,7 @@ const allowedSubTypes = [
   "conf",
   "ui",
   "wal",
+  "parquet",
 ];
 
 const errorMessage = `

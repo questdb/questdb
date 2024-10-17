@@ -835,6 +835,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParquetFrameCacheCapacity() {
+        return 3;
+    }
+
+    @Override
     public int getSqlSmallMapKeyCapacity() {
         return 64;
     }
@@ -1154,6 +1159,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionO3OverwriteControlEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isReadOnlyInstance() {
         return false;
     }
@@ -1205,11 +1215,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean mangleTableDirNames() {
-        return false;
-    }
-
-    @Override
-    public boolean getPartitionO3OverwriteControlEnabled() {
         return false;
     }
 

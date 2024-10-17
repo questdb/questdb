@@ -153,21 +153,6 @@ public class IOURingImpl implements IOURing {
         return facade.submitAndWait(ringAddr, 1);
     }
 
-    /**
-     * Returns a pointer to sqe to fill. If there are sqes no available, returns 0.
-     */
-    private long nextSqe() {
-        final int head = Unsafe.getUnsafe().getInt(sqKheadAddr);
-        Unsafe.getUnsafe().loadFence();
-        final int tail = Unsafe.getUnsafe().getInt(ringAddr + SQ_SQE_TAIL_OFFSET);
-        if (tail - head < sqKringEntries) {
-            final long addr = sqesAddr + (long) (tail & sqKringMask) * SIZEOF_SQE;
-            Unsafe.getUnsafe().putInt(ringAddr + SQ_SQE_TAIL_OFFSET, tail + 1);
-            return addr;
-        }
-        return 0;
-    }
-
     private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len) {
         final long sqeAddr = nextSqe();
         if (sqeAddr == 0) {
@@ -181,6 +166,21 @@ public class IOURingImpl implements IOURing {
         final long id = idSeq++;
         Unsafe.getUnsafe().putLong(sqeAddr + SQE_USER_DATA_OFFSET, id);
         return id;
+    }
+
+    /**
+     * Returns a pointer to sqe to fill. If there are sqes no available, returns 0.
+     */
+    private long nextSqe() {
+        final int head = Unsafe.getUnsafe().getInt(sqKheadAddr);
+        Unsafe.getUnsafe().loadFence();
+        final int tail = Unsafe.getUnsafe().getInt(ringAddr + SQ_SQE_TAIL_OFFSET);
+        if (tail - head < sqKringEntries) {
+            final long addr = sqesAddr + (long) (tail & sqKringMask) * SIZEOF_SQE;
+            Unsafe.getUnsafe().putInt(ringAddr + SQ_SQE_TAIL_OFFSET, tail + 1);
+            return addr;
+        }
+        return 0;
     }
 
 }

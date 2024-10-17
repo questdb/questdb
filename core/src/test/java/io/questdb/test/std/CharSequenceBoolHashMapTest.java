@@ -28,10 +28,9 @@ package io.questdb.test.std;
 import io.questdb.std.CharSequenceBoolHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import org.junit.Test;
 
 import static org.junit.Assert.*;
-
-import org.junit.Test;
 
 public class CharSequenceBoolHashMapTest {
 

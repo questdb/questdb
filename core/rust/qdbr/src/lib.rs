@@ -22,12 +22,14 @@
  *
  ******************************************************************************/
 
-mod parquet_read;
-mod parquet_write;
-mod utils;
-
+#![feature(allocator_api)]
 extern crate core;
 pub extern crate jni;
+mod allocator;
+mod cairo;
+mod parquet;
+mod parquet_read;
+mod parquet_write;
 
 use jni::sys::jlong;
 use jni::{objects::JClass, JNIEnv};

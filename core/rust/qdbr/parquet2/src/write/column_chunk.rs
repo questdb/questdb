@@ -31,11 +31,10 @@ pub fn write_column_chunk<W, E>(
     mut offset: u64,
     descriptor: &ColumnDescriptor,
     mut compressed_pages: DynStreamingIterator<'_, CompressedPage, E>,
-) -> Result<(ColumnChunk, Vec<PageWriteSpec>, u64)>
+) -> std::result::Result<(ColumnChunk, Vec<PageWriteSpec>, u64), E>
 where
     W: Write,
-    Error: From<E>,
-    E: std::error::Error,
+    E: std::error::Error + From<Error>,
 {
     // write every page
 
@@ -53,11 +52,13 @@ where
 
     // write metadata
     let mut protocol = TCompactOutputProtocol::new(writer);
-    bytes_written += column_chunk
+    let column_chunk_bytes: Result<usize> = column_chunk
         .meta_data
         .as_ref()
         .unwrap()
-        .write_to_out_protocol(&mut protocol)? as u64;
+        .write_to_out_protocol(&mut protocol)
+        .map_err(|e| e.into());
+    bytes_written += column_chunk_bytes? as u64;
 
     Ok((column_chunk, specs, bytes_written))
 }

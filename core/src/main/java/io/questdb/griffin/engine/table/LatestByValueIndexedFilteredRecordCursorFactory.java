@@ -31,6 +31,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
@@ -79,7 +80,8 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractPag
     @Override
     protected void _close() {
         super._close();
-        filter.close();
+        Misc.free(filter);
+        Misc.free(cursor);
     }
 
     @Override

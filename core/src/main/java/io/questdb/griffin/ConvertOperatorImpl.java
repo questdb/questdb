@@ -30,7 +30,9 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.*;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -44,7 +46,8 @@ import java.io.IOException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.ColumnType.isVarSize;
-import static io.questdb.cairo.TableUtils.*;
+import static io.questdb.cairo.TableUtils.dFile;
+import static io.questdb.cairo.TableUtils.iFile;
 
 public class ConvertOperatorImpl implements Closeable {
     private static final Log LOG = LogFactory.getLog(ConvertOperatorImpl.class);
@@ -182,7 +185,7 @@ public class ConvertOperatorImpl implements Closeable {
 
                             if (rowCount > 0) {
                                 path.trimTo(rootLen);
-                                TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
+                                TableUtils.setPathForNativePartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
                                 int pathTrimToLen = path.size();
 
                                 long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;

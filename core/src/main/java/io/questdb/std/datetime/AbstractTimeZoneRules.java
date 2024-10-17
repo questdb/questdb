@@ -24,10 +24,10 @@
 
 package io.questdb.std.datetime;
 
-import io.questdb.cairo.BinarySearch;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 import java.time.ZoneOffset;
 import java.time.zone.ZoneOffsetTransitionRule;
@@ -153,7 +153,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     private long dstFromHistory(long epoch) {
-        int index = historicTransitions.binarySearch(epoch, BinarySearch.SCAN_UP);
+        int index = historicTransitions.binarySearch(epoch, Vect.BIN_SEARCH_SCAN_UP);
         if (index == -1) {
             return Long.MAX_VALUE;
         }
@@ -231,7 +231,7 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     private long offsetFromHistory(long epoch) {
-        int index = historicTransitions.binarySearch(epoch, BinarySearch.SCAN_UP);
+        int index = historicTransitions.binarySearch(epoch, Vect.BIN_SEARCH_SCAN_UP);
         if (index == -1) {
             return firstWall;
         }

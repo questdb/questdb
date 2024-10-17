@@ -36,6 +36,8 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -158,7 +160,6 @@ public class PGJobContextTest extends BasePGTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
-        inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
@@ -184,6 +185,7 @@ public class PGJobContextTest extends BasePGTest {
                 .I$();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        inputRoot = TestUtils.getCsvRoot();
     }
 
     @After
@@ -7573,6 +7575,19 @@ nodejs code:
         });
     }
 
+    // TODO(puzpuzpuz): fix schema changes handling in PGWire for extended protocol
+    //                  https://github.com/questdb/questdb/issues/4971
+    @Ignore
+    @Test
+    public void testReadParquetSchemaChangeExtended() throws Exception {
+        testReadParquetSchemaChange(false);
+    }
+
+    @Test
+    public void testReadParquetSchemaChangeSimple() throws Exception {
+        testReadParquetSchemaChange(true);
+    }
+
     @Test
     public void testRegProcedure() throws Exception {
         skipOnWalRun(); // non-partitioned table
@@ -9376,6 +9391,19 @@ create table tab as (
         });
     }
 
+    // TODO(puzpuzpuz): fix schema changes handling in PGWire for extended protocol
+    //                  https://github.com/questdb/questdb/issues/4971
+    @Ignore
+    @Test
+    public void testTableSchemaChangeExtended() throws Exception {
+        testTableSchemaChange(false);
+    }
+
+    @Test
+    public void testTableSchemaChangeSimple() throws Exception {
+        testTableSchemaChange(true);
+    }
+
     /*
     We want to ensure that tableoid is set to zero, otherwise squirrelSql will not display the result set.
      */
@@ -10137,10 +10165,6 @@ create table tab as (
         });
     }
 
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
-
     @Test
     public void testUpdatePreparedRenameUpdate() throws Exception {
         assertMemoryLeak(() -> {
@@ -10192,10 +10216,6 @@ create table tab as (
             }
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateWithNowAndSystimestamp() throws Exception {
@@ -10327,16 +10347,16 @@ create table tab as (
 
     /*
         package main
-        
+
         import (
             "database/sql"
             "fmt"
             "math"
             "time"
-        
+
             _ "github.com/lib/pq"
         )
-        
+
         const (
             host     = "localhost"
             port     = 8812
@@ -10344,7 +10364,7 @@ create table tab as (
             password = "quest"
             dbname   = "qdb"
         )
-        
+
         func main() {
             connStr := fmt.Sprintf(
                 "host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
@@ -10352,17 +10372,17 @@ create table tab as (
             db, err := sql.Open("postgres", connStr)
             checkErr(err)
             defer db.Close()
-        
+
             date, err := time.ParseInLocation("2006-01-02T15:04:05.999", "2022-01-12T12:01:01.120", time.UTC)
             checkErr(err)
             timestamp, err := time.ParseInLocation("2006-01-02T15:04:05.999999", "2020-02-13T10:11:12.123450", time.UTC)
             checkErr(err)
-        
+
             stmt, err := db.Prepare("INSERT INTO all_types values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, " +
                 "cast($13 as geohash(1c)), cast($14 as geohash(2c)) , cast($15  as geohash(4c)), cast($16 as geohash(8c)), $17, $18, cast('' || $19 as long256), $20)")
             checkErr(err)
             defer stmt.Close()
-        
+
             var data = [][]interface{}{
                 {bool(false), int16(0), int16(0), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, timestamp},
                 {bool(true), int16(1), int16(1), mkstring("a"), mkint32(4), mkint64(5), &date, &timestamp, mkfloat32(12.345), mkfloat64(1.0234567890123),
@@ -10371,25 +10391,25 @@ create table tab as (
                 {bool(true), int16(math.MaxInt8), int16(math.MaxInt16), mkstring("z"), mkint32(math.MaxInt32), mkint64(math.MaxInt64), &date, mktimestamp("1970-01-01T00:00:00.000000"),
                     mkfloat32(math.MaxFloat32), mkfloat64(math.MaxFloat64), mkstring("XXX"), mkstring(" "), mkstring("e"), mkstring("ee"), mkstring("eeee"), mkstring("eeeeeeee"),
                     mkstring("255.255.255.255"), mkstring("a0eebc99-ffff-ffff-ffff-ffffffffffff"), mkstring("0x5dd94b8492b4be20632d0236ddb8f47c91efc2568b4d452847b4a645dbefffff"), mktimestamp("2020-03-31T00:00:00.987654")}}
-        
+
             for i := 0; i < len(data); i++ {
                 _, err = stmt.Exec(data[i]...)
                 checkErr(err)
             }
         }
-        
+
         func checkErr(err error) {
             if err != nil {
                 panic(err)
             }
         }
-        
+
         func mktimestamp(s string) *time.Time {
             timestamp, err := time.ParseInLocation("2006-01-02T15:04:05.999999", s, time.UTC)
             checkErr(err)
             return &timestamp
         }
-        
+
         func mkstring(s string) *string {
             return &s
         }
@@ -10405,7 +10425,7 @@ create table tab as (
         func mkint64(i int64) *int64 {
             return &i
         }
-        
+
         ----------------------------
         require (
             github.com/lib/pq v1.10.9 // indirect
@@ -10462,14 +10482,14 @@ create table tab as (
 
     /*
         use sqlx::postgres::PgPoolOptions;
-        
+
         #[async_std::main]
         async fn main() -> Result<(), sqlx::Error> {
             let pool = PgPoolOptions::new()
                 .max_connections(5)
                 .connect("postgresql://admin:quest@localhost:8812/qdb")
                 .await?;
-        
+
             let row: (String,) = sqlx::query_as("SELECT id from x").fetch_one(&pool).await?;
             assert_eq!(row.0, "D");
             Ok(())
@@ -12360,6 +12380,63 @@ create table tab as (
         });
     }
 
+    private void testReadParquetSchemaChange(boolean simple) throws Exception {
+        inputRoot = root; // the parquet files are exported into the root dir
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    PGWireServer server = createPGServer(1);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), simple, true)) {
+                    connection.prepareStatement("create table x as (select 1 id_x, timestamp_sequence(0,10000) as ts from long_sequence(1))").execute();
+                    connection.prepareStatement("create table y as (select 2 id_y, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))").execute();
+
+                    try (
+                            Path path = new Path();
+                            PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                            TableReader readerX = engine.getReader("x");
+                            TableReader readerY = engine.getReader("y")
+                    ) {
+                        path.of(root).concat("table.parquet").$();
+                        PartitionEncoder.populateFromTableReader(readerX, partitionDescriptor, 0);
+                        PartitionEncoder.encode(partitionDescriptor, path);
+
+                        try (PreparedStatement ps = connection.prepareStatement("select * from read_parquet('table.parquet')")) {
+                            try (ResultSet resultSet = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "id_x[INTEGER],ts[TIMESTAMP]\n" +
+                                                "1,1970-01-01 00:00:00.0\n",
+                                        sink,
+                                        resultSet
+                                );
+                            }
+
+                            // delete the file and populate from y table
+                            engine.getConfiguration().getFilesFacade().remove(path.$());
+                            PartitionEncoder.populateFromTableReader(readerY, partitionDescriptor, 0);
+                            PartitionEncoder.encode(partitionDescriptor, path);
+
+                            // Query the data once again - this time the Parquet schema is different,
+                            // so the query should get recompiled.
+                            try (ResultSet resultSet = ps.executeQuery()) {
+                                sink.clear();
+                                assertResultSet(
+                                        "id_y[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                                "2,foobar,1970-01-01 00:00:00.000001\n",
+                                        sink,
+                                        resultSet
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     private void testSemicolon(boolean simpleQueryMode) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -12372,6 +12449,47 @@ create table tab as (
                         final PreparedStatement statement = connection.prepareStatement(";;")
                 ) {
                     statement.execute();
+                }
+            }
+        });
+    }
+
+    private void testTableSchemaChange(boolean simple) throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    PGWireServer server = createPGServer(1);
+                    WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (Connection connection = getConnection(server.getPort(), simple, true)) {
+                    connection.prepareStatement("create table x as (select 2 id, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))").execute();
+
+                    try (PreparedStatement ps = connection.prepareStatement("x")) {
+                        try (ResultSet resultSet = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(
+                                    "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                            "2,foobar,1970-01-01 00:00:00.000001\n",
+                                    sink,
+                                    resultSet
+                            );
+                        }
+
+                        connection.prepareStatement("alter table x drop column str;").execute();
+
+                        // Query the data once again - this time the schema is different,
+                        // so the query should get recompiled.
+                        try (ResultSet resultSet = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(
+                                    "id[INTEGER],ts[TIMESTAMP]\n" +
+                                            "2,1970-01-01 00:00:00.000001\n",
+                                    sink,
+                                    resultSet
+                            );
+                        }
+                    }
                 }
             }
         });

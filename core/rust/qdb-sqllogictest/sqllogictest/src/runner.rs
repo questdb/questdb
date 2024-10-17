@@ -284,7 +284,8 @@ pub enum TestErrorKind {
         actual_stdout: String,
     },
     // Remember to also update [`TestErrorKindDisplay`] if this message is changed.
-    #[error("{kind} is expected to fail with error:\n\t{expected_err}\nbut got error:\n\t{err}\n[SQL] {sql}")]
+    #[error("{kind} is expected to fail with error:\n\t{expected_err}\nbut got error:\n\t{err}\n[SQL] {sql}"
+    )]
     ErrorMismatch {
         sql: String,
         err: AnyError,
@@ -397,7 +398,7 @@ impl<'a> Display for TestErrorKindDisplay<'a> {
                     "system command stdout mismatch:\n[command] {command}\n[Diff] (-expected|+actual)\n{}",
                     TextDiff::from_lines(expected_stdout, actual_stdout)
                         .iter_all_changes()
-                        .format_with("\n", |diff, f|{ format_diff(&diff, f, true)})
+                        .format_with("\n", |diff, f| { format_diff(&diff, f, true) })
                 )
             }
             _ => write!(f, "{}", self.error),
@@ -506,9 +507,9 @@ pub fn default_column_validator<T: ColumnType>(_: &Vec<T>, _: &Vec<T>) -> bool {
 pub fn strict_column_validator<T: ColumnType>(actual: &Vec<T>, expected: &Vec<T>) -> bool {
     actual.len() == expected.len()
         && !actual
-            .iter()
-            .zip(expected.iter())
-            .any(|(actual_column, expected_column)| actual_column != expected_column)
+        .iter()
+        .zip(expected.iter())
+        .any(|(actual_column, expected_column)| actual_column != expected_column)
 }
 
 /// Sqllogictest runner.
@@ -523,10 +524,10 @@ pub struct Runner<D: AsyncDB, M: MakeConnection> {
     hash_threshold: usize,
     /// Labels for condition `skipif` and `onlyif`.
     labels: HashSet<String>,
-    timestamp_format: Option<TimestampFormat>
+    timestamp_format: Option<TimestampFormat>,
 }
 
-impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
+impl<D: AsyncDB, M: MakeConnection<Conn=D>> Runner<D, M> {
     /// Create a new test runner on the database, with the given connection maker.
     ///
     /// See [`MakeConnection`] for more details.
@@ -702,10 +703,10 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                 let mut actual_stdout = None;
                 let error: Option<AnyError> = match result {
                     Ok(Output {
-                        status,
-                        stdout,
-                        stderr,
-                    }) => {
+                           status,
+                           stdout,
+                           stderr,
+                       }) => {
                         let stdout = String::from_utf8_lossy(&stdout).to_string();
                         let stderr = String::from_utf8_lossy(&stderr).to_string();
                         tracing::info!(target:"sqllogictest::system_command", command, ?status, stdout, stderr, "system command executed");
@@ -790,7 +791,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                     QueryExpect::Results { sort_mode, .. } => sort_mode,
                     QueryExpect::Error(_) => None,
                 }
-                .or(self.sort_mode);
+                    .or(self.sort_mode);
                 match sort_mode {
                     None | Some(SortMode::NoSort) => {}
                     Some(SortMode::RowSort) => {
@@ -883,7 +884,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                         sql,
                         kind: RecordKind::Query,
                     }
-                    .at(loc));
+                        .at(loc));
                 }
             }
             (
@@ -897,7 +898,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                         sql,
                         kind: RecordKind::Query,
                     }
-                    .at(loc))
+                        .at(loc))
                 }
                 QueryExpect::Results { results, .. } if !results.is_empty() => {
                     return Err(TestErrorKind::QueryResultMismatch {
@@ -905,7 +906,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                         expected: results.join("\n"),
                         actual: "".to_string(),
                     }
-                    .at(loc))
+                        .at(loc))
                 }
                 QueryExpect::Results { .. } => {}
             },
@@ -924,7 +925,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                         sql,
                         kind: RecordKind::Statement,
                     }
-                    .at(loc))
+                        .at(loc))
                 }
                 (None, StatementExpect::Count(expected_count)) => {
                     if expected_count != *count {
@@ -933,7 +934,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                             expected: expected_count,
                             actual: format!("affected {count} rows"),
                         }
-                        .at(loc));
+                            .at(loc));
                     }
                 }
                 (None, StatementExpect::Ok) => {}
@@ -945,7 +946,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                             expected_err: expected_error.to_string(),
                             kind: RecordKind::Statement,
                         }
-                        .at(loc));
+                            .at(loc));
                     }
                 }
                 (Some(e), StatementExpect::Count(_) | StatementExpect::Ok) => {
@@ -954,7 +955,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                         err: Arc::clone(e),
                         kind: RecordKind::Statement,
                     }
-                    .at(loc));
+                        .at(loc));
                 }
             },
             (
@@ -973,7 +974,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                             sql,
                             kind: RecordKind::Query,
                         }
-                        .at(loc));
+                            .at(loc));
                     }
                     (Some(e), QueryExpect::Error(expected_error)) => {
                         if !expected_error.is_match(&e.to_string()) {
@@ -983,7 +984,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                                 expected_err: expected_error.to_string(),
                                 kind: RecordKind::Query,
                             }
-                            .at(loc));
+                                .at(loc));
                         }
                     }
                     (Some(e), QueryExpect::Results { .. }) => {
@@ -992,7 +993,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                             err: Arc::clone(e),
                             kind: RecordKind::Query,
                         }
-                        .at(loc));
+                            .at(loc));
                     }
                     (
                         None,
@@ -1008,7 +1009,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                                 expected: expected_types.iter().map(|c| c.to_char()).join(""),
                                 actual: types.iter().map(|c| c.to_char()).join(""),
                             }
-                            .at(loc));
+                                .at(loc));
                         }
 
                         if !(self.validator)(rows, &expected_results) {
@@ -1019,7 +1020,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                                 expected: expected_results.join("\n"),
                                 actual: output_rows.join("\n"),
                             }
-                            .at(loc));
+                                .at(loc));
                         }
                     }
                 };
@@ -1041,7 +1042,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                         command,
                         err: Arc::clone(err),
                     }
-                    .at(loc));
+                        .at(loc));
                 }
                 match (expected_stdout, actual_stdout) {
                     (None, _) => {}
@@ -1054,7 +1055,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                                 expected_stdout,
                                 actual_stdout,
                             }
-                            .at(loc));
+                                .at(loc));
                         }
                     }
                 }
@@ -1082,7 +1083,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
     /// To acquire the result of each record, manually call `run_async` for each record instead.
     pub async fn run_multi_async(
         &mut self,
-        records: impl IntoIterator<Item = Record<D::ColumnType>>,
+        records: impl IntoIterator<Item=Record<D::ColumnType>>,
     ) -> Result<(), TestError> {
         for record in records.into_iter() {
             if let Record::Halt { .. } = record {
@@ -1100,7 +1101,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
     /// To acquire the result of each record, manually call `run` for each record instead.
     pub fn run_multi(
         &mut self,
-        records: impl IntoIterator<Item = Record<D::ColumnType>>,
+        records: impl IntoIterator<Item=Record<D::ColumnType>>,
     ) -> Result<(), TestError> {
         block_on(self.run_multi_async(records))
     }
@@ -1159,7 +1160,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
         jobs: usize,
     ) -> Result<(), ParallelTestError>
     where
-        Fut: Future<Output = D>,
+        Fut: Future<Output=D>,
     {
         let files = glob::glob(glob).expect("failed to read glob pattern");
         let mut tasks = vec![];
@@ -1217,7 +1218,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
         jobs: usize,
     ) -> Result<(), ParallelTestError>
     where
-        Fut: Future<Output = D>,
+        Fut: Future<Output=D>,
     {
         block_on(self.run_parallel_async(glob, hosts, conn_builder, jobs))
     }
@@ -1368,7 +1369,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                         validator,
                         column_type_validator,
                     )
-                    .unwrap_or(record);
+                        .unwrap_or(record);
                     writeln!(outfile, "{record}")?;
                 }
             }
@@ -1466,10 +1467,10 @@ pub fn update_record_with_output<T: ColumnType>(
             }),
             // Error match
             (Some(e), StatementExpect::Error(expected_error))
-                if expected_error.is_match(&e.to_string()) =>
-            {
-                None
-            }
+            if expected_error.is_match(&e.to_string()) =>
+                {
+                    None
+                }
             // Error mismatch, update expected error
             (Some(e), r) => {
                 let reference = match &r {
@@ -1501,10 +1502,10 @@ pub fn update_record_with_output<T: ColumnType>(
         ) => match (error, expected) {
             // Error match
             (Some(e), QueryExpect::Error(expected_error))
-                if expected_error.is_match(&e.to_string()) =>
-            {
-                None
-            }
+            if expected_error.is_match(&e.to_string()) =>
+                {
+                    None
+                }
             // Error mismatch
             (Some(e), r) => {
                 let reference = match &r {
@@ -1618,7 +1619,7 @@ mod tests {
 
             expected: Some(record),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1643,7 +1644,7 @@ mod tests {
                  3 4",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1667,7 +1668,7 @@ mod tests {
                  3 4",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1684,7 +1685,7 @@ mod tests {
             // No update
             expected: None,
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1703,7 +1704,7 @@ mod tests {
                  select * from foo;\n",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1727,7 +1728,7 @@ Caused by:
   Inner Error",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1748,7 +1749,7 @@ Caused by:
                  create table foo;",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1767,7 +1768,7 @@ Caused by:
                  select * from foo;",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1790,7 +1791,7 @@ Caused by:
                  insert into foo values(2);",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1808,7 +1809,7 @@ Caused by:
                  insert into foo values(2);",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1825,7 +1826,7 @@ Caused by:
             // update
             expected: None,
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1844,7 +1845,7 @@ Caused by:
                  insert into foo values(2);",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1868,7 +1869,7 @@ Caused by:
   Inner Error",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1887,7 +1888,7 @@ Caused by:
                  insert into foo values(2);",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1911,7 +1912,7 @@ Caused by:
   Inner Error",
             ),
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1948,7 +1949,7 @@ Caused by:
             // no update expected
             expected: None,
         }
-        .run()
+            .run()
     }
 
     #[test]
@@ -1985,7 +1986,7 @@ Caused by:
             // no update expected
             expected: None,
         }
-        .run()
+            .run()
     }
 
     #[derive(Debug)]
