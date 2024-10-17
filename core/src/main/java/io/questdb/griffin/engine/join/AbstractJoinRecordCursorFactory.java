@@ -40,4 +40,9 @@ public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCurs
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
     }
+
+    @Override
+    public boolean followedLimitAdvice() {
+        return masterFactory.followedLimitAdvice();
+    }
 }
