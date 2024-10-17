@@ -904,6 +904,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.VarGroupByFunctionFactory,
 //                 var_samp()
             io.questdb.griffin.engine.functions.groupby.VarSampleGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.ApproxVarSampleGroupByFunctionFactory,
 //                 var_pop()
             io.questdb.griffin.engine.functions.groupby.VarPopGroupByFunctionFactory,
 //                 covar_samp()
