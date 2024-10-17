@@ -1454,6 +1454,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // other is pointing to the new partition folder
         LOG.info().$("converting parquet partition to native [path=").$substr(pathRootSize, path).I$();
         final long parquetFd = openRO(ff, path.$(), LOG);
+        // TODO(puzpuzpuz): should we read the size from txWriter? consider other cases and parquet compaction
         final long fileSize = ff.length(parquetFd);
         final int columnCount = metadata.getColumnCount();
 
@@ -5739,7 +5740,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (o3MaxLag > 0) {
                 long lagError = 0;
                 if (getMaxTimestamp() != Long.MIN_VALUE) {
-
                     // When table already has data we can calculate the overlap of the newly added
                     // batch of records with existing data in the table. Positive value of the overlap
                     // means that our o3EffectiveLag was undersized.
