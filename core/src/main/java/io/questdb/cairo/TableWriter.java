@@ -1429,7 +1429,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (partitionIndex < 0) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
             throw CairoException.nonCritical().put("cannot convert parquet partition to native, partition does not exist [table=").put(tableToken.getTableName())
-                    .put(", partition=").put(utf8Sink).put(']');
+                    .put(", partition=").put(utf8Sink)
+                    .put(']');
         }
 
         if (!txWriter.isPartitionParquet(partitionIndex)) {

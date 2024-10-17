@@ -92,6 +92,13 @@ public class TimestampFinderTest extends AbstractCairoTest {
                         ticks = duplicatesPerTick;
                     }
                 }
+
+                // write one more row, so that the active partition contains it;
+                // that's because we can't convert active partition to parquet
+                long newerTimestamp = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
+                oracleWriter.newRow(newerTimestamp).append();
+                writer.newRow(newerTimestamp).append();
+
                 oracleWriter.commit();
                 writer.commit();
             }
@@ -105,8 +112,8 @@ public class TimestampFinderTest extends AbstractCairoTest {
                     TableReader reader = newOffPoolReader(configuration, "x");
                     ParquetTimestampFinder finder = new ParquetTimestampFinder();
             ) {
-                Assert.assertEquals(1, oracleReader.getPartitionCount());
-                Assert.assertEquals(1, reader.getPartitionCount());
+                Assert.assertEquals(2, oracleReader.getPartitionCount());
+                Assert.assertEquals(2, reader.getPartitionCount());
 
                 oracleReader.openPartition(0);
                 reader.openPartition(0);
