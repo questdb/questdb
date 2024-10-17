@@ -38,7 +38,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -73,15 +75,17 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         try {
             final Path path = Path.getThreadLocal2("");
             checkPathIsSafeToRead(path, filePath, argPos.getQuick(0), config);
-            long fd = TableUtils.openRO(config.getFilesFacade(), path.$(), LOG);
+            final FilesFacade ff = config.getFilesFacade();
+            final long fd = TableUtils.openRO(ff, path.$(), LOG);
             try (PartitionDecoder decoder = new PartitionDecoder()) {
-                decoder.of(fd);
+                final long fileSize = ff.length(fd);
+                decoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
                 decoder.metadata().copyTo(metadata, true);
                 return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, config.getFilesFacade()));
             } finally {
-                config.getFilesFacade().close(fd);
+                ff.close(fd);
             }
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), "error reading parquet file ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());

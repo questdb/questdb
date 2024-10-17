@@ -248,8 +248,9 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
 
     private void openParquet(int frameIndex) {
         final long fd = addressCache.getParquetFd(frameIndex);
-        if (parquetDecoder.getFd() != fd) {
-            parquetDecoder.of(fd);
+        final long fileSize = addressCache.getParquetFileSize(frameIndex);
+        if ((parquetDecoder.getFd() != fd) || (parquetDecoder.getFileSize() != fileSize)) {
+            parquetDecoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
         final PartitionDecoder.Metadata metadata = parquetDecoder.metadata();
         if (metadata.columnCount() < addressCache.getColumnCount()) {

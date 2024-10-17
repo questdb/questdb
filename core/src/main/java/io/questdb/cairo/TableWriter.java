@@ -805,23 +805,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean checkPassed = false;
         boolean isSoftLink;
         boolean isParquet;
-        long parquetPartitionFileSize = -1L;
+        long parquetSize = -1L;
         try {
             if (ff.exists(detachedPath.$())) {
                 isSoftLink = ff.isSoftLink(detachedPath.$()); // returns false regardless in Windows
 
                 isParquet = ff.exists(detachedPath.concat(PARQUET_PARTITION_NAME).$());
                 if (isParquet) {
-                    parquetPartitionFileSize = ff.length(detachedPath.$());
+                    parquetSize = ff.length(detachedPath.$());
                 }
                 // detached metadata files validation
                 CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getName();
                 if (partitionSize > -1L) {
                     // read detachedMinTimestamp and detachedMaxTimestamp
-                    readPartitionMinMax(timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, partitionSize);
+                    readPartitionMinMaxTimestamps(timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, parquetSize, partitionSize);
                 } else {
                     // read size, detachedMinTimestamp and detachedMaxTimestamp
-                    partitionSize = readPartitionSizeMinMax(timestamp, detachedPath.trimTo(detachedRootLen), timestampColName);
+                    partitionSize = readPartitionSizeMinMaxTimestamps(timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, parquetSize);
                 }
 
                 if (partitionSize < 1) {
@@ -879,7 +879,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             if (isParquet) {
-                txWriter.setPartitionParquetFormat(timestamp, parquetPartitionFileSize, true);
+                txWriter.setPartitionParquetFormat(timestamp, parquetSize, true);
             }
 
             txWriter.bumpTruncateVersion();
@@ -1429,7 +1429,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (partitionIndex < 0) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
             throw CairoException.nonCritical().put("cannot convert parquet partition to native, partition does not exist [table=").put(tableToken.getTableName())
-                    .put(", partition=").put(utf8Sink).put(']');
+                    .put(", partition=").put(utf8Sink)
+                    .put(']');
         }
 
         if (!txWriter.isPartitionParquet(partitionIndex)) {
@@ -1454,6 +1455,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // other is pointing to the new partition folder
         LOG.info().$("converting parquet partition to native [path=").$substr(pathRootSize, path).I$();
         final long parquetFd = openRO(ff, path.$(), LOG);
+        final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
         final int columnCount = metadata.getColumnCount();
 
         // packed as [auxFd, dataFd, dataVecBytesWritten]
@@ -1462,17 +1464,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long parquetRowCount = 0;
         try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER)) {
-            parquetDecoder.of(parquetFd);
+            parquetDecoder.of(parquetFd, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
             parquetMetadata.copyTo(metadata, false);
 
+            parquetColumnIdsAndTypes.clear();
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 final int columnType = metadata.getColumnType(i);
                 final String columnName = metadata.getColumnName(i);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, i);
 
-                parquetColumnIdsAndTypes.clear();
                 parquetColumnIdsAndTypes.add(i);
                 parquetColumnIdsAndTypes.add(columnType);
 
@@ -5050,7 +5052,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
 
         if (timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp)) {
-
             // removing active partition
 
             // calculate new transient row count, min/max timestamps and find the partition to open next
@@ -5063,11 +5064,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 prevTimestamp = 0L; // meaningless
             } else {
                 final int prevIndex = index - 1;
+                final long parquetSize = txWriter.getPartitionParquetFileSize(prevIndex);
                 prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
                 newTransientRowCount = txWriter.getPartitionSize(prevIndex);
                 try {
                     setPathForNativePartition(path.trimTo(pathSize), partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                    readPartitionMinMax(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount);
+                    readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount, parquetSize);
                     nextMaxTimestamp = attachMaxTimestamp;
                 } finally {
                     path.trimTo(pathSize);
@@ -5094,7 +5096,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
             }
         } else {
-
             // when we want to delete first partition we must find out minTimestamp from
             // next partition if it exists, or next partition, and so on
             //
@@ -5738,7 +5739,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (o3MaxLag > 0) {
                 long lagError = 0;
                 if (getMaxTimestamp() != Long.MIN_VALUE) {
-
                     // When table already has data we can calculate the overlap of the newly added
                     // batch of records with existing data in the table. Positive value of the overlap
                     // means that our o3EffectiveLag was undersized.
@@ -6939,7 +6939,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
         try {
             setStateForTimestamp(other, timestamp);
-            return isParquet ? readMinTimestampParquet(other) : readMinTimestampNative(other);
+            return isParquet ? readMinTimestampParquet(other, partitionIndex) : readMinTimestampNative(other);
         } finally {
             other.trimTo(pathSize);
         }
@@ -6959,11 +6959,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long readMinTimestampParquet(Path partitionPath) {
-        long parquetFileFd = -1L;
+    private long readMinTimestampParquet(Path partitionPath, int partitionIndex) {
+        long parquetFd = -1;
         try {
-            parquetFileFd = openRO(ff, partitionPath.concat(PARQUET_PARTITION_NAME).$(), LOG);
-            parquetDecoder.of(parquetFileFd);
+            parquetFd = openRO(ff, partitionPath.concat(PARQUET_PARTITION_NAME).$(), LOG);
+            final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+            parquetDecoder.of(parquetFd, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
             final int timestampIndex = getMetadata().getTimestampIndex();
             parquetColumnIdsAndTypes.clear();
             parquetColumnIdsAndTypes.add(timestampIndex);
@@ -6971,13 +6972,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetDecoder.readRowGroupStats(parquetStatBuffers, parquetColumnIdsAndTypes, 0);
             return parquetStatBuffers.getMinValueLong(0);
         } finally {
-            ff.close(parquetFileFd);
+            ff.close(parquetFd);
             Misc.free(parquetDecoder);
         }
     }
 
-    private void readNativePartitionMinMax(Path partitionPath, CharSequence columnName, long partitionSize) {
-        final long fd = TableUtils.openRO(ff, dFile(partitionPath, columnName, COLUMN_NAME_TXN_NONE), LOG);
+    private void readNativeMinMaxTimestamps(Path partitionPath, CharSequence columnName, long partitionSize) {
+        final long fd = openRO(ff, dFile(partitionPath, columnName, COLUMN_NAME_TXN_NONE), LOG);
         try {
             attachMinTimestamp = ff.readNonNegativeLong(fd, 0);
             attachMaxTimestamp = ff.readNonNegativeLong(fd, (partitionSize - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP));
@@ -6990,7 +6991,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // returns size of partition detected, e.g. size of monotonic increase
     // of timestamp longs read from 0 offset to the end of the file
     // It also writes min and max values found in detachedMinTimestamp and detachedMaxTimestamp
-    private long readNativePartitionSizeMinMax(long partitionTimestamp, Path path, CharSequence columnName) {
+    private long readNativeSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName) {
         int pathLen = path.size();
         try {
             path.concat(TXN_FILE_NAME);
@@ -7006,12 +7007,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long partitionSize = attachTxReader.getPartitionRowCountByTimestamp(partitionTimestamp);
                     if (partitionSize <= 0) {
                         throw CairoException.nonCritical()
-                                .put("partition is not preset in detached txn file [path=")
-                                .put(path).put(", partitionSize=").put(partitionSize).put(']');
+                                .put("partition is not preset in detached txn file [path=").put(path)
+                                .put(", partitionSize=").put(partitionSize)
+                                .put(']');
                     }
 
                     // Read min and max timestamp values from the file
-                    readPartitionMinMax(partitionTimestamp, path.trimTo(pathLen), columnName, partitionSize);
+                    readPartitionMinMaxTimestamps(partitionTimestamp, path.trimTo(pathLen), columnName, -1, partitionSize);
                     return partitionSize;
                 } finally {
                     Misc.free(attachTxReader);
@@ -7026,7 +7028,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (fileSize <= 0) {
                     throw CairoException.critical(ff.errno())
                             .put("timestamp column is too small to attach the partition [path=")
-                            .put(path).put(", fileSize=").put(fileSize).put(']');
+                            .put(path)
+                            .put(", fileSize=").put(fileSize)
+                            .put(']');
                 }
                 long mappedMem = mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
                 try {
@@ -7060,11 +7064,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     // side effect: sets attachMinTimestamp and attachMaxTimestamp, modifies partitionPath
     // returns partition size
-    private long readParquetPartitionMinMax(Path filePath) {
-        long parquetFileFd = -1L;
+    private long readParquetMinMaxTimestamps(Path filePath, long parquetSize) {
+        assert parquetSize > 0;
+        long parquetFd = -1;
         try {
-            parquetFileFd = TableUtils.openRO(ff, filePath.$(), LOG);
-            parquetDecoder.of(parquetFileFd);
+            parquetFd = openRO(ff, filePath.$(), LOG);
+            parquetDecoder.of(parquetFd, parquetSize, MemoryTag.NATIVE_TABLE_WRITER);
             final int timestampIndex = getMetadata().getTimestampIndex();
             parquetColumnIdsAndTypes.clear();
             parquetColumnIdsAndTypes.add(timestampIndex);
@@ -7077,44 +7082,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             return parquetDecoder.metadata().rowCount();
         } finally {
-            ff.close(parquetFileFd);
+            ff.close(parquetFd);
             Misc.free(parquetDecoder);
         }
     }
 
-    private void readPartitionMinMax(long partitionTimestamp, Path path, CharSequence columnName, long partitionSize) {
+    private void readPartitionMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName, long parquetSize, long partitionSize) {
         int partitionLen = path.size();
-
-        if (ff.exists(path.concat(PARQUET_PARTITION_NAME).$())) {
-            readParquetPartitionMinMax(path);
-        } else {
+        try {
+            if (ff.exists(path.concat(PARQUET_PARTITION_NAME).$())) {
+                readParquetMinMaxTimestamps(path, parquetSize);
+            } else {
+                path.trimTo(partitionLen);
+                readNativeMinMaxTimestamps(path, columnName, partitionSize);
+            }
+        } finally {
             path.trimTo(partitionLen);
-            readNativePartitionMinMax(path, columnName, partitionSize);
         }
 
         if (attachMinTimestamp < 0 || attachMaxTimestamp < 0) {
             throw CairoException.critical(ff.errno())
                     .put("cannot read min, max timestamp from the [path=").put(path)
                     .put(", partitionSizeRows=").put(partitionSize)
-                    .put(", errno=").put(ff.errno()).put(']');
+                    .put(", errno=").put(ff.errno())
+                    .put(']');
         }
         if (txWriter.getPartitionTimestampByTimestamp(attachMinTimestamp) != partitionTimestamp
                 || txWriter.getPartitionTimestampByTimestamp(attachMaxTimestamp) != partitionTimestamp) {
             throw CairoException.critical(0)
                     .put("invalid timestamp data in detached partition, data does not match partition directory name [path=").put(path)
                     .put(", minTimestamp=").ts(attachMinTimestamp)
-                    .put(", maxTimestamp=").ts(attachMaxTimestamp).put(']');
+                    .put(", maxTimestamp=").ts(attachMaxTimestamp)
+                    .put(']');
         }
     }
 
-    private long readPartitionSizeMinMax(long partitionTimestamp, Path path, CharSequence columnName) {
+    private long readPartitionSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName, long parquetSize) {
         int partitionLen = path.size();
         try {
             if (ff.exists(path.concat(PARQUET_PARTITION_NAME).$())) {
-                return readParquetPartitionMinMax(path);
+                return readParquetMinMaxTimestamps(path, parquetSize);
             } else {
                 path.trimTo(partitionLen);
-                return readNativePartitionSizeMinMax(partitionTimestamp, path, columnName);
+                return readNativeSizeMinMaxTimestamps(partitionTimestamp, path, columnName);
             }
         } finally {
             path.trimTo(partitionLen);

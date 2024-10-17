@@ -21,13 +21,16 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _class: JClass,
     allocator: *const QdbAllocator,
     raw_fd: i32,
+    file_size: u64,
 ) -> *mut ParquetDecoder<NonOwningFile> {
     let reader = NonOwningFile::new(unsafe { File::from_raw_fd_i32(raw_fd) });
     let allocator = unsafe { &*allocator }.clone();
-    match ParquetDecoder::read(allocator, reader) {
+    match ParquetDecoder::read(allocator, reader, file_size) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
         Err(mut err) => {
-            err.add_context(format!("could not read parquet file with fd {raw_fd}"));
+            err.add_context(format!(
+                "could not read parquet file with fd {raw_fd} and read size {file_size}"
+            ));
             err.add_context("error in PartitionDecoder.create");
             err.into_cairo_exception().throw(&mut env)
         }
@@ -136,6 +139,34 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
                 "could not get row group stats with fd {raw_fd} in row group {row_group_index}"
             ));
             err.add_context("error in PartitionDecoder.readRowGroupStats");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+// See PartitionDecoder for more info on the returned value format.
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_findRowGroupByTimestamp(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *mut ParquetDecoder<NonOwningFile>,
+    timestamp: i64,
+    row_lo: usize,
+    row_hi: usize,
+    timestamp_column_index: u32,
+) -> u64 {
+    assert!(!decoder.is_null(), "decoder pointer is null");
+
+    let decoder = unsafe { &mut *decoder };
+
+    match decoder.find_row_group_by_timestamp(timestamp, row_lo, row_hi, timestamp_column_index) {
+        Ok(row_group_index) => row_group_index,
+        Err(mut err) => {
+            let raw_fd = decoder.reader.as_raw_fd_i32();
+            err.add_context(format!(
+                "could not find row group by timestamp {timestamp} with fd {raw_fd}"
+            ));
+            err.add_context("error in PartitionDecoder.findRowGroupByTimestamp");
             err.into_cairo_exception().throw(&mut env)
         }
     }
