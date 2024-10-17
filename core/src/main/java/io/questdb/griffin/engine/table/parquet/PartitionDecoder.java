@@ -31,7 +31,6 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -55,6 +54,7 @@ public class PartitionDecoder implements QuietCloseable {
     private final Metadata metadata = new Metadata();
     private long columnsPtr;
     private long fd; // kept around for logging purposes
+    private long fileSize;
     private long ptr;
     private long rowGroupSizesPtr;
 
@@ -70,6 +70,7 @@ public class PartitionDecoder implements QuietCloseable {
     public void close() {
         destroy();
         fd = -1;
+        fileSize = -1;
     }
 
     public int decodeRowGroup(
@@ -80,7 +81,7 @@ public class PartitionDecoder implements QuietCloseable {
             int rowHi // high row index within the row group, exclusive
     ) {
         assert ptr != 0;
-        return decodeRowGroup(  // throws CairoException on error
+        return decodeRowGroup( // throws CairoException on error
                 ptr,
                 rowGroupBuffers.ptr(),
                 columns.getAddress(),
@@ -113,26 +114,22 @@ public class PartitionDecoder implements QuietCloseable {
             int timestampColumnIndex
     ) {
         assert ptr != 0;
-        try {
-            return findRowGroupByTimestamp(
-                    ptr,
-                    timestamp,
-                    rowLo,
-                    rowHi,
-                    timestampColumnIndex
-            );
-        } catch (Throwable th) {
-            LOG.error().$("could not find row group by timestamp [fd=").$(fd)
-                    .$(", timestamp=").$(timestamp)
-                    .$(", timestampColumnIndex=").$(timestampColumnIndex)
-                    .$(", msg=").$(th.getMessage())
-                    .I$();
-            throw CairoException.nonCritical().put(th.getMessage());
-        }
+        return findRowGroupByTimestamp( // throws CairoException on error
+                ptr,
+                timestamp,
+                rowLo,
+                rowHi,
+                timestampColumnIndex
+        );
     }
 
     public long getFd() {
         return fd;
+    }
+
+    public long getFileSize() {
+        assert fileSize > 0 || fd == -1;
+        return fileSize;
     }
 
     public Metadata metadata() {
@@ -140,15 +137,14 @@ public class PartitionDecoder implements QuietCloseable {
         return metadata;
     }
 
-    public void of(long fd) {
-        of(fd, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-    }
-
-    public void of(long fd, int memoryTag) {
+    public void of(long fd, long fileSize, int memoryTag) {
+        assert fd != -1;
+        assert fileSize > 0;
         destroy();
         this.fd = fd;
+        this.fileSize = fileSize;
         final long allocator = Unsafe.getNativeAllocator(memoryTag);
-        ptr = create(allocator, Files.toOsFd(fd));  // throws CairoException on error
+        ptr = create(allocator, Files.toOsFd(fd), fileSize);  // throws CairoException on error
         columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
         rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
         metadata.init();
@@ -160,7 +156,7 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroupIndex
     ) {
         assert ptr != 0;
-        readRowGroupStats(  // throws CairoException on error
+        readRowGroupStats( // throws CairoException on error
                 ptr,
                 statBuffers.ptr(),
                 columns.getAddress(),
@@ -183,7 +179,7 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long columnsPtrOffset();
 
-    private static native long create(long allocator, int fd) throws CairoException;
+    private static native long create(long allocator, int fd, long fileSize) throws CairoException;
 
     private static native int decodeRowGroup(
             long decoderPtr,

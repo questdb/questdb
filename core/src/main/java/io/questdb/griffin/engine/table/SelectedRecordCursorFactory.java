@@ -213,6 +213,13 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long getParquetFileSize() {
+            final long fileSize = baseFrame.getParquetFileSize();
+            assert fileSize > 0 || baseFrame.getFormat() != PartitionFormat.PARQUET;
+            return fileSize;
+        }
+
+        @Override
         public int getParquetRowGroup() {
             return baseFrame.getParquetRowGroup();
         }

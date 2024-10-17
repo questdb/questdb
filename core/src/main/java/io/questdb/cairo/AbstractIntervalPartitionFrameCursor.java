@@ -285,6 +285,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected static class IntervalPartitionFrame implements PartitionFrame {
         protected byte format;
         protected long parquetFd;
+        protected long parquetFileSize;
         protected int partitionIndex;
         protected int rowGroupIndex;
         // we don't need rowGroupLo as it can be calculated as rowGroupLo+(rowHi-rowLo)
@@ -295,6 +296,12 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         @Override
         public long getParquetFd() {
             return parquetFd;
+        }
+
+        @Override
+        public long getParquetFileSize() {
+            assert parquetFileSize > -1 || format != PartitionFormat.PARQUET;
+            return parquetFileSize;
         }
 
         @Override

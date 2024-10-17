@@ -21,13 +21,16 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _class: JClass,
     allocator: *const QdbAllocator,
     raw_fd: i32,
+    file_size: u64,
 ) -> *mut ParquetDecoder<NonOwningFile> {
     let reader = NonOwningFile::new(unsafe { File::from_raw_fd_i32(raw_fd) });
     let allocator = unsafe { &*allocator }.clone();
-    match ParquetDecoder::read(allocator, reader) {
+    match ParquetDecoder::read(allocator, reader, file_size) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
         Err(mut err) => {
-            err.add_context(format!("could not read parquet file with fd {raw_fd}"));
+            err.add_context(format!(
+                "could not read parquet file with fd {raw_fd} and read size {file_size}"
+            ));
             err.add_context("error in PartitionDecoder.create");
             err.into_cairo_exception().throw(&mut env)
         }
