@@ -6723,8 +6723,7 @@ nodejs code:
     }
 
     @Test
-    @Ignore("PGWire 2.0: cannot create portal for non-SELECT SQL " +
-            "legacy: expected 101, actual 100")
+    @Ignore("expected 101, actual 100. we do not support read-your-uncommitted-writes in a transaction")
     public void testMultistatement() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -6742,6 +6741,38 @@ nodejs code:
                     tbl.execute();
                     connection.commit();
                     // Queries with multiple statements should not be transformed.
+                    PreparedStatement stmt = connection.prepareStatement("insert into x(a) values(100); x");
+                    stmt.setFetchSize(10);
+
+                    assertFalse(stmt.execute()); // INSERT
+                    assertTrue(stmt.getMoreResults()); // SELECT
+                    ResultSet rs = stmt.getResultSet();
+                    int count = 0;
+                    while (rs.next()) {
+                        assertEquals(count, rs.getInt(1));
+                        ++count;
+                    }
+                    assertEquals(totalRows + 1, count);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNamedPortalForInsert() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertMemoryLeak(() -> {
+            try (
+                    final IPGWireServer server = createPGServer(1);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+                try (final Connection connection = getConnection(server.getPort(), false, true)) {
+                    int totalRows = 100;
+
+                    CallableStatement tbl = connection.prepareCall(
+                            "create table x as (select cast(x - 1 as int) a from long_sequence(" + totalRows + "))");
+                    tbl.execute();
                     PreparedStatement stmt = connection.prepareStatement("insert into x(a) values(100); x");
                     stmt.setFetchSize(10);
 

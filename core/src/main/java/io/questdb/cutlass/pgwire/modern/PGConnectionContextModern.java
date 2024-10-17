@@ -649,10 +649,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // not to fail, these have to be separate factories and pipeline entries
 
         if (portalName != null) {
-            // check if we can create portal, it makes sense only for SELECT SQLs, such that contain Factory
-            if (!pipelineCurrentEntry.isFactory()) {
-                throw msgKaput().put("cannot create portal for non-SELECT SQL [portalName=").put(portalName).put(']');
-            }
             LOG.info().$("create portal [name=").$(portalName).I$();
             int index = namedPortals.keyIndex(portalName);
             if (index > -1) {
