@@ -197,7 +197,8 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                             .col("id", ColumnType.LONG),
                     100,
                     "1970-01-05",
-                    2); // generate 2 partitions
+                    2
+            ); // generate 2 partitions
 
             // Convert the partition to parquet via SQL.
             ddl("alter table x convert partition to parquet where designated_ts >= 0");
