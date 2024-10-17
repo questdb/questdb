@@ -82,6 +82,7 @@ abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
         return probe(key, index);
     }
 
+    //
     public int keyIndex(CharSequence key, int lo, int hi) {
         int index = Chars.lowerCaseHashCode(key, lo, hi) & mask;
 
