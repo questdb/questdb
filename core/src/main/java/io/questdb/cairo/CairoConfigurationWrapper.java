@@ -24,7 +24,12 @@
 
 package io.questdb.cairo;
 
-import io.questdb.*;
+import io.questdb.BuildInformation;
+import io.questdb.ConfigPropertyKey;
+import io.questdb.ConfigPropertyValue;
+import io.questdb.FactoryProvider;
+import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -1138,6 +1143,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isPartitionEncoderParquetStatisticsEnabled() {
         return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
+    }
+
+    @Override
+    public boolean isPartitionO3OverwriteControlEnabled() {
+        return getDelegate().isPartitionO3OverwriteControlEnabled();
     }
 
     @Override

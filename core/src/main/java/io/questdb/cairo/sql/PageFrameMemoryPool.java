@@ -253,6 +253,12 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
             parquetDecoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
         final PartitionDecoder.Metadata metadata = parquetDecoder.metadata();
+        if (metadata.columnCount() < addressCache.getColumnCount()) {
+            throw CairoException.nonCritical().put("parquet column count is less than number of queried table columns [parquetColumnCount=")
+                    .put(metadata.columnCount())
+                    .put(", columnCount=")
+                    .put(addressCache.getColumnCount());
+        }
         // Prepare table reader to parquet column index mapping.
         parquetColumnIndexes.clear();
         for (int i = 0, n = metadata.columnCount(); i < n; i++) {

@@ -25,7 +25,16 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -38,7 +47,13 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -46,7 +61,13 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import static io.questdb.PropertyKey.CAIRO_CHECKPOINT_RECOVERY_ENABLED;
 import static io.questdb.PropertyKey.CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED;
@@ -570,13 +591,8 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.checkpointRecover();
             engine.reloadTableNames();
 
+
             drainWalQueue();
-
-            // Stale metadata so no change
-            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
-            assertSql("count\n1\n", "select count() from tables() where table_name = 'test2';");
-
-            engine.metadataCacheHydrateAllTables();
 
             // Renamed table should be there under the original name.
             assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
