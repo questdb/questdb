@@ -1469,12 +1469,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
             parquetMetadata.copyTo(metadata, false);
 
+            parquetColumnIdsAndTypes.clear();
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 final int columnType = metadata.getColumnType(i);
                 final String columnName = metadata.getColumnName(i);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, i);
 
-                parquetColumnIdsAndTypes.clear();
                 parquetColumnIdsAndTypes.add(i);
                 parquetColumnIdsAndTypes.add(columnType);
 
