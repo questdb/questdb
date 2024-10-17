@@ -72,8 +72,10 @@ public class PGOids {
     public static final CharSequence[] PG_TYPE_TO_PROC_NAME = new CharSequence[14];
     public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[14];
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
+    public static final int PG_UNSPECIFIED = 0;
     public static final int PG_UUID = 2950;
     public static final int PG_VARCHAR = 1043;
+    public static final int PG_VOID = 2278;
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
     public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
     public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);
@@ -101,6 +103,8 @@ public class PGOids {
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_UUID = ((PG_UUID >> 24) & 0xff) | ((PG_UUID << 8) & 0xff0000) | ((PG_UUID >> 8) & 0xff00) | ((PG_UUID << 24) & 0xff000000);
     public static final int X_B_PG_UUID = 1 | X_PG_UUID;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_VOID = ((PG_VOID >> 24) & 0xff) | ((PG_VOID << 8) & 0xff0000) | ((PG_VOID >> 8) & 0xff00) | ((PG_VOID << 24) & 0xff000000);
     private static final IntList TYPE_OIDS = new IntList();
 
     public static short getColumnBinaryFlag(int type) {

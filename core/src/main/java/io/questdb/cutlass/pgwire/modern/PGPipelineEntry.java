@@ -1277,14 +1277,26 @@ public class PGPipelineEntry implements QuietCloseable {
 
     private void msgParseCopyOutTypeDescriptionTypeOIDs(BindVariableService bindVariableService) {
         final int n = bindVariableService.getIndexedVariableCount();
-        outParameterTypeDescriptionTypeOIDs.clear();
+        outParameterTypeDescriptionTypeOIDs.setPos(n);
         if (n > 0) {
-            outParameterTypeDescriptionTypeOIDs.setPos(n);
             for (int i = 0; i < n; i++) {
-                final Function f = bindVariableService.getFunction(i);
-                outParameterTypeDescriptionTypeOIDs.setQuick(i, Numbers.bswap(PGOids.getTypeOid(
-                        f != null ? f.getType() : ColumnType.UNDEFINED
-                )));
+                int oid = PG_UNSPECIFIED;
+
+                // first we prioritize the types we received in the PARSE message
+                if (msgParseParameterTypeOIDs.size() > i) {
+                    oid = msgParseParameterTypeOIDs.getQuick(i);
+                }
+
+                // if there was no type in the PARSE message, we use the type inferred by the compiler
+                // Q: why we cannot always use the types provided by a compiler?
+                // A: the compiler might infer slightly different type than the client provided.
+                //    if the client include types in a PARSE message and a subsequent DESCRIBE sends back different types
+                //    the client will error out. e.g. PG JDBC is very strict about this.
+                if (oid == PG_UNSPECIFIED || oid == X_PG_VOID) {
+                    final Function f = bindVariableService.getFunction(i);
+                    oid = Numbers.bswap(PGOids.getTypeOid(f != null ? f.getType() : ColumnType.UNDEFINED));
+                }
+                outParameterTypeDescriptionTypeOIDs.setQuick(i, oid);
             }
         }
     }
