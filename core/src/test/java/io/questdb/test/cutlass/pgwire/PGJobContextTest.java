@@ -6452,8 +6452,6 @@ nodejs code:
 
     @Test
     public void testLocalCopyFromCancellation() throws Exception {
-        // @Ignore("TODO PGWire 2.0")
-        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement copyStatement = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true")) {
