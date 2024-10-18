@@ -226,7 +226,92 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
-    public void testSelectAllAfterConcurrentColDropCreate() throws Exception {
+    public void testInsertWhileConcurrentlyAlteringTable_preparedStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            executeStatementWhileConcurrentlyChangingSchema(connection,
+                    "ALTER TABLE tango RENAME COLUMN x TO y",
+                    "ALTER TABLE tango RENAME COLUMN y TO x",
+                    "insert rows",
+                    null, () -> {
+                        try (PreparedStatement s = connection.prepareStatement("INSERT INTO tango VALUES (42)")) {
+                            s.execute();
+                        }
+                    });
+        });
+    }
+
+    @Test
+    public void testInsertWhileConcurrentlyAlteringTable_preparedStatementReused() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement s = connection.prepareStatement("INSERT INTO tango VALUES (42)")) {
+                executeStatementWhileConcurrentlyChangingSchema(connection,
+                        "ALTER TABLE tango RENAME COLUMN x TO y",
+                        "ALTER TABLE tango RENAME COLUMN y TO x",
+                        "insert rows", null, s::execute);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            executeStatementWhileConcurrentlyChangingSchema(connection,
+                    "ALTER TABLE tango RENAME COLUMN x TO y",
+                    "ALTER TABLE tango RENAME COLUMN y TO x",
+                    "insert rows",
+                    null, () -> {
+                        try (Statement s = connection.createStatement()) {
+                            s.executeUpdate("INSERT INTO tango VALUES (42)");
+                        }
+                    });
+        });
+    }
+
+    @Test
+    public void testInsertWhileConcurrentlyRecreatingTable_preparedStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            executeStatementWhileConcurrentlyChangingSchema(connection,
+                    "DROP TABLE tango; CREATE TABLE tango AS (SELECT x AS y from long_sequence(10));",
+                    "DROP TABLE tango; CREATE TABLE tango AS (SELECT x from long_sequence(10));",
+                    "insert rows", "table does not exist \\[table=tango\\]",
+                    () -> {
+                        try (PreparedStatement s = connection.prepareStatement("INSERT INTO tango VALUES (42)")) {
+                            s.execute();
+                        }
+                    });
+        });
+    }
+
+    @Test
+    public void testInsertWhileConcurrentlyRecreatingTable_preparedStatementReused() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement s = connection.prepareStatement("INSERT INTO tango VALUES (42)")) {
+                executeStatementWhileConcurrentlyChangingSchema(connection,
+                        "DROP TABLE tango; CREATE TABLE tango AS (SELECT x AS y from long_sequence(10));",
+                        "DROP TABLE tango; CREATE TABLE tango AS (SELECT x from long_sequence(10));",
+                        "insert rows", "table does not exist \\[table=tango\\]",
+                        s::execute);
+            }
+        });
+    }
+
+    @Test
+    public void testInsertWhileConcurrentlyRecreatingTable_simpleStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            executeStatementWhileConcurrentlyChangingSchema(connection,
+                    "DROP TABLE tango; CREATE TABLE tango AS (SELECT x AS y from long_sequence(10));",
+                    "DROP TABLE tango; CREATE TABLE tango AS (SELECT x from long_sequence(10));",
+                    "insert rows", "table does not exist \\[table=tango\\]",
+                    () -> {
+                        try (Statement s = connection.createStatement()) {
+                            s.executeUpdate("INSERT INTO tango VALUES (42)");
+                        }
+                    });
+        });
+    }
+
+    @Test
+    public void testSelectAllAfterConcurrentColAddDrop() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.execute("create table select_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
@@ -922,24 +1007,26 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
             @NotNull String backgroundDdl1,
             @NotNull String backgroundDdl2,
             @NotNull String whatMainLoopTriesToDo,
-            @Nullable String acceptedErrorSubstring,
+            @Nullable String acceptedErrorRegex,
             @NotNull MainLoopBody mainLoopBody
     ) throws Exception {
         ddl("CREATE TABLE tango AS (SELECT x FROM long_sequence(10)) ");
         AtomicBoolean stop = new AtomicBoolean();
         AtomicBoolean backgroundTaskStarted = new AtomicBoolean();
+        AtomicReference<Exception> backgroundError = new AtomicReference<>();
+        boolean hadForegroundError = false;
         Thread t = new Thread(() -> {
             try {
                 backgroundTaskStarted.set(true);
                 while (!stop.get()) {
                     try (Statement s = connection.createStatement()) {
-                        s.executeUpdate(backgroundDdl1);
+                        s.execute(backgroundDdl1);
                         mayDrainWalQueue();
-                        s.executeUpdate(backgroundDdl2);
+                        s.execute(backgroundDdl2);
                     }
                 }
-            } catch (Exception e1) {
-                LOG.error().$("Error in table-altering thread").$(e1).$();
+            } catch (Exception e) {
+                backgroundError.set(e);
             } finally {
                 Path.clearThreadLocals();
             }
@@ -956,17 +1043,27 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                     hadSuccess = true;
                     mayDrainWalQueue();
                 } catch (SQLException e) {
-                    if (acceptedErrorSubstring != null) {
-                        assertMessageMatches(e, acceptedErrorSubstring);
+                    if (acceptedErrorRegex != null) {
+                        assertMessageMatches(e, acceptedErrorRegex);
                     } else {
                         Assert.fail("Did not expect any failure");
                     }
                 }
             }
             assertTrue(failMsg, hadSuccess);
+        } catch (Throwable e) {
+            hadForegroundError = true;
         } finally {
             stop.set(true);
             t.join();
+            Exception bgErr = backgroundError.get();
+            if (bgErr != null && hadForegroundError) {
+                LOG.error().$("Background thread failed").$(bgErr).$();
+            }
+        }
+        Exception bgErr = backgroundError.get();
+        if (bgErr != null) {
+            throw new Exception("Background task failed", bgErr);
         }
     }
 
