@@ -448,8 +448,8 @@ public class CleartextPasswordPgWireAuthenticator implements SocketAuthenticator
                 if (PGKeywords.startsWithTimeoutOption(valueLo, valueHi - valueLo)) {
                     try {
                         dus.of(valueLo + 21, valueHi, false);
-                        long statementTimeout = Numbers.parseLong(dus);
-                        optionsListener.setStatementTimeout(statementTimeout);
+                        long sqlTimeout = Numbers.parseLong(dus);
+                        optionsListener.setSqlTimeout(sqlTimeout);
                     } catch (NumericException ex) {
                         parsed = false;
                     }

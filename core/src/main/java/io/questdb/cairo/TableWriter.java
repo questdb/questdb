@@ -607,7 +607,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
 
         long columnNameTxn = getTxn();
-        LOG.info().$("adding column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$substr(pathRootSize, path).$();
+        LOG.info().$("adding column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("]', columnName txn ").$(columnNameTxn).$(" to ").$substr(pathRootSize, path).$();
 
         addColumnToMeta(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, -1);
 
@@ -1919,6 +1919,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public Row newRow(long timestamp) {
         switch (rowAction) {
             case ROW_ACTION_OPEN_PARTITION:
+
+                if (timestamp == Numbers.LONG_NULL) {
+                    throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+                }
 
                 if (timestamp < Timestamps.O3_MIN_TS) {
                     throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");

@@ -207,6 +207,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public boolean isLegacyModeEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isReadOnlyUserEnabled() {
         return false;
     }
