@@ -25,20 +25,61 @@
 package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.TelemetryOrigin;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.cutlass.pgwire.PGResponseSink;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CharacterStore;
+import io.questdb.griffin.CharacterStoreEntry;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.CompiledQueryImpl;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.QueryPausedException;
-import io.questdb.std.*;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.BitSet;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectBinarySequence;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IntList;
+import io.questdb.std.Interval;
+import io.questdb.std.Long128;
+import io.questdb.std.Long256;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjObjHashMap;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.SimpleAssociativeCache;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Uuid;
+import io.questdb.std.Vect;
+import io.questdb.std.WeakSelfReturningObjectPool;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf8String;
@@ -1435,6 +1476,17 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
+    private void outColInterval(PGResponseSink utf8Sink, Record record, int col) {
+        final Interval interval = record.getInterval(col);
+        if (Interval.NULL.equals(interval)) {
+            utf8Sink.setNullValue();
+        } else {
+            long a = utf8Sink.skipInt();
+            interval.toSink(utf8Sink);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
     private void outColLong256(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final Long256 long256Value = record.getLong256A(columnIndex);
         if (long256Value.getLong0() == Numbers.LONG_NULL && long256Value.getLong1() == Numbers.LONG_NULL && long256Value.getLong2() == Numbers.LONG_NULL && long256Value.getLong3() == Numbers.LONG_NULL) {
@@ -1761,6 +1813,10 @@ public class PGPipelineEntry implements QuietCloseable {
                     break;
                 case ColumnType.IPv4:
                     outColTxtIPv4(utf8Sink, record, i);
+                    break;
+                case ColumnType.INTERVAL:
+                case BINARY_TYPE_INTERVAL:
+                    outColInterval(utf8Sink, record, i);
                     break;
                 case ColumnType.VARCHAR:
                 case BINARY_TYPE_VARCHAR:

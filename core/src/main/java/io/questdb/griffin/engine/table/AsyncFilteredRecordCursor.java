@@ -26,8 +26,14 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
@@ -350,19 +356,19 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                     Os.pause();
                 }
             } while (frameIndex < frameLimit);
-        } catch (Throwable e) {
-            if (e instanceof CairoException) {
-                CairoException ce = (CairoException) e;
+        } catch (Throwable th) {
+            if (th instanceof CairoException) {
+                CairoException ce = (CairoException) th;
                 if (ce.isInterruption() || ce.isCancellation()) {
-                    LOG.error().$("filter error [ex=").$(((CairoException) e).getFlyweightMessage()).I$();
+                    LOG.error().$("filter error [ex=").$(((CairoException) th).getFlyweightMessage()).I$();
                     throwTimeoutException();
                 } else {
-                    LOG.error().$("filter error [ex=").$(e).I$();
+                    LOG.error().$("filter error [ex=").$(th).I$();
                     throw ce;
                 }
             }
-            LOG.error().$("filter error [ex=").$(e).I$();
-            throw CairoException.nonCritical().put(e.getMessage());
+            LOG.error().$("filter error [ex=").$(th).I$();
+            throw CairoException.nonCritical().put(th.getMessage());
         }
     }
 

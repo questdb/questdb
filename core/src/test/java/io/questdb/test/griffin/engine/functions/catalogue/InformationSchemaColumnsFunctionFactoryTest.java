@@ -35,22 +35,50 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             ddl("create table A(col0 int, col1 symbol, col2 double)");
             ddl("create table B(col0 long, col1 string, col2 float)");
             ddl("create table C(col0 double, col1 char, col2 byte)");
+            drainWalQueue();
             assertQuery(
                     "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE\n" +
-                            "qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR\n" +
-                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE\n" +
+                            "qdb\tpublic\tA\tcol0\t0\t\tyes\tINT\n" +
+                            "qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL\n" +
+                            "qdb\tpublic\tA\tcol2\t2\t\tyes\tDOUBLE\n" +
                             "qdb\tpublic\tB\tcol0\t0\t\tyes\tLONG\n" +
                             "qdb\tpublic\tB\tcol1\t1\t\tyes\tSTRING\n" +
                             "qdb\tpublic\tB\tcol2\t2\t\tyes\tFLOAT\n" +
-                            "qdb\tpublic\tA\tcol0\t0\t\tyes\tINT\n" +
-                            "qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL\n" +
-                            "qdb\tpublic\tA\tcol2\t2\t\tyes\tDOUBLE\n",
-                    "SELECT * FROM information_schema.columns()",
+                            "qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE\n" +
+                            "qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR\n" +
+                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE\n",
+                    "SELECT * FROM information_schema.columns() ORDER BY table_name",
                     null,
                     null,
-                    false
+                    true
             );
+        });
+    }
+
+    @Test
+    public void testRename() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test_rename ( ts timestamp, x int ) timestamp(ts) partition by day wal");
+            drainWalQueue();
+
+            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                    "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_rename");
+
+            assertSql("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
+                    "qdb\tpublic\ttest_rename\tts\t0\t\tyes\tTIMESTAMP\n" +
+                    "qdb\tpublic\ttest_rename\tx\t1\t\tyes\tINT\n", "information_schema.columns()");
+
+            ddl("rename table test_rename to test_renamed");
+            drainWalQueue();
+
+            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                    "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_renamed");
+
+            assertSql("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
+                    "qdb\tpublic\ttest_renamed\tts\t0\t\tyes\tTIMESTAMP\n" +
+                    "qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tINT\n", "information_schema.columns()");
         });
     }
 }

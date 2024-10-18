@@ -24,14 +24,28 @@
 
 package io.questdb.cairo;
 
-import io.questdb.*;
+import io.questdb.BuildInformation;
+import io.questdb.BuildInformationHolder;
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.DefaultTelemetryConfiguration;
+import io.questdb.FactoryProvider;
+import io.questdb.PropServerConfiguration;
+import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -194,12 +208,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getCountDistinctCapacity() {
-        return 4;
+        return 3;
     }
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return 0.8;
+        return 0.75;
     }
 
     @Override
@@ -1191,6 +1205,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean mangleTableDirNames() {
+        return false;
+    }
+
+    @Override
+    public boolean getPartitionO3OverwriteControlEnabled() {
         return false;
     }
 

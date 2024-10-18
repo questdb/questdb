@@ -28,8 +28,13 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
@@ -37,6 +42,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
@@ -82,20 +88,51 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             long beginNanos,
             boolean jit
     ) {
-        final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
-        final int pos = e instanceof FlyweightMessageContainer ? ((FlyweightMessageContainer) e).getPosition() : 0;
-        LOG.errorW()
-                .$("err")
-                .$(" [id=").$(sqlId)
-                .$(", sql=`").utf8(sqlText).$('`')
-                .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
-                .$(", cache=").$(executionContext.isCacheHit())
-                .$(", jit=").$(jit)
-                .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
-                .$(", msg=").$(e.getMessage())
-                .$(", errno=").$(errno)
-                .$(", pos=").$(pos)
-                .I$();
+        // Extract all the varaibles before the call to call LOG.errorW() to avoid exception
+        // causing log sequence leaks.
+        long queryTime = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
+        CharSequence principal = executionContext.getSecurityContext().getPrincipal();
+        boolean cacheHit = executionContext.isCacheHit();
+
+        if (e instanceof FlyweightMessageContainer) {
+            final int pos = ((FlyweightMessageContainer) e).getPosition();
+            final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
+            final CharSequence message = ((FlyweightMessageContainer) e).getFlyweightMessage();
+            LOG.errorW()
+                    .$("err")
+                    .$(" [id=").$(sqlId)
+                    .$(", sql=`").utf8(sqlText).$('`')
+                    .$(", principal=").$(principal)
+                    .$(", cache=").$(cacheHit)
+                    .$(", jit=").$(jit)
+                    .$(", time=").$(queryTime)
+                    .$(", msg=").$(message)
+                    .$(", errno=").$(errno)
+                    .$(", pos=").$(pos)
+                    .I$();
+        } else {
+            // This is unknown exception, can be OOM that can cause exception in logging.
+            LogRecord log = null;
+            try {
+                log = LOG.errorW();
+                log.$("err")
+                        .$(" [id=").$(sqlId)
+                        .$(", sql=`").utf8(sqlText).$('`')
+                        .$(", principal=").$(principal)
+                        .$(", cache=").$(cacheHit)
+                        .$(", jit=").$(jit)
+                        .$(", time=").$(queryTime)
+                        .$(", exception=").$(e);
+            } catch (Throwable th) {
+                // Game over, we can't log anything
+                System.err.print("failed to log exception message");
+            } finally {
+                // Make sure logging sequence is always released.
+                if (log != null) {
+                    log.I$();
+                }
+            }
+        }
     }
 
     public static void logStart(
@@ -278,10 +315,10 @@ public class QueryProgress extends AbstractRecordCursorFactory {
         public boolean hasNext() throws DataUnavailableException {
             try {
                 return base.hasNext();
-            } catch (Throwable e) {
+            } catch (Throwable th) {
                 failed = true;
-                logError(e);
-                throw e;
+                logError(th);
+                throw th;
             }
         }
 

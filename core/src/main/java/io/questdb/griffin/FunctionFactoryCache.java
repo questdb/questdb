@@ -49,7 +49,7 @@ public class FunctionFactoryCache {
         boolean enableTestFactories = configuration.enableTestFactories();
         LOG.info().$("loading functions [test=").$(enableTestFactories).$(']').$();
         for (FunctionFactory factory : functionFactories) {
-            if (!factory.getClass().getName().contains("test") || enableTestFactories) {
+            if (!factory.getClass().getName().contains("io.questdb.griffin.engine.functions.test.") || enableTestFactories) {
                 try {
                     final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(factory);
                     final String name = descriptor.getName();

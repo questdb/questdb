@@ -28,9 +28,26 @@ import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.ServerMain;
-import io.questdb.cairo.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.DefaultDdlListener;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.LogRecordSinkAdapter;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -50,10 +67,36 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjObjHashMap;
+import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rnd;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.MutableUtf16Sink;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.QuestDBTestNode;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
@@ -63,14 +106,18 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 
-import java.io.*;
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Paths;
 import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -934,6 +981,14 @@ public final class TestUtils {
         }
     }
 
+    public static String dumpMetadataCache(CairoEngine engine) {
+        try (MetadataCacheReader ro = engine.getMetadataCache().readLock()) {
+            StringSink sink = new StringSink();
+            ro.toSink(sink);
+            return sink.toString();
+        }
+    }
+
     public static boolean equals(CharSequence expected, CharSequence actual) {
         if (expected == null && actual == null) {
             return true;
@@ -1273,6 +1328,13 @@ public final class TestUtils {
         }
     }
 
+    public static String printSqlToString(CairoEngine engine, SqlExecutionContext sqlExecutionContext, CharSequence sql, MutableUtf16Sink sink) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            printSql(compiler, sqlExecutionContext, sql, sink);
+            return sink.toString();
+        }
+    }
+
     public static void printSqlWithTypes(
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
@@ -1391,13 +1453,8 @@ public final class TestUtils {
         return sink.toString();
     }
 
-    public static String replaceSizeToMatchPartitionSumInOS(String expected, String tableName, List<String> partitionColumnNames,
-                                                            CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
-        return replaceSizeToMatchPartitionSumInOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink, partitionColumnNames);
-    }
-
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
-        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine, null);
+        WorkerPoolUtils.setupQueryJobs(workerPool, cairoEngine);
         WorkerPoolUtils.setupWriterJobs(workerPool, cairoEngine);
     }
 
@@ -1726,30 +1783,6 @@ public final class TestUtils {
                 sink.put('\t');
             }
         }
-        return sink.toString();
-    }
-
-    private static String replaceSizeToMatchPartitionSumInOS(
-            String expected,
-            Utf8Sequence root,
-            String tableName,
-            CairoEngine engine,
-            StringSink sink,
-            List<String> partitionColumnNames
-    ) {
-        ObjObjHashMap<String, Long> sizes = TestUtils.findPartitionSizes(root, tableName, engine, sink);
-        String[] lines = expected.split("\n");
-        sink.clear();
-        StringSink auxSink = new StringSink();
-        long size = 0L;
-        String line = lines[0];
-        for (int i = 0; i < partitionColumnNames.size(); i++) {
-            Long s = sizes.get(partitionColumnNames.get(i));
-            long pSize = s != null ? s : 0L;
-            size += pSize;
-        }
-        line = line.replaceAll("SIZE", String.valueOf(size));
-        sink.put(line).put('\n');
         return sink.toString();
     }
 

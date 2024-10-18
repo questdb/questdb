@@ -25,6 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.PartitionOverwriteControl;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -33,11 +34,17 @@ import org.jetbrains.annotations.TestOnly;
 public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
     private final MessageBus messageBus;
+    private final PartitionOverwriteControl partitionOverwriteControl;
     private ReaderListener readerListener;
 
-    public ReaderPool(CairoConfiguration configuration, MessageBus messageBus) {
+    public ReaderPool(CairoConfiguration configuration, MessageBus messageBus, PartitionOverwriteControl partitionOverwriteControl) {
         super(configuration, configuration.getReaderPoolMaxSegments(), configuration.getInactiveReaderTTL());
         this.messageBus = messageBus;
+        this.partitionOverwriteControl = partitionOverwriteControl;
+    }
+
+    public ReaderPool(CairoConfiguration configuration, MessageBus messageBus) {
+        this(configuration, messageBus, null);
     }
 
     @TestOnly
@@ -52,7 +59,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
 
     @Override
     protected R newTenant(TableToken tableToken, Entry<R> entry, int index) {
-        return new R(this, entry, index, tableToken, messageBus, readerListener);
+        return new R(this, entry, index, tableToken, messageBus, readerListener, partitionOverwriteControl);
     }
 
     @TestOnly
@@ -73,9 +80,10 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                 int index,
                 TableToken tableToken,
                 MessageBus messageBus,
-                ReaderListener readerListener
+                ReaderListener readerListener,
+                PartitionOverwriteControl partitionOverwriteControl
         ) {
-            super(pool.getConfiguration(), tableToken, messageBus);
+            super(pool.getConfiguration(), tableToken, messageBus, partitionOverwriteControl);
             this.pool = pool;
             this.entry = entry;
             this.index = index;

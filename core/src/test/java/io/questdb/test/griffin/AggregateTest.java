@@ -25,7 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -35,7 +40,13 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.Rosti;
+import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.RostiAllocFacadeImpl;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
@@ -1560,32 +1571,36 @@ public class AggregateTest extends AbstractCairoTest {
     public void testStrFunctionKey() throws Exception {
         // An important aspect of this test is that both replace() and count_distinct()
         // functions use the same column as the input.
+        String expected = "replace\tcount\tcount_distinct\n" +
+                "foobaz\t63\t2\n" +
+                "bazbaz\t37\t1\n";
         assertQuery(
-                "replace\tcount\tcount_distinct\n" +
-                        "foobaz\t63\t2\n" +
-                        "bazbaz\t37\t1\n",
+                expected,
                 "select replace(s, 'bar', 'baz'), count(), count_distinct(s) from tab",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_str('foobar','foobaz','barbaz') s from long_sequence(100))",
                 null,
                 true,
                 true
         );
+        assertSql(expected, "select replace(s, 'bar', 'baz'), count(), count(distinct s) from tab");
     }
 
     @Test
     public void testStrFunctionKeyReverseOrder() throws Exception {
         // An important aspect of this test is that both replace() and count_distinct()
         // functions use the same column as the input.
+        String expected = "count_distinct\tcount\treplace\n" +
+                "2\t63\tfoobaz\n" +
+                "1\t37\tbazbaz\n";
         assertQuery(
-                "count_distinct\tcount\treplace\n" +
-                        "2\t63\tfoobaz\n" +
-                        "1\t37\tbazbaz\n",
+                expected,
                 "select count_distinct(s), count(), replace(s, 'bar', 'baz') from tab",
                 "create table tab as (select timestamp_sequence(0, 100000) ts, rnd_str('foobar','foobaz','barbaz') s from long_sequence(100))",
                 null,
                 true,
                 true
         );
+        assertSql(expected, "select count(distinct s), count(), replace(s, 'bar', 'baz') from tab");
     }
 
     @Test
