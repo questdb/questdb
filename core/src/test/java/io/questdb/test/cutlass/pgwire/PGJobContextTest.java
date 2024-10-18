@@ -2615,16 +2615,13 @@ if __name__ == "__main__":
 
     @Test
     public void testCancelRunningQuery() throws Exception {
-        // @Ignore("TODO PGWire 2.0: Mem leak")
-        Assume.assumeTrue(legacyMode);
         String[] queries = {
                 "create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
                 "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
                 "insert into dest select count(*)::timestamp, 0, 0.0 from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
                 "update dest set l = t1.x from (tab where d > 0 limit 1, -1 ) t1 where sleep(120000)"
         };
-
-        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             ddl("create table if not exists tab as " +
                     "(select x::timestamp ts, x, rnd_double() d from long_sequence(5)) timestamp(ts) partition by day");
             ddl("create table if not exists dest as (select x l from long_sequence(10))");
