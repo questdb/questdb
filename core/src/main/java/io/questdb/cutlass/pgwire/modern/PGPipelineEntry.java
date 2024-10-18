@@ -225,6 +225,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 outParameterTypeDescriptionTypeOIDs,
                 pgResultSetColumnTypes
         );
+        // copy only the fields set at the PARSE time
         newEntry.cacheHit = cacheHit;
         newEntry.empty = empty;
         newEntry.insertOp = insertOp;
@@ -235,10 +236,6 @@ public class PGPipelineEntry implements QuietCloseable {
         newEntry.sqlText = sqlText;
         newEntry.sqlType = sqlType;
         newEntry.sqlTextHasSecret = sqlTextHasSecret;
-        newEntry.stateDesc = stateDesc;
-        newEntry.stateParse = stateParse;
-        newEntry.stateParseExecuted = stateParseExecuted;
-        newEntry.stateSync = stateSync;
         newEntry.tai = tai;
         newEntry.tas = tas;
         return newEntry;
@@ -830,6 +827,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 bindVariableService.define(j, ColumnType.LONG, 0);
                 break;
             case X_PG_TIMESTAMP:
+            case X_PG_TIMESTAMP_TZ:
                 bindVariableService.define(j, ColumnType.TIMESTAMP, 0);
                 break;
             case X_PG_INT2:
@@ -902,6 +900,7 @@ public class PGPipelineEntry implements QuietCloseable {
                                 setBindVariableAsLong(i, lo, valueSize, bindVariableService);
                                 break;
                             case X_PG_TIMESTAMP:
+                            case X_PG_TIMESTAMP_TZ:
                                 setBindVariableAsTimestamp(i, lo, valueSize, bindVariableService);
                                 break;
                             case X_PG_INT2:
@@ -976,6 +975,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 bindVariableService.define(j, ColumnType.LONG, 0);
                 break;
             case X_PG_TIMESTAMP:
+            case X_PG_TIMESTAMP_TZ:
                 bindVariableService.define(j, ColumnType.TIMESTAMP, 0);
                 break;
             case X_PG_INT2:

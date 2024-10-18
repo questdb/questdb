@@ -7575,12 +7575,12 @@ nodejs code:
                             "5,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00,null\n";
 
                     // modern uses metadata from the PARSE message
-                    final String modernExpected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[VARCHAR],$22[VARCHAR]\n" +
-                            "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00,null\n" +
-                            "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00,null\n" +
-                            "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00,null\n" +
-                            "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00,null\n" +
-                            "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00,null\n";
+                    final String modernExpected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP],$22[VARCHAR]\n" +
+                            "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023,null\n" +
+                            "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023,null\n" +
+                            "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023,null\n" +
+                            "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023,null\n" +
+                            "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023,null\n";
                     final String expected = legacyMode ? legacyExpected : modernExpected;
 
                     StringSink sink = new StringSink();
@@ -7635,12 +7635,14 @@ nodejs code:
     }
 
     @Test
-    @Ignore("legacy: output column 16 of wrong type; modern: Can't change resolved type for param: 19 from 1082 to 1114")
     public void testPreparedStatementTextParams() throws Exception {
         skipOnWalRun(); // non-partitioned table
         sendBufferSize = 1024;
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
-            PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
+        long modes = legacyMode ? CONN_AWARE_EXTENDED_TEXT : CONN_AWARE_ALL;
+        assertWithPgServer(modes, (connection, binary, mode, port) -> {
+            PreparedStatement statement = connection.prepareStatement("select x, ? as \"$1\",? as \"$2\",? as \"$3\",? as \"$4\"," +
+                    "? as \"$5\",? as \"$6\",? as \"$7\",? as \"$8\",? as \"$9\",? as \"$10\",? as \"$11\",? as \"$12\",? as \"$13\"," +
+                    "? as \"$14\",? as \"$15\",? as \"$16\",? as \"$17\",? as \"$18\",? as \"$19\",? as \"$20\",? as \"$21\" from long_sequence(5)");
             statement.setInt(1, 4);
             statement.setLong(2, 123L);
             statement.setFloat(3, 5.43f);
@@ -7689,19 +7691,38 @@ nodejs code:
                 // in "text" mode, it will send OID 701 making server believe it is "double". This is
                 // one of many JDBC driver bugs, that is liable to change in the future driver versions
                 if (binary) {
-                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[VARCHAR]\n" +
-                            "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
-                            "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
-                            "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
-                            "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
-                            "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n";
+                    if (mode == Mode.SIMPLE) {
+                        // simple mode
+                        expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                                "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                    } else {
+                        expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                                "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                    }
                 } else {
-                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[VARCHAR]\n" +
-                            "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
-                            "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
-                            "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
-                            "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
-                            "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n";
+                    if (mode == Mode.SIMPLE) {
+                        expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                                "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                    } else {
+                        expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                                "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                                "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                    }
                 }
             }
 

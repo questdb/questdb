@@ -763,6 +763,14 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 't';
     }
 
+    public static boolean isInt2Keyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 'i'
+                && (tok.charAt(1) | 32) == 'n'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == '2';
+    }
+
     public static boolean isInt4Keyword(CharSequence tok) {
         return tok.length() == 4
                 && (tok.charAt(0) | 32) == 'i'

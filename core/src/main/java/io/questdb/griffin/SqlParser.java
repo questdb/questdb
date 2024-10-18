@@ -2816,6 +2816,8 @@ public class SqlParser {
                 node.rhs.token = "int";
             } else if (SqlKeywords.isInt8Keyword(node.rhs.token)) {
                 node.rhs.token = "long";
+            } else if (SqlKeywords.isInt2Keyword(node.rhs.token)) {
+                node.rhs.token = "short";
             }
         }
     }

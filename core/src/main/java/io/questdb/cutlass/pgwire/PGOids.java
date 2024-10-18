@@ -63,6 +63,7 @@ public class PGOids {
     public static final int PG_OID = 26;
     public static final int PG_PUBLIC_OID = 2200;
     public static final int PG_TIMESTAMP = 1114;
+    public static final int PG_TIMESTAMP_TZ = 1184;
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_PROC_OIDS = new IntList();
     public static final char[] PG_TYPE_TO_CATEGORY = new char[14];
@@ -100,6 +101,8 @@ public class PGOids {
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_TIMESTAMP = ((PG_TIMESTAMP >> 24) & 0xff) | ((PG_TIMESTAMP << 8) & 0xff0000) | ((PG_TIMESTAMP >> 8) & 0xff00) | ((PG_TIMESTAMP << 24) & 0xff000000);
     public static final int X_B_PG_TIMESTAMP = 1 | X_PG_TIMESTAMP;
+    @SuppressWarnings("NumericOverflow")
+    public static final int X_PG_TIMESTAMP_TZ = ((PG_TIMESTAMP_TZ >> 24) & 0xff) | ((PG_TIMESTAMP_TZ << 8) & 0xff0000) | ((PG_TIMESTAMP_TZ >> 8) & 0xff00) | ((PG_TIMESTAMP_TZ << 24) & 0xff000000);
     @SuppressWarnings("NumericOverflow")
     public static final int X_PG_UUID = ((PG_UUID >> 24) & 0xff) | ((PG_UUID << 8) & 0xff0000) | ((PG_UUID >> 8) & 0xff00) | ((PG_UUID << 24) & 0xff000000);
     public static final int X_B_PG_UUID = 1 | X_PG_UUID;
