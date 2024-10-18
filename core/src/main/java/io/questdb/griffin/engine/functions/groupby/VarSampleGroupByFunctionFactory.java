@@ -86,7 +86,7 @@ public class VarSampleGroupByFunctionFactory implements FunctionFactory {
 
             // This is only valid when countA is much larger than countB.
             // If both are large and similar sizes, delta is not scaled down.
-            // double meanAB = meanA + delta * ((double) countB / countAB);
+            // double mergedMean = srcMean + delta * ((double) destCount / mergedCount);
 
             // So we use this instead:
             double mergedMean = (srcCount * srcMean + destCount * destMean) / mergedCount;
