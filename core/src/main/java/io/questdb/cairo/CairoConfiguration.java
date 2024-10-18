@@ -131,6 +131,10 @@ public interface CairoConfiguration {
 
     int getCreateAsSelectRetryCount();
 
+    int getCreateMatViewModelPoolCapacity();
+
+    int getCreateMatViewRetryCount();
+
     long getCreateTableModelBatchSize();
 
     int getCreateTableModelPoolCapacity();
@@ -600,6 +604,8 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMatViewEnabled();
+
     boolean isMultiKeyDedupEnabled();
 
     boolean isO3QuickSortEnabled();
@@ -607,6 +613,8 @@ public interface CairoConfiguration {
     boolean isParallelIndexingEnabled();
 
     boolean getPartitionO3OverwriteControlEnabled();
+
+    boolean isPartitionEncoderParquetStatisticsEnabled();
 
     boolean isReadOnlyInstance();
 
@@ -637,8 +645,6 @@ public interface CairoConfiguration {
      * @return true if mangling of directory names for non-WAL tables is enabled, false otherwise.
      */
     boolean mangleTableDirNames();
-
-    boolean isPartitionEncoderParquetStatisticsEnabled();
 
     default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
     }

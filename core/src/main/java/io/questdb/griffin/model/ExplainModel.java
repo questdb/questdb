@@ -62,6 +62,16 @@ public class ExplainModel implements ExecutionModel, Mutable, Sinkable {
         return EXPLAIN;
     }
 
+    @Override
+    public CharSequence getTableName() {
+        return model.getTableName();
+    }
+
+    @Override
+    public ExpressionNode getTableNameExpr() {
+        return model.getTableNameExpr();
+    }
+
     public void setFormat(int format) {
         this.format = format;
     }

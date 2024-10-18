@@ -1785,9 +1785,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
 
             int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(fillStride.token, fillStride.position);
+            assert samplingIntervalEnd < fillStride.token.length();
             long samplingInterval = TimestampSamplerFactory.parseInterval(fillStride.token, samplingIntervalEnd, fillStride.position);
             assert samplingInterval > 0;
-            assert samplingIntervalEnd < fillStride.token.length();
             char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
             TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(samplingInterval, samplingIntervalUnit, fillStride.position);
 
