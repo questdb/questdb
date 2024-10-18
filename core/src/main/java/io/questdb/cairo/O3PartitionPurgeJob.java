@@ -350,6 +350,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     // previousNameVersion can be deleted
                     // -1 here is to compensate +1 added when partition version parsed from folder name
                     // See comments of why +1 added there in parsePartitionDateVersion()
+                    engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, partitionTimestamp, previousNameVersion - 1, 0);
                     purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging overwritten partition directory [path=");
                 } else {
                     LOG.info().$("cannot purge overwritten partition directory, locked for reading path=").$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();

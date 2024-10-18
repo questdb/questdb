@@ -121,7 +121,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 allClean = false;
                             }
                         }
-
                     } else if (type == Files.DT_FILE) {
                         tempPath.trimTo(rootLen);
                         tempPath.concat(pUtf8NameZ);
@@ -557,7 +556,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     void applyWal(
             @NotNull TableToken tableToken,
             CairoEngine engine,
-            OperationExecutor operationCompiler,
+            OperationExecutor operationExecutor,
             Job.RunStatus runStatus
     ) {
         final Path tempPath = Path.PATH.get();
@@ -580,7 +579,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         // rely on CheckWalTransactionsJob to notify us when to apply transactions
                         return;
                     }
-                    applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, txnTracker);
+                    applyOutstandingWalTransactions(tableToken, writer, engine, operationExecutor, tempPath, runStatus, txnTracker);
                     txnTracker.hadEnoughMemory(tableToken.getTableName(), rnd);
                     writerTxn = writer.getSeqTxn();
                     dirtyWriterTxn = writer.getAppliedSeqTxn();

@@ -15,7 +15,6 @@ DEFAULT_LOCAL_DIRS=${DEFAULT_LOCAL_DIRS:-"/conf /public /db /.checkpoint /snapsh
 array=( ${DEFAULT_LOCAL_DIRS} )
 read -ra LOCALDIRS < <( echo -n "( "; printf -- "-ipath ${QUESTDB_DATA_DIR}%s* -o " "${array[@]:0:$((${#array[@]} - 1))}"; echo -n "-ipath ${QUESTDB_DATA_DIR}${array[@]: -1}*"; echo " )";)
 
-
 # backwards compatibility with previous versions
 if [ ${IGNORE_FIND_AND_OWN_DIR+x} ]
 then
@@ -28,7 +27,6 @@ find_and_own_dir() {
     [ $(stat --format '%u:%g' ${QUESTDB_DATA_DIR}) == "$USER:$GROUP" ] || chown "$USER:$GROUP" ${QUESTDB_DATA_DIR}
     find ${QUESTDB_DATA_DIR} "${LOCALDIRS[@]}" \( ! -user $USER -o ! -group $GROUP \) -exec chown $USER:$GROUP '{}' \;
 }
-
 
 # Temporary only
 # Most of the users will have the data mounted under /root/.questdb as default
@@ -47,7 +45,7 @@ fi
 # Check if arguments are provided in the configuration file
 if [ $# -eq 0 ]; then
     echo "No arguments found in the configuration, start with default arguments"
-    set -- $JAVA_COMMAND -XX:+UseParallelGC -XX:ErrorFile=${QUESTDB_DATA_DIR}/db/hs_err_pid+%p.log -Dout=${QUESTDB_DATA_DIR}/conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
+    set -- $JAVA_COMMAND -ea -Dnoebug -XX:+UseParallelGC -XX:ErrorFile=${QUESTDB_DATA_DIR}/db/hs_err_pid+%p.log -Dout=${QUESTDB_DATA_DIR}/conf/log.conf -m io.questdb/io.questdb.ServerMain -d ${QUESTDB_DATA_DIR} -f
 else
     if [ "${1:0:1}" = '-' ]; then
         echo "Found config arguments $@"
