@@ -31,22 +31,13 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjHashSet;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
 import java.util.Comparator;
 
 /**
@@ -368,7 +359,7 @@ public class MetadataCache implements QuietCloseable {
     /**
      * An implementation of {@link MetadataCacheWriter }. Provides a read-path into the metadata cache.
      */
-    private class MetadataCacheWriterImpl extends MetadataCacheReaderImpl implements Closeable, MetadataCacheWriter, AutoCloseable {
+    private class MetadataCacheWriterImpl extends MetadataCacheReaderImpl implements MetadataCacheWriter {
 
         /**
          * Clears the table cache.
