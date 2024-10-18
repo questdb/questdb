@@ -32,6 +32,7 @@ import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
@@ -141,7 +142,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         long rowCount = 0;
         if (refreshState.tryLock()) {
             try {
-                factory = refreshState.getFactory();
+                factory = refreshState.acquireRecordFactory();
                 copier = refreshState.getRecordToRowCopier();
 
                 int maxRecompileAttempts = 10;
@@ -149,6 +150,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                     try {
                         if (factory == null) {
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                                LOG.info().$("compiling view [view=").$(viewDef.getTableToken()).$(", attempt=").$(i).I$();
                                 CompiledQuery compiledQuery = compiler.compile(viewDef.getViewSql(), matViewRefreshExecutionContext);
                                 if (compiledQuery.getType() != CompiledQuery.SELECT) {
                                     throw SqlException.$(0, "materialized view query must be a SELECT statement");
@@ -159,6 +161,8 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                                     copier = getRecordToRowCopier(tableWriter, factory, compiler);
                                 }
                             } catch (SqlException e) {
+                                Misc.free(factory);
+                                LOG.error().$("error refreshing materialized view, compilation error [view=").$(viewDef.getTableToken()).$(", error=").$(e.getFlyweightMessage()).I$();
                                 refreshState.compilationFail(e);
                                 return false;
                             }
@@ -184,13 +188,17 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                         }
                         break;
                     } catch (TableReferenceOutOfDateException e) {
-                        factory = null;
+                        factory = Misc.free(factory);
                         if (i == maxRecompileAttempts - 1) {
                             LOG.error().$("error refreshing materialized view, base table is under heavy DDL changes [view=")
                                     .$(viewDef.getTableToken()).$(", recompileAttempts=").$(maxRecompileAttempts).I$();
                             refreshState.refreshFail(e);
                             return false;
                         }
+                    } catch (Throwable th) {
+                        Misc.free(factory);
+                        refreshState.refreshFail(th);
+                        throw th;
                     }
                 }
 
@@ -267,7 +275,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         boolean refreshed = false;
         while (materializedViewGraph.tryDequeueRefreshTask(mvRefreshTask)) {
             TableToken baseTable = mvRefreshTask.baseTable;
-            LOG.info().$("refreshing materialized views dependent on after notification [table=").$(baseTable).I$();
+            LOG.info().$("refreshing materialized views dependent on [table=").$(baseTable).I$();
             refreshed |= refreshDependentViews(baseTable, materializedViewGraph);
         }
         return refreshed;
@@ -309,8 +317,10 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
 
                     try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
                         boolean changed = insertAsSelect(viewGraph, viewDef, commitWriter);
-                        engine.getTableSequencerAPI().setLastRefreshBaseTxn(viewToken, toBaseTxn);
-                        viewTxnTracker.setLastRefreshBaseTxn(toBaseTxn);
+                        if (changed) {
+                            engine.getTableSequencerAPI().setLastRefreshBaseTxn(viewToken, toBaseTxn);
+                            viewTxnTracker.setLastRefreshBaseTxn(toBaseTxn);
+                        }
                         return changed;
                     }
                 }
@@ -326,7 +336,6 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
 
     @Override
     protected boolean runSerially() {
-        boolean refreshed = refreshNotifiedViews();
-        return refreshed;
+        return refreshNotifiedViews();
     }
 }

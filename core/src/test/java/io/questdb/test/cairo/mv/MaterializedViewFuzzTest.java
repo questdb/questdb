@@ -250,6 +250,7 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
             for (int i = 0; i < tableCount; i++) {
                 String viewSql = viewSqls.getQuick(i);
                 String mvName = testTableName + "_" + i + "_mv";
+                LOG.info().$("asserting view ").$(mvName).$(" against ").$(viewSql).$();
                 TestUtils.assertSqlCursors(
                         compiler,
                         sqlExecutionContext,
@@ -307,6 +308,8 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
                     } while (refreshJob.run(0));
                 }
 
+            } catch (Throwable throwable) {
+                LOG.error().$("Refresh job failed: ").$(throwable).$();
             } finally {
                 Path.clearThreadLocals();
                 LOG.info().$("Refresh job stopped").$();

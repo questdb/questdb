@@ -52,11 +52,12 @@ public class MaterializedViewRefreshState implements QuietCloseable {
     public void compilationFail(SqlException e) {
         getSink().put(e.getFlyweightMessage());
         errorCode = e.getPosition();
-        Misc.free(cursorFactory);
     }
 
-    public RecordCursorFactory getFactory() {
-        return cursorFactory;
+    public RecordCursorFactory acquireRecordFactory() {
+        RecordCursorFactory factory = cursorFactory;
+        cursorFactory = null;
+        return factory;
     }
 
     public long getRecordRowCopierMetadataVersion() {
