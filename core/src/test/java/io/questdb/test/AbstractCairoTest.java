@@ -999,6 +999,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
+        assertExceptionNoLeakCheck(sql, errorPos, contains, fullFatJoins, sqlExecutionContext);
+    }
+
+    protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins, SqlExecutionContext sqlExecutionContext) throws Exception {
         Assert.assertNotNull(contains);
         Assert.assertTrue("provide matching text", contains.length() > 0);
         try {
