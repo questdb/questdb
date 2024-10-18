@@ -174,6 +174,7 @@ public class PGPipelineEntry implements QuietCloseable {
         cursor = Misc.free(cursor);
         factory = Misc.free(factory);
         insertOp = Misc.free(insertOp);
+        Misc.free(compiledQuery.getUpdateOperation());
         if (parameterValueArenaPtr != 0) {
             Unsafe.free(parameterValueArenaPtr, parameterValueArenaHi - parameterValueArenaPtr, MemoryTag.NATIVE_PGW_PIPELINE);
             parameterValueArenaPtr = 0;

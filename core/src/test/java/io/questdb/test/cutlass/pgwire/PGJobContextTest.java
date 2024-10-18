@@ -3166,8 +3166,6 @@ if __name__ == "__main__":
 
     @Test
     public void testExecuteAndCancelSqlCommands() throws Exception {
-        // @Ignore("TODO PGWire 2.0")
-        Assume.assumeTrue(legacyMode);
         Assume.assumeTrue(walEnabled);
 
         final long TIMEOUT = 240_000;
