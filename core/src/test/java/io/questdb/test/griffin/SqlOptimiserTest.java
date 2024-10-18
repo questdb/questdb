@@ -1895,6 +1895,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testQualifiedTableNames() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table \"foo.bah\" (ts timestamp) timestamp(ts) partition by day wal;");
+            assertPlanNoLeakCheck("select ts, count from \"foo.bah\" sample by 1d from '2008-12-28' TO '2009-01-05' FILL(NULL)", "");
+        });
+    }
+
+    @Test
     public void testQueryPlanForFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int, ts timestamp) timestamp(ts);");
@@ -3436,6 +3444,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "2018-01-19T00:00:00.000000Z\tnull\n" +
                     "2018-01-24T00:00:00.000000Z\tnull\n" +
                     "2018-01-29T00:00:00.000000Z\tnull\n", query);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToWithCTEs() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table foo (ts timestamp, x int, y int) timestamp(ts) partition by day wal;");
+            assertPlanNoLeakCheck("WITH inner AS (SELECT ts, avg(x) as x FROM foo WHERE ts >= '2024-09-17T22:00:00.000000Z'\n" +
+                    "AND ts <= '2024-09-18T22:00:00.000000Z'\n" +
+                    "SAMPLE BY 15m FILL(PREV)\n" +
+                    ")\n" +
+                    "SELECT ts, avg(x) FROM inner\n" +
+                    " WHERE ts >= '2024-09-17T22:00:00.000000Z'\n" +
+                    " AND ts <= '2024-09-18T22:00:00.000000Z' SAMPLE BY 15m\n" +
+                    "                FROM\n" +
+                    "        '2024-09-17T22:00:00.000000Z' TO '2024-09-18T22:00:00.000000Z' FILL(0)\n" +
+                    "        ORDER BY\n" +
+                    "        ts;", "Sample By\n" +
+                    "  fill: value\n" +
+                    "  range: ('2024-09-17T22:00:00.000000Z','2024-09-18T22:00:00.000000Z')\n" +
+                    "  values: [avg(x)]\n" +
+                    "    Filter filter: (ts>=1726610400000000 and 1726696800000000>=ts)\n" +
+                    "        Sample By\n" +
+                    "          fill: prev\n" +
+                    "          values: [avg(x)]\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Interval forward scan on: foo\n" +
+                    "                  intervals: [(\"2024-09-17T22:00:00.000000Z\",\"2024-09-18T22:00:00.000000Z\")]\n");
         });
     }
 
