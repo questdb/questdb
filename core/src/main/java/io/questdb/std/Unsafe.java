@@ -27,6 +27,7 @@ package io.questdb.std;
 // @formatter:off
 import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.AccessibleObject;
@@ -191,6 +192,17 @@ public final class Unsafe {
     public static long getMemUsedByTag(int memoryTag) {
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         return COUNTERS[memoryTag].sum();
+    }
+
+    @TestOnly
+    public static String getMemUsedHumanReadable() {
+        StringBuilder sb = new StringBuilder();
+
+        for (int i = 0, n = COUNTERS.length; i < n; i++) {
+            sb.append(MemoryTag.nameOf(i)).append(": ").append(COUNTERS[i]).append("\n");
+        }
+
+        return sb.toString();
     }
 
     public static long getReallocCount() {
