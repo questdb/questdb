@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.finance;
+package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
@@ -108,6 +108,21 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getLeft() {
+            return xFunction;
+        }
+
+        @Override
+        public String getName() {
+            return "regr_slope";
+        }
+
+        @Override
+        public Function getRight() {
+            return yFunction;
+        }
+
+        @Override
         public int getValueIndex() {
             return valueIndex;
         }
@@ -128,13 +143,13 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isThreadSafe() {
-            return BinaryFunction.super.isThreadSafe();
+        public boolean isConstant() {
+            return false;
         }
 
         @Override
-        public boolean supportsParallelism() {
-            return true;
+        public boolean isThreadSafe() {
+            return BinaryFunction.super.isThreadSafe();
         }
 
         @Override
@@ -159,32 +174,17 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getLeft() {
-            return xFunction;
-        }
-
-        @Override
-        public Function getRight() {
-            return yFunction;
-        }
-
-        @Override
-        public boolean isConstant() {
-            return false;
-        }
-
-        @Override
-        public String getName() {
-            return "regr_slope";
-        }
-
-        @Override
         public void setNull(MapValue mapValue) {
             mapValue.putDouble(valueIndex, Double.NaN);
             mapValue.putDouble(valueIndex + 1, Double.NaN);
             mapValue.putDouble(valueIndex + 2, Double.NaN);
             mapValue.putDouble(valueIndex + 3, Double.NaN);
             mapValue.putLong(valueIndex + 4, 0);
+        }
+
+        @Override
+        public boolean supportsParallelism() {
+            return true;
         }
 
         protected void aggregate(MapValue mapValue, double y, double x) {
