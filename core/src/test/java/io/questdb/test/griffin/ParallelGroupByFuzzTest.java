@@ -702,6 +702,15 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByCovariance() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(covar_samp(adouble, along), 14) FROM tab", "round\n" +
+                        "-92233.72036854776\n",
+                "SELECT round(covar_pop(adouble, along), 13) FROM tab", "round\n" +
+                        "-922337.2036854776\n");
+    }
+
+    @Test
     public void testParallelJsonKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
