@@ -608,6 +608,13 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testExceptionAfterHeader() throws Exception {
+        testExceptionAfterHeader(0, "d5", "");
+        testExceptionAfterHeader(1, "db", "[true]");
+        testExceptionAfterHeader(2, "e3", "[true],[false]");
+    }
+
+    @Test
     public void testExecuteAndCancelSqlCommandsOnExpEndpoint() throws Exception {
         testExecuteAndCancelSqlCommands("/exp");
     }
@@ -1400,7 +1407,6 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n",
                                         1,
                                         0,
-                                        false,
                                         false
                                 );
 
@@ -1480,7 +1486,6 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n",
                                         1,
                                         0,
-                                        false,
                                         false
                                 );
 
@@ -1887,7 +1892,6 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n",
                                         1,
                                         0,
-                                        false,
                                         false
                                 );
 
@@ -2106,7 +2110,6 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n",
                                         1,
                                         0,
-                                        false,
                                         false
                                 );
 
@@ -2198,7 +2201,6 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n",
                                         1,
                                         0,
-                                        false,
                                         false
                                 );
 
@@ -3784,112 +3786,6 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testJsonQueryDataError() throws Exception {
-        assertMemoryLeak(() -> {
-            final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = new TestWorkerPool(1);
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
-            ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-                });
-
-                workerPool.start(LOG);
-
-                try {
-
-                    // send multipart request to server
-                    final String request = "GET /query?limit=0%2C1000&count=true&src=con&query=select%20npe()%20from%20long_sequence(1)&timings=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36\r\n" +
-                            "Accept: */*\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Sec-Fetch-Dest: empty\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "Cookie: _ga=GA1.1.2124932001.1573824669; _hjid=f2db90b2-18cf-4956-8870-fcdcde56f3ca; _hjIncludedInSample=1; _gid=GA1.1.697400188.1591597903\r\n" +
-                            "\r\n";
-
-                    NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    long fd = nf.socketTcp(true);
-                    try {
-                        long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
-                        assert sockAddrInfo != -1;
-                        try {
-                            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
-                            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-
-                            final int len = request.length() * 2;
-                            long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-                            try {
-                                int sent = 0;
-                                int reqLen = request.length();
-                                Utf8s.strCpyAscii(request, reqLen, ptr);
-                                while (sent < reqLen) {
-                                    int n = NetworkFacadeImpl.INSTANCE.sendRaw(fd, ptr + sent, reqLen - sent);
-                                    assertTrue(n > -1);
-                                    sent += n;
-                                }
-
-                                Os.sleep(1);
-
-                                nf.configureNonBlocking(fd);
-                                long t = System.currentTimeMillis();
-                                boolean disconnected = true;
-                                while (nf.recvRaw(fd, ptr, 1) > -1) {
-                                    if (t + 20000 < System.currentTimeMillis()) {
-                                        disconnected = false;
-                                        break;
-                                    }
-                                }
-                                assertTrue("disconnect expected", disconnected);
-                            } finally {
-                                Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
-                            }
-                        } finally {
-                            nf.freeAddrInfo(sockAddrInfo);
-                        }
-                    } finally {
-                        nf.close(fd);
-                    }
-                } finally {
-                    workerPool.halt();
-                }
-            }
-        });
-    }
-
-    @Test
     public void testJsonQueryDataUnavailableClientDisconnectsBeforeEventFired() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -5319,8 +5215,7 @@ public class IODispatcherTest extends AbstractTest {
                                     "00\r\n",
                             1,
                             0,
-                            false,
-                            true
+                            false
                     );
                 },
                 false,
@@ -7336,7 +7231,6 @@ public class IODispatcherTest extends AbstractTest {
                                     "\r\n",
                             1,
                             0,
-                            false,
                             false
                     );
 
@@ -7368,7 +7262,6 @@ public class IODispatcherTest extends AbstractTest {
                                     "\r\n",
                             1,
                             0,
-                            false,
                             false
                     );
 
@@ -7400,7 +7293,6 @@ public class IODispatcherTest extends AbstractTest {
                                     "\r\n",
                             1,
                             0,
-                            false,
                             false
                     );
                 });
@@ -7486,7 +7378,6 @@ public class IODispatcherTest extends AbstractTest {
                                             JSON_DDL_RESPONSE,
                                     1,
                                     0,
-                                    false,
                                     false
                             );
 
@@ -7517,7 +7408,6 @@ public class IODispatcherTest extends AbstractTest {
                                             "\r\n",
                                     1,
                                     0,
-                                    false,
                                     false
                             );
                         }
@@ -7630,7 +7520,6 @@ public class IODispatcherTest extends AbstractTest {
                                     JSON_DDL_RESPONSE,
                             1,
                             0,
-                            false,
                             false
                     );
 
@@ -7661,7 +7550,6 @@ public class IODispatcherTest extends AbstractTest {
                                     "00\r\n\r\n",
                             1,
                             0,
-                            false,
                             false
                     );
 
@@ -7690,7 +7578,6 @@ public class IODispatcherTest extends AbstractTest {
                                     JSON_DDL_RESPONSE,
                             1,
                             0,
-                            false,
                             false
                     );
 
@@ -7721,7 +7608,6 @@ public class IODispatcherTest extends AbstractTest {
                                     "00\r\n\r\n",
                             1,
                             0,
-                            false,
                             false
                     );
                 });
@@ -7913,8 +7799,7 @@ public class IODispatcherTest extends AbstractTest {
         testJsonQuery0(1, engine -> {
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
-                    // select '' from long_sequence(1)
-                    "GET /exec?query=select%20simulate_crash%28'C'%29 HTTP/1.1\n" +
+                    "GET /exec?query=select%20simulate_crash%28'E'%29 HTTP/1.1\n" +
                             "Host: localhost:9000\r\n" +
                             "Connection: keep-alive\r\n" +
                             "Accept: */*\r\n" +
@@ -7931,11 +7816,13 @@ public class IODispatcherTest extends AbstractTest {
                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                             "Transfer-Encoding: chunked\r\n" +
                             "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n",
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "c5\r\n" +
+                            "{\"query\":\"select simulate_crash('E')\",\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0,\"error\":\"HTTP 500 (Internal server error), simulated cairo error\"}",
                     1,
                     0,
-                    false,
-                    true
+                    false
             );
             Assert.assertEquals(1, engine.getMetrics().health().unhandledErrorsCount());
         }, false);
@@ -7946,8 +7833,7 @@ public class IODispatcherTest extends AbstractTest {
         testJsonQuery0(1, engine -> {
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            // select '' from long_sequence(1)
-                            "GET /exec?query=select%20simulate_crash%28'D'%29 HTTP/1.1\n" +
+                            "GET /exec?query=select%20simulate_crash%28'0'%29 HTTP/1.1\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7967,12 +7853,45 @@ public class IODispatcherTest extends AbstractTest {
                                     "Keep-Alive: timeout=5, max=10000\r\n",
                             1,
                             0,
-                            false,
-                            true
+                            false
                     );
                     Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
                 }
                 , false);
+    }
+
+    @Test
+    public void testTriggerNPE() throws Exception {
+        testJsonQuery0(1, engine -> {
+            sendAndReceive(
+                    NetworkFacadeImpl.INSTANCE,
+                    "GET /exec?limit=0%2C1000&count=true&src=con&query=select%20npe()%20from%20long_sequence(1) HTTP/1.1\n" +
+                            "Host: localhost:9000\r\n" +
+                            "Connection: keep-alive\r\n" +
+                            "Accept: */*\r\n" +
+                            "X-Requested-With: XMLHttpRequest\r\n" +
+                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                            "Sec-Fetch-Site: same-origin\r\n" +
+                            "Sec-Fetch-Mode: cors\r\n" +
+                            "Referer: http://localhost:9000/index.html\r\n" +
+                            "Accept-Encoding: gzip, deflate, br\r\n" +
+                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                            "\r\n",
+                    "HTTP/1.1 200 OK\r\n" +
+                            "Server: questDB/1.0\r\n" +
+                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                            "Transfer-Encoding: chunked\r\n" +
+                            "Content-Type: application/json; charset=utf-8\r\n" +
+                            "Keep-Alive: timeout=5, max=10000\r\n" +
+                            "\r\n" +
+                            "ab\r\n" +
+                            "{\"query\":\"select npe() from long_sequence(1)\",\"columns\":[{\"name\":\"npe\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[],\"count\":0,\"error\":\"HTTP 500 (Internal server error)\"}",
+                    1,
+                    0,
+                    false
+            );
+            Assert.assertEquals(1, engine.getMetrics().health().unhandledErrorsCount());
+        }, false);
     }
 
     @Test
@@ -8601,7 +8520,6 @@ public class IODispatcherTest extends AbstractTest {
                 response,
                 1,
                 0,
-                false,
                 false
         );
     }
@@ -8612,7 +8530,7 @@ public class IODispatcherTest extends AbstractTest {
             CharSequence response,
             int requestCount,
             long pauseBetweenSendAndReceive,
-            @SuppressWarnings("SameParameterValue") boolean print
+            boolean print
     ) {
         sendAndReceive(
                 nf,
@@ -9078,6 +8996,42 @@ public class IODispatcherTest extends AbstractTest {
                         Misc.free(eventRef.get());
                     }
                 });
+    }
+
+    private void testExceptionAfterHeader(int numOfRows, String length, String rows) throws Exception {
+        testJsonQuery0(1, engine -> {
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /exec?query=select%20simulate_crash%28'" + numOfRows + "'%29%20from%20long_sequence%285%29 HTTP/1.1\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    length + "\r\n" +
+                                    "{\"query\":\"select simulate_crash('" + numOfRows + "') from long_sequence(5)\",\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[" + rows + "],\"count\":" + numOfRows + ",\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false
+                    );
+                    Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
+                }
+                , false);
     }
 
     private void testExecuteAndCancelSqlCommands(final String url) throws Exception {
