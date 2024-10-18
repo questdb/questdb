@@ -31,12 +31,12 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectString;
 
 public class PartitionDecoder implements QuietCloseable {
@@ -54,13 +54,23 @@ public class PartitionDecoder implements QuietCloseable {
     private final Metadata metadata = new Metadata();
     private long columnsPtr;
     private long fd; // kept around for logging purposes
+    private long fileSize;
     private long ptr;
     private long rowGroupSizesPtr;
+
+    public static boolean decodeNoNeedToDecodeFlag(long encodedIndex) {
+        return (encodedIndex & 1) == 1;
+    }
+
+    public static int decodeRowGroupIndex(long encodedIndex) {
+        return (int) ((encodedIndex >> 1) - 1);
+    }
 
     @Override
     public void close() {
         destroy();
         fd = -1;
+        fileSize = -1;
     }
 
     public int decodeRowGroup(
@@ -71,7 +81,7 @@ public class PartitionDecoder implements QuietCloseable {
             int rowHi // high row index within the row group, exclusive
     ) {
         assert ptr != 0;
-        return decodeRowGroup(  // throws CairoException on error
+        return decodeRowGroup( // throws CairoException on error
                 ptr,
                 rowGroupBuffers.ptr(),
                 columns.getAddress(),
@@ -82,8 +92,44 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
+    /**
+     * Searches for the row group holding the given timestamp.
+     * Scan direction is always {@link Vect#BIN_SEARCH_SCAN_DOWN}.
+     * <p>
+     * The row group index can be calculated on the returned value
+     * via a {@link #decodeRowGroupIndex(long)} call. In case if the located
+     * position is at the end of a row group or between two row groups, the
+     * {@link #decodeNoNeedToDecodeFlag(long)} method will return true.
+     *
+     * @param timestamp            timestamp value to search for
+     * @param rowLo                row lo, inclusive
+     * @param rowHi                row hi, inclusive
+     * @param timestampColumnIndex timestamp column index within the Parquet file
+     * @return encoded row group index and "no need to decode" flag
+     */
+    public long findRowGroupByTimestamp(
+            long timestamp,
+            long rowLo,
+            long rowHi,
+            int timestampColumnIndex
+    ) {
+        assert ptr != 0;
+        return findRowGroupByTimestamp( // throws CairoException on error
+                ptr,
+                timestamp,
+                rowLo,
+                rowHi,
+                timestampColumnIndex
+        );
+    }
+
     public long getFd() {
         return fd;
+    }
+
+    public long getFileSize() {
+        assert fileSize > 0 || fd == -1;
+        return fileSize;
     }
 
     public Metadata metadata() {
@@ -91,15 +137,14 @@ public class PartitionDecoder implements QuietCloseable {
         return metadata;
     }
 
-    public void of(long fd) {
-        of(fd, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-    }
-
-    public void of(long fd, int memoryTag) {
+    public void of(long fd, long fileSize, int memoryTag) {
+        assert fd != -1;
+        assert fileSize > 0;
         destroy();
         this.fd = fd;
+        this.fileSize = fileSize;
         final long allocator = Unsafe.getNativeAllocator(memoryTag);
-        ptr = create(allocator, Files.toOsFd(fd));  // throws CairoException on error
+        ptr = create(allocator, Files.toOsFd(fd), fileSize); // throws CairoException on error
         columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
         rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
         metadata.init();
@@ -111,7 +156,7 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroupIndex
     ) {
         assert ptr != 0;
-        readRowGroupStats(  // throws CairoException on error
+        readRowGroupStats( // throws CairoException on error
                 ptr,
                 statBuffers.ptr(),
                 columns.getAddress(),
@@ -134,7 +179,7 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long columnsPtrOffset();
 
-    private static native long create(long allocator, int fd) throws CairoException;
+    private static native long create(long allocator, int fd, long fileSize) throws CairoException;
 
     private static native int decodeRowGroup(
             long decoderPtr,
@@ -147,6 +192,14 @@ public class PartitionDecoder implements QuietCloseable {
     ) throws CairoException;
 
     private static native void destroy(long impl);
+
+    private static native long findRowGroupByTimestamp(
+            long decoderPtr,
+            long rowLo,
+            long rowHi,
+            long timestamp,
+            int timestampColumnIndex
+    );
 
     private static native long readRowGroupStats(
             long decoderPtr,

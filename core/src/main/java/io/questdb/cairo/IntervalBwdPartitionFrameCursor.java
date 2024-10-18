@@ -24,12 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-
-import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 
 public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFrameCursor {
     private static final Log LOG = LogFactory.getLog(IntervalBwdPartitionFrameCursor.class);
@@ -98,14 +97,14 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
                 final long lo;
                 if (partitionTimestampLo < intervalLo) {
-                    lo = timestampFinder.findTimestamp(intervalLo - 1, 0, limitHi, BIN_SEARCH_SCAN_DOWN) + 1;
+                    lo = timestampFinder.findTimestamp(intervalLo - 1, 0, limitHi) + 1;
                 } else {
                     lo = 0;
                 }
 
                 final long hi;
                 if (partitionTimestampHi > intervalHi) {
-                    hi = timestampFinder.findTimestamp(intervalHi, lo, limitHi, BIN_SEARCH_SCAN_DOWN) + 1;
+                    hi = timestampFinder.findTimestamp(intervalHi, lo, limitHi) + 1;
                 } else {
                     hi = limitHi + 1;
                 }
@@ -123,6 +122,18 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     frame.rowLo = lo;
                     frame.rowHi = hi;
                     sizeSoFar += hi - lo;
+
+                    final byte format = reader.getPartitionFormat(currentPartition);
+                    if (format == PartitionFormat.PARQUET) {
+                        assert parquetDecoder.getFd() != -1 : "parquet decoder is not initialized";
+                        frame.format = PartitionFormat.PARQUET;
+                        frame.parquetDecoder = parquetDecoder;
+                    } else {
+                        assert format == PartitionFormat.NATIVE;
+                        frame.format = PartitionFormat.NATIVE;
+                        frame.parquetDecoder = null;
+                    }
+
                     return frame;
                 }
             } else {

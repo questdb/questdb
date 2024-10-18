@@ -101,6 +101,14 @@ public interface PageFrame {
     long getParquetFd();
 
     /**
+     * Return the Parquet partition's read size or -1 in case of a native partition.
+     * Specifying the read size allows us to find a specific metadata at the end of the read size
+     * (rather than the end of the file) should we have performed an O3 operation that extended
+     * the file size.
+     */
+    long getParquetFileSize();
+
+    /**
      * Returns row group index corresponding to the Parquet page frame.
      * <p>
      * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.

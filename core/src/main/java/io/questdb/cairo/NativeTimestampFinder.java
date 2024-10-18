@@ -29,7 +29,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Vect;
 
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
-import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public class NativeTimestampFinder implements TimestampFinder, Mutable {
     private MemoryR column;
@@ -42,14 +41,10 @@ public class NativeTimestampFinder implements TimestampFinder, Mutable {
     }
 
     @Override
-    public long findTimestamp(long value, long rowLo, long rowHi, int scanDir) {
-        long idx = Vect.binarySearch64Bit(column.getPageAddress(0), value, rowLo, rowHi, scanDir);
+    public long findTimestamp(long value, long rowLo, long rowHi) {
+        long idx = Vect.binarySearch64Bit(column.getPageAddress(0), value, rowLo, rowHi, BIN_SEARCH_SCAN_DOWN);
         if (idx < 0) {
-            if (scanDir == BIN_SEARCH_SCAN_UP) {
-                idx = -idx - 1;
-            } else if (scanDir == BIN_SEARCH_SCAN_DOWN) {
-                idx = -idx - 2;
-            }
+            return -idx - 2;
         }
         return idx;
     }

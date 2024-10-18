@@ -33,15 +33,18 @@ import io.questdb.std.Vect;
 public interface TimestampFinder {
 
     /**
-     * Performs search on timestamp column.
+     * Performs search on timestamp column. Effectively, the search is the same as
+     * calling {@link Vect#binarySearch64Bit(long, long, long, long, int)} on the partition slice,
+     * but the returned result is always positive.
+     * <p>
+     * The scan direction is {@link Vect#BIN_SEARCH_SCAN_DOWN}.
      *
-     * @param value   timestamp value to find, the found value is equal or less than this value
-     * @param rowLo   row low index for the search boundary, inclusive
-     * @param rowHi   row high index for the search boundary, inclusive
-     * @param scanDir scan direction {@link Vect#BIN_SEARCH_SCAN_DOWN} (1) or {@link Vect#BIN_SEARCH_SCAN_UP} (-1)
-     * @return TODO(puzpuzpuz): document me
+     * @param value timestamp value to find, the found value is equal or less than this value
+     * @param rowLo row low index for the search boundary, inclusive
+     * @param rowHi row high index for the search boundary, inclusive
+     * @return search result
      */
-    long findTimestamp(long value, long rowLo, long rowHi, int scanDir);
+    long findTimestamp(long value, long rowLo, long rowHi);
 
     long maxTimestamp();
 

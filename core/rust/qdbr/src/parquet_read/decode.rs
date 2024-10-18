@@ -333,6 +333,82 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         }
         Ok(())
     }
+
+    pub fn find_row_group_by_timestamp(
+        &mut self,
+        timestamp: i64,
+        row_lo: usize,
+        row_hi: usize,
+        timestamp_column_index: u32,
+    ) -> ParquetResult<u64> {
+        let timestamp_column_index = timestamp_column_index as usize;
+        let column_type = self.columns[timestamp_column_index].column_type;
+        if column_type.tag() != ColumnTypeTag::Timestamp {
+            return Err(fmt_err!(
+                Invalid,
+                "expected timestamp column, but got {}, column index: {}",
+                column_type,
+                timestamp_column_index
+            ));
+        }
+
+        let row_group_count = self.row_group_count;
+        let mut row_count = 0usize;
+        let mut matched_prev_max = false;
+        for (row_group_idx, row_group_meta) in self.metadata.row_groups.iter().enumerate() {
+            let columns_meta = row_group_meta.columns();
+            let column_metadata = &columns_meta[timestamp_column_index];
+            let column_chunk = column_metadata.column_chunk();
+            let column_chunk_meta = column_chunk.meta_data.as_ref().ok_or_else(|| {
+                fmt_err!(
+                    Invalid,
+                    "metadata not found for timestamp column, column index: {}",
+                    timestamp_column_index
+                )
+            })?;
+
+            let column_chunk_size = column_chunk_meta.num_values as usize;
+            if row_hi + 1 < row_count {
+                break;
+            }
+            if row_lo < row_count + column_chunk_size {
+                let column_chunk_stats =
+                    column_chunk_meta.statistics.as_ref().ok_or_else(|| {
+                        fmt_err!(
+                            Invalid,
+                            "statistics not found for timestamp column, column index: {}",
+                            timestamp_column_index
+                        )
+                    })?;
+
+                let min_value = long_stat_value(&column_chunk_stats.min_value)?;
+                let max_value = long_stat_value(&column_chunk_stats.max_value)?;
+
+                // left boundary
+                if timestamp == min_value && min_value != max_value {
+                    // have to decode the group and search in it
+                    return Ok(2 * (row_group_idx + 1) as u64);
+                }
+                // to the left of the row group
+                if timestamp < min_value {
+                    if matched_prev_max {
+                        // right boundary of the previous row group
+                        return Ok((2 * row_group_idx + 1) as u64);
+                    }
+                    // between previous and current row groups
+                    return Ok((2 * row_group_idx + 1) as u64);
+                }
+                // within the row group
+                if timestamp > min_value && timestamp < max_value {
+                    return Ok(2 * (row_group_idx + 1) as u64);
+                }
+                matched_prev_max = timestamp == max_value;
+            }
+            row_count += column_chunk_size;
+        }
+
+        Ok((2 * row_group_count + 1) as u64)
+    }
 }
 
 pub fn decode_page(
@@ -1167,6 +1243,22 @@ pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
         .collect()
 }
 
+fn long_stat_value(value: &Option<Vec<u8>>) -> ParquetResult<i64> {
+    let value = value
+        .as_ref()
+        .ok_or_else(|| fmt_err!(Invalid, "missing statistics value"))?;
+    if value.len() != 8 {
+        return Err(fmt_err!(
+            Invalid,
+            "unexpected value byte array size of {}",
+            value.len()
+        ));
+    }
+    Ok(i64::from_le_bytes(
+        value[0..8].try_into().expect("unexpected vec length"),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use crate::allocator::{AcVec, TestAllocatorState};
@@ -1179,6 +1271,7 @@ mod tests {
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
+    use parquet::file::reader::Length;
     use parquet2::write::Version;
     use rand::Rng;
     use std::fs::File;
@@ -1207,7 +1300,8 @@ mod tests {
             expected_buff.data_vec.as_ref(),
         );
 
-        let mut decoder = ParquetDecoder::read(allocator.clone(), file).unwrap();
+        let file_len = file.len();
+        let mut decoder = ParquetDecoder::read(allocator.clone(), file, file_len).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
@@ -1254,7 +1348,8 @@ mod tests {
             expected_buff.data_vec.as_ref(),
         );
 
-        let mut decoder = ParquetDecoder::read(allocator.clone(), file).unwrap();
+        let file_len = file.len();
+        let mut decoder = ParquetDecoder::read(allocator.clone(), file, file_len).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
@@ -1472,7 +1567,8 @@ mod tests {
         let column_count = columns.len();
         let file = write_cols_to_parquet_file(row_group_size, data_page_size, version, columns);
 
-        let mut decoder = ParquetDecoder::read(allocator.clone(), file).unwrap();
+        let file_len = file.len();
+        let mut decoder = ParquetDecoder::read(allocator.clone(), file, file_len).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;

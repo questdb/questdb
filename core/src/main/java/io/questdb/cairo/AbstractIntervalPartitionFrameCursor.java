@@ -30,20 +30,21 @@ import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.TestOnly;
 
-import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
     protected final IntervalPartitionFrame frame = new IntervalPartitionFrame();
     protected final RuntimeIntrinsicIntervalModel intervalModel;
+    protected final PartitionDecoder parquetDecoder = new PartitionDecoder();
     protected final int timestampIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
-    private final ParquetTimestampFinder parquetTimestampFinder = new ParquetTimestampFinder();
+    private final ParquetTimestampFinder parquetTimestampFinder;
     protected LongList intervals;
     protected int intervalsHi;
     protected int intervalsLo;
@@ -65,12 +66,14 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         assert timestampIndex > -1;
         this.intervalModel = intervalModel;
         this.timestampIndex = timestampIndex;
+        this.parquetTimestampFinder = new ParquetTimestampFinder(parquetDecoder);
     }
 
     @Override
     public void close() {
         reader = Misc.free(reader);
         Misc.free(parquetTimestampFinder);
+        Misc.free(parquetDecoder);
         nativeTimestampFinder.clear();
     }
 
@@ -198,11 +201,11 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
                 if (partitionTimestampLo >= intervalLo) {
                     lo = 0;
                 } else {
-                    lo = timestampFinder.findTimestamp(intervalLo, partitionLimit == -1 ? 0 : partitionLimit, rowCount, BIN_SEARCH_SCAN_UP);
+                    lo = timestampFinder.findTimestamp(intervalLo - 1, partitionLimit == -1 ? 0 : partitionLimit, rowCount - 1) + 1;
                 }
 
                 // Interval is inclusive of edges, and we have to bump to high bound because it is non-inclusive.
-                long hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1, BIN_SEARCH_SCAN_DOWN) + 1;
+                long hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1) + 1;
                 if (lo < hi) {
                     size += (hi - lo);
 
@@ -285,27 +288,14 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     protected static class IntervalPartitionFrame implements PartitionFrame {
         protected byte format;
-        protected long parquetFd;
+        protected PartitionDecoder parquetDecoder;
         protected int partitionIndex;
-        protected int rowGroupIndex;
-        // we don't need rowGroupLo as it can be calculated as rowGroupLo+(rowHi-rowLo)
-        protected int rowGroupLo;
         protected long rowHi;
         protected long rowLo;
 
         @Override
-        public long getParquetFd() {
-            return parquetFd;
-        }
-
-        @Override
-        public int getParquetRowGroup() {
-            return rowGroupIndex;
-        }
-
-        @Override
-        public int getParquetRowGroupLo() {
-            return rowGroupLo;
+        public PartitionDecoder getParquetDecoder() {
+            return parquetDecoder;
         }
 
         @Override
