@@ -499,7 +499,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         } catch (Throwable e) {
             LOG.error().$("exception in function factory: ").$(e).$();
             Misc.freeObjList(args);
-            throw SqlException.position(position).put("exception in function factory");
+            throw SqlException.position(position).put("exception in function factory: ").put(e.getMessage());
         }
 
         if (function == null) {

@@ -26,6 +26,7 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -36,6 +37,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpResponseSink;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -43,6 +45,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.SCSequence;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Chars;
@@ -666,7 +669,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     private void doQueryRecordPrefix(HttpChunkedResponse response) {
         queryState = QUERY_RECORD_PREFIX;
-        response.bookmark();
+        response.bookmarkRow();
         if (count > skip) {
             response.putAscii(',');
         }
@@ -686,50 +689,26 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        // we no longer need cursor when we reached query suffix
-        // closing cursor here guarantees that by the time http client finished reading response the table
-        // is released
-        cursor = Misc.free(cursor);
-        circuitBreaker = null;
-        queryState = QUERY_SUFFIX;
-        if (count > -1) {
-            logTimings();
-            response.bookmark();
-            response.putAscii(']');
-            response.putAscii(',').putAsciiQuoted("count").putAscii(':').put(count);
-            if (timings) {
-                response.putAscii(',').putAsciiQuoted("timings").putAscii(':')
-                        .putAscii('{')
-                        .putAsciiQuoted("authentication").putAscii(':').put(httpConnectionContext.getAuthenticationNanos()).putAscii(',')
-                        .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
-                        .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
-                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos)
-                        .putAscii('}');
-            }
-            if (explain) {
-                response.putAscii(',').putAsciiQuoted("explain").putAscii(':')
-                        .putAscii('{')
-                        .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(queryJitCompiled ? "true" : "false")
-                        .putAscii('}');
-            }
-            response.putAscii('}');
-            count = -1;
-            counter.set(-1);
-            response.sendChunk(true);
-            return;
-        }
-        response.done();
+        querySuffixWithError(response, 0, null);
     }
 
     private void doRecordFetchLoop(
             HttpChunkedResponse response,
             int columnCount
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        do {
-            doQueryRecordPrefix(response);
-            doQueryRecord(response, columnCount);
-            doQueryRecordSuffix(response);
-        } while (doQueryNextRecord());
+        try {
+            do {
+                doQueryRecordPrefix(response);
+                doQueryRecord(response, columnCount);
+                doQueryRecordSuffix(response);
+            } while (doQueryNextRecord());
+        } catch (DataUnavailableException | EntryUnavailableException | NoSpaceLeftInResponseBufferException e) {
+            throw e;
+        } catch (Throwable e) {
+            response.resetToRowBookmark();
+            count--;
+            throw e;
+        }
         doQuerySuffix(response, columnCount);
     }
 
@@ -973,6 +952,52 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
         this.columnCount = columnCount;
         return true;
+    }
+
+    void querySuffixWithError(
+            HttpChunkedResponse response,
+            int code,
+            CharSequence message
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // we no longer need cursor when we reached query suffix
+        // closing cursor here guarantees that by the time http client finished reading response the table
+        // is released
+        cursor = Misc.free(cursor);
+        circuitBreaker = null;
+        queryState = QUERY_SUFFIX;
+        if (count > -1) {
+            logTimings();
+            response.bookmark();
+            response.putAscii(']');
+            response.putAscii(',').putAsciiQuoted("count").putAscii(':').put(count);
+            if (code > 0) {
+                response.putAscii(',').putAsciiQuoted("error").putAscii(':').putQuote()
+                        .putAscii("HTTP ").put(code).putAscii(" (").putAscii(HttpResponseSink.getStatusMessage(code))
+                        .putAscii(message != null ? "), " : ")")
+                        .escapeJsonStr(message != null ? message : "").putQuote();
+            }
+            if (timings) {
+                response.putAscii(',').putAsciiQuoted("timings").putAscii(':')
+                        .putAscii('{')
+                        .putAsciiQuoted("authentication").putAscii(':').put(httpConnectionContext.getAuthenticationNanos()).putAscii(',')
+                        .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
+                        .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
+                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos)
+                        .putAscii('}');
+            }
+            if (explain) {
+                response.putAscii(',').putAsciiQuoted("explain").putAscii(':')
+                        .putAscii('{')
+                        .putAsciiQuoted("jitCompiled").putAscii(':').putAscii(queryJitCompiled ? "true" : "false")
+                        .putAscii('}');
+            }
+            response.putAscii('}');
+            count = -1;
+            counter.set(-1);
+            response.sendChunk(true);
+            return;
+        }
+        response.done();
     }
 
     void resume(HttpChunkedResponse response) throws PeerDisconnectedException, PeerIsSlowToReadException {
