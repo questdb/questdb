@@ -117,7 +117,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             if (current < numOfRecordsBeforeError) {
-                return current++ % 2 == 0; 
+                return current++ % 2 == 0;
             }
             throw CairoException.critical(1).put("simulated cairo exception");
         }
