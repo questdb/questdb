@@ -41,6 +41,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.regex.Pattern;
 
 import static org.junit.Assert.assertTrue;
@@ -724,11 +725,14 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                     "ALTER TABLE tango RENAME COLUMN x TO y",
                     "ALTER TABLE tango RENAME COLUMN y TO x",
                     "query table",
-                    null, () -> {
+                    "Invalid column: y", () -> {
                         try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
                             ResultSet rs = s.executeQuery();
-                            rs.last();
-                            Assert.assertEquals(10, rs.getRow());
+                            int rowCount = 0;
+                            while (rs.next()) {
+                                rowCount++;
+                            }
+                            Assert.assertEquals(10, rowCount);
                         }
                     });
         });
@@ -742,10 +746,13 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                         "ALTER TABLE tango RENAME COLUMN x TO y",
                         "ALTER TABLE tango RENAME COLUMN y TO x",
                         "query table",
-                        null, () -> {
+                        "Invalid column: y", () -> {
                             ResultSet rs = s.executeQuery();
-                            rs.last();
-                            Assert.assertEquals(10, rs.getRow());
+                            int rowCount = 0;
+                            while (rs.next()) {
+                                rowCount++;
+                            }
+                            Assert.assertEquals(10, rowCount);
                         });
             }
         });
@@ -757,12 +764,15 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
             executeStatementWhileConcurrentlyChangingSchema(connection,
                     "ALTER TABLE tango RENAME COLUMN x TO y",
                     "ALTER TABLE tango RENAME COLUMN y TO x",
-                    "insert rows",
-                    null, () -> {
+                    "query table",
+                    "Invalid column: y", () -> {
                         try (Statement s = connection.createStatement()) {
                             ResultSet rs = s.executeQuery("SELECT y FROM tango");
-                            rs.last();
-                            Assert.assertEquals(10, rs.getRow());
+                            int rowCount = 0;
+                            while (rs.next()) {
+                                rowCount++;
+                            }
+                            Assert.assertEquals(10, rowCount);
                         }
                     });
         });
@@ -775,11 +785,14 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "ALTER TABLE tango RENAME COLUMN x TO y",
                         "ALTER TABLE tango RENAME COLUMN y TO x",
-                        "insert rows",
-                        null, () -> {
+                        "query table",
+                        "Invalid column: y", () -> {
                             ResultSet rs = s.executeQuery("SELECT y FROM tango");
-                            rs.last();
-                            Assert.assertEquals(10, rs.getRow());
+                            int rowCount = 0;
+                            while (rs.next()) {
+                                rowCount++;
+                            }
+                            Assert.assertEquals(10, rowCount);
                         });
             }
         });
@@ -791,12 +804,15 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
             executeStatementWhileConcurrentlyChangingSchema(connection,
                     "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
                     "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
-                    "insert rows",
-                    null, () -> {
+                    "query table",
+                    "Invalid column: y", () -> {
                         try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
                             ResultSet rs = s.executeQuery();
-                            rs.last();
-                            Assert.assertEquals(10, rs.getRow());
+                            int rowCount = 0;
+                            while (rs.next()) {
+                                rowCount++;
+                            }
+                            Assert.assertEquals(10, rowCount);
                         }
                     });
         });
@@ -809,11 +825,14 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
                         "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
-                        "insert rows",
-                        null, () -> {
+                        "query table",
+                        "Invalid column: y", () -> {
                             ResultSet rs = s.executeQuery();
-                            rs.last();
-                            Assert.assertEquals(10, rs.getRow());
+                            int rowCount = 0;
+                            while (rs.next()) {
+                                rowCount++;
+                            }
+                            Assert.assertEquals(10, rowCount);
                         });
             }
         });
@@ -826,11 +845,14 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                     "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
                     "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
                     "query table",
-                    null, () -> {
+                    "Invalid column: y", () -> {
                         try (Statement s = connection.createStatement()) {
                             ResultSet rs = s.executeQuery("SELECT y FROM tango");
-                            rs.last();
-                            Assert.assertEquals(10, rs.getRow());
+                            int rowCount = 0;
+                            while (rs.next()) {
+                                rowCount++;
+                            }
+                            Assert.assertEquals(10, rowCount);
                         }
                     });
         });
@@ -1161,6 +1183,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                     try (Statement s = connection.createStatement()) {
                         s.execute(backgroundDdl1);
                         mayDrainWalQueue();
+                        LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(5));
                         s.execute(backgroundDdl2);
                     }
                 }
@@ -1174,24 +1197,40 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
         try {
             while (!backgroundTaskStarted.get()) { /* keep checking */ }
             boolean hadSuccess = false;
-            int retryCount = 100;
-            String failMsg = String.format("Failed to %s after %d retries", whatMainLoopTriesToDo, retryCount);
-            for (int i = 0; i < retryCount && backgroundError.get() == null; i++) {
+            int minAttemptCount = 100;
+            int minDurationMillis = 250;
+            int maxAttemptCount = 1000;
+            int maxDurationMillis = 5000;
+            long minDeadline = Long.MAX_VALUE;
+            long maxDeadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(maxDurationMillis);
+            String failMsg = String.format(
+                    "Failed to %s after at least %d milliseconds or at least %d attempts",
+                    whatMainLoopTriesToDo, maxDurationMillis, maxAttemptCount);
+            for (int i = 0; backgroundError.get() == null && (
+                    i < minAttemptCount || System.nanoTime() < minDeadline
+                            || !hadSuccess && i < maxAttemptCount && System.nanoTime() < maxDeadline
+            ); i++
+            ) {
                 try {
                     mainLoopBody.run();
                     hadSuccess = true;
                     mayDrainWalQueue();
+                    if (minDeadline == Long.MAX_VALUE) {
+                        minDeadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(minDurationMillis);
+                    }
                 } catch (SQLException e) {
                     if (acceptedErrorRegex != null) {
                         assertMessageMatches(e, acceptedErrorRegex);
                     } else {
                         Assert.fail("Did not expect any failure");
                     }
+                    LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
                 }
             }
             assertTrue(failMsg, hadSuccess);
         } catch (Throwable e) {
             hadForegroundError = true;
+            throw e;
         } finally {
             stop.set(true);
             t.join();
