@@ -116,6 +116,11 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         return pageFrameCursor.of(partitionFrameCursor);
     }
 
+    @Override
+    public boolean followedLimitAdvice() {
+        return partitionFrameCursorFactory.followedLimitAdvice();
+    }
+
     protected abstract RecordCursor initRecordCursor(
             PageFrameCursor frameCursor,
             SqlExecutionContext executionContext

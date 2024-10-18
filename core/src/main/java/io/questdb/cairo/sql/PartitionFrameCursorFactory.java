@@ -97,4 +97,8 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     default void toSink(@NotNull CharSink<?> sink) {
         throw new UnsupportedOperationException();
     }
+
+    default boolean followedLimitAdvice() {
+        return false;
+    }
 }
