@@ -718,6 +718,125 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testSelectWhileConcurrentlyAlteringTable_preparedStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            executeStatementWhileConcurrentlyChangingSchema(connection,
+                    "ALTER TABLE tango RENAME COLUMN x TO y",
+                    "ALTER TABLE tango RENAME COLUMN y TO x",
+                    "query table",
+                    null, () -> {
+                        try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
+                            ResultSet rs = s.executeQuery();
+                            rs.last();
+                            Assert.assertEquals(10, rs.getRow());
+                        }
+                    });
+        });
+    }
+
+    @Test
+    public void testSelectWhileConcurrentlyAlteringTable_preparedStatementReused() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
+                executeStatementWhileConcurrentlyChangingSchema(connection,
+                        "ALTER TABLE tango RENAME COLUMN x TO y",
+                        "ALTER TABLE tango RENAME COLUMN y TO x",
+                        "query table",
+                        null, () -> {
+                            ResultSet rs = s.executeQuery();
+                            rs.last();
+                            Assert.assertEquals(10, rs.getRow());
+                        });
+            }
+        });
+    }
+
+    @Test
+    public void testSelectWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            executeStatementWhileConcurrentlyChangingSchema(connection,
+                    "ALTER TABLE tango RENAME COLUMN x TO y",
+                    "ALTER TABLE tango RENAME COLUMN y TO x",
+                    "insert rows",
+                    null, () -> {
+                        try (Statement s = connection.createStatement()) {
+                            ResultSet rs = s.executeQuery("SELECT y FROM tango");
+                            rs.last();
+                            Assert.assertEquals(10, rs.getRow());
+                        }
+                    });
+        });
+    }
+
+    @Test
+    public void testSelectWhileConcurrentlyAlteringTable_simpleStatementReused() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement s = connection.createStatement()) {
+                executeStatementWhileConcurrentlyChangingSchema(connection,
+                        "ALTER TABLE tango RENAME COLUMN x TO y",
+                        "ALTER TABLE tango RENAME COLUMN y TO x",
+                        "insert rows",
+                        null, () -> {
+                            ResultSet rs = s.executeQuery("SELECT y FROM tango");
+                            rs.last();
+                            Assert.assertEquals(10, rs.getRow());
+                        });
+            }
+        });
+    }
+
+    @Test
+    public void testSelectWhileConcurrentlyRecreatingTable_preparedStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
+            executeStatementWhileConcurrentlyChangingSchema(connection,
+                    "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
+                    "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
+                    "insert rows",
+                    null, () -> {
+                        try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
+                            ResultSet rs = s.executeQuery();
+                            rs.last();
+                            Assert.assertEquals(10, rs.getRow());
+                        }
+                    });
+        });
+    }
+
+    @Test
+    public void testSelectWhileConcurrentlyRecreatingTable_preparedStatementReused() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
+            try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
+                executeStatementWhileConcurrentlyChangingSchema(connection,
+                        "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
+                        "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
+                        "insert rows",
+                        null, () -> {
+                            ResultSet rs = s.executeQuery();
+                            rs.last();
+                            Assert.assertEquals(10, rs.getRow());
+                        });
+            }
+        });
+    }
+
+    @Test
+    public void testSelectWhileConcurrentlyRecreatingTable_simpleStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
+            executeStatementWhileConcurrentlyChangingSchema(connection,
+                    "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
+                    "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
+                    "query table",
+                    null, () -> {
+                        try (Statement s = connection.createStatement()) {
+                            ResultSet rs = s.executeQuery("SELECT y FROM tango");
+                            rs.last();
+                            Assert.assertEquals(10, rs.getRow());
+                        }
+                    });
+        });
+    }
+
+    @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
