@@ -24,11 +24,17 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Os;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -37,6 +43,7 @@ import org.junit.Test;
 
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 
 public class MetadataCacheTest extends AbstractCairoTest {
@@ -81,210 +88,276 @@ public class MetadataCacheTest extends AbstractCairoTest {
             "\t\tCairoColumn [name=n, position=15, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=15]\n";
 
     @Test
-    public void fuzzConcurrentCreatesAndDrops() throws InterruptedException {
+    public void fuzzConcurrentCreatesAndDrops() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger creatorInteger = new AtomicInteger();
+            AtomicInteger dropperInteger = new AtomicInteger();
 
-        AtomicInteger creatorInteger = new AtomicInteger();
-        AtomicInteger dropperInteger = new AtomicInteger();
+            Thread creatingThread = new Thread(() -> {
+                try {
+                    fuzzConcurrentCreatesAndDropsCreatorThread(creatorInteger);
+                } catch (Throwable ignore) {
+                }
+            });
 
-        Thread creatingThread = new Thread(() -> {
-            try {
-                fuzzConcurrentCreatesAndDropsCreatorThread(creatorInteger);
-            } catch (Exception ignore) {
+            Thread droppingThread = new Thread(() -> {
+                try {
+                    fuzzConcurrentCreatesAndDropsDropperThread(dropperInteger);
+                } catch (Throwable ignore) {
+                }
+            });
+
+            creatingThread.start();
+            droppingThread.start();
+
+            Os.sleep(2_000);
+
+            creatingThread.interrupt();
+            droppingThread.interrupt();
+
+            creatingThread.join();
+            droppingThread.join();
+
+            int creatorCounter = creatorInteger.get();
+            int dropperCounter = dropperInteger.get();
+
+            LOG.infoW().$("[creator=").$(creatorCounter).$(", dropper=").$(dropperCounter).I$();
+
+            drainWalQueue();
+
+            LOG.infoW().$("unpublished_wal_txn_count:").$(engine.getUnpublishedWalTxnCount()).$();
+
+            TableToken tableToken;
+            CairoTable cairoTable;
+            tableToken = engine.getTableTokenIfExists("foo");
+
+            if (tableToken != null) {
+                try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                    cairoTable = metadataRO.getTable(tableToken);
+                }
+
+                if (engine.isTableDropped(tableToken)) {
+                    Assert.assertNull(cairoTable);
+                } else {
+                    Assert.assertNotNull(cairoTable);
+                }
             }
+
         });
-
-        Thread droppingThread = new Thread(() -> {
-            try {
-                fuzzConcurrentCreatesAndDropsDropperThread(dropperInteger);
-            } catch (Exception ignore) {
-            }
-        });
-
-        creatingThread.start();
-        droppingThread.start();
-
-        TableToken tableToken;
-        CairoTable cairoTable;
-
-        Thread.sleep(2_000);
-
-        creatingThread.interrupt();
-        droppingThread.interrupt();
-
-        creatingThread.join();
-        droppingThread.join();
-
-        int creatorCounter = creatorInteger.get();
-        int dropperCounter = dropperInteger.get();
-
-        LOG.infoW().$("[creator=").$(creatorCounter).$(", dropper=").$(dropperCounter).I$();
-
-        drainWalQueue();
-
-        LOG.infoW().$("unpublished_wal_txn_count:").$(engine.getUnpublishedWalTxnCount()).$();
-
-        tableToken = engine.getTableTokenIfExists("foo");
-
-        if (tableToken != null) {
-            try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
-                cairoTable = metadataRO.getTable(tableToken);
-            }
-
-            if (engine.isTableDropped(tableToken)) {
-                Assert.assertNull(cairoTable);
-            } else {
-                Assert.assertNotNull(cairoTable);
-            }
-        }
     }
 
     @SuppressWarnings("BusyWait")
     @Test
-    public void fuzzRenames() throws Exception {
+    public void fuzzRenamesOnlyOneTablePresentAtATime() throws Exception {
+        assertMemoryLeak(() -> {
 
-        ddl("create table foo ( ts timestamp, x int ) timestamp(ts) partition by day wal;");
+            ddl("create table foo ( ts timestamp, x int ) timestamp(ts) partition by day wal;");
+            AtomicReference<Throwable> exception = new AtomicReference<>();
 
-        Thread fooToBahThread = new Thread(() -> {
+            Thread fooToBahThread = new Thread(() -> {
+                try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    while (true) {
+                        engine.ddl("rename table foo to bah", sqlExecutionContext);
+                        assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from bah",
+                                engine, sqlExecutionContext, new StringSink());
+                    }
+                } catch (SqlException | CairoException ignore) {
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    exception.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            Thread bahToFooThread = new Thread(() -> {
+                try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    while (true) {
+                        engine.ddl("rename table bah to foo", sqlExecutionContext);
+                        assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from foo",
+                                engine, sqlExecutionContext, new StringSink()
+                        );
+                    }
+                } catch (SqlException | CairoException ignore) {
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    exception.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            fooToBahThread.start();
+            bahToFooThread.start();
+
+            Instant i = Instant.now();
+
+            String s;
+            StringSink ss = new StringSink();
+            // should only ever contain one or the other
+            // check that `tables()` gives consistent view
+            while (Instant.now().getEpochSecond() - i.getEpochSecond() < 2) {
+                s = dumpTables(ss);
+                Assert.assertTrue(
+                        TestUtils.dumpMetadataCache(engine),
+                        s.contains("foo\t") ^ s.contains("bah\t"));
+                Thread.sleep(50);
+            }
+
+            ss.clear();
+
+            fooToBahThread.interrupt();
+            bahToFooThread.interrupt();
+
+            fooToBahThread.join();
+            bahToFooThread.join();
+
+            if (exception.get() != null) {
+                throw new RuntimeException(exception.get());
+            }
+
             try {
-                ddl("rename table foo to bah");
-//                assertException("show columns from foo", 18, "table does not exist");
-                assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from bah");
-            } catch (Exception ignore) {
+                drainWalQueue();
+            } catch (TableReferenceOutOfDateException e) {
+                LOG.infoW().$(e).$();
+            }
+
+            TableToken fooToken = engine.getTableTokenIfExists("foo");
+            TableToken bahToken = engine.getTableTokenIfExists("bah");
+
+            // one should be null
+            Assert.assertNotSame(fooToken, bahToken);
+
+            String cacheString = TestUtils.dumpMetadataCache(engine);
+
+            if (fooToken == null) {
+                Assert.assertFalse(cacheString.contains("name=foo"));
+                Assert.assertTrue(cacheString.contains("name=bah"));
+                assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
+                        "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
+            }
+            if (bahToken == null) {
+                Assert.assertFalse(cacheString.contains("name=bah"));
+                Assert.assertTrue(cacheString.contains("name=foo"));
+                assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
+                        "1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
             }
         });
-
-        Thread bahToFooThread = new Thread(() -> {
-            try {
-                ddl("rename table bah to foo");
-//                assertException("show columns from bah", 18, "table does not exist");
-                assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from foo");
-            } catch (Exception ignore) {
-            }
-        });
-
-        fooToBahThread.start();
-        bahToFooThread.start();
-
-        Instant i = Instant.now();
-
-        String s;
-        StringSink ss = new StringSink();
-        // should only ever contain one or the other
-        // check that `tables()` gives consistent view
-        while (Instant.now().getEpochSecond() - i.getEpochSecond() < 2) {
-            s = dumpTables(ss);
-            Assert.assertTrue(
-                    TestUtils.dumpMetadataCache(engine),
-                    s.contains("foo\t") ^ s.contains("bah\t"));
-            Thread.sleep(50);
-        }
-
-        ss.clear();
-
-        fooToBahThread.interrupt();
-        bahToFooThread.interrupt();
-
-        fooToBahThread.join();
-        bahToFooThread.join();
-
-        drainWalQueue();
-
-        TableToken fooToken = engine.getTableTokenIfExists("foo");
-        TableToken bahToken = engine.getTableTokenIfExists("bah");
-
-        // one should be null
-        Assert.assertNotSame(fooToken, bahToken);
-
-        String cacheString = TestUtils.dumpMetadataCache(engine);
-
-        if (fooToken == null) {
-            Assert.assertFalse(cacheString.contains("name=foo"));
-            Assert.assertTrue(cacheString.contains("name=bah"));
-            assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
-                    "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
-        }
-        if (bahToken == null) {
-            Assert.assertFalse(cacheString.contains("name=bah"));
-            Assert.assertTrue(cacheString.contains("name=foo"));
-            assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
-                    "1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
-        }
     }
 
     @Test
     public void fuzzRenamesWithConcurrentAlters() throws Exception {
 
-        ddl("create table foo ( ts timestamp, x int ) timestamp(ts) partition by day wal;");
+        assertMemoryLeak(() -> {
+            ddl("create table foo ( ts timestamp, x int ) timestamp(ts) partition by day wal;");
+            AtomicReference<Throwable> exception = new AtomicReference<>();
 
-        Thread fooToBahThread = new Thread(() -> {
+            Thread fooToBahThread = new Thread(() -> {
+                try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    while (true) {
+                        engine.ddl("rename table foo to bah", sqlExecutionContext);
+                        assertExceptionNoLeakCheck("show columns from foo", 18, "table does not exist", false, sqlExecutionContext);
+                        assertSql(
+                                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n",
+                                "show columns from bah",
+                                engine,
+                                sqlExecutionContext,
+                                new StringSink()
+                        );
+                    }
+                } catch (InterruptedException | SqlException | CairoException ignore) {
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    exception.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            Thread bahToFooThread = new Thread(() -> {
+                try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    while (true) {
+                        engine.ddl("rename table bah to foo", sqlExecutionContext);
+                        assertException("show columns from bah", 18, "table does not exist", sqlExecutionContext);
+                        assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from foo",
+                                engine,
+                                sqlExecutionContext,
+                                new StringSink()
+                        );
+                    }
+                } catch (InterruptedException | SqlException | CairoException ignore) {
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    exception.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+
+            });
+
+            Thread adderThread = new Thread(() -> {
+                try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                    while (true) {
+                        engine.ddl("alter table foo add column y symbol", sqlExecutionContext);
+                    }
+                } catch (SqlException | CairoException ignored) {
+                } catch (Throwable e) {
+                    e.printStackTrace();
+                    exception.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+
+            fooToBahThread.start();
+            bahToFooThread.start();
+            adderThread.start();
+
+            Thread.sleep(2000);
+
+            fooToBahThread.interrupt();
+            bahToFooThread.interrupt();
+            adderThread.interrupt();
+
+            fooToBahThread.join();
+            bahToFooThread.join();
+            adderThread.join();
+
+            if (exception.get() != null) {
+                throw new RuntimeException(exception.get());
+            }
+
             try {
-                ddl("rename table foo to bah");
-                assertException("show columns from foo", 18, "table does not exist");
-                assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from bah");
-            } catch (Exception ignore) {
+                drainWalQueue();
+            } catch (TableReferenceOutOfDateException e) {
+                LOG.infoW().$(e).$();
+            }
+
+            TableToken fooToken = engine.getTableTokenIfExists("foo");
+            TableToken bahToken = engine.getTableTokenIfExists("bah");
+
+            // one should be null
+            Assert.assertNotSame(fooToken, bahToken);
+
+            String cacheString = TestUtils.dumpMetadataCache(engine);
+
+            if (fooToken == null) {
+                Assert.assertFalse(cacheString.contains("name=foo"));
+                Assert.assertTrue(cacheString.contains("name=bah"));
+            }
+            if (bahToken == null) {
+                Assert.assertFalse(cacheString.contains("name=bah"));
+                Assert.assertTrue(cacheString.contains("name=foo"));
             }
         });
-
-        Thread bahToFooThread = new Thread(() -> {
-            try {
-                ddl("rename table bah to foo");
-                assertException("show columns from bah", 18, "table does not exist");
-                assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                        "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                        "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from foo");
-            } catch (Exception ignore) {
-            }
-        });
-
-        Thread adderThread = new Thread(() -> {
-            try {
-                ddl("alter table foo add column y symbol");
-            } catch (Exception ignore) {
-            }
-        });
-
-        fooToBahThread.start();
-        bahToFooThread.start();
-        adderThread.start();
-
-        Thread.sleep(2_000);
-
-        fooToBahThread.interrupt();
-        bahToFooThread.interrupt();
-        adderThread.interrupt();
-
-        fooToBahThread.join();
-        bahToFooThread.join();
-        adderThread.join();
-
-        try {
-            drainWalQueue();
-        } catch (TableReferenceOutOfDateException e) {
-            LOG.infoW().$(e).$();
-        }
-
-        TableToken fooToken = engine.getTableTokenIfExists("foo");
-        TableToken bahToken = engine.getTableTokenIfExists("bah");
-
-        // one should be null
-        Assert.assertNotSame(fooToken, bahToken);
-
-        String cacheString = TestUtils.dumpMetadataCache(engine);
-
-        if (fooToken == null) {
-            Assert.assertFalse(cacheString.contains("name=foo"));
-            Assert.assertTrue(cacheString.contains("name=bah"));
-        }
-        if (bahToken == null) {
-            Assert.assertFalse(cacheString.contains("name=bah"));
-            Assert.assertTrue(cacheString.contains("name=foo"));
-        }
     }
 
     @Test
@@ -633,6 +706,18 @@ public class MetadataCacheTest extends AbstractCairoTest {
         });
     }
 
+    private void assertSql(
+            String expected,
+            String sql,
+            CairoEngine engine,
+            SqlExecutionContextImpl sqlExecutionContext,
+            StringSink stringSink
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            TestUtils.assertSql(engine, sqlExecutionContext, sql, stringSink, expected);
+        }
+    }
+
     private void createX() throws SqlException {
         ddl(
                 "create table x as (" +
@@ -661,11 +746,6 @@ public class MetadataCacheTest extends AbstractCairoTest {
     private void createY() throws SqlException {
         ddl("create table y ( ts timestamp ) timestamp(ts) partition by day wal;");
     }
-
-
-    // todo: ALTER TABLE SET TYPE
-    // more complicated since it requires a database restart
-    // maybe fuzzer is best place to check this
 
     private void createZ() throws SqlException {
         ddl(
@@ -696,10 +776,12 @@ public class MetadataCacheTest extends AbstractCairoTest {
     private void fuzzConcurrentCreatesAndDropsCreatorThread(AtomicInteger counter) throws SqlException, InterruptedException {
         String createDdl = "CREATE TABLE IF NOT EXISTS foo ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );";
 
-        while (true) {
-            ddl(createDdl);
-            counter.incrementAndGet();
-            Thread.sleep(50);
+        try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+            while (true) {
+                engine.ddl(createDdl, sqlExecutionContext);
+                counter.incrementAndGet();
+                Thread.sleep(50);
+            }
         }
     }
 
