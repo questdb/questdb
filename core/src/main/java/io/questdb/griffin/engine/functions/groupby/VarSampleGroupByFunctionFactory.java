@@ -34,6 +34,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
+// Based on Welford's algorithm.
 public class VarSampleGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
@@ -71,6 +72,7 @@ public class VarSampleGroupByFunctionFactory implements FunctionFactory {
             return "var_samp";
         }
 
+        // Chan et al. [CGL82; CGL83]
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
             double srcMean = srcValue.getDouble(valueIndex);
