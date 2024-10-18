@@ -8328,10 +8328,10 @@ nodejs code:
     @Test
     public void testQueryTimeout() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        Assume.assumeFalse(legacyMode);
         maxQueryTime = 300;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (final PreparedStatement statement = connection.prepareStatement("select sleep(120000)")) {
+            ddl("create table tab as (select rnd_double() d from long_sequence(1000000))");
+            try (final PreparedStatement statement = connection.prepareStatement("select * from tab order by d")) {
                 try {
                     statement.execute();
                     Assert.fail();
@@ -8343,13 +8343,12 @@ nodejs code:
     }
 
     @Test
-    public void testQueryTimeoutLegacy() throws Exception {
+    public void testQueryTimeoutModern() throws Exception {
         skipOnWalRun(); // non-partitioned table
+        Assume.assumeFalse(legacyMode);
         maxQueryTime = 300;
-        Assume.assumeTrue(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            ddl("create table tab as (select rnd_double() d from long_sequence(1000000))");
-            try (final PreparedStatement statement = connection.prepareStatement("select * from tab order by d")) {
+            try (final PreparedStatement statement = connection.prepareStatement("select sleep(120000)")) {
                 try {
                     statement.execute();
                     Assert.fail();
