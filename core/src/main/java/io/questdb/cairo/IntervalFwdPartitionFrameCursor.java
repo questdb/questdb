@@ -111,19 +111,15 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     frame.rowHi = hi;
                     sizeSoFar += (hi - lo);
 
-                    if (reader.getPartitionFormat(partitionLo) == PartitionFormat.PARQUET) {
+                    final byte format = reader.getPartitionFormat(partitionLo);
+                    if (format == PartitionFormat.PARQUET) {
+                        assert parquetDecoder.getFd() != -1 : "parquet decoder is not initialized";
                         frame.format = PartitionFormat.PARQUET;
-                        frame.parquetFd = reader.getParquetFd(partitionLo);
-                        frame.parquetFileSize = reader.getParquetFileSize(partitionLo);
-                        // TODO(puzpuzpuz): this is broken
-                        frame.rowGroupIndex = 0;
-                        frame.rowGroupLo = 0;
+                        frame.parquetDecoder = parquetDecoder;
                     } else {
+                        assert format == PartitionFormat.NATIVE;
                         frame.format = PartitionFormat.NATIVE;
-                        frame.parquetFd = -1;
-                        frame.parquetFileSize = -1;
-                        frame.rowGroupIndex = -1;
-                        frame.rowGroupLo = -1;
+                        frame.parquetDecoder = null;
                     }
 
                     // we do have whole partition of fragment?

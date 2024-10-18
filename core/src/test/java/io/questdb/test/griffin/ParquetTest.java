@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -187,28 +188,6 @@ public class ParquetTest extends AbstractCairoTest {
                             "9\t1970-01-01T02:13:20.000000Z\n" +
                             "10\t1970-01-01T02:30:00.000000Z\n",
                     "x"
-            );
-        });
-    }
-
-    @Test
-    public void testMultiplePartitionsWithTimeFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl(
-                    "create table x as (\n" +
-                            "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
-                            "  from long_sequence(10)\n" +
-                            ") timestamp(ts) partition by hour;"
-            );
-            ddl("alter table x convert partition to parquet where ts >= 0");
-
-            assertSql(
-                    "id\tts\n" +
-                            "5\t1970-01-01T01:06:40.000000Z\n" +
-                            "6\t1970-01-01T01:23:20.000000Z\n" +
-                            "7\t1970-01-01T01:40:00.000000Z\n" +
-                            "8\t1970-01-01T01:56:40.000000Z\n",
-                    "x where ts in '1970-01-01T01'"
             );
         });
     }
@@ -464,6 +443,85 @@ public class ParquetTest extends AbstractCairoTest {
             ddl("alter table x convert partition to parquet where ts >= 0");
 
             checkData.run();
+        });
+    }
+
+    @Test
+    public void testTimeFilterMultipleRowGroupPerPartition() throws Exception {
+        testTimeFilter(10);
+    }
+
+    @Test
+    public void testTimeFilterSingleRowGroupPerPartition() throws Exception {
+        testTimeFilter(100);
+    }
+
+    private void testTimeFilter(int rowGroupSize) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (\n" +
+                            "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
+                            "  from long_sequence(100)\n" +
+                            ") timestamp(ts) partition by day;"
+            );
+            ddl("alter table x convert partition to parquet where ts >= 0");
+
+            // fwd
+            assertSql(
+                    "id\tts\n" +
+                            "5\t1970-01-01T01:06:40.000000Z\n" +
+                            "6\t1970-01-01T01:23:20.000000Z\n" +
+                            "7\t1970-01-01T01:40:00.000000Z\n" +
+                            "8\t1970-01-01T01:56:40.000000Z\n",
+                    "x where ts in '1970-01-01T01'"
+            );
+            assertSql(
+                    "id\tts\n" +
+                            "25\t1970-01-01T06:40:00.000000Z\n" +
+                            "26\t1970-01-01T06:56:40.000000Z\n",
+                    "x where ts in '1970-01-01T06:30:00.000Z;30m;1d;2'"
+            );
+            assertSql(
+                    "id\tts\n" +
+                            "25\t1970-01-01T06:40:00.000000Z\n" +
+                            "26\t1970-01-01T06:56:40.000000Z\n" +
+                            "28\t1970-01-01T07:30:00.000000Z\n" +
+                            "29\t1970-01-01T07:46:40.000000Z\n" +
+                            "32\t1970-01-01T08:36:40.000000Z\n" +
+                            "33\t1970-01-01T08:53:20.000000Z\n" +
+                            "36\t1970-01-01T09:43:20.000000Z\n" +
+                            "37\t1970-01-01T10:00:00.000000Z\n",
+                    "x where ts in '1970-01-01T06:30:00.000Z;30m;1h;4'"
+            );
+
+            // bwd
+            assertSql(
+                    "id\tts\n" +
+                            "8\t1970-01-01T01:56:40.000000Z\n" +
+                            "7\t1970-01-01T01:40:00.000000Z\n" +
+                            "6\t1970-01-01T01:23:20.000000Z\n" +
+                            "5\t1970-01-01T01:06:40.000000Z\n",
+                    "x where ts in '1970-01-01T01' order by ts desc"
+            );
+            assertSql(
+                    "id\tts\n" +
+                            "26\t1970-01-01T06:56:40.000000Z\n" +
+                            "25\t1970-01-01T06:40:00.000000Z\n",
+                    "x where ts in '1970-01-01T06:30:00.000Z;30m;1d;2' order by ts desc"
+            );
+            assertSql(
+                    "id\tts\n" +
+                            "37\t1970-01-01T10:00:00.000000Z\n" +
+                            "36\t1970-01-01T09:43:20.000000Z\n" +
+                            "33\t1970-01-01T08:53:20.000000Z\n" +
+                            "32\t1970-01-01T08:36:40.000000Z\n" +
+                            "29\t1970-01-01T07:46:40.000000Z\n" +
+                            "28\t1970-01-01T07:30:00.000000Z\n" +
+                            "26\t1970-01-01T06:56:40.000000Z\n" +
+                            "25\t1970-01-01T06:40:00.000000Z\n",
+                    "x where ts in '1970-01-01T06:30:00.000Z;30m;1h;4' order by ts desc"
+            );
         });
     }
 }

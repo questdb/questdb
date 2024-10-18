@@ -144,7 +144,7 @@ public class PartitionDecoder implements QuietCloseable {
         this.fd = fd;
         this.fileSize = fileSize;
         final long allocator = Unsafe.getNativeAllocator(memoryTag);
-        ptr = create(allocator, Files.toOsFd(fd), fileSize);  // throws CairoException on error
+        ptr = create(allocator, Files.toOsFd(fd), fileSize); // throws CairoException on error
         columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
         rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
         metadata.init();

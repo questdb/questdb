@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
@@ -121,6 +122,18 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     frame.rowLo = lo;
                     frame.rowHi = hi;
                     sizeSoFar += hi - lo;
+
+                    final byte format = reader.getPartitionFormat(currentPartition);
+                    if (format == PartitionFormat.PARQUET) {
+                        assert parquetDecoder.getFd() != -1 : "parquet decoder is not initialized";
+                        frame.format = PartitionFormat.PARQUET;
+                        frame.parquetDecoder = parquetDecoder;
+                    } else {
+                        assert format == PartitionFormat.NATIVE;
+                        frame.format = PartitionFormat.NATIVE;
+                        frame.parquetDecoder = null;
+                    }
+
                     return frame;
                 }
             } else {
