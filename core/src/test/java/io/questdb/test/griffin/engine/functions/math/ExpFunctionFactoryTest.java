@@ -36,20 +36,6 @@ public class ExpFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExpFloat() throws Exception {
-        assertSql("exp\n" +
-                        "7.38905609893065\n",
-                "select exp(cast (2 as float))");
-    }
-
-    @Test
-    public void testExpNegative() throws Exception {
-        assertSql("exp\n" +
-                        "0.1353352832366127\n",
-                "select exp(-2)");
-    }
-
-    @Test
     public void testExpDoubleNaN() throws Exception {
         assertSql("exp\n" +
                         "null\n",
@@ -61,5 +47,19 @@ public class ExpFunctionFactoryTest extends AbstractCairoTest {
         assertSql("exp\n" +
                         "null\n",
                 "select exp(null)");
+    }
+
+    @Test
+    public void testExpFloat() throws Exception {
+        assertSql("exp\n" +
+                        "7.38905609893065\n",
+                "select exp(cast (2 as float))");
+    }
+
+    @Test
+    public void testExpNegative() throws Exception {
+        assertSql("exp\n" +
+                        "0.1353352832366127\n",
+                "select exp(-2)");
     }
 }

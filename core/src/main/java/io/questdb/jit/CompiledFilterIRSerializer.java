@@ -837,9 +837,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
         int orCount = -1;
-        for (int i = 0, n = intervals.size() / 2; i < n; i += 1) {
-            long lo = IntervalUtils.getEncodedPeriodLo(intervals, i * 2);
-            long hi = IntervalUtils.getEncodedPeriodHi(intervals, i * 2);
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            long lo = IntervalUtils.getEncodedPeriodLo(intervals, i);
+            long hi = IntervalUtils.getEncodedPeriodHi(intervals, i);
             putOperand(IMM, I8_TYPE, lo);
             inPredicateTraverseAlgo.traverse(lhs, this);
             putOperator(GE);

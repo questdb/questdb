@@ -27,14 +27,24 @@ package io.questdb.test.griffin.engine.functions.str;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.str.RPadFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class RPadFunctionFactoryTest extends AbstractFunctionFactoryTest {
+    @Test
+    public void testABProtocol() throws SqlException {
+        ddl("create table x as (select rnd_str(1, 40, 0) s from long_sequence(100))");
+        assertSql(
+                "count\n" +
+                        "100\n",
+                "select count (*) from x where rpad(s, 20) = rpad(s, 20)"
+        );
+    }
+
     @Test
     public void testFailsOnBufferLengthAboveLimit() throws SqlException {
         try {
@@ -80,16 +90,6 @@ public class RPadFunctionFactoryTest extends AbstractFunctionFactoryTest {
     public void testZeroLength() throws SqlException {
         call("abc", 0).andAssert("");
         call("pqrs", 0).andAssert("");
-    }
-
-    @Test
-    public void testABProtocol() throws SqlException {
-        ddl("create table x as (select rnd_str(1, 40, 0) s from long_sequence(100))");
-        assertSql(
-                "count\n" +
-                        "100\n",
-                "select count (*) from x where rpad(s, 20) = rpad(s, 20)"
-        );
     }
 
     @Override

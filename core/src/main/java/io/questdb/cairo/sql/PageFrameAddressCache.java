@@ -38,6 +38,7 @@ import io.questdb.std.*;
 public class PageFrameAddressCache implements Mutable {
     private final ObjList<LongList> auxPageAddresses = new ObjList<>();
     private final ObjList<LongList> auxPageSizes = new ObjList<>();
+    private final IntList columnIndexes = new IntList();
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
@@ -45,6 +46,10 @@ public class PageFrameAddressCache implements Mutable {
     private final long nativeCacheSizeThreshold;
     private final ObjList<LongList> pageAddresses = new ObjList<>();
     private final ObjList<LongList> pageSizes = new ObjList<>();
+    private final LongList parquetFds = new LongList();
+    private final IntList parquetRowGroupHis = new IntList();
+    private final IntList parquetRowGroupLos = new IntList();
+    private final IntList parquetRowGroups = new IntList();
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
     // Sum of all LongList sizes.
@@ -60,7 +65,7 @@ public class PageFrameAddressCache implements Mutable {
             return; // The page frame is already cached
         }
 
-        if (frame.getFormat() == PageFrame.NATIVE_FORMAT) {
+        if (frame.getFormat() == PartitionFormat.NATIVE) {
             final LongList framePageAddresses = longListPool.next();
             final LongList framePageSizes = longListPool.next();
             final LongList frameAuxPageAddresses = longListPool.next();
@@ -93,6 +98,10 @@ public class PageFrameAddressCache implements Mutable {
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(frame.getFormat());
+        parquetFds.add(frame.getParquetFd());
+        parquetRowGroups.add(frame.getParquetRowGroup());
+        parquetRowGroupLos.add(frame.getParquetRowGroupLo());
+        parquetRowGroupHis.add(frame.getParquetRowGroupHi());
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 
@@ -100,6 +109,10 @@ public class PageFrameAddressCache implements Mutable {
     public void clear() {
         frameSizes.clear();
         frameFormats.clear();
+        parquetFds.clear();
+        parquetRowGroups.clear();
+        parquetRowGroupLos.clear();
+        parquetRowGroupHis.clear();
         pageAddresses.clear();
         auxPageAddresses.clear();
         pageSizes.clear();
@@ -125,6 +138,11 @@ public class PageFrameAddressCache implements Mutable {
         return columnCount;
     }
 
+    // returns local (query) to table reader index mapping
+    public IntList getColumnIndexes() {
+        return columnIndexes;
+    }
+
     public IntList getColumnTypes() {
         return columnTypes;
     }
@@ -145,19 +163,36 @@ public class PageFrameAddressCache implements Mutable {
         return pageSizes.getQuick(frameIndex);
     }
 
+    public long getParquetFd(int frameIndex) {
+        return parquetFds.getQuick(frameIndex);
+    }
+
+    public int getParquetRowGroup(int frameIndex) {
+        return parquetRowGroups.getQuick(frameIndex);
+    }
+
+    public int getParquetRowGroupHi(int frameIndex) {
+        return parquetRowGroupHis.getQuick(frameIndex);
+    }
+
+    public int getParquetRowGroupLo(int frameIndex) {
+        return parquetRowGroupLos.getQuick(frameIndex);
+    }
+
     public long getRowIdOffset(int frameIndex) {
         return rowIdOffsets.getQuick(frameIndex);
     }
 
     public boolean hasColumnTops(int frameIndex) {
         final byte frameFormat = frameFormats.getQuick(frameIndex);
-        assert frameFormat == PageFrame.NATIVE_FORMAT;
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            if (pageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0
-                    // VARCHAR column that contains short strings will have zero data vector,
-                    // so for such columns we also need to check that the aux (index) vector is zero.
-                    && auxPageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0) {
-                return true;
+        if (frameFormat == PartitionFormat.NATIVE) {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                if (pageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0
+                        // VARCHAR column that contains short strings will have zero data vector,
+                        // so for such columns we also need to check that the aux (index) vector is zero.
+                        && auxPageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0) {
+                    return true;
+                }
             }
         }
         return false;
@@ -167,12 +202,14 @@ public class PageFrameAddressCache implements Mutable {
         return ColumnType.isVarSize(columnTypes.getQuick(columnIndex));
     }
 
-    public void of(@Transient RecordMetadata metadata) {
+    public void of(@Transient RecordMetadata metadata, @Transient IntList columnIndexes) {
         columnCount = metadata.getColumnCount();
         columnTypes.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));
         }
+        this.columnIndexes.clear();
+        this.columnIndexes.addAll(columnIndexes);
         clear();
     }
 }

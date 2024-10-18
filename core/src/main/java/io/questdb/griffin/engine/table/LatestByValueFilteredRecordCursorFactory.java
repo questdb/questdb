@@ -73,6 +73,7 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameR
     protected void _close() {
         super._close();
         Misc.free(filter);
+        Misc.free(cursor);
     }
 
     @Override

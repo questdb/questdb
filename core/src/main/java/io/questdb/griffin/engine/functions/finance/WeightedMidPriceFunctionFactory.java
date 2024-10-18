@@ -49,10 +49,10 @@ public class WeightedMidPriceFunctionFactory implements FunctionFactory {
     }
 
     private static class WeightedMidPriceFunction extends DoubleFunction implements QuaternaryFunction {
-        private final Function bidSize;
-        private final Function bidPrice;
         private final Function askPrice;
         private final Function askSize;
+        private final Function bidPrice;
+        private final Function bidSize;
 
         // Argument order, e.g. `bidSize, bidPrice, askPrice, askSize`, follows the standard order commonly displayed on trading systems.
         public WeightedMidPriceFunction(Function bidSize, Function bidPrice, Function askPrice, Function askSize) {

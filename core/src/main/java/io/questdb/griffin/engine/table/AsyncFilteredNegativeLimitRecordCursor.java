@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -35,6 +36,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Used to handle the LIMIT -N clause with the descending timestamp order case. To do so, this cursor
@@ -52,7 +54,6 @@ import io.questdb.std.Rows;
  * </pre>
  */
 class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
-
     private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
 
     // Used for random access: we may have to deserialize Parquet page frame.
@@ -71,10 +72,10 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     // Buffer used to accumulate all filtered row ids.
     private DirectLongList rows;
 
-    public AsyncFilteredNegativeLimitRecordCursor(int scanDirection) {
-        this.record = new PageFrameMemoryRecord();
+    public AsyncFilteredNegativeLimitRecordCursor(@NotNull CairoConfiguration configuration, int scanDirection) {
+        this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-        this.frameMemoryPool = new PageFrameMemoryPool();
+        this.frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override
@@ -107,7 +108,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         if (recordB != null) {
             return recordB;
         }
-        recordB = new PageFrameMemoryRecord(record);
+        recordB = new PageFrameMemoryRecord(record, PageFrameMemoryRecord.RECORD_B_LETTER);
         return recordB;
     }
 

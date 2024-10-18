@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Function;
@@ -42,9 +43,9 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
-
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
 
     private final Function filter;
@@ -68,11 +69,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     // It is typically copied from LIMIT clause on SQL statement.
     private long rowsRemaining;
 
-    public AsyncFilteredRecordCursor(Function filter, int scanDirection) {
+    public AsyncFilteredRecordCursor(@NotNull CairoConfiguration configuration, Function filter, int scanDirection) {
         this.filter = filter;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-        record = new PageFrameMemoryRecord();
-        frameMemoryPool = new PageFrameMemoryPool();
+        record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override
@@ -165,7 +166,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         if (recordB != null) {
             return recordB;
         }
-        recordB = new PageFrameMemoryRecord(record);
+        recordB = new PageFrameMemoryRecord(record, PageFrameMemoryRecord.RECORD_B_LETTER);
         return recordB;
     }
 
@@ -306,6 +307,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             // because we updated frameIndex and loop can exit due to lack of frames.
             // Non-update of 'cursor' could cause double-free.
             cursor = -1;
+            // We also need to clear the record as it's initialized with the task's
+            // page frame memory that is now closed.
+            record.clear();
         }
     }
 

@@ -131,7 +131,7 @@ public class IndexBuilder extends RebuildColumnBase {
             int indexValueBlockCapacity
     ) {
         final int trimTo = path.size();
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         try {
             final int plen = path.size();
 

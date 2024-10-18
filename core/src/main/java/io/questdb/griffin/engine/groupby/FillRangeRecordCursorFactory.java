@@ -64,7 +64,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final FillRangeRecordCursor cursor;
     private final Function fromFunc;
-    private final RecordMetadata metadata;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final int timestampIndex;
@@ -92,7 +91,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timestampIndex = timestampIndex;
         this.valueFuncs = fillValues;
-        this.metadata = metadata;
         this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex);
     }
 
@@ -103,9 +101,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (metadata.getColumnCount() > valueFuncs.size() + 1) {
+        if (getMetadata().getColumnCount() > valueFuncs.size() + 1) {
             if (valueFuncs.size() == 1 && valueFuncs.getQuick(0).isNullConstant()) {
-                final int diff = (metadata.getColumnCount() - 1);
+                final int diff = (getMetadata().getColumnCount() - 1);
                 // skip one entry as it should be the designated timestamp
                 for (int i = 1; i < diff; i++) {
                     valueFuncs.add(NullConstant.NULL);
@@ -123,11 +121,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.close();
             throw th;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override
@@ -208,11 +201,13 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private int rangeBound;
         private long toTimestamp;
 
-        private FillRangeRecordCursor(TimestampSampler timestampSampler,
-                                      @NotNull Function fromFunc,
-                                      @NotNull Function toFunc,
-                                      ObjList<Function> valueFuncs,
-                                      int timestampIndex) {
+        private FillRangeRecordCursor(
+                TimestampSampler timestampSampler,
+                @NotNull Function fromFunc,
+                @NotNull Function toFunc,
+                ObjList<Function> valueFuncs,
+                int timestampIndex
+        ) {
             this.timestampSampler = timestampSampler;
             this.fromFunc = fromFunc;
             this.toFunc = toFunc;

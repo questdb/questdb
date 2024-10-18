@@ -23,7 +23,6 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.functions.bool;
 
-import io.questdb.cairo.BinarySearch;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
@@ -36,7 +35,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8Sequence;
 
 public class InLongFunctionFactory implements FunctionFactory {
@@ -166,7 +170,7 @@ public class InLongFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long val = tsFunc.getLong(rec);
-            return negated != inList.binarySearch(val, BinarySearch.SCAN_UP) >= 0;
+            return negated != inList.binarySearch(val, Vect.BIN_SEARCH_SCAN_UP) >= 0;
         }
 
         @Override
@@ -201,7 +205,7 @@ public class InLongFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long val = keyFunc.getLong(rec);
-            return negated != inList.binarySearch(val, BinarySearch.SCAN_UP) >= 0;
+            return negated != inList.binarySearch(val, Vect.BIN_SEARCH_SCAN_UP) >= 0;
         }
 
         @Override

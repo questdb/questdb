@@ -81,12 +81,12 @@ public class LineTcpParser {
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
+    private boolean asciiSegment;
     private long bufAt;
     private ProtoEntity currentEntity;
     private byte entityHandler = -1;
     private long entityLo;
     private ErrorCode errorCode;
-    private boolean asciiSegment;
     private boolean isQuotedFieldValue;
     private int nEntities;
     private int nEscapedChars;

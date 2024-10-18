@@ -28,6 +28,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 
 public class TableReferenceOutOfDateException extends RuntimeException implements FlyweightMessageContainer {
     private static final String prefix = "cached query plan cannot be used because table schema has changed [table='";
@@ -35,6 +36,15 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
     private final StringSink message = (StringSink) new StringSink().put(prefix);
 
     public static TableReferenceOutOfDateException of(CharSequence outdatedTableName) {
+        TableReferenceOutOfDateException ex = tlException.get();
+        // This is to have correct stack trace in local debugging with -ea option
+        assert (ex = new TableReferenceOutOfDateException()) != null;
+        ex.message.clear(prefix.length());
+        ex.message.put(outdatedTableName).put("']");
+        return ex;
+    }
+
+    public static TableReferenceOutOfDateException of(Utf8Sequence outdatedTableName) {
         TableReferenceOutOfDateException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new TableReferenceOutOfDateException()) != null;
