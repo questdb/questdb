@@ -1,6 +1,9 @@
 <component name="ProjectCodeStyleConfiguration">
   <code_scheme name="Project" version="173">
     <option name="FORMATTER_TAGS_ENABLED" value="true" />
+    <JavaCodeStyleSettings>
+      <option name="CLASS_COUNT_TO_USE_IMPORT_ON_DEMAND" value="50" />
+    </JavaCodeStyleSettings>
     <codeStyleSettings language="JAVA">
       <arrangement>
         <groups />

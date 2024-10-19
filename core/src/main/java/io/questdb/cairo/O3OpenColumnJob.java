@@ -30,7 +30,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3CopyTask;
 import io.questdb.tasks.O3OpenColumnTask;
@@ -266,8 +270,6 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long srcVarFd = Math.abs(srcDataVarFd);
         final FilesFacade ff = tableWriter.getFilesFacade();
         final boolean mixedIOFlag = tableWriter.allowMixedIO();
-        final long initialSrcDataTop = srcDataTop;
-
         try {
             pathToNewPartition.trimTo(pplen);
             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
@@ -373,30 +375,15 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             srcDataTopOffset = columnTypeDriver.getAuxVectorOffset(srcDataTop);
 
             dstAuxFd = openRW(ff, iFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-            dstAuxSize = columnTypeDriver.auxRowsToBytes(srcOooHi - srcOooLo + 1) +
-                    columnTypeDriver.getAuxVectorSize(srcDataMax - srcDataTop);
 
-            if (prefixType == O3_BLOCK_NONE) {
-                // split partition
-                dstAuxSize -= columnTypeDriver.auxRowsToBytes(prefixHi + 1 - srcDataTop);
-            }
+            // Use target partition size to determine the size of fixed file, it's already compensated
+            // for partitions splits and duplicates found by dedup
+            long newRowCount = o3SplitPartitionSize > 0 ? o3SplitPartitionSize : srcDataNewPartitionSize - srcDataTop;
+            dstAuxSize = columnTypeDriver.getAuxVectorSize(newRowCount);
+
             dstAuxAddr = mapRW(ff, dstAuxFd, dstAuxSize, MemoryTag.MMAP_O3);
             if (!mixedIOFlag) {
                 ff.madvise(dstAuxAddr, dstAuxSize, Files.POSIX_MADV_RANDOM);
-            }
-
-            dstDataFd = openRW(ff, dFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-            dstDataSize = srcDataSize - srcDataOffset + columnTypeDriver.getDataVectorSize(o3AuxAddr, srcOooLo, srcOooHi);
-
-            if (prefixType == O3_BLOCK_NONE && prefixHi > initialSrcDataTop) {
-                // split partition
-                assert prefixLo == 0;
-                dstDataSize -= columnTypeDriver.getDataVectorSize(srcAuxAddr, prefixLo, prefixHi - initialSrcDataTop);
-            }
-
-            dstVarAddr = dstDataSize > 0 ? mapRW(ff, dstDataFd, dstDataSize, MemoryTag.MMAP_O3) : 0;
-            if (!mixedIOFlag) {
-                ff.madvise(dstVarAddr, dstDataSize, Files.POSIX_MADV_RANDOM);
             }
 
             if (prefixType == O3_BLOCK_DATA) {
@@ -433,7 +420,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
             // offset 2
             if (mergeDataLo > -1 && mergeOOOLo > -1) {
-                dstAuxAppendOffset2 = dstAuxAppendOffset1 + columnTypeDriver.getAuxVectorOffset(mergeRowCount);
+                final long mergeDataSize;
                 if (mergeRowCount == mergeDataHi - mergeDataLo + 1 + mergeOOOHi - mergeOOOLo + 1) {
                     // No deduplication, all rows from O3 and column data will be written.
                     // In this case var col length is calculated as o3 var col len + data var col len
@@ -443,7 +430,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                             mergeDataLo - srcDataTop,
                             mergeDataHi - srcDataTop
                     );
-                    dstDataAppendOffset2 = dstDataAppendOffset1 + o3size + dataSize;
+
+                    mergeDataSize = o3size + dataSize;
                 } else {
                     // Deduplication happens, some rows are eliminated.
                     // Dedup eliminates some rows, there is no way to know the append offset of var file beforehand.
@@ -460,19 +448,41 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // 'long long value'
                     // Which is longer than oooLen + dataLen
                     // To deal with unpredicatability of the dedup var col size run the dedup merged size calculation
-                    long dedupMergeVarColumnSize = columnTypeDriver.dedupMergeVarColumnSize(
+                    mergeDataSize = timestampMergeIndexAddr > 0 ? columnTypeDriver.dedupMergeVarColumnSize(
                             timestampMergeIndexAddr,
-                            timestampMergeIndexSize / TIMESTAMP_MERGE_ENTRY_BYTES,
+                            mergeRowCount,
                             srcAuxAddr + srcDataFixOffset - columnTypeDriver.getAuxVectorOffset(srcDataTop),
                             o3AuxAddr
-                    );
-
-                    assert dedupMergeVarColumnSize >= 0;
-                    dstDataAppendOffset2 = dstDataAppendOffset1 + dedupMergeVarColumnSize;
+                    ) : 0;
                 }
+
+                dstAuxAppendOffset2 = dstAuxAppendOffset1 + columnTypeDriver.getAuxVectorOffset(mergeRowCount);
+                dstDataAppendOffset2 = dstDataAppendOffset1 + mergeDataSize;
             } else {
                 dstAuxAppendOffset2 = dstAuxAppendOffset1;
                 dstDataAppendOffset2 = dstDataAppendOffset1;
+            }
+
+            long suffixSize = suffixType == O3_BLOCK_DATA ?
+                    columnTypeDriver.getDataVectorSize(
+                            // No need to compensate for srcDataTop here,
+                            // suffixLo, suffixHi are already adjusted for srcDataTop
+                            srcAuxAddr + srcDataFixOffset,
+                            suffixLo,
+                            suffixHi
+                    )
+                    : 0;
+            long suffixSize2 = suffixType == O3_BLOCK_O3
+                    ? columnTypeDriver.getDataVectorSize(o3AuxAddr, suffixLo, suffixHi)
+                    : 0;
+            dstDataSize = dstDataAppendOffset2 + suffixSize + suffixSize2;
+
+            dstDataFd = openRW(ff, dFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
+            if (dstDataSize > 0) {
+                dstVarAddr = mapRW(ff, dstDataFd, dstDataSize, MemoryTag.MMAP_O3);
+                if (!mixedIOFlag) {
+                    ff.madvise(dstVarAddr, dstDataSize, Files.POSIX_MADV_RANDOM);
+                }
             }
 
             if (mergeType != O3_BLOCK_NONE) {
@@ -2376,7 +2386,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstIndexAdjust = srcDataTopOffset >> 2;
 
             dstFixFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-            dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
+            // Use target partition size to determine the size of fixed file, it's already compensated
+            // for partitions splits and duplicates found by dedup
+            long rowCount = o3SplitPartitionSize > 0 ? o3SplitPartitionSize : srcDataNewPartitionSize - srcDataTop;
+            dstFixSize = rowCount << shl;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
             if (!mixedIOFlag) {
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);

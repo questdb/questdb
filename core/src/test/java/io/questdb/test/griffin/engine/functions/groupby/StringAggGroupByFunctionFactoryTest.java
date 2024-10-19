@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
+
 public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
@@ -53,6 +54,36 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
                 false,
                 true
         );
+    }
+
+    @Test
+    public void testDistinctColumnNameNotQuoted() throws Exception {
+        assertException(
+                "select string_agg(distinct, ',') from x",
+                "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') \"distinct\", timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
+                18,
+                "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"distinct\""
+        );
+
+        assertException("select string_agg(distinct::varchar, ',') from x", 18, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"distinct\"");
+    }
+
+    @Test
+    public void testDistinctColumnNameQuoted() throws Exception {
+        String expected = "string_agg\n" +
+                "abc,bbb,aaa,ccc,aaa\n";
+        assertQuery(
+                "string_agg\n" +
+                        "abc,bbb,aaa,ccc,aaa\n",
+                "select string_agg(\"distinct\", ',') from x",
+                "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') \"distinct\", timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
+                null,
+                false,
+                true
+        );
+
+        assertSql(expected, "select string_agg(\"distinct\"::varchar, ',') from x");
+        assertSql(expected, "select string_agg(cast (\"distinct\" as string)::varchar, ',') from x");
     }
 
     @Test

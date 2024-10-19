@@ -128,6 +128,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void close() {
+        // we have to clear the underling memory
+        // to ensure direct strings obtained from
+        // this memory do not segfault
+        clear();
         close(true);
     }
 

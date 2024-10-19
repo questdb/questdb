@@ -159,7 +159,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public long size() {
-        return (int) ((pos - address) >>> 3);
+        return (pos - address) >>> 3;
     }
 
     public void sortAsUnsigned() {

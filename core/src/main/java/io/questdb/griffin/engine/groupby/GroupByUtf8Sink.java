@@ -47,7 +47,7 @@ import org.jetbrains.annotations.Nullable;
 public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     private static final long HEADER_SIZE = 2 * Integer.BYTES + Byte.BYTES;
     private static final long IS_ASCII_OFFSET = 2 * Integer.BYTES;
-    private static final int MIN_CAPACITY = 16;
+    private static final int MIN_CAPACITY = 8;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private GroupByAllocator allocator;
     private AsciiCharSequence asciiCharSequence;

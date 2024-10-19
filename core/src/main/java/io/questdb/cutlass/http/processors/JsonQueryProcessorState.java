@@ -27,8 +27,12 @@ package io.questdb.cutlass.http.processors;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHeader;
@@ -41,7 +45,17 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.Interval;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Uuid;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -63,6 +77,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_SEND_RECORDS_LOOP = 8;
     static final int QUERY_SETUP_FIRST_RECORD = 0;
     static final int QUERY_SUFFIX = 7;
+    private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
     private final ObjList<String> columnNames = new ObjList<>();
     private final IntList columnSkewList = new IntList();
@@ -78,6 +93,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final StringSink query = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
+    private byte apiVersion = DEFAULT_API_VERSION;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private int columnCount;
     private int columnIndex;
@@ -133,6 +149,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     @Override
     public void clear() {
+        apiVersion = DEFAULT_API_VERSION;
         columnCount = 0;
         columnSkewList.clear();
         columnTypesAndFlags.clear();
@@ -183,8 +200,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             long stop
     ) throws Utf8Exception {
         this.query.clear();
-        if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), this.query)) {
-            throw Utf8Exception.INSTANCE;
+        if (query != null) {
+            if (!Utf8s.utf8ToUtf16(query.lo(), query.hi(), this.query)) {
+                throw Utf8Exception.INSTANCE;
+            }
         }
         this.skip = skip;
         this.stop = stop;
@@ -196,6 +215,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         explain = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_EXPLAIN));
         quoteLargeNum = Utf8s.equalsNcAscii("true", request.getUrlParam(URL_PARAM_QUOTE_LARGE_NUM))
                 || Utf8s.equalsNcAscii("con", request.getUrlParam(URL_PARAM_SRC));
+        apiVersion = parseApiVersion(request);
     }
 
     public LogRecord critical() {
@@ -208,6 +228,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void freeAsyncOperation() {
         operationFuture = Misc.free(operationFuture);
+    }
+
+    public byte getApiVersion() {
+        return apiVersion;
     }
 
     public SCSequence getEventSubSequence() {
@@ -293,6 +317,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
+    }
+
+    private static byte parseApiVersion(HttpRequestHeader header) {
+        DirectUtf8Sequence versionStr = header.getUrlParam(URL_PARAM_VERSION);
+        if (versionStr == null) {
+            return DEFAULT_API_VERSION;
+        } else {
+            try {
+                return (byte) Numbers.parseInt(versionStr);
+            } catch (NumericException e) {
+                return DEFAULT_API_VERSION;
+            }
+        }
     }
 
     private static void putBooleanValue(HttpChunkedResponse response, Record rec, int col) {
@@ -894,6 +931,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.queryTimestampIndex = metadata.getTimestampIndex();
         HttpRequestHeader header = httpConnectionContext.getRequestHeader();
         DirectUtf8Sequence columnNames = header.getUrlParam(URL_PARAM_COLS);
+
         int columnCount;
         columnSkewList.clear();
         if (columnNames != null) {
