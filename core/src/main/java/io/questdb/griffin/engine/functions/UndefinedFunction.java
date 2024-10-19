@@ -35,6 +35,7 @@ import io.questdb.std.str.Utf8Sequence;
 
 public class UndefinedFunction implements ScalarFunction {
     public static UndefinedFunction INSTANCE = new UndefinedFunction();
+    
     @Override
     public final BinarySequence getBin(io.questdb.cairo.sql.Record rec) {
         throw new UnsupportedOperationException();
