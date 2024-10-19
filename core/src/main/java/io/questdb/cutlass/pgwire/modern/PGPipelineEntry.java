@@ -1121,14 +1121,14 @@ public class PGPipelineEntry implements QuietCloseable {
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
         if (transactionState != ERROR_TRANSACTION) {
-            copyParameterValuesToBindVariableService(
-                    sqlExecutionContext,
-                    characterStore,
-                    utf8String,
-                    binarySequenceParamsPool
-            );
             // execute against writer from the engine, synchronously (null sequence)
             for (int attempt = 1; ; attempt++) {
+                copyParameterValuesToBindVariableService(
+                        sqlExecutionContext,
+                        characterStore,
+                        utf8String,
+                        binarySequenceParamsPool
+                );
                 try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
                     // this doesn't actually wait, because the call is synchronous
                     fut.await();
@@ -1160,14 +1160,14 @@ public class PGPipelineEntry implements QuietCloseable {
     ) throws SqlException, BadProtocolException {
         switch (transactionState) {
             case IN_TRANSACTION: {
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        characterStore,
-                        utf8String,
-                        binarySequenceParamsPool
-                );
-                InsertMethod m;
                 for (int attempt = 1; ; attempt++) {
+                    copyParameterValuesToBindVariableService(
+                            sqlExecutionContext,
+                            characterStore,
+                            utf8String,
+                            binarySequenceParamsPool
+                    );
+                    InsertMethod m;
                     try {
                         m = insertOp.createMethod(sqlExecutionContext, writerSource);
                         try {
@@ -1280,14 +1280,14 @@ public class PGPipelineEntry implements QuietCloseable {
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
         if (transactionState != ERROR_TRANSACTION) {
-            copyParameterValuesToBindVariableService(
-                    sqlExecutionContext,
-                    characterStore,
-                    utf8String,
-                    binarySequenceParamsPool
-            );
             // execute against writer from the engine, synchronously (null sequence)
             for (int attempt = 1; ; attempt++) {
+                copyParameterValuesToBindVariableService(
+                        sqlExecutionContext,
+                        characterStore,
+                        utf8String,
+                        binarySequenceParamsPool
+                );
                 try {
                     UpdateOperation updateOperation = compiledQuery.getUpdateOperation();
                     TableToken tableToken = updateOperation.getTableToken();
