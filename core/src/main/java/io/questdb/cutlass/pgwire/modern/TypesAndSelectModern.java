@@ -68,6 +68,8 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
         this.factory = factory;
         this.sqlType = sqlType;
         this.sqlTag = sqlTag;
+        this.inPgParameterTypeOIDs.addAll(inPgParameterTypeOIDs);
+        this.outPgParameterTypeOIDs.addAll(outPgParameterTypeOIDs);
     }
 
     @Override

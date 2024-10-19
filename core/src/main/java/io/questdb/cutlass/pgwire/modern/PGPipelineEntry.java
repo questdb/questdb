@@ -2244,21 +2244,18 @@ public class PGPipelineEntry implements QuietCloseable {
     // It is irrelevant which types were defined by the SQL compiler. We are assuming that same SQL text will
     // produce the same parameter definitions for every compilation.
     boolean msgParseReconcileParameterTypes(short parameterTypeCount, TypeContainer typeContainer) {
-        if (parameterTypeCount > 0) {
-            // both BindVariableService and the "typeContainer" have parameter types
-            // we have to allow the possibility that parameter types between the
-            // cache and the "parse" message could be different. If they are,
-            // we have to discard the cache and re-compile the SQL text
-            IntList cachedTypes = typeContainer.getPgInParameterTypeOIDs();
-            int cachedTypeCount = cachedTypes.size();
-            int clientTypeCount = msgParseParameterTypeOIDs.size();
-            if (cachedTypeCount == clientTypeCount) {
-                for (int i = 0; i < cachedTypeCount; i++) {
-                    if (cachedTypes.getQuick(i) != msgParseParameterTypeOIDs.getQuick(i)) {
-                        return false;
-                    }
-                }
-            } else {
+        IntList cachedTypes = typeContainer.getPgInParameterTypeOIDs();
+        int cachedTypeCount = cachedTypes.size();
+        if (parameterTypeCount != cachedTypeCount) {
+            return false;
+        }
+
+        // both BindVariableService and the "typeContainer" have parameter types
+        // we have to allow the possibility that parameter types between the
+        // cache and the "parse" message could be different. If they are,
+        // we have to discard the cache and re-compile the SQL text
+        for (int i = 0; i < cachedTypeCount; i++) {
+            if (cachedTypes.getQuick(i) != msgParseParameterTypeOIDs.getQuick(i)) {
                 return false;
             }
         }
