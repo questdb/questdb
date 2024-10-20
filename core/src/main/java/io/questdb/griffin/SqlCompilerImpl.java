@@ -857,7 +857,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         int semicolonPos = -1;
         do {
             tok = maybeExpectToken(lexer, "'column' or column name", semicolonPos < 0);
-            //Captures IF NOT EXISTS [COLUMN NAME]
 
             if (semicolonPos >= 0) {
                 if (tok != null) {
@@ -867,18 +866,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             if(SqlKeywords.isIfKeyword(tok)){
-                CharSequence tempTok = SqlUtil.fetchNext(lexer);
-                if(tempTok != null && SqlKeywords.isNotKeyword(tempTok)){
-                    tempTok = SqlUtil.fetchNext(lexer);
-                    if(tempTok != null && SqlKeywords.isExistsKeyword(tempTok)){
+                tok = SqlUtil.fetchNext(lexer);
+                if(tok != null && SqlKeywords.isNotKeyword(tok)){
+                    tok = SqlUtil.fetchNext(lexer);
+                    if(tok != null && SqlKeywords.isExistsKeyword(tok)){
                         tok = SqlUtil.fetchNext(lexer); // captured column name
-                        //check to see if it already exists and if does we break
-                        System.out.println("Column: " + tok);
                         if(tableMetadata.getColumnIndexQuiet(tok) != -1){
                             break;
                         }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unexpected token '").put(tok)
+                                .put("' for if not exists");
                     }
-
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'not' expected");
                 }
             } else {
                 int index = tableMetadata.getColumnIndexQuiet(tok);
@@ -886,7 +887,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "column '").put(tok).put("' already exists");
                 }
             }
-
 
             CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
             int columnNamePosition = lexer.lastTokenPosition();
