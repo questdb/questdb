@@ -332,6 +332,20 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnIfNotExists() throws Exception {
+        createX();
+        ddl("alter table x add column if not exists a int");
+        ddl("alter table x add column description string");
+    }
+
+    @Test
+    public void testAddDuplicateColumnIfNotExists() throws Exception {
+        createX();
+        ddl("alter table x add column a int");
+        ddl("alter table x add column if not exists a int");
+    }
+
+    @Test
     public void testAddExpectColumnKeyword() throws Exception {
         assertFailure("alter table x add", 17, "'column' or column name");
     }
