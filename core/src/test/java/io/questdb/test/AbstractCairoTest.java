@@ -67,7 +67,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.ExplainPlanFactory;
-import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.ExplainModel;
@@ -514,7 +513,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             metadataRW.clearCache();
         }
         AbstractTest.tearDownStatic();
-        DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
 
     public static Utf8String utf8(CharSequence value) {
@@ -562,6 +560,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 }
             }
         }
+        Path.clearThreadLocals();
     }
 
     private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {

@@ -97,7 +97,7 @@ public class VacuumColumnVersions implements Closeable {
         tableFiles.clear();
         try {
             ff.iterateDir(path.$(), visitTablePartition);
-            Vect.sort3LongAscInPlace(tableFiles.getAddress(), tableFiles.size() / 3);
+            Vect.sort3LongAscInPlaceChecked(tableFiles.getAddress(), tableFiles.size() / 3);
             purgeColumnVersions(tableFiles, reader, engine);
         } finally {
             tableFiles.shrink(COLUMN_VERSION_LIST_CAPACITY);

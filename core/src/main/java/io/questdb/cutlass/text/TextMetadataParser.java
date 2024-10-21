@@ -187,7 +187,7 @@ public class TextMetadataParser implements JsonParser, Mutable, Closeable {
 
     private static void strcpyw(final CharSequence value, final int len, final long address) {
         for (int i = 0; i < len; i++) {
-            Unsafe.getUnsafe().putChar(address + ((long) i << 1), value.charAt(i));
+            Unsafe.putChar(address + ((long) i << 1), value.charAt(i));
         }
     }
 

@@ -3161,7 +3161,7 @@ public class SqlOptimiser implements Mutable {
             @NotNull SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final RecordCursorFactory tableFactory;
+        RecordCursorFactory tableFactory = null;
         TableToken tableToken;
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
             switch (model.getShowKind()) {

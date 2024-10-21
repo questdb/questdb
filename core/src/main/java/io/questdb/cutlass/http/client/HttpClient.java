@@ -331,7 +331,7 @@ public abstract class HttpClient implements QuietCloseable {
         @Override
         public Request put(byte b) {
             checkCapacity(1);
-            Unsafe.getUnsafe().putByte(ptr, b);
+            Unsafe.putByte(ptr, b);
             ptr++;
             return this;
         }

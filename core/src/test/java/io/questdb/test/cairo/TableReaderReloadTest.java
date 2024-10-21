@@ -148,49 +148,53 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         }
         final Rnd rnd = new Rnd();
         final int bufferSize = 1024;
-        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, partitionBy);
-        model.timestamp();
-        AbstractCairoTest.create(model);
+        final long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, partitionBy);
+            model.timestamp();
+            AbstractCairoTest.create(model);
 
-        long timestamp = 0;
-        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+            long timestamp = 0;
+            try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
 
-            try (TableReader reader = newOffPoolReader(configuration, "all")) {
-                Assert.assertFalse(reader.reload());
-            }
-
-            populateTable(rnd, buffer, timestamp, increment, writer);
-            rnd.reset();
-
-            try (
-                    TableReader reader = newOffPoolReader(configuration, "all");
-                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
-            ) {
-                final Record record = cursor.getRecord();
-                assertTable(rnd, buffer, cursor, record);
-                assertOpenPartitionCount(reader);
-
-                if (keepSymbolTables) {
-                    writer.truncateSoft();
-                } else {
-                    writer.truncate();
+                try (TableReader reader = newOffPoolReader(configuration, "all")) {
+                    Assert.assertFalse(reader.reload());
                 }
-                Assert.assertTrue(reader.reload());
-                assertOpenPartitionCount(reader);
-                cursor.toTop();
-                Assert.assertFalse(cursor.hasNext());
 
-                rnd.reset();
                 populateTable(rnd, buffer, timestamp, increment, writer);
-                Assert.assertTrue(reader.reload());
-                assertOpenPartitionCount(reader);
-
                 rnd.reset();
-                cursor.toTop();
-                assertTable(rnd, buffer, cursor, record);
-                assertOpenPartitionCount(reader);
+
+                try (
+                        TableReader reader = newOffPoolReader(configuration, "all");
+                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+                ) {
+                    final Record record = cursor.getRecord();
+                    assertTable(rnd, buffer, cursor, record);
+                    assertOpenPartitionCount(reader);
+
+                    if (keepSymbolTables) {
+                        writer.truncateSoft();
+                    } else {
+                        writer.truncate();
+                    }
+                    Assert.assertTrue(reader.reload());
+                    assertOpenPartitionCount(reader);
+                    cursor.toTop();
+                    Assert.assertFalse(cursor.hasNext());
+
+                    rnd.reset();
+                    populateTable(rnd, buffer, timestamp, increment, writer);
+                    Assert.assertTrue(reader.reload());
+                    assertOpenPartitionCount(reader);
+
+                    rnd.reset();
+                    cursor.toTop();
+                    assertTable(rnd, buffer, cursor, record);
+                    assertOpenPartitionCount(reader);
+                }
             }
+        } finally {
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -201,46 +205,51 @@ public class TableReaderReloadTest extends AbstractCairoTest {
 
         final Rnd rnd = new Rnd();
         final int bufferSize = 1024;
-        long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-        TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, partitionBy);
-        model.timestamp();
-        AbstractCairoTest.create(model);
+        final long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            TableModel model = CreateTableTestUtils.getAllTypesModel(configuration, partitionBy);
+            model.timestamp();
+            AbstractCairoTest.create(model);
 
-        long timestamp = 0;
-        try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
-            try (TableReader reader = newOffPoolReader(configuration, "all")) {
-                Assert.assertFalse(reader.reload());
-            }
-
-            populateTable(rnd, buffer, timestamp, increment, writer);
-            rnd.reset();
-
-            try (
-                    TableReader reader = newOffPoolReader(configuration, "all");
-                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
-            ) {
-                final Record record = cursor.getRecord();
-                assertTable(rnd, buffer, cursor, record);
-                assertOpenPartitionCount(reader);
-
-                if (keepSymbolTables) {
-                    writer.truncateSoft();
-                } else {
-                    writer.truncate();
+            long timestamp = 0;
+            try (TableWriter writer = newOffPoolWriter(configuration, "all", metrics)) {
+                try (TableReader reader = newOffPoolReader(configuration, "all")) {
+                    Assert.assertFalse(reader.reload());
                 }
 
-                // Write different data
-                rnd.reset(123, 123);
-                populateTable(rnd, buffer, timestamp, increment / 2, writer);
-                Assert.assertTrue(reader.reload());
-                assertOpenPartitionCount(reader);
+                populateTable(rnd, buffer, timestamp, increment, writer);
+                rnd.reset();
 
-                // Assert the data is what was written the second time
-                rnd.reset(123, 123);
-                cursor.toTop();
-                assertTable(rnd, buffer, cursor, record);
-                assertOpenPartitionCount(reader);
+                try (
+                        TableReader reader = newOffPoolReader(configuration, "all");
+                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+                ) {
+                    final Record record = cursor.getRecord();
+                    assertTable(rnd, buffer, cursor, record);
+                    assertOpenPartitionCount(reader);
+
+                    if (keepSymbolTables) {
+                        writer.truncateSoft();
+                    } else {
+                        writer.truncate();
+                    }
+
+                    // Write different data
+                    rnd.reset(123, 123);
+                    populateTable(rnd, buffer, timestamp, increment / 2, writer);
+                    Assert.assertTrue(reader.reload());
+                    assertOpenPartitionCount(reader);
+
+                    // Assert the data is what was written the second time
+                    rnd.reset(123, 123);
+                    cursor.toTop();
+                    assertTable(rnd, buffer, cursor, record);
+                    assertOpenPartitionCount(reader);
+                }
             }
+        } finally {
+            Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_DEFAULT);
         }
+
     }
 }

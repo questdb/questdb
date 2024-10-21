@@ -77,26 +77,26 @@ public final class LatestByArguments {
     }
 
     public static void setFilteredSize(long address, long size) {
-        Unsafe.getUnsafe().putLong(address + FILTERED_SIZE_OFFSET, size);
+        Unsafe.putLong(address + FILTERED_SIZE_OFFSET, size);
     }
 
     public static void setKeyHi(long address, long up) {
-        Unsafe.getUnsafe().putLong(address + KEY_HI_OFFSET, up);
+        Unsafe.putLong(address + KEY_HI_OFFSET, up);
     }
 
     public static void setKeyLo(long address, long lo) {
-        Unsafe.getUnsafe().putLong(address + KEY_LO_OFFSET, lo);
+        Unsafe.putLong(address + KEY_LO_OFFSET, lo);
     }
 
     public static void setRowsAddress(long address, long addr) {
-        Unsafe.getUnsafe().putLong(address + ROWS_ADDRESS_OFFSET, addr);
+        Unsafe.putLong(address + ROWS_ADDRESS_OFFSET, addr);
     }
 
     public static void setRowsCapacity(long address, long cap) {
-        Unsafe.getUnsafe().putLong(address + ROWS_CAPACITY_OFFSET, cap);
+        Unsafe.putLong(address + ROWS_CAPACITY_OFFSET, cap);
     }
 
     public static void setRowsSize(long address, long size) {
-        Unsafe.getUnsafe().putLong(address + ROWS_SIZE_OFFSET, size);
+        Unsafe.putLong(address + ROWS_SIZE_OFFSET, size);
     }
 }

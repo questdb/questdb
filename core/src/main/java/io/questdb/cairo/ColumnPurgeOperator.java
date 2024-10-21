@@ -401,7 +401,7 @@ public class ColumnPurgeOperator implements Closeable {
     private void setCompletionTimestamp(LongList completedRecordIds, long timeMicro) {
         // This is in-place update for known record ids of completed column in column version cleanup log table
         try {
-            Unsafe.getUnsafe().putLong(longBytes, timeMicro);
+            Unsafe.putLong(longBytes, timeMicro);
             for (int rec = 0, n = completedRecordIds.size(); rec < n; rec++) {
                 long recordId = completedRecordIds.getQuick(rec);
                 int partitionIndex = Rows.toPartitionIndex(recordId);

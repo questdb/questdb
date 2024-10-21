@@ -47,7 +47,7 @@ public class FDSet implements QuietCloseable, Mutable {
         }
         long p = _wptr;
         int osFd = Files.toOsFd(fd);
-        Unsafe.getUnsafe().putLong(p, osFd);
+        Unsafe.putLong(p, osFd);
         _wptr = p + 8;
         longFds.put(osFd, fd);
     }
@@ -80,7 +80,7 @@ public class FDSet implements QuietCloseable, Mutable {
     }
 
     public void setCount(int count) {
-        Unsafe.getUnsafe().putInt(address + SelectAccessor.COUNT_OFFSET, count);
+        Unsafe.putInt(address + SelectAccessor.COUNT_OFFSET, count);
     }
 
     private void resize() {
