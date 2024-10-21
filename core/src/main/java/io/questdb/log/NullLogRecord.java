@@ -60,11 +60,6 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
-        return this;
-    }
-
-    @Override
     public LogRecord $(@NotNull CharSequence sequence, int lo, int hi) {
         return this;
     }
@@ -110,11 +105,6 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
-    public LogRecord $uuid(long lo, long hi) {
-        return this;
-    }
-
-    @Override
     public LogRecord $(@Nullable Sinkable x) {
         return this;
     }
@@ -145,12 +135,22 @@ final class NullLogRecord implements LogRecord {
     }
 
     @Override
+    public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
+        return this;
+    }
+
+    @Override
     public LogRecord $ts(long x) {
         return this;
     }
 
     @Override
     public LogRecord $utf8(long lo, long hi) {
+        return this;
+    }
+
+    @Override
+    public LogRecord $uuid(long lo, long hi) {
         return this;
     }
 

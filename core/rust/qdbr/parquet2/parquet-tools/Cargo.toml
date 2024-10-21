@@ -1,0 +1,19 @@
+[package]
+name = "parquet-tools"
+version = "0.1.0"
+authors = ["Fernando Herrera <fernando.j.herrera@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "parquet_tools"
+path = "src/lib/lib.rs"
+
+[[bin]]
+name = "parquet_tools"
+path = "src/main.rs"
+
+[dependencies]
+parquet2 = { version = "0.14", path = "../" }
+clap = {version = "2.33", features = ["yaml"]}

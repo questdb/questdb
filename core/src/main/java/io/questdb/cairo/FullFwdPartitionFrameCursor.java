@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.MemoryTag;
 import org.jetbrains.annotations.Nullable;
 
 public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
@@ -33,7 +35,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
         while (partitionIndex < partitionHi) {
-            final long hi = getTableReader().openPartition(partitionIndex);
+            final long hi = reader.openPartition(partitionIndex);
             if (hi > 0) {
                 counter.add(hi);
             }
@@ -44,7 +46,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public @Nullable PartitionFrame next() {
         while (partitionIndex < partitionHi) {
-            final long hi = getTableReader().openPartition(partitionIndex);
+            final long hi = reader.openPartition(partitionIndex);
             if (hi < 1) {
                 // this partition is missing, skip
                 partitionIndex++;
@@ -53,6 +55,22 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 frame.rowLo = 0;
                 frame.rowHi = hi;
                 partitionIndex++;
+
+                final byte format = reader.getPartitionFormat(frame.partitionIndex);
+                if (format == PartitionFormat.PARQUET) {
+                    final long fd = reader.getParquetFd(frame.partitionIndex);
+                    assert fd != -1;
+                    final long parquetSize = reader.getParquetFileSize(frame.partitionIndex);
+                    assert parquetSize > 0;
+                    parquetDecoder.of(fd, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    frame.format = PartitionFormat.PARQUET;
+                    frame.parquetDecoder = parquetDecoder;
+                    return frame;
+                }
+
+                assert format == PartitionFormat.NATIVE;
+                frame.format = PartitionFormat.NATIVE;
+                frame.parquetDecoder = null;
                 return frame;
             }
         }

@@ -72,21 +72,27 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     private static final int PAGE_FRAME_COUNT = 4; // also used to set queue size, so must be a power of 2
     private static final int PAGE_FRAME_MAX_ROWS = 100;
     private static final int ROW_COUNT = 10 * PAGE_FRAME_COUNT * PAGE_FRAME_MAX_ROWS;
+    private final boolean convertToParquet;
     private final boolean enableJitCompiler;
     private final boolean enableParallelGroupBy;
 
-    public ParallelGroupByFuzzTest(boolean enableParallelGroupBy, boolean enableJitCompiler) {
+    public ParallelGroupByFuzzTest(boolean enableParallelGroupBy, boolean enableJitCompiler, boolean convertToParquet) {
         this.enableParallelGroupBy = enableParallelGroupBy;
         this.enableJitCompiler = enableJitCompiler;
+        this.convertToParquet = convertToParquet;
     }
 
-    @Parameterized.Parameters(name = "parallel={0} JIT={1}")
+    @Parameterized.Parameters(name = "parallel={0} JIT={1} parquet={2}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                {true, true},
-                {true, false},
-                {false, true},
-                {false, false},
+                {true, true, true},
+                {true, true, false},
+                {true, false, true},
+                {true, false, false},
+                {false, true, true},
+                {false, true, false},
+                {false, false, true},
+                {false, false, false},
         });
     }
 
@@ -94,6 +100,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, PAGE_FRAME_MAX_ROWS);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, PAGE_FRAME_MAX_ROWS);
         // We intentionally use small values for shard count and reduce
         // queue capacity to exhibit various edge cases.
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
@@ -120,6 +127,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             );
             insert("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
             insert("INSERT INTO t VALUES ('2023-09-21T11:00:00.000000Z', 1, 1);");
+
+            if (convertToParquet) {
+                ddl("alter table t convert partition to parquet where ts >= 0");
+            }
 
             assertQuery(
                     "count\n" +
@@ -152,6 +163,10 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             insert("INSERT INTO t VALUES ('2023-09-21T10:00:02.000000Z', 'a', 'd');");
             insert("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 'b', 'c');");
             insert("INSERT INTO t VALUES ('2023-09-21T10:00:01.000000Z', 'b', 'c');");
+
+            if (convertToParquet) {
+                ddl("alter table t convert partition to parquet where ts >= 0");
+            }
 
             assertQuery(
                     "count\n" +
@@ -193,6 +208,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             insert("INSERT INTO t2 VALUES ('2023-09-21T10:00:02.000000Z', 3, 1);");
             insert("INSERT INTO t2 VALUES ('2023-09-21T10:00:00.000000Z', 4, 2);");
 
+            if (convertToParquet) {
+                ddl("alter table t1 convert partition to parquet where ts >= 0");
+                ddl("alter table t2 convert partition to parquet where ts >= 0");
+            }
+
             assertQuery(
                     "event\tcount\n" +
                             "1\t1\n" +
@@ -221,6 +241,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "  quantity LONG) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
                         assertQueries(
                                 engine,
                                 sqlExecutionContext,
@@ -673,6 +696,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "create table x as (select * from (select rnd_symbol('a','b','c') a, 'x' || x b from long_sequence(" + ROW_COUNT + ")))",
                                 sqlExecutionContext
                         );
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
                         assertQueries(
                                 engine,
                                 sqlExecutionContext,
@@ -1095,7 +1121,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                     "from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
-                    drainWalQueue();
+                    if (convertToParquet) {
+                        ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                    }
 
                     final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
                     final SOCountDownLatch haltLatch = new SOCountDownLatch(numOfThreads);
@@ -1568,13 +1596,16 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
 
                         ddl(
                                 compiler,
                                 "create table tbl1 as (select rnd_double() x, rnd_double() y, rnd_symbol('a', 'b', 'c') sym from long_sequence(100000))",
                                 sqlExecutionContext
                         );
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tbl1 convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
 
                         TestUtils.assertSql(
                                 engine,
@@ -1944,7 +1975,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                     "from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
-                    drainWalQueue();
+                    if (convertToParquet) {
+                        ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                    }
 
                     final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
                     final SOCountDownLatch haltLatch = new SOCountDownLatch(numOfThreads);
@@ -2008,7 +2041,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
-                    drainWalQueue();
+                    if (convertToParquet) {
+                        ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                    }
 
                     final CyclicBarrier barrier = new CyclicBarrier(numOfThreads);
                     final SOCountDownLatch haltLatch = new SOCountDownLatch(numOfThreads);
@@ -2735,6 +2770,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
                         assertQueries(
                                 engine,
                                 sqlExecutionContext,
@@ -2830,9 +2868,12 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " from long_sequence(10000)) timestamp(ts) partition by day",
                                 sqlExecutionContext
                         );
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
 
                         // Run with single-threaded GROUP BY.
-                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "false");
+                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, false);
                         TestUtils.printSql(
                                 engine,
                                 sqlExecutionContext,
@@ -2841,7 +2882,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         );
 
                         // Run with parallel GROUP BY.
-                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+                        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, true);
                         final StringSink sinkB = new StringSink();
                         TestUtils.printSql(
                                 engine,
@@ -2895,6 +2936,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         " from long_sequence(" + ROW_COUNT + ")) timestamp(ts) partition by day",
                                 sqlExecutionContext
                         );
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
@@ -2930,6 +2974,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
 
                         try {
                             try (final RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
@@ -2979,6 +3026,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY"
                 );
                 insert("insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")");
+                if (convertToParquet) {
+                    ddl("alter table tab convert partition to parquet where ts >= 0");
+                }
 
                 context.with(
                         context.getSecurityContext(),
@@ -3028,6 +3078,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "insert into tab select (x * 864000000)::timestamp, '{\"key\": \"k' || (x % 5) || '\", \"foo\": \"bar\"}', x, x from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
@@ -3067,7 +3120,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        drainWalQueue();
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
@@ -3105,7 +3160,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        drainWalQueue();
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
@@ -3138,6 +3195,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(500)) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
 
                         TestUtils.assertSql(
                                 engine,
@@ -3197,7 +3257,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        drainWalQueue();
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
 
                         // now drop the String table and recreate it with a Varchar key
@@ -3223,7 +3285,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        drainWalQueue();
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,
@@ -3263,7 +3327,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        drainWalQueue();
+                        if (convertToParquet) {
+                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
                     },
                     configuration,

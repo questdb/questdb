@@ -137,7 +137,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             private long fd;
 
             @Override
-            public long append(long fd, long buf, int len) {
+            public long append(long fd, long buf, long len) {
                 if (fd == this.fd && counter.decrementAndGet() == 0) {
                     throw CairoException.critical(24).put("test error");
                 }

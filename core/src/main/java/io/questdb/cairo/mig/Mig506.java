@@ -84,7 +84,7 @@ final class Mig506 {
 
         for (long ts = partitionFloorMethod.floor(minTimestamp); ts < tsLimit; ts = partitionAddMethod.calculate(ts, 1)) {
             path.trimTo(rootLen);
-            TableUtils.setPathForPartition(path, partitionBy, ts, -1);
+            TableUtils.setPathForNativePartition(path, partitionBy, ts, -1);
             if (ff.exists(path.concat(TX_STRUCT_UPDATE_1_ARCHIVE_FILE_NAME).$())) {
                 if (!removedPartitionsIncludes(ts, txMem, symbolsCount)) {
                     long partitionSize = TableUtils.readLongAtOffset(ff, path.$(), tempMem8b, 0);

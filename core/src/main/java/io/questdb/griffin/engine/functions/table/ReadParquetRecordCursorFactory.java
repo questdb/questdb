@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
@@ -45,8 +46,8 @@ public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        cursor.of(executionContext, path.$());
+    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        cursor.of(path.$());
         return cursor;
     }
 
@@ -56,13 +57,13 @@ public class ReadParquetRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @Override
-    protected void _close() {
-        cursor = Misc.free(cursor);
-        path = Misc.free(path);
+    public void toPlan(PlanSink sink) {
+        sink.type("parquet file sequential scan");
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
-        sink.type("parquet file sequential scan");
+    protected void _close() {
+        cursor = Misc.free(cursor);
+        path = Misc.free(path);
     }
 }

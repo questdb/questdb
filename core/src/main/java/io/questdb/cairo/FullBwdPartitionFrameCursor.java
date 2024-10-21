@@ -24,8 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.std.MemoryTag;
 
 public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
 
@@ -49,8 +51,25 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 partitionIndex--;
             } else {
                 frame.partitionIndex = partitionIndex;
+                frame.rowLo = 0;
                 frame.rowHi = hi;
                 partitionIndex--;
+
+                final byte format = reader.getPartitionFormat(frame.partitionIndex);
+                if (format == PartitionFormat.PARQUET) {
+                    final long fd = reader.getParquetFd(frame.partitionIndex);
+                    assert fd != -1;
+                    final long parquetSize = reader.getParquetFileSize(frame.partitionIndex);
+                    assert parquetSize > 0;
+                    parquetDecoder.of(fd, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    frame.format = PartitionFormat.PARQUET;
+                    frame.parquetDecoder = parquetDecoder;
+                    return frame;
+                }
+
+                assert format == PartitionFormat.NATIVE;
+                frame.format = PartitionFormat.NATIVE;
+                frame.parquetDecoder = null;
                 return frame;
             }
         }

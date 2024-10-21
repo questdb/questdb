@@ -65,7 +65,7 @@ public class RecoverVarIndex extends RebuildColumnBase {
         }
 
         int trimTo = path.size();
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
 
         try {
             path.concat(columnName);

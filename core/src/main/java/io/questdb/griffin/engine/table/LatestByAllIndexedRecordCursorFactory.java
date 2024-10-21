@@ -80,5 +80,6 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
     protected void _close() {
         super._close();
         Misc.free(prefixes);
+        Misc.free(cursor);
     }
 }

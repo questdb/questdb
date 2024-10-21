@@ -38,6 +38,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     private final Function filter;
     private final boolean restrictedByExcludedValues;
     private final boolean restrictedByIncludedValues;
+    private final DirectLongList rowIds;
     private final int shrinkToCapacity;
     private boolean areRecordsFound;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -46,7 +47,6 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     private IntHashSet foundKeys;
     private int foundSize;
     private IntHashSet includedSymbolKeys;
-    private DirectLongList rowIds;
 
     public LatestByValueListRecordCursor(
             @NotNull CairoConfiguration configuration,
@@ -75,19 +75,12 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     public void close() {
         super.close();
         if (rowIds.getCapacity() > shrinkToCapacity) {
-            rowIds = Misc.free(rowIds);
-            rowIds = new DirectLongList(shrinkToCapacity, MemoryTag.NATIVE_LONG_LIST);
             foundKeys = new IntHashSet(shrinkToCapacity);
             // symbolKeys is unlikely to take too much memory
             // because every value is associated with a value from `in (...)` WHERE filter and
             // the list of parsed functions is of bigger size than symbolKeys hash set.
         }
-    }
-
-    public void destroy() {
-        // After close() the instance is designed to be re-usable.
-        // Destroy makes it non-reusable
-        rowIds = Misc.free(rowIds);
+        Misc.free(rowIds);
     }
 
     @Override
@@ -109,6 +102,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
         this.frameCursor = pageFrameCursor;
+        rowIds.reopen();
         recordA.of(pageFrameCursor);
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();

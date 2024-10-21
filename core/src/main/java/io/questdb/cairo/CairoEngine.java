@@ -186,7 +186,7 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.reload();
 
             this.sqlCompilerPool = new SqlCompilerPool(this);
-            if (configuration.getPartitionO3OverwriteControlEnabled()) {
+            if (configuration.isPartitionO3OverwriteControlEnabled()) {
                 enablePartitionOverwriteControl();
             }
             this.metadataCache = new MetadataCache(this);

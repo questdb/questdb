@@ -191,6 +191,23 @@ public class CharSequenceLongHashMapTest {
     }
 
     @Test
+    public void testContains() {
+        CharSequenceLongHashMap map = new CharSequenceLongHashMap();
+        Rnd rnd = new Rnd();
+        final int N = 1000;
+
+        for (int i = 0; i < N; i++) {
+            String s = rnd.nextString(10).substring(1, 9);
+            map.put(s, i);
+        }
+
+        final ObjList<CharSequence> keys = map.keys();
+        for (int i = 0; i < keys.size(); i++) {
+            Assert.assertTrue(map.contains(keys.get(i)));
+        }
+    }
+
+    @Test
     public void testPartialLookup() {
         CharSequenceLongHashMap map = new CharSequenceLongHashMap();
         Rnd rnd = new Rnd();
@@ -213,23 +230,6 @@ public class CharSequenceLongHashMapTest {
         for (int i = 0; i < N; i++) {
             CharSequence cs = rnd.nextString(10);
             Assert.assertFalse(map.excludes(cs, 1, 9));
-        }
-    }
-
-    @Test
-    public void testContains() {
-        CharSequenceLongHashMap map = new CharSequenceLongHashMap();
-        Rnd rnd = new Rnd();
-        final int N = 1000;
-
-        for (int i = 0; i < N; i++) {
-            String s = rnd.nextString(10).substring(1, 9);
-            map.put(s, i);
-        }
-
-        final ObjList<CharSequence> keys = map.keys();
-        for (int i = 0; i < keys.size(); i++) {
-            Assert.assertTrue(map.contains(keys.get(i)));
         }
     }
 }
