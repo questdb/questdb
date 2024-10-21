@@ -1249,8 +1249,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
             for (int i = 0; backgroundError.get() == null && (
                     i < minAttemptCount || System.nanoTime() < minDeadline
                             || !hadSuccess && i < maxAttemptCount && System.nanoTime() < maxDeadline
-            ); i++
-            ) {
+            ); i++) {
                 try {
                     mainLoopBody.run();
                     hadSuccess = true;
