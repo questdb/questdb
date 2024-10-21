@@ -1,4 +1,5 @@
 import io.questdb.griffin.engine.functions.finance.TwapGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.finance.VwapDoubleGroupByFunctionFactory;
 
 /*******************************************************************************
  *     ___                  _   ____  ____
@@ -898,7 +899,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory,
 //                  vwap()
-            io.questdb.griffin.engine.functions.groupby.VwapDoubleGroupByFunctionFactory,
+            VwapDoubleGroupByFunctionFactory,
 //                 stddev()
             io.questdb.griffin.engine.functions.groupby.StdDevGroupByFunctionFactory,
 //                 stddev_samp()
