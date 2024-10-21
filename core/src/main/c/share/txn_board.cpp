@@ -163,12 +163,10 @@ public:
     void init(uint32_t entry_count) {
         mask = entry_count - 1;
         size = entry_count;
-        // clean up all counters
-        for (int64_t i = 0; i < entry_count; i++) {
-            counts[i] = 0;
-        }
-        min = L_MIN;
-        max = 0;
+        int64_t expected = 0;
+        // Since txn values are guaranteed to be greater than 0, min can be 0 only on
+        // a newly created scoreboard. So, this CAS should only succeed single time.
+        min.compare_exchange_strong(expected, L_MIN);
     }
 
     bool is_range_available(int64_t from, int64_t to) {

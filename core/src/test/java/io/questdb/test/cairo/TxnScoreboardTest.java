@@ -39,6 +39,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -338,6 +339,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         for (int i = 0; i < 10000; i++) {
             LOG.info().$("iteration: " + i).$();
             testLimits();
+            // Make sure to delete all files from root, so that we don't start with some garbage in txn scoreboards.
+            wipeFiles(new File(root));
         }
     }
 
@@ -589,6 +592,20 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 scoreboard.acquireTxn(900992);
             }
         });
+    }
+
+    private static void wipeFiles(File dir) {
+        File[] files = dir.listFiles();
+        if (files == null) {
+            return;
+        }
+        for (File f : files) {
+            if (f.isDirectory()) {
+                wipeFiles(f);
+            } else if (f.isFile()) {
+                Assert.assertTrue(f.delete());
+            }
+        }
     }
 
     @SuppressWarnings("SameParameterValue")
