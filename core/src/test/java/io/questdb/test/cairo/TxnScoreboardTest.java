@@ -27,7 +27,10 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -332,8 +335,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testLimitsO3Acquire() throws Exception {
-        LOG.debug().$("starting testLimitsLoop").$();
         for (int i = 0; i < 10000; i++) {
+            LOG.info().$("iteration: " + i).$();
             testLimits();
         }
     }
