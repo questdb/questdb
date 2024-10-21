@@ -98,5 +98,10 @@ public class ToTimezoneTimestampFunctionFactory implements FunctionFactory {
                 return timestampValue;
             }
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new ToTimezoneFunctionVar(timestamp, timezone);
+        }
     }
 }

@@ -53,4 +53,9 @@ public final class VarcharCaseFunction extends VarcharFunction implements CaseFu
     public Utf8Sequence getVarcharB(Record rec) {
         return picker.pick(rec).getVarcharB(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new VarcharCaseFunction(picker, args);
+    }
 }

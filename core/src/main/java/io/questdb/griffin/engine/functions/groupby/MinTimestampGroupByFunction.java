@@ -112,4 +112,9 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public Function newInstance(final Function arg)  {
+        return new MinTimestampGroupByFunction(arg);
+    }
 }

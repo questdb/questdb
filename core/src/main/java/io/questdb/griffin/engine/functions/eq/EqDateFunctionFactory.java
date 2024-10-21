@@ -57,5 +57,10 @@ public class EqDateFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (left.getDate(rec) == right.getDate(rec));
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new EqDateFunction(left, right);
+        }
     }
 }

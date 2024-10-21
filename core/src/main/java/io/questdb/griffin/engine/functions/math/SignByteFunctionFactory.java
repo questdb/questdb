@@ -69,5 +69,10 @@ public class SignByteFunctionFactory implements FunctionFactory {
         public String getName() {
             return "sign";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

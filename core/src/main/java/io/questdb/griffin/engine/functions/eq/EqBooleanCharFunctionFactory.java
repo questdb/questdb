@@ -88,5 +88,10 @@ public class EqBooleanCharFunctionFactory implements FunctionFactory {
             }
             sink.val('=').val(right);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg, right);
+        }
     }
 }

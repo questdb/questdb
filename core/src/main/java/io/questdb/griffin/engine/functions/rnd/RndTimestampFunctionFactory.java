@@ -96,5 +96,10 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_timestamp(").val(lo).val(',').val(range + lo - 1).val(',').val(nanRate - 1).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new Func(lo, range + lo - 1, nanRate - 1);
+        }
     }
 }

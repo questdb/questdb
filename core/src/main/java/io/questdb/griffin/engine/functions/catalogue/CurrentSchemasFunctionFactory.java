@@ -97,5 +97,10 @@ public class CurrentSchemasFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("current_schemas()");
         }
+
+        @Override
+        public Function deepClone() {
+            return new CurrentSchemaFunction();
+        }
     }
 }

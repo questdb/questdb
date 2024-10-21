@@ -67,5 +67,10 @@ public class AbsShortFunctionFactory implements FunctionFactory {
             short value = function.getShort(rec);
             return (short) Math.abs(value);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new AbsFunction(arg);
+        }
     }
 }

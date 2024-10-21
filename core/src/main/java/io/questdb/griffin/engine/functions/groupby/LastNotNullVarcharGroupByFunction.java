@@ -66,4 +66,9 @@ public class LastNotNullVarcharGroupByFunction extends FirstVarcharGroupByFuncti
             destValue.putBool(valueIndex + 2, false);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastNotNullVarcharGroupByFunction(arg);
+    }
 }

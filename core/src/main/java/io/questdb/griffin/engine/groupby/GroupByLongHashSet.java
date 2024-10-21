@@ -64,6 +64,12 @@ public class GroupByLongHashSet {
         this.noKeyValue = noKeyValue;
     }
 
+    public GroupByLongHashSet(GroupByLongHashSet other) {
+        this.initialCapacity = other.initialCapacity;
+        this.loadFactor = other.loadFactor;
+        this.noKeyValue = other.noKeyValue;
+    }
+
     /**
      * Adds key to hash set preserving key uniqueness.
      *

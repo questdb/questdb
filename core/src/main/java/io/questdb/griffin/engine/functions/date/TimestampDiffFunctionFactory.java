@@ -125,6 +125,11 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("datediff('").val(left).val("',").val(center).val(',').val(right).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new DateDiffFunc(left, right, center);
+        }
     }
 
     private static class DiffVarConstFunction extends LongFunction implements UnaryFunction {
@@ -157,6 +162,11 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("datediff('").val(symbol).val("',").val(arg).val(',').val(constantTime).val(')');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new DiffVarConstFunction(arg, constantTime, func, symbol);
         }
     }
 
@@ -196,6 +206,11 @@ public class TimestampDiffFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("datediff('").val(symbol).val("',").val(left).val(',').val(right).val(')');
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new DiffVarVarFunction(left, right, func, symbol);
         }
     }
 

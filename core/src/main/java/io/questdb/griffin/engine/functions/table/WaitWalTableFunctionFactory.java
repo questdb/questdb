@@ -97,5 +97,10 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("wait_wal_table(").val(tableName).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new WaitWalFunction(tableName);
+        }
     }
 }

@@ -54,5 +54,10 @@ public class CastFloatToShortFunctionFactory implements FunctionFactory {
             final float value = arg.getFloat(rec);
             return Numbers.isNull(value) || value > Short.MAX_VALUE || value < Short.MIN_VALUE ? 0 : (short) value;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

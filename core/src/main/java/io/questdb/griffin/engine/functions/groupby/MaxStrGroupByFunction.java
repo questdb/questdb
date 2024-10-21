@@ -169,4 +169,9 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
     public void toTop() {
         UnaryFunction.super.toTop();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new MaxStrGroupByFunction(arg);
+    }
 }

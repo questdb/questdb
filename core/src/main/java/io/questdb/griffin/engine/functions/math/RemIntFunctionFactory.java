@@ -84,5 +84,10 @@ public class RemIntFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(left).val('%').val(right);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

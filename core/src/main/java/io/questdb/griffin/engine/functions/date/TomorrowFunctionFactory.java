@@ -67,5 +67,10 @@ public class TomorrowFunctionFactory implements FunctionFactory {
         protected int shiftFromToday() {
             return 1;
         }
+
+        @Override
+        public Function deepClone() {
+            return new Func();
+        }
     }
 }

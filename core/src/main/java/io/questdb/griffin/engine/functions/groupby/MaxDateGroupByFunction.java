@@ -112,4 +112,9 @@ public class MaxDateGroupByFunction extends DateFunction implements GroupByFunct
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new MaxDateGroupByFunction(arg);
+    }
 }

@@ -54,4 +54,9 @@ public class LastByteGroupByFunction extends FirstByteGroupByFunction {
             destValue.putByte(valueIndex + 1, srcValue.getByte(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastByteGroupByFunction(0, arg);
+    }
 }

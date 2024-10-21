@@ -222,17 +222,23 @@ public class ConcatFunctionFactory implements FunctionFactory {
                 adapters.getQuick(i).sink(utf16Sink, functions.getQuick(i), rec);
             }
         }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new ConcatFunction(args, new IntList(argPositions));
+        }
     }
 
     private static class ConstConcatFunction extends StrFunction implements ConstantFunction {
         private final ObjList<Function> functions;
-        private final StringSink sink = new StringSink();
+        private StringSink sink;
 
         public ConstConcatFunction(ObjList<Function> functions, IntList argPositions) throws SqlException {
             this.functions = functions;
 
             final int functionCount = functions.size();
             final ObjList<TypeAdapter> adapters = new ObjList<>(functionCount);
+            this.sink = new StringSink();
             populateAdapters(adapters, functions, argPositions);
             for (int i = 0; i < functionCount; i++) {
                 adapters.getQuick(i).sink(sink, functions.getQuick(i), null);
@@ -252,6 +258,16 @@ public class ConcatFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("concat(").val(functions).val(')');
+        }
+
+        @Override
+        public Function deepClone() {
+            return new ConstConcatFunction(functions, new StringSink(sink));
+        }
+
+        private ConstConcatFunction(ObjList<Function> functions, StringSink sink) {
+            this.functions = functions;
+            this.sink = sink;
         }
     }
 

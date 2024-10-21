@@ -65,5 +65,10 @@ public class EqCharCharFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (left.getChar(rec) == right.getChar(rec));
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

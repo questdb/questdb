@@ -70,4 +70,9 @@ public class FirstNotNullVarcharGroupByFunction extends FirstVarcharGroupByFunct
             destValue.putBool(valueIndex + 2, false);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstNotNullVarcharGroupByFunction(arg);
+    }
 }

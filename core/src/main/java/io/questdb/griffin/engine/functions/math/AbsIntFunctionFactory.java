@@ -73,5 +73,10 @@ public class AbsIntFunctionFactory implements FunctionFactory {
         public String getName() {
             return "abs";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new AbsIntFunction(arg);
+        }
     }
 }

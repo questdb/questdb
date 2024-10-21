@@ -59,5 +59,10 @@ public class CastSymbolToLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             return Numbers.parseLongQuiet(arg.getSymbol(rec));
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

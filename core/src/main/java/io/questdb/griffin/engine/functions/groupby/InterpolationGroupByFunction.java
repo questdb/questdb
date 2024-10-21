@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
@@ -322,5 +323,10 @@ public class InterpolationGroupByFunction implements GroupByFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("Interpolated(").val(wrappedFunction).val(")");
+    }
+
+    @Override
+    public Function deepClone() {
+        return new InterpolationGroupByFunction((GroupByFunction) wrappedFunction.deepClone());
     }
 }

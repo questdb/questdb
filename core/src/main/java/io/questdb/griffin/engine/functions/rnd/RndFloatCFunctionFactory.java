@@ -79,5 +79,10 @@ public class RndFloatCFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_float(").val(nanRate).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new RndFunction(nanRate - 1);
+        }
     }
 }

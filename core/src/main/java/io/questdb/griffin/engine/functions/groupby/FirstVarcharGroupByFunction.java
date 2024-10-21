@@ -162,4 +162,9 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
     public void toTop() {
         UnaryFunction.super.toTop();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstVarcharGroupByFunction(arg);
+    }
 }

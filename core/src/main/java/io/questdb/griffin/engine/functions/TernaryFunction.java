@@ -105,4 +105,11 @@ public interface TernaryFunction extends Function {
         getCenter().toTop();
         getRight().toTop();
     }
+
+    Function newInstance(final Function left, final Function center, final Function right);
+
+    @Override
+    default Function deepClone() {
+        return newInstance(getLeft().deepClone(), getCenter().deepClone(), getRight().deepClone());
+    }
 }

@@ -91,5 +91,10 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
             }
             sink.val(right);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new LtTimestampFunction(left, right);
+        }
     }
 }

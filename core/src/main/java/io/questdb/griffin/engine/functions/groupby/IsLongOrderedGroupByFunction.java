@@ -102,4 +102,9 @@ public class IsLongOrderedGroupByFunction extends BooleanFunction implements Gro
     public boolean supportsParallelism() {
         return false;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new IsLongOrderedGroupByFunction(arg);
+    }
 }

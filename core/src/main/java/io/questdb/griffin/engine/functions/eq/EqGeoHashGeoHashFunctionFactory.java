@@ -114,33 +114,13 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
     private static Function createBinaryFunc(Function geohash1, Function geohash2, int valType) {
         switch (ColumnType.tagOf(valType)) {
             case ColumnType.GEOBYTE:
-                return new GeoEqFunc(geohash1, geohash2) {
-                    @Override
-                    public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoByte(rec) == geohash2.getGeoByte(rec));
-                    }
-                };
+                return new GeoEqFunc(geohash1, geohash2, (Function left,Function right, Record rec) -> left.getGeoByte(rec) == right.getGeoByte(rec));
             case ColumnType.GEOSHORT:
-                return new GeoEqFunc(geohash1, geohash2) {
-                    @Override
-                    public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoShort(rec) == geohash2.getGeoShort(rec));
-                    }
-                };
+                return new GeoEqFunc(geohash1, geohash2, (Function left,Function right, Record rec) -> left.getGeoShort(rec) == right.getGeoShort(rec));
             case ColumnType.GEOINT:
-                return new GeoEqFunc(geohash1, geohash2) {
-                    @Override
-                    public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoInt(rec) == geohash2.getGeoInt(rec));
-                    }
-                };
+                return new GeoEqFunc(geohash1, geohash2, (Function left,Function right, Record rec) -> left.getGeoInt(rec) == right.getGeoInt(rec));
             default:
-                return new GeoEqFunc(geohash1, geohash2) {
-                    @Override
-                    public boolean getBool(Record rec) {
-                        return negated != (geohash1.getGeoLong(rec) == geohash2.getGeoLong(rec));
-                    }
-                };
+                return new GeoEqFunc(geohash1, geohash2, (Function left,Function right, Record rec) -> left.getGeoLong(rec) == right.getGeoLong(rec));
         }
     }
 
@@ -198,6 +178,11 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         protected long getHash() {
             return hash;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckFuncByte(arg, hash);
+        }
     }
 
     private static class ConstCheckFuncInt extends ConstCheckFunc {
@@ -216,6 +201,11 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         @Override
         protected long getHash() {
             return hash;
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckFuncInt(arg, hash);
         }
     }
 
@@ -236,6 +226,11 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         protected long getHash() {
             return hash;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckFuncLong(arg, hash);
+        }
     }
 
     private static class ConstCheckFuncShort extends ConstCheckFunc {
@@ -255,20 +250,32 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         protected long getHash() {
             return hash;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckFuncShort(arg, hash);
+        }
     }
 
-    private static abstract class GeoEqFunc extends NegatableBooleanFunction implements BinaryFunction {
+    private static class GeoEqFunc extends NegatableBooleanFunction implements BinaryFunction {
         protected final Function left;
         protected final Function right;
+        private final GetBoolFunc getBoolFunc;
 
-        public GeoEqFunc(Function left, Function right) {
+        public GeoEqFunc(Function left, Function right, GetBoolFunc getBoolFunc ) {
             this.left = left;
             this.right = right;
+            this.getBoolFunc = getBoolFunc;
         }
 
         @Override
         public Function getLeft() {
             return left;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return isNegated() != getBoolFunc.getBool(left, right, rec);
         }
 
         @Override
@@ -287,6 +294,16 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public boolean isOperator() {
             return true;
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new GeoEqFunc(left, right, getBoolFunc);
+        }
+
+        @FunctionalInterface
+        private interface GetBoolFunc {
+            boolean getBool(Function left, Function right, Record rec);
         }
     }
 }

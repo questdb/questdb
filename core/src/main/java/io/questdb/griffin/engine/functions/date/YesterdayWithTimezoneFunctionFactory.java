@@ -87,6 +87,11 @@ public class YesterdayWithTimezoneFunctionFactory implements FunctionFactory {
         protected int shiftFromToday() {
             return -1;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 
     private static class RuntimeConstFunc extends AbstractDayIntervalWithTimezoneFunction {
@@ -119,6 +124,11 @@ public class YesterdayWithTimezoneFunctionFactory implements FunctionFactory {
         @Override
         protected int shiftFromToday() {
             return -1;
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
         }
     }
 }

@@ -123,4 +123,9 @@ public class SymbolColumn extends SymbolFunction implements ScalarFunction {
     public CharSequence valueOf(int symbolKey) {
         return symbolTable.valueOf(symbolKey);
     }
+
+    @Override
+    public Function deepClone() {
+        return new SymbolColumn(columnIndex, symbolTableStatic);
+    }
 }

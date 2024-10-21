@@ -128,4 +128,11 @@ public interface QuaternaryFunction extends Function {
         getFunc2().toTop();
         getFunc3().toTop();
     }
+
+    Function newInstance(final Function func0, final Function func1, final Function func2, final Function func3);
+
+    @Override
+    default Function deepClone() {
+        return newInstance(getFunc0().deepClone(), getFunc1().deepClone(), getFunc2().deepClone(), getFunc3().deepClone());
+    }
 }

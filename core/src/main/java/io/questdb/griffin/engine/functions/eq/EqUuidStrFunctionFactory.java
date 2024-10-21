@@ -122,6 +122,11 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             }
             sink.val("='").valUuid(constStrLo, constStrHi).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstStrFunc(constStrLo, constStrHi, arg);
+        }
     }
 
     /**
@@ -165,6 +170,11 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             }
             sink.val("='").valUuid(constUuidLo, constUuidHi).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstUuidFunc(constUuidLo, constUuidHi, arg);
+        }
     }
 
     /**
@@ -190,6 +200,11 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
             } catch (NumericException e) {
                 return negated;
             }
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 
@@ -254,6 +269,11 @@ public final class EqUuidStrFunctionFactory implements FunctionFactory {
                 sink.val('!');
             }
             sink.val("='").val(strFunc).val('\'');
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 }

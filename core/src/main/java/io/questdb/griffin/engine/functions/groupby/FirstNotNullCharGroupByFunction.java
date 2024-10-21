@@ -63,4 +63,9 @@ public class FirstNotNullCharGroupByFunction extends FirstCharGroupByFunction {
             destValue.putChar(valueIndex + 1, srcVal);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstNotNullCharGroupByFunction(arg);
+    }
 }

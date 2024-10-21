@@ -76,5 +76,10 @@ public class NullIfCharFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return chrFunc2;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

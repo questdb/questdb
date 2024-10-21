@@ -79,5 +79,10 @@ public class CastDateToLong256FunctionFactory implements FunctionFactory {
             long256b.setLow(value);
             return long256b;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

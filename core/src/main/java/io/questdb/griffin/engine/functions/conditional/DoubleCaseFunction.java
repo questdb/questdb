@@ -47,4 +47,9 @@ class DoubleCaseFunction extends DoubleFunction implements CaseFunction {
     public double getDouble(Record rec) {
         return picker.pick(rec).getDouble(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new DoubleCaseFunction(picker, args);
+    }
 }

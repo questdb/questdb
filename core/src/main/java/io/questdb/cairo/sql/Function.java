@@ -31,6 +31,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.DeepCloneable;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
@@ -41,7 +42,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public interface Function extends Closeable, StatefulAtom, Plannable {
+public interface Function extends Closeable, StatefulAtom, Plannable, DeepCloneable<Function> {
 
     static void init(
             ObjList<? extends Function> args,
@@ -250,6 +251,19 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     default boolean isUndefined() {
         return getType() == ColumnType.UNDEFINED;
+    }
+
+    /**
+     * DeepClone does not clone the running-states, only the init states of the function,
+     * must be called before Function::init.
+     * Used for parallel filter/groupBy execution, that avoid Function::parser for every worker.
+     * Note: CursorFunction and Window Function are not supported for temp,
+     * those would not be used in Filter/groupBy function.
+     *
+     * @return deep clones of the function
+     */
+    default Function deepClone() {
+        throw new UnsupportedOperationException();
     }
 
     /**

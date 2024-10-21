@@ -102,4 +102,9 @@ public class TestSumDoubleGroupByFunction extends DoubleFunction implements Grou
     public boolean supportsParallelism() {
         return false;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        throw new UnsupportedOperationException();
+    }
 }

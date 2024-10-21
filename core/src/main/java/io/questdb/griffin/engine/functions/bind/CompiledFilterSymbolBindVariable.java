@@ -100,4 +100,9 @@ public class CompiledFilterSymbolBindVariable extends SymbolFunction implements 
     public CharSequence valueOf(int symbolKey) {
         return symbolTable.valueOf(symbolKey);
     }
+
+    @Override
+    public Function deepClone() {
+        return new CompiledFilterSymbolBindVariable(symbolFunction.deepClone(), columnIndex);
+    }
 }

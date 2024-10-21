@@ -76,5 +76,10 @@ public class DayOfWeekSundayFirstFunctionFactory implements FunctionFactory {
         public String getName() {
             return "day_of_week_sunday_first";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

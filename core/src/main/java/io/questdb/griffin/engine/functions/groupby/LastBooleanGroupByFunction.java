@@ -54,4 +54,9 @@ public class LastBooleanGroupByFunction extends FirstBooleanGroupByFunction {
             destValue.putBool(valueIndex + 1, srcValue.getBool(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastBooleanGroupByFunction(0, arg);
+    }
 }

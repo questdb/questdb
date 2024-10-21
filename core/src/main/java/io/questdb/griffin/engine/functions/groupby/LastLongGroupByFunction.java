@@ -54,4 +54,9 @@ public class LastLongGroupByFunction extends FirstLongGroupByFunction {
             destValue.putLong(valueIndex + 1, srcValue.getLong(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastLongGroupByFunction(arg);
+    }
 }

@@ -60,4 +60,9 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
             destValue.putLong(valueIndex + 1, srcVal);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastNotNullTimestampGroupByFunction(arg);
+    }
 }

@@ -77,5 +77,10 @@ public class MonthOfYearFunctionFactory implements FunctionFactory {
         public String getName() {
             return "month";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new MonthOfYearFunction(arg);
+        }
     }
 }

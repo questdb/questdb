@@ -85,5 +85,10 @@ public class SessionUserFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
         }
+
+        @Override
+        public Function deepClone() {
+            return new SessionUserFunction();
+        }
     }
 }

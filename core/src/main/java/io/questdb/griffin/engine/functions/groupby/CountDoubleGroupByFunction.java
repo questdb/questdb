@@ -53,4 +53,9 @@ public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
             mapValue.addLong(valueIndex, 1);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new CountDoubleGroupByFunction(arg);
+    }
 }

@@ -74,5 +74,10 @@ public class CastVarcharToCharFunctionFactory implements FunctionFactory {
         public boolean isThreadSafe() {
             return false;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

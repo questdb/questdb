@@ -54,5 +54,10 @@ public class CastTimestampToBooleanFunctionFactory implements FunctionFactory {
             long timestamp = arg.getTimestamp(rec);
             return timestamp != Numbers.LONG_NULL && timestamp != 0;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

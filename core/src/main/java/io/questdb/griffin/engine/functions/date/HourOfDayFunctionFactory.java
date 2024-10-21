@@ -76,5 +76,10 @@ public class HourOfDayFunctionFactory implements FunctionFactory {
         public String getName() {
             return "hour";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new HourOfDayFunction(arg);
+        }
     }
 }

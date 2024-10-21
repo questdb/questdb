@@ -58,5 +58,10 @@ public class CastIPv4ToIntFunctionFactory implements FunctionFactory {
             }
             return arg.getIPv4(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastIPv4ToIntFunction(arg);
+        }
     }
 }

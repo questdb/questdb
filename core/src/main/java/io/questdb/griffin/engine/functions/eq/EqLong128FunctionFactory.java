@@ -60,5 +60,10 @@ public class EqLong128FunctionFactory implements FunctionFactory {
                             && left.getLong128Hi(rec) == right.getLong128Hi(rec)
             );
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

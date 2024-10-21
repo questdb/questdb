@@ -103,6 +103,11 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
             }
             sink.val('=').val(constant).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckFunc(arg, constant);
+        }
     }
 
     private static class Func extends AbstractEqBinaryFunction {
@@ -122,6 +127,11 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
             } else {
                 return "=";
             }
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 
@@ -150,6 +160,11 @@ public class EqIPv4FunctionFactory implements FunctionFactory {
             } else {
                 sink.val(" is null");
             }
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new NullCheckFunc(arg);
         }
     }
 }

@@ -203,6 +203,11 @@ public class InSymbolFunctionFactory implements FunctionFactory {
             }
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func((SymbolFunction)arg, new CharSequenceHashSet(set), new ObjList<>(deferredValues), new IntList(deferredValuePositions));
+        }
+
         private boolean testAsInt(Record rec) {
             return intSet.contains(arg.getInt(rec));
         }

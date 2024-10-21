@@ -178,6 +178,11 @@ public class InDoubleFunctionFactory implements FunctionFactory {
             }
             sink.val(" in ").val(inList);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new InDoubleConstFunction(arg, new DoubleList(inList));
+        }
     }
 
     private static class InDoubleRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
@@ -220,6 +225,11 @@ public class InDoubleFunctionFactory implements FunctionFactory {
                 sink.val(" not");
             }
             sink.val(" in ").val(inList);
+        }
+
+        @Override
+        public Function newInstance(ObjList<Function> args) {
+            return new InDoubleRuntimeConstFunction(keyFunction.deepClone(), args, new IntList(valueFunctionPositions));
         }
     }
 
@@ -272,6 +282,11 @@ public class InDoubleFunctionFactory implements FunctionFactory {
             }
             sink.val(" in ");
             sink.val(args, 1);
+        }
+
+        @Override
+        public Function newInstance(ObjList<Function> args) {
+            return new InDoubleVarFunction(args);
         }
     }
 }

@@ -81,5 +81,10 @@ public class NullIfLongFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("nullif(").val(longFunc1).val(',').val(longFunc2).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new NullIfLongFunction(left, right);
+        }
     }
 }

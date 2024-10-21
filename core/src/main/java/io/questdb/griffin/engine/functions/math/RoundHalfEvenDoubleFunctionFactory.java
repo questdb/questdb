@@ -109,6 +109,11 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return right;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 
     private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
@@ -139,6 +144,11 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(SYMBOL).val('(').val(arg).val(',').val(scale).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FuncNegConst(arg, scale);
+        }
     }
 
     private static class FuncPosConst extends DoubleFunction implements UnaryFunction {
@@ -168,6 +178,11 @@ public class RoundHalfEvenDoubleFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(SYMBOL).val('(').val(arg).val(',').val(scale).val(')');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FuncPosConst(arg, scale);
         }
     }
 

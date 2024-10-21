@@ -52,5 +52,10 @@ public class CastShortToCharFunctionFactory implements FunctionFactory {
         public char getChar(Record rec) {
             return (char) arg.getShort(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

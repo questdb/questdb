@@ -86,5 +86,10 @@ public class SubTimestampFunctionFactory implements FunctionFactory {
         public boolean isOperator() {
             return true;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

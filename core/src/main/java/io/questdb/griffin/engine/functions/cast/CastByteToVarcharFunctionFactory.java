@@ -78,5 +78,10 @@ public class CastByteToVarcharFunctionFactory implements FunctionFactory {
             sinkB.put((int) arg.getByte(rec));
             return sinkB;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

@@ -58,5 +58,10 @@ public class CastFloatToDoubleFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             return arg.getFloat(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

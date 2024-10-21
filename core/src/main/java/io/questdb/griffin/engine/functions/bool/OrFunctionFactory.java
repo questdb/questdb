@@ -102,5 +102,10 @@ public class OrFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val('(').val(left).val(" or ").val(right).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new MyBooleanFunction(left, right);
+        }
     }
 }

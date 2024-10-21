@@ -122,6 +122,11 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
             sink.val('=');
             sink.valLong256(constLong0, constLong1, constLong2, constLong3);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstStrFunc(arg, constLong0, constLong1, constLong2, constLong3);
+        }
     }
 
     private static class Long256ConstDecoder {
@@ -203,6 +208,11 @@ public class EqLong256StrFunctionFactory implements FunctionFactory {
             }
             sink.val('=');
             sink.val(strFunc);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new RuntimeConstStrFunc(left, right);
         }
     }
 }

@@ -52,5 +52,10 @@ public class CastByteToCharFunctionFactory implements FunctionFactory {
         public char getChar(Record rec) {
             return (char) arg.getByte(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

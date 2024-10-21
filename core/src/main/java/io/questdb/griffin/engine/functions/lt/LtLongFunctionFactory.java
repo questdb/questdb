@@ -96,5 +96,10 @@ public class LtLongFunctionFactory implements FunctionFactory {
             }
             sink.val(right);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new LtLongFunction(left, right);
+        }
     }
 }

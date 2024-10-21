@@ -53,5 +53,10 @@ public class CastBooleanToDoubleFunctionFactory implements FunctionFactory {
             boolean val = arg.getBool(rec);
             return val ? 1.0f : 0.0f;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

@@ -105,6 +105,11 @@ public class RPadVarcharFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new RPadFunc(left, right, maxLength);
+        }
+
         @Nullable
         private Utf8StringSink rPad(Utf8Sequence str, int len, Utf8StringSink sink) {
             if (str != null && len >= 0) {

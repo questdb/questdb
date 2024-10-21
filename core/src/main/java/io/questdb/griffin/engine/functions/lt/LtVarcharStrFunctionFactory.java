@@ -117,5 +117,10 @@ public class LtVarcharStrFunctionFactory implements FunctionFactory {
             sink.val(getName());
             sink.val('\'').val(constant).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstOnRightFunc(arg, constant);
+        }
     }
 }

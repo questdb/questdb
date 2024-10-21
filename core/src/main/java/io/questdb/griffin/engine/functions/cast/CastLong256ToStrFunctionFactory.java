@@ -90,5 +90,10 @@ public class CastLong256ToStrFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(arg).val("::string");
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

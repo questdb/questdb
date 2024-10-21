@@ -54,5 +54,10 @@ public class CastDoubleToBooleanFunctionFactory implements FunctionFactory {
             double dbl = arg.getDouble(rec);
             return !Numbers.isNull(dbl) && Math.signum(dbl) != 0;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

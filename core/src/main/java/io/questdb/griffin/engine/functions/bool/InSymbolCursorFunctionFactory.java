@@ -180,6 +180,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             sink.val(valueArg).val(" in ").val(cursorArg);
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new StrInCursorFunction(left, right, func);
+        }
+
         private void buildValueSet() {
             final Record record = cursor.getRecord();
             StringSink sink = Misc.getThreadLocalSink();
@@ -217,6 +222,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(valueArg).val(" in null");
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new StrInNullCursorFunction(arg);
         }
     }
 
@@ -288,6 +298,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             sink.val(valueArg).val(" in ").val(cursorArg);
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new SymbolInCursorFunction((SymbolFunction) left, right, func);
+        }
+
         private void buildSymbolKeys() {
             final StaticSymbolTable symbolTable = valueArg.getStaticSymbolTable();
             assert symbolTable != null;
@@ -323,6 +338,11 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(valueArg).val(" in null");
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new SymbolInNullCursorFunction(arg);
         }
     }
 }

@@ -61,4 +61,9 @@ public class FirstNotNullTimestampGroupByFunction extends FirstTimestampGroupByF
             destValue.putLong(valueIndex + 1, srcVal);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstNotNullTimestampGroupByFunction(arg);
+    }
 }

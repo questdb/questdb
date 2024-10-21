@@ -96,6 +96,11 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(left).val(" between ").val(from).val(" and ").val(to);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstFunc(arg, from, to);
+        }
     }
 
     private static class VarBetweenFunction extends BooleanFunction implements TernaryFunction {
@@ -147,6 +152,11 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(arg).val(" between ").val(from).val(" and ").val(to);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new VarBetweenFunction(center, left, right);
         }
     }
 }

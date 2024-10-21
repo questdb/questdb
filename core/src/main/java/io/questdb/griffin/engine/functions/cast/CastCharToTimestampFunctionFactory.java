@@ -60,5 +60,10 @@ public class CastCharToTimestampFunctionFactory implements FunctionFactory {
             final byte v = (byte) (arg.getChar(rec) - '0');
             return v > -1 && v < 10 ? v : Numbers.LONG_NULL;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

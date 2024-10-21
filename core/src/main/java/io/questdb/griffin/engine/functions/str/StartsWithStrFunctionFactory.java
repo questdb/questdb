@@ -83,5 +83,10 @@ public class StartsWithStrFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return prefixFunc;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new StartsWithStrFunction(left, right);
+        }
     }
 }

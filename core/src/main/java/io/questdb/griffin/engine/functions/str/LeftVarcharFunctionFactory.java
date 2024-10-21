@@ -110,6 +110,11 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
             sink.val("left(").val(varcharFunc).val(',').val(count).val(')');
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCountFunc(arg, count);
+        }
+
         private int getCharPos(int len) {
             return LeftVarcharFunctionFactory.getCharPos(len, count);
         }
@@ -171,6 +176,11 @@ public class LeftVarcharFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
 
         @Nullable

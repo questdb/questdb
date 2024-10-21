@@ -189,6 +189,11 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
         return false;
     }
 
+    @Override
+    public Function newInstance(final Function left, final Function center, final Function right) {
+        return new HaversineDistDegreeGroupByFunction(left, center, right);
+    }
+
     private double calculateHaversineDistance(MapValue value1, MapValue value2) {
         //value1
         double lat1Degrees = getLastLatitude(value1);

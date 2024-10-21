@@ -59,4 +59,9 @@ class Long256CaseFunction extends Long256Function implements CaseFunction {
     public Long256 getLong256B(Record rec) {
         return picker.pick(rec).getLong256B(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new Long256CaseFunction(picker, args);
+    }
 }

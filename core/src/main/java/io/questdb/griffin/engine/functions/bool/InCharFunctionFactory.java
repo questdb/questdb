@@ -115,5 +115,10 @@ public class InCharFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(arg).val(" in ").val(set);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new InCharConstFunction(arg, new IntHashSet(set));
+        }
     }
 }

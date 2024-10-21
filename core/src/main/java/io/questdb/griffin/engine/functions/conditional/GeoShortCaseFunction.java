@@ -49,4 +49,9 @@ public class GeoShortCaseFunction extends GeoShortFunction implements MultiArgFu
     public short getGeoShort(Record rec) {
         return picker.pick(rec).getGeoShort(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new GeoShortCaseFunction(type, picker, args);
+    }
 }

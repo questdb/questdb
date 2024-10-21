@@ -76,5 +76,10 @@ public class SecondOfMinuteFunctionFactory implements FunctionFactory {
         public String getName() {
             return "second";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new SecondOfMinuteFunc(arg);
+        }
     }
 }

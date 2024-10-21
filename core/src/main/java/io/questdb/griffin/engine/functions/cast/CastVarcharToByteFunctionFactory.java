@@ -62,5 +62,10 @@ public class CastVarcharToByteFunctionFactory implements FunctionFactory {
             final Utf8Sequence value = arg.getVarcharA(rec);
             return (byte) Numbers.parseIntQuiet(value != null ? value.asAsciiCharSequence() : null);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

@@ -106,4 +106,9 @@ public class TestSumTDoubleGroupByFunction extends DoubleFunction implements Gro
     public boolean supportsParallelism() {
         return false;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new TestSumTDoubleGroupByFunction(arg);
+    }
 }

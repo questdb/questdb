@@ -67,5 +67,10 @@ public class CastVarcharToDoubleFunctionFactory implements FunctionFactory {
                 return Double.NaN;
             }
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

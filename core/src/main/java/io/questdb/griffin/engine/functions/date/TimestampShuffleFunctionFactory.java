@@ -95,6 +95,9 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
             rnd.reset();
         }
 
-
+        @Override
+        public Function deepClone() {
+            return new TimestampShuffleFunction(start, end);
+        }
     }
 }

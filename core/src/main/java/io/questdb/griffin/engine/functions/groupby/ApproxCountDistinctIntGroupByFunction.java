@@ -46,9 +46,11 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     private int hllPtrIndex;
     private int overwrittenFlagIndex;
     private int valueIndex;
+    private final int precision;
 
     public ApproxCountDistinctIntGroupByFunction(Function arg, int precision) {
         this.arg = arg;
+        this.precision = precision;
         this.hllA = new HyperLogLog(precision);
         this.hllB = new HyperLogLog(precision);
     }
@@ -219,6 +221,11 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     @Override
     public boolean supportsParallelism() {
         return true;
+    }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new ApproxCountDistinctIntGroupByFunction(arg, precision);
     }
 
     private void overwrite(MapValue mapValue, long value) {

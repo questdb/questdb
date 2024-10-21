@@ -97,6 +97,16 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
             }
             sink.val(" in ").val(intervals);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new EqTimestampStrConstantFunction(arg, intervals);
+        }
+
+        private EqTimestampStrConstantFunction(Function left, LongList intervals) {
+            this.left = left;
+            this.intervals.add(intervals);
+        }
     }
 
     public static class EqTimestampStrFunction extends NegatableBooleanFunction implements BinaryFunction {
@@ -151,6 +161,11 @@ public class InTimestampStrFunctionFactory implements FunctionFactory {
                 sink.val(" not");
             }
             sink.val(" in ").val(right);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new EqTimestampStrFunction(left, right);
         }
     }
 }

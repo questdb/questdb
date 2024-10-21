@@ -67,5 +67,10 @@ public class ExpDoubleFunctionFactory implements FunctionFactory {
         public String getName() {
             return "exp";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ExpFunction(arg);
+        }
     }
 }

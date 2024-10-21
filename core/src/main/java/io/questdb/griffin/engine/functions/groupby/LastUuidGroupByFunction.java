@@ -54,4 +54,9 @@ public final class LastUuidGroupByFunction extends FirstUuidGroupByFunction {
             destValue.putLong128(valueIndex + 1, srcValue.getLong128Lo(valueIndex + 1), srcValue.getLong128Hi(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastUuidGroupByFunction(arg);
+    }
 }

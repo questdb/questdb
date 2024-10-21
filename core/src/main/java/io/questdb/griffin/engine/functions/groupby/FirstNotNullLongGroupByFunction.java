@@ -62,4 +62,9 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
             destValue.putLong(valueIndex + 1, srcVal);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstNotNullLongGroupByFunction(arg);
+    }
 }

@@ -115,4 +115,9 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     public boolean supportsParallelism() {
         return false;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new TestSumStringGroupByFunction(arg);
+    }
 }

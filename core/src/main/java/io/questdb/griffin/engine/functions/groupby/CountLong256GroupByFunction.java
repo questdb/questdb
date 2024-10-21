@@ -59,4 +59,9 @@ public class CountLong256GroupByFunction extends AbstractCountGroupByFunction {
     public boolean supportsParallelism() {
         return false;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new CountLong256GroupByFunction(arg);
+    }
 }

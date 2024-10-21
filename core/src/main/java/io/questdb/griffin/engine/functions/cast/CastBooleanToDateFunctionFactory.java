@@ -52,5 +52,10 @@ public class CastBooleanToDateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             return arg.getDate(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

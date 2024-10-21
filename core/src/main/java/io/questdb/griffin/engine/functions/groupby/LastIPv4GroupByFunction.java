@@ -53,4 +53,9 @@ public class LastIPv4GroupByFunction extends FirstIPv4GroupByFunction {
             destValue.putInt(valueIndex + 1, srcValue.getIPv4(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastIPv4GroupByFunction(arg);
+    }
 }

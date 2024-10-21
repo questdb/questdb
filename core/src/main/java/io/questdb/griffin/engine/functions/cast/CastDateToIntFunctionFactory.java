@@ -60,5 +60,10 @@ public class CastDateToIntFunctionFactory implements FunctionFactory {
             final long value = arg.getDate(rec);
             return value == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) value;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

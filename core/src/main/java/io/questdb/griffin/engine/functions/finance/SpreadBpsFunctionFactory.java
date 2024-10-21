@@ -79,5 +79,10 @@ public class SpreadBpsFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return ask;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new SpreadBpsFunction(left, right);
+        }
     }
 }

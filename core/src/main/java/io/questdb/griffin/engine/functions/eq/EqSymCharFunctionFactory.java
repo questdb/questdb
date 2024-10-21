@@ -113,6 +113,11 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
             }
             sink.val("='").val(constant).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckColumnFunc((SymbolFunction) arg, constant);
+        }
     }
 
     private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -142,6 +147,11 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
             }
             sink.val("='").val(constant).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckFunc(arg, constant);
+        }
     }
 
     private static class Func extends AbstractEqBinaryFunction {
@@ -152,6 +162,11 @@ public class EqSymCharFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != Chars.equalsNc(left.getSymbol(rec), right.getChar(rec));
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 }

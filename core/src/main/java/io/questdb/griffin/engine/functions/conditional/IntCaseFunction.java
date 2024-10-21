@@ -48,4 +48,9 @@ class IntCaseFunction extends IntFunction implements CaseFunction {
     public int getInt(Record rec) {
         return picker.pick(rec).getInt(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new IntCaseFunction(picker, args);
+    }
 }

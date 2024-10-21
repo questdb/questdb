@@ -115,4 +115,9 @@ public class MaxCharGroupByFunction extends CharFunction implements GroupByFunct
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new MaxCharGroupByFunction(arg);
+    }
 }

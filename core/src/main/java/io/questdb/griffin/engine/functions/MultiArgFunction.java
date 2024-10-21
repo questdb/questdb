@@ -108,4 +108,11 @@ public interface MultiArgFunction extends Function {
     default void toTop() {
         GroupByUtils.toTop(getArgs());
     }
+
+    Function newInstance(final ObjList<Function> args);
+
+    @Override
+    default Function deepClone() {
+        return newInstance(new ObjList<>(getArgs(), true));
+    }
 }

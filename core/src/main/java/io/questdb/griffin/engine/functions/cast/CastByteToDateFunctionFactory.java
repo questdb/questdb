@@ -52,5 +52,10 @@ public class CastByteToDateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             return arg.getByte(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastByteToDateFunction(arg);
+        }
     }
 }

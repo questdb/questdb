@@ -74,5 +74,10 @@ public class MatchCharFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(value).val(" ~ '").val(expected).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new MatchFunction(arg, expected);
+        }
     }
 }

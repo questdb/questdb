@@ -79,5 +79,10 @@ public class CastFloatToLong256FunctionFactory implements FunctionFactory {
             long256b.setLow((long) value);
             return long256b;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

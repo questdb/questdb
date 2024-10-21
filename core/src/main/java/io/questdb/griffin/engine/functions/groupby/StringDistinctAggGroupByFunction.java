@@ -192,4 +192,9 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
         }
         return sink;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new StringDistinctAggGroupByFunction(arg, delimiter, setInitialCapacity, setLoadFactor);
+    }
 }

@@ -173,6 +173,10 @@ public class SplitPartFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        protected int getIndexPosition() {
+            return indexPosition;
+        }
+
         private StringSink getStrWithClear(Record rec, StringSink sink) {
             sink.clear();
             CharSequence str = strFunc.getStrA(rec);
@@ -203,6 +207,11 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new SplitPartConstIndexFunction(left, delimiterFunc, indexFunc, getIndexPosition(), index);
+        }
+
+        @Override
         int getIndex(Record rec) {
             return index;
         }
@@ -217,6 +226,11 @@ public class SplitPartFunctionFactory implements FunctionFactory {
                 int indexPosition
         ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new SplitPartFunction(left, center, right, getIndexPosition());
         }
 
         @Override

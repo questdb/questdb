@@ -53,5 +53,10 @@ public class CastSymbolToByteFunctionFactory implements FunctionFactory {
         public byte getByte(Record rec) {
             return (byte) Numbers.parseIntQuiet(arg.getSymbol(rec));
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

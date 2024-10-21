@@ -71,5 +71,10 @@ public class NegFloatFunctionFactory implements FunctionFactory {
         public boolean isOperator() {
             return true;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

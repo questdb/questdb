@@ -92,6 +92,11 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(arg).val("::regclass");
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastStrToRegClassFunction(arg);
+        }
     }
 
     static {

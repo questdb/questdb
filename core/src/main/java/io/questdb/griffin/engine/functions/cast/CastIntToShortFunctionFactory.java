@@ -54,5 +54,10 @@ public class CastIntToShortFunctionFactory implements FunctionFactory {
             final int value = arg.getInt(rec);
             return value != Numbers.INT_NULL ? (short) value : 0;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

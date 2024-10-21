@@ -145,6 +145,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             }
             return Numbers.INT_NULL;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CenturyFunction(arg);
+        }
     }
 
     static final class DecadeFunction extends IntExtractFunction {
@@ -159,6 +164,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
                 return Timestamps.getDecade(value);
             }
             return Numbers.INT_NULL;
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new DecadeFunction(arg);
         }
     }
 
@@ -175,6 +185,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             }
             return Numbers.INT_NULL;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new DowFunction(arg);
+        }
     }
 
     static final class DoyFunction extends IntExtractFunction {
@@ -190,6 +205,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             }
             return Numbers.INT_NULL;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new DoyFunction(arg);
+        }
     }
 
     static final class EpochFunction extends LongExtractFunction {
@@ -204,6 +224,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
                 return value / Timestamps.SECOND_MICROS;
             }
             return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new EpochFunction(arg);
         }
     }
 
@@ -238,6 +263,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             }
             return Numbers.INT_NULL;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new IsoDowFunction(arg);
+        }
     }
 
     static final class IsoYearFunction extends IntExtractFunction {
@@ -252,6 +282,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
                 return Timestamps.getIsoYear(value);
             }
             return Numbers.INT_NULL;
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new IsoYearFunction(arg);
         }
     }
 
@@ -286,6 +321,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             }
             return Numbers.LONG_NULL;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new MicrosecondsFunction(arg);
+        }
     }
 
     static final class MillenniumFunction extends IntExtractFunction {
@@ -300,6 +340,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
                 return Timestamps.getMillennium(value);
             }
             return Numbers.INT_NULL;
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new MillenniumFunction(arg);
         }
     }
 
@@ -316,6 +361,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             }
             return Numbers.LONG_NULL;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new MillisecondsFunction(arg);
+        }
     }
 
     static final class QuarterFunction extends IntExtractFunction {
@@ -331,6 +381,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
             }
             return Numbers.INT_NULL;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new QuarterFunction(arg);
+        }
     }
 
     static final class WeekFunction extends IntExtractFunction {
@@ -345,6 +400,11 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
                 return Timestamps.getWeek(value);
             }
             return Numbers.INT_NULL;
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new WeekFunction(arg);
         }
     }
 }

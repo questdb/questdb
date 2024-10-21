@@ -82,5 +82,10 @@ public final class CastUuidToStrFunctionFactory implements FunctionFactory {
             long hi = arg.getLong128Hi(rec);
             return Uuid.isNull(lo, hi) ? TableUtils.NULL_LEN : Uuid.UUID_LENGTH;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

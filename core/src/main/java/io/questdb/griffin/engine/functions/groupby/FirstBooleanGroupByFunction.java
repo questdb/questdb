@@ -111,4 +111,9 @@ public class FirstBooleanGroupByFunction extends BooleanFunction implements Grou
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstBooleanGroupByFunction(arg);
+    }
 }

@@ -97,5 +97,10 @@ public class AllNotEqVarcharFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(arg).val(" <> all ").val(set);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new AllNotEqualVarcharFunction(arg, new Utf8SequenceHashSet(set));
+        }
     }
 }

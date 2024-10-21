@@ -90,5 +90,10 @@ public class RndDateCCCFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_date(").val(lo).val(',').val(range).val(',').val(nanRate).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new Func(lo, range + lo - 1, nanRate - 1);
+        }
     }
 }

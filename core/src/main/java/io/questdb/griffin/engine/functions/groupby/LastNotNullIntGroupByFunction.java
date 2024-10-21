@@ -60,4 +60,9 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
             destValue.putInt(valueIndex + 1, srcVal);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastNotNullIntGroupByFunction(arg);
+    }
 }

@@ -94,6 +94,11 @@ public class CastVarcharToGeoHashFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function newInstance(final Function arg) {
+            return new Func(type, arg, position);
+        }
+
+        @Override
         protected long getGeoHashLong0(Record rec) {
             try {
                 return parseGeoHash(arg.getVarcharA(rec), position, bitsPrecision);

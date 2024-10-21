@@ -79,5 +79,10 @@ public class CastVarcharToIPv4FunctionFactory implements FunctionFactory {
             final Utf8Sequence value = arg.getVarcharA(rec);
             return Numbers.parseIPv4Quiet(value != null ? value.asAsciiCharSequence() : null);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

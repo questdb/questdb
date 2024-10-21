@@ -88,6 +88,10 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
             sink.val("rnd_ipv4(").val(lo).val(',').val(range + lo - 1).val(nullRate - 1).val(')');
         }
 
+        @Override
+        public Function deepClone() {
+            return new RndFunction(lo, range + lo - 1, nullRate);
+        }
     }
 }
 

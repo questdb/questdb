@@ -113,6 +113,11 @@ public class ContainsEqIPv4Utils {
             sink.val(arg);
             sink.val("<<=").val(subnet).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstStrFunc(arg, subnet, netmask);
+        }
     }
 
     private static class RuntimeConstStrFunc extends BooleanFunction implements BinaryFunction {
@@ -169,6 +174,11 @@ public class ContainsEqIPv4Utils {
             sink.val(ipv4Func);
             sink.val("<<=").val(strFunc).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new RuntimeConstStrFunc(left, right, strFuncPosition);
+        }
     }
 
     private static class StrFunc extends BooleanFunction implements BinaryFunction {
@@ -216,6 +226,11 @@ public class ContainsEqIPv4Utils {
             sink.val(ipv4Func);
             sink.val("<<=").val(strFunc).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new StrFunc(left, right);
+        }
     }
 
     private static class VarcharFunc extends BooleanFunction implements BinaryFunction {
@@ -262,6 +277,11 @@ public class ContainsEqIPv4Utils {
         public void toPlan(PlanSink sink) {
             sink.val(ipv4Func);
             sink.val("<<=").val(varcharFunc).val('\'');
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new VarcharFunc(left, right);
         }
     }
 }

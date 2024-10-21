@@ -115,6 +115,11 @@ public class LeftStrFunctionFactory implements FunctionFactory {
             sink.val("left(").val(strFunc).val(',').val(count).val(')');
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCountFunc(arg, count);
+        }
+
         private int getPos(int len) {
             return LeftStrFunctionFactory.getPos(len, count);
         }
@@ -182,6 +187,11 @@ public class LeftStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
 
         @Nullable

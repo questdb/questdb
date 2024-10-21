@@ -30,6 +30,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
+
 public interface UnaryFunction extends Function {
 
     @Override
@@ -86,5 +89,12 @@ public interface UnaryFunction extends Function {
     @Override
     default void toTop() {
         getArg().toTop();
+    }
+
+    Function newInstance(final Function arg);
+
+    @Override
+    default Function deepClone() {
+        return newInstance(getArg().deepClone());
     }
 }

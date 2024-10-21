@@ -71,5 +71,10 @@ public class Atan2DoubleFunctionFactory implements FunctionFactory {
         public String getName() {
             return SYMBOL;
         }
+
+        @Override
+        public Function deepClone() {
+            return new Atan2Function(y.deepClone(), x.deepClone());
+        }
     }
 }

@@ -52,5 +52,10 @@ public class CastShortToLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             return arg.getShort(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

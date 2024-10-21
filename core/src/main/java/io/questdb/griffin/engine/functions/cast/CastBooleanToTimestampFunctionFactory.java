@@ -52,5 +52,10 @@ public class CastBooleanToTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             return arg.getTimestamp(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

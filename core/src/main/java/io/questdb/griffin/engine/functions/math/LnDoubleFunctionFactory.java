@@ -71,5 +71,10 @@ public class LnDoubleFunctionFactory implements FunctionFactory {
         public String getName() {
             return "ln";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new LnFunction(arg);
+        }
     }
 }

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.SqlException;
 
 public interface ConstantFunction extends Function {
     @Override
@@ -35,5 +36,10 @@ public interface ConstantFunction extends Function {
     @Override
     default boolean isThreadSafe() {
         return true;
+    }
+
+    @Override
+    default Function deepClone() {
+        return this;
     }
 }

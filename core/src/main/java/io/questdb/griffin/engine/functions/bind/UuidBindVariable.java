@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.engine.functions.UuidFunction;
@@ -56,6 +57,11 @@ public class UuidBindVariable extends UuidFunction implements ScalarFunction, Mu
     @Override
     public boolean isRuntimeConstant() {
         return true;
+    }
+
+    @Override
+    public Function deepClone() {
+        return this;
     }
 
     void set(long lo, long hi) {

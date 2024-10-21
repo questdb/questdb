@@ -85,6 +85,11 @@ public class RndLong256FunctionFactory implements FunctionFactory {
             sink.val(SIGNATURE);
         }
 
+        @Override
+        public Function deepClone() {
+            return new RndFunction();
+        }
+
         @NotNull
         private Long256 rndLong(Long256Impl long256) {
             long256.fromRnd(rnd);

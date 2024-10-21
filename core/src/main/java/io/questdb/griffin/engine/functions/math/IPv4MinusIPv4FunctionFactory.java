@@ -85,5 +85,10 @@ public class IPv4MinusIPv4FunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(left).val('+').val(right);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new IPv4MinusIPv4Function(left, right);
+        }
     }
 }

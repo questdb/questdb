@@ -154,6 +154,11 @@ public class CorrGroupByFunction extends DoubleFunction implements GroupByFuncti
         return false;
     }
 
+    @Override
+    public Function newInstance(final Function left, final Function right) {
+        return new CorrGroupByFunction(left, right);
+    }
+
     protected void aggregate(MapValue mapValue, double x, double y) {
         double meanX = mapValue.getDouble(valueIndex);
         double sumX = mapValue.getDouble(valueIndex + 1);

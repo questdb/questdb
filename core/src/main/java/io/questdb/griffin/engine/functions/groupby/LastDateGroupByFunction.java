@@ -54,4 +54,9 @@ public class LastDateGroupByFunction extends FirstDateGroupByFunction {
             destValue.putDate(valueIndex + 1, srcValue.getDate(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastDateGroupByFunction(0, arg);
+    }
 }

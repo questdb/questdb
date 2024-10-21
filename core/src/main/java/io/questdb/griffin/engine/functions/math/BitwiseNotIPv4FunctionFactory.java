@@ -75,5 +75,10 @@ public class BitwiseNotIPv4FunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val('~').val(value);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new BitwiseNotIPv4Function(arg);
+        }
     }
 }

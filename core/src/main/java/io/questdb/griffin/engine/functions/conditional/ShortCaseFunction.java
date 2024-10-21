@@ -47,4 +47,9 @@ class ShortCaseFunction extends ShortFunction implements CaseFunction {
     public short getShort(Record rec) {
         return picker.pick(rec).getShort(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new ShortCaseFunction(picker, args);
+    }
 }

@@ -150,4 +150,9 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
         mapValue.putDouble(valueIndex, t);
         mapValue.putDouble(valueIndex + 1, c);
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new NSumDoubleGroupByFunction(arg);
+    }
 }

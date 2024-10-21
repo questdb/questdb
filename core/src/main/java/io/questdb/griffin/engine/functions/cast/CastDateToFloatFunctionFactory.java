@@ -52,5 +52,10 @@ public class CastDateToFloatFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             return arg.getFloat(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

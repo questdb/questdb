@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Rosti;
@@ -128,5 +129,16 @@ public class MinDoubleVectorAggregateFunction extends DoubleFunction implements 
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntMinDoubleWrapUp(pRosti, valueOffset, this.min.get());
+    }
+
+    @Override
+    public Function deepClone() {
+        return new MinDoubleVectorAggregateFunction(columnIndex, keyValueFunc, distinctFunc);
+    }
+
+    private MinDoubleVectorAggregateFunction(int columnIndex, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+        this.columnIndex = columnIndex;
+        this.keyValueFunc = keyValueFunc;
+        this.distinctFunc = distinctFunc;
     }
 }

@@ -115,6 +115,11 @@ public class RPadFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new RPadFunc(strFunc, lenFunc, maxLength);
+        }
+
         @Nullable
         private StringSink rPad(CharSequence str, int len, StringSink sink) {
             if (str != null && len >= 0) {
