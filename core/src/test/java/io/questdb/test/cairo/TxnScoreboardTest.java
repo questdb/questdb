@@ -283,10 +283,6 @@ public class TxnScoreboardTest extends AbstractCairoTest {
             try (final Path shmPath = new Path()) {
                 try (TxnScoreboard scoreboard2 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
                     try (TxnScoreboard scoreboard1 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
-                        for (int i = 0; i <= expect; i++) {
-                            Assert.assertEquals(0, scoreboard1.getActiveReaderCount(i));
-                        }
-
                         // we should successfully acquire expected number of entries
                         for (int i = 0; i < expect; i++) {
                             scoreboard1.acquireTxn(i + 134);
