@@ -40,9 +40,14 @@ public class MatViewGraph implements QuietCloseable {
     private final AtomicInteger queueFullCounter = new AtomicInteger();
     private final ConcurrentHashMap<MaterializedViewRefreshState> refreshStateByTableDirName = new ConcurrentHashMap<>();
     private final ConcurrentQueue<MvRefreshTask> refreshTaskQueue;
+    private final ConcurrentHashMap<MaterializedViewDefinition> viewByDirName = new ConcurrentHashMap<>();
 
     public MatViewGraph(CairoConfiguration configuration) {
         refreshTaskQueue = new ConcurrentQueue<MvRefreshTask>(MvRefreshTask::new);
+    }
+
+    public void clear() {
+        close();
     }
 
     @Override
@@ -79,6 +84,24 @@ public class MatViewGraph implements QuietCloseable {
 
     public int getQueueFullCount() {
         return queueFullCounter.get();
+    }
+
+    public MaterializedViewDefinition getView(CharSequence baseTableName, TableToken viewTable) {
+        BaseTableMatViewRefreshState state = dependantViewsByTableName.get(baseTableName);
+        if (state != null) {
+            try {
+                state.readLock();
+                for (int i = 0, size = state.matViews.size(); i < size; i++) {
+                    MaterializedViewDefinition view = state.matViews.get(i);
+                    if (view.getTableToken().equals(viewTable)) {
+                        return view;
+                    }
+                }
+            } finally {
+                state.unlockRead();
+            }
+        }
+        return null;
     }
 
     public MaterializedViewRefreshState getViewRefreshState(TableToken tableToken) {

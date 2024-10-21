@@ -70,7 +70,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
 
             if (minTs <= maxTs && minTs >= viewDefinition.getSampleByFromEpochMicros()) {
                 // Handle sample by with timezones
-                long sampleByPeriod = viewDefinition.getSampleByPeriodMicros();
+                long sampleByPeriod = viewDefinition.getSampleByInterval();
                 long sampleByFromEpoch = viewDefinition.getSampleByFromEpochMicros();
                 minTs = sampleByFromEpoch + (minTs - sampleByFromEpoch) / sampleByPeriod * sampleByPeriod;
                 maxTs = sampleByFromEpoch + ((maxTs - sampleByFromEpoch + sampleByPeriod) / sampleByPeriod) * sampleByPeriod;

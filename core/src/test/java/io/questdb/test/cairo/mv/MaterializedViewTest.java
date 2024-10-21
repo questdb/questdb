@@ -30,10 +30,11 @@ import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.mv.MaterializedViewRefreshJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
+
+import static io.questdb.std.datetime.microtime.Timestamps.HOUR_MICROS;
 
 public class MaterializedViewTest extends AbstractCairoTest {
     @Test
@@ -115,17 +116,24 @@ public class MaterializedViewTest extends AbstractCairoTest {
     }
 
     private static void createMatView(TableToken baseToken, String viewSql) throws SqlException {
+        String mvName = "price_1h";
         ddl("create table price_1h (" +
                 "sym varchar, price double, ts timestamp" +
                 ") timestamp(ts) partition by DAY WAL dedup upsert keys(ts, sym)"
         );
 
-        MaterializedViewDefinition viewDefinition = new MaterializedViewDefinition();
-
-        viewDefinition.setParentTableName(baseToken.getTableName());
-        viewDefinition.setViewSql(viewSql);
-        viewDefinition.setSampleByPeriodMicros(Timestamps.HOUR_MICROS);
-        viewDefinition.setTableToken(engine.verifyTableName("price_1h"));
+        TableToken mvTableToken = engine.verifyTableName(mvName);
+        MaterializedViewDefinition viewDefinition = new MaterializedViewDefinition(
+                mvTableToken,
+                viewSql,
+                baseToken.getTableName(),
+                HOUR_MICROS,
+                'u',
+                0,
+                Long.MAX_VALUE,
+                "UTC",
+                null
+        );
         engine.getMaterializedViewGraph().upsertView(baseToken, viewDefinition);
     }
 

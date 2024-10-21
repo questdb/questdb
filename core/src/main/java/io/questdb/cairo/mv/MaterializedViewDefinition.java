@@ -27,49 +27,103 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.TableToken;
 
 public class MaterializedViewDefinition {
-    private long sampleByPeriodMicros;
-    private CharSequence parentTableName;
-    private long sampleByFromEpochMicros;
-    private CharSequence viewSql;
-    private TableToken tableToken;
+    private final CharSequence baseTableName;
+    private final long sampleByFromEpochMicros;
+    private final long sampleByPeriodMicros;
+    private final char samplingIntervalUnit;
+    private final TableToken tableToken;
+    private final String timeZone;
+    private final String timeZoneOffset;
+    private final long toMicros;
+    private final CharSequence viewSql;
+
+    public MaterializedViewDefinition(
+            TableToken matViewToken,
+            String query,
+            String baseTableName,
+            long samplingInterval,
+            char samplingIntervalUnit,
+            long fromMicros,
+            long toMicros,
+            String timeZone,
+            String timeZoneOffset
+    ) {
+        this.tableToken = matViewToken;
+        this.viewSql = query;
+        this.baseTableName = baseTableName;
+        this.sampleByPeriodMicros = samplingInterval;
+        this.samplingIntervalUnit = samplingIntervalUnit;
+        this.sampleByFromEpochMicros = fromMicros;
+        this.toMicros = toMicros;
+        this.timeZone = timeZone;
+        this.timeZoneOffset = timeZoneOffset;
+    }
 
     public CharSequence getBaseTableName() {
-        return parentTableName;
+        return baseTableName;
+    }
+
+    public long getFromMicros() {
+        return sampleByFromEpochMicros;
+    }
+
+    public TableToken getMatViewToken() {
+        return tableToken;
+    }
+
+    public CharSequence getQuery() {
+        return viewSql;
     }
 
     public long getSampleByFromEpochMicros() {
         return sampleByFromEpochMicros;
     }
 
-    public long getSampleByPeriodMicros() {
+    public long getSampleByInterval() {
         return sampleByPeriodMicros;
+    }
+
+    public char getSamplingIntervalUnit() {
+        return samplingIntervalUnit;
     }
 
     public TableToken getTableToken() {
         return tableToken;
     }
 
+    public String getTimeZone() {
+        return timeZone;
+    }
+
+    public String getTimeZoneOffset() {
+        return timeZoneOffset;
+    }
+
+    public long getToMicros() {
+        return toMicros;
+    }
+
     public CharSequence getViewSql() {
         return viewSql;
     }
 
-    public void setParentTableName(CharSequence parentTableName) {
-        this.parentTableName = parentTableName;
-    }
+//    public void setBaseTableName(CharSequence baseTableName) {
+//        this.baseTableName = baseTableName;
+//    }
 
-    public void setSampleByFromEpochMicros(long sampleByFromEpochMicros) {
-        this.sampleByFromEpochMicros = sampleByFromEpochMicros;
-    }
-
-    public void setSampleByPeriodMicros(long sampleByPeriodMicros) {
-        this.sampleByPeriodMicros = sampleByPeriodMicros;
-    }
-
-    public void setTableToken(TableToken tableToken) {
-        this.tableToken = tableToken;
-    }
-
-    public void setViewSql(CharSequence viewSql) {
-        this.viewSql = viewSql;
-    }
+//    public void setSampleByFromEpochMicros(long sampleByFromEpochMicros) {
+//        this.sampleByFromEpochMicros = sampleByFromEpochMicros;
+//    }
+//
+//    public void setSampleByPeriodMicros(long sampleByPeriodMicros) {
+//        this.sampleByPeriodMicros = sampleByPeriodMicros;
+//    }
+//
+//    public void setTableToken(TableToken tableToken) {
+//        this.tableToken = tableToken;
+//    }
+//
+//    public void setViewSql(CharSequence viewSql) {
+//        this.viewSql = viewSql;
+//    }
 }

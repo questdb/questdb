@@ -185,12 +185,19 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
                 + " dedup upsert keys(" + upsertKeys + ")"
         );
 
-        MaterializedViewDefinition viewDefinition = new MaterializedViewDefinition();
+        TableToken mvTableToken = engine.verifyTableName(mvName);
+        MaterializedViewDefinition viewDefinition = new MaterializedViewDefinition(
+                mvTableToken,
+                viewSql,
+                baseToken.getTableName(),
+                sampleByPeriod,
+                'u',
+                0,
+                Long.MAX_VALUE,
+                "UTC",
+                null
+        );
 
-        viewDefinition.setParentTableName(baseToken.getTableName());
-        viewDefinition.setViewSql(viewSql);
-        viewDefinition.setSampleByPeriodMicros(sampleByPeriod);
-        viewDefinition.setTableToken(engine.verifyTableName(mvName));
         engine.getMaterializedViewGraph().upsertView(baseToken, viewDefinition);
     }
 
