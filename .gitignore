@@ -18,6 +18,10 @@ win64svc/build
 win64svc/CMakeCache.txt
 win64svc/cmake-build-release
 core/src/main/resources/io/questdb/bin/linux/libasm.a
+core/questdb/bin-local/lib_simdjson.a
+core/questdb/bin-local/libasm.a
+core/questdb/bin-local/libjemalloc.so
+core/questdb/bin-local/libquestdb.so
 core/cmake-build-debug
 core/cmake-build-debug-coverage
 core/cmake-build-release
