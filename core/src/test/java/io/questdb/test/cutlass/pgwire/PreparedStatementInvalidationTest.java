@@ -28,12 +28,22 @@ import io.questdb.PropertyKey;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Ignore;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
-import java.sql.*;
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.BrokenBarrierException;
@@ -1209,8 +1219,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
             for (int i = 0; backgroundError.get() == null && (
                     i < minAttemptCount || System.nanoTime() < minDeadline
                             || !hadSuccess && i < maxAttemptCount && System.nanoTime() < maxDeadline
-            ); i++
-            ) {
+            ); i++) {
                 try {
                     mainLoopBody.run();
                     hadSuccess = true;
