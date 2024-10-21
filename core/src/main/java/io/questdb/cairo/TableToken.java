@@ -163,7 +163,7 @@ public class TableToken implements Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        if (!dirNameSameAsTableName) {
+        if (dirNameSameAsTableName) {
             sink.put(dirName);
         } else {
             sink.put("TableToken{tableName=").put(tableName)

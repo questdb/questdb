@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.*;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
@@ -69,11 +71,19 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
             long maxTs = txnRangeLoader.getMaxTimestamp();
 
             if (minTs <= maxTs && minTs >= viewDefinition.getSampleByFromEpochMicros()) {
-                // Handle sample by with timezones
-                long sampleByPeriod = viewDefinition.getSampleByInterval();
+                // TODO: reuse the sampler instance
+                // TODO: Handle sample by with timezones
+                TimestampSampler sampler = TimestampSamplerFactory.getInstance(
+                        viewDefinition.getSampleByInterval(),
+                        viewDefinition.getSamplingIntervalUnit(),
+                        0
+                );
+
                 long sampleByFromEpoch = viewDefinition.getSampleByFromEpochMicros();
-                minTs = sampleByFromEpoch + (minTs - sampleByFromEpoch) / sampleByPeriod * sampleByPeriod;
-                maxTs = sampleByFromEpoch + ((maxTs - sampleByFromEpoch + sampleByPeriod) / sampleByPeriod) * sampleByPeriod;
+                sampler.setStart(sampleByFromEpoch);
+
+                minTs = sampler.round(minTs);
+                maxTs = sampler.nextTimestamp(sampler.round(maxTs));
 
                 executionContext.setRanges(minTs, maxTs - 1);
 

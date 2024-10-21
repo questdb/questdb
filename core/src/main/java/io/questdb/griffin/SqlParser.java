@@ -779,6 +779,7 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "Unsupported materialized view query");
             }
         }
+        viewTableModel.setDedupKeyFlag(viewTableModel.getTimestampIndex());
         return matViewModel;
     }
 

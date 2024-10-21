@@ -138,15 +138,16 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
+            final String query = "select ts, k, avg(v), last(v) from " + TABLE1 + " sample by 30s";
             ddl("create materialized view test as (" + query + ") partition by day");
 
-            assertQuery("ts\tk\tavg\n", "test", "ts", true, true);
+            assertQuery("ts\tk\tavg\tlast\n", "test", "ts", true, true);
 
             try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
-                assertFalse(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(0));
                 assertTrue(metadata.isDedupKey(1));
                 assertFalse(metadata.isDedupKey(2));
+                assertFalse(metadata.isDedupKey(3));
             }
             assertMaterializedViewDefinition("test", query, TABLE1, 30, 's');
         });

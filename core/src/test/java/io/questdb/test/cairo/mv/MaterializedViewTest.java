@@ -26,17 +26,23 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.mv.MaterializedViewRefreshJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.std.datetime.microtime.Timestamps.HOUR_MICROS;
 
 public class MaterializedViewTest extends AbstractCairoTest {
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
     @Test
     public void testIncrementalRefresh() throws Exception {
         testIncrementalRefresh0("select sym, last(price) as price, ts from base_price sample by 1h");
@@ -65,7 +71,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
             );
 
             TableToken baseToken = engine.verifyTableName("base_price");
-            createMatView(baseToken, "select sym, last(price), ts from base_price sample by 1h");
+            createMatView(baseToken, "select sym, last(price) as price, ts from base_price sample by 1h");
 
             insert("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
@@ -116,25 +122,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
     }
 
     private static void createMatView(TableToken baseToken, String viewSql) throws SqlException {
-        String mvName = "price_1h";
-        ddl("create table price_1h (" +
-                "sym varchar, price double, ts timestamp" +
-                ") timestamp(ts) partition by DAY WAL dedup upsert keys(ts, sym)"
-        );
-
-        TableToken mvTableToken = engine.verifyTableName(mvName);
-        MaterializedViewDefinition viewDefinition = new MaterializedViewDefinition(
-                mvTableToken,
-                viewSql,
-                baseToken.getTableName(),
-                HOUR_MICROS,
-                'u',
-                0,
-                Long.MAX_VALUE,
-                "UTC",
-                null
-        );
-        engine.getMaterializedViewGraph().upsertView(baseToken, viewDefinition);
+        ddl("create materialized view price_1h as (" + viewSql + ") partition by DAY");
     }
 
     private void testIncrementalRefresh0(String viewSql) throws Exception {

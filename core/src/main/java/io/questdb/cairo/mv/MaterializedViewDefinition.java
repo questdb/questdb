@@ -106,24 +106,4 @@ public class MaterializedViewDefinition {
     public CharSequence getViewSql() {
         return viewSql;
     }
-
-//    public void setBaseTableName(CharSequence baseTableName) {
-//        this.baseTableName = baseTableName;
-//    }
-
-//    public void setSampleByFromEpochMicros(long sampleByFromEpochMicros) {
-//        this.sampleByFromEpochMicros = sampleByFromEpochMicros;
-//    }
-//
-//    public void setSampleByPeriodMicros(long sampleByPeriodMicros) {
-//        this.sampleByPeriodMicros = sampleByPeriodMicros;
-//    }
-//
-//    public void setTableToken(TableToken tableToken) {
-//        this.tableToken = tableToken;
-//    }
-//
-//    public void setViewSql(CharSequence viewSql) {
-//        this.viewSql = viewSql;
-//    }
 }

@@ -24,8 +24,8 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.mv.MaterializedViewRefreshJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
@@ -36,11 +36,19 @@ import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.griffin.wal.AbstractFuzzTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MaterializedViewFuzzTest extends AbstractFuzzTest {
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
     @Test
     public void test2LevelDependencyViewFuzz() throws Exception {
         assertMemoryLeak(() -> {
@@ -179,26 +187,10 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
     }
 
     private static void createMatView(TableToken baseToken, String viewSql, String mvName, String upsertKeys, long sampleByPeriod) throws SqlException {
-        ddl("create table " + mvName + " as ("
-                + "SELECT * FROM (" + viewSql + ") WHERE 1 = 2"
-                + ") timestamp(ts) partition by DAY WAL"
-                + " dedup upsert keys(" + upsertKeys + ")"
+        ddl("create materialized view " + mvName + " as ("
+                + viewSql
+                + ") partition by DAY"
         );
-
-        TableToken mvTableToken = engine.verifyTableName(mvName);
-        MaterializedViewDefinition viewDefinition = new MaterializedViewDefinition(
-                mvTableToken,
-                viewSql,
-                baseToken.getTableName(),
-                sampleByPeriod,
-                'u',
-                0,
-                Long.MAX_VALUE,
-                "UTC",
-                null
-        );
-
-        engine.getMaterializedViewGraph().upsertView(baseToken, viewDefinition);
     }
 
     private ObjList<FuzzTransaction> createTransactionsAndMv(Rnd rnd, String tableNameBase, String viewSql) throws SqlException, NumericException {

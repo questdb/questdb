@@ -3038,7 +3038,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         for (int i = 0, n = model.getColumnCount(); i < n; i++) {
             CharSequence columnName = model.getColumnName(i);
             int index = metadata.getColumnIndexQuiet(columnName);
-            assert index > -1 : "wtf? " + columnName;
+            assert index > -1 : "wtf2? " + columnName;
             if (!ColumnType.isSymbol(metadata.getColumnType(index)) && model.isIndexed(i)) {
                 throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
             }
