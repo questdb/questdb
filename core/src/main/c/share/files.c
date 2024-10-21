@@ -374,9 +374,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_lock
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
         (JNIEnv *e, jclass cl, jlong lpszName, jlong size) {
-
     jint fd = open((const char *) lpszName, O_CREAT | O_RDWR, 0644);
-
     if (fd < 0) {
         // error opening / creating file
         return fd;
@@ -384,7 +382,9 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
 
     jlong fileSize = Java_io_questdb_std_Files_length(e, cl, fd);
     if (fileSize > 0) {
-        if (flock((int) fd, LOCK_EX | LOCK_NB) == 0) {
+        ssize_t res;
+        RESTARTABLE(flock((int) fd, LOCK_EX | LOCK_NB), res);
+        if (res == 0) {
             // truncate file to 0 byte
             if (ftruncate(fd, 0) == 0) {
                 // allocate file to `size`
