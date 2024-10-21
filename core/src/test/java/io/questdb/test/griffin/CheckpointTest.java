@@ -1311,10 +1311,10 @@ public class CheckpointTest extends AbstractCairoTest {
                             for (int i = 0, n = metadata0.getColumnCount(); i < n; i++) {
                                 TableColumnMetadata columnMetadata0 = metadata0.getColumnMetadata(i);
                                 TableColumnMetadata columnMetadata1 = metadata0.getColumnMetadata(i);
-                                Assert.assertEquals(columnMetadata0.getName(), columnMetadata1.getName());
-                                Assert.assertEquals(columnMetadata0.getType(), columnMetadata1.getType());
+                                Assert.assertEquals(columnMetadata0.getColumnName(), columnMetadata1.getColumnName());
+                                Assert.assertEquals(columnMetadata0.getColumnType(), columnMetadata1.getColumnType());
                                 Assert.assertEquals(columnMetadata0.getIndexValueBlockCapacity(), columnMetadata1.getIndexValueBlockCapacity());
-                                Assert.assertEquals(columnMetadata0.isIndexed(), columnMetadata1.isIndexed());
+                                Assert.assertEquals(columnMetadata0.isSymbolIndexFlag(), columnMetadata1.isSymbolIndexFlag());
                                 Assert.assertEquals(columnMetadata0.isSymbolTableStatic(), columnMetadata1.isSymbolTableStatic());
                             }
 

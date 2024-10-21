@@ -531,7 +531,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     cursor.hasNext();
                 }
             } else {
-                try (OperationFuture future = cq.execute(null)) {
+                try (OperationFuture future = cq.execute(sqlExecutionContext, null, false)) {
                     future.await();
                 }
             }

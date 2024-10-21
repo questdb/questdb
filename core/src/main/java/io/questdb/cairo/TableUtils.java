@@ -222,7 +222,7 @@ public final class TableUtils {
         if (existingIndex < 0) {
             throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
         }
-        String columnNameStr = columnMetadata.getQuick(existingIndex).getName();
+        String columnNameStr = columnMetadata.getQuick(existingIndex).getColumnName();
         int columnIndex = columnMetadata.size();
         columnMetadata.add(
                 new TableColumnMetadata(
@@ -1341,7 +1341,7 @@ public final class TableUtils {
             throw CairoException.critical(0).put("Column not found: ").put(columnName);
         }
         final String newNameStr = newName.toString();
-        columnMetadata.getQuick(columnIndex).setName(newNameStr);
+        columnMetadata.getQuick(columnIndex).rename(newNameStr);
 
         columnNameIndexMap.removeEntry(columnName);
         columnNameIndexMap.put(newNameStr, columnIndex);

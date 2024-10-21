@@ -802,13 +802,6 @@ public class SqlParser {
         );
         ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         assert columns.size() > 0;
-
-        // we do not know types of columns at this stage
-        // compiler must put table together using query metadata.
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            createTableOperationBuilder.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity());
-        }
-
         createTableOperationBuilder.setQueryModel(queryModel);
         expectTok(lexer, ')');
     }
@@ -874,17 +867,17 @@ public class SqlParser {
         while (true) {
             CharSequence tok = notTermTok(lexer);
             SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-            final CharSequence name = GenericLexer.immutableOf(GenericLexer.unquote(tok));
-            final int position = lexer.lastTokenPosition();
-            final int type = toColumnType(lexer, notTermTok(lexer));
+            final CharSequence columnName = GenericLexer.immutableOf(GenericLexer.unquote(tok));
+            final int columnPosition = lexer.lastTokenPosition();
+            final int columnType = toColumnType(lexer, notTermTok(lexer));
 
-            if (!TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength())) {
-                throw SqlException.$(position, " new column name contains invalid characters");
+            if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
+                throw SqlException.$(columnPosition, " new column name contains invalid characters");
             }
 
-            createTableOperationBuilder.addColumn(position, name, type, configuration.getDefaultSymbolCapacity());
+            createTableOperationBuilder.addColumn(columnPosition, columnName, columnType, configuration.getDefaultSymbolCapacity());
 
-            if (ColumnType.isSymbol(type)) {
+            if (ColumnType.isSymbol(columnType)) {
                 tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
 
                 int symbolCapacity;
@@ -905,7 +898,7 @@ public class SqlParser {
                     cached = configuration.getDefaultSymbolCacheFlag();
                     lexer.unparseLast();
                 }
-                createTableOperationBuilder.cached(cached);
+                createTableOperationBuilder.updateSymbolCacheFlagOfCurrentLastColumn(cached);
                 if (cached && symbolCapacity != -1) {
                     TableUtils.validateSymbolCapacityCached(true, symbolCapacity, lexer.lastTokenPosition());
                 }
@@ -945,20 +938,15 @@ public class SqlParser {
     private void parseCreateTableIndexDef(GenericLexer lexer) throws SqlException {
         expectTok(lexer, '(');
         final CharSequence columnName = expectLiteral(lexer).token;
-        final int position = lexer.lastTokenPosition();
-        final int columnIndex = getCreateTableColumnIndex(columnName, position);
-        final int columnType = createTableOperationBuilder.getColumnType(columnIndex);
-        if (columnType > -1 && !ColumnType.isSymbol(columnType)) {
-            throw SqlException.$(position, "indexes are supported only for SYMBOL columns: ").put(columnName);
-        }
+        final int columnNamePosition = lexer.lastTokenPosition();
 
         if (isCapacityKeyword(tok(lexer, "'capacity'"))) {
             int errorPosition = lexer.getPosition();
             int indexValueBlockSize = expectInt(lexer);
             TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
-            createTableOperationBuilder.setIndexFlags(columnIndex, true, Numbers.ceilPow2(indexValueBlockSize));
+            createTableOperationBuilder.setCreateAsSelectIndexFlag(columnName, columnNamePosition, true, Numbers.ceilPow2(indexValueBlockSize));
         } else {
-            createTableOperationBuilder.setIndexFlags(columnIndex, true, configuration.getIndexValueBlockSize());
+            createTableOperationBuilder.setCreateAsSelectIndexFlag(columnName, columnNamePosition,true, configuration.getIndexValueBlockSize());
             lexer.unparseLast();
         }
         expectTok(lexer, ')');
@@ -968,14 +956,14 @@ public class SqlParser {
         CharSequence tok = tok(lexer, "')', or 'index'");
 
         if (isFieldTerm(tok)) {
-            createTableOperationBuilder.setIndexFlags(false, configuration.getIndexValueBlockSize());
+            createTableOperationBuilder.updateIndexFlagOfCurrentLastColumn(false, configuration.getIndexValueBlockSize());
             return tok;
         }
 
         expectTok(lexer, tok, "index");
 
         if (isFieldTerm(tok = tok(lexer, ") | , expected"))) {
-            createTableOperationBuilder.setIndexFlags(true, configuration.getIndexValueBlockSize());
+            createTableOperationBuilder.updateIndexFlagOfCurrentLastColumn(true, configuration.getIndexValueBlockSize());
             return tok;
         }
 
@@ -984,7 +972,7 @@ public class SqlParser {
         int errorPosition = lexer.getPosition();
         int indexValueBlockSize = expectInt(lexer);
         TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
-        createTableOperationBuilder.setIndexFlags(true, Numbers.ceilPow2(indexValueBlockSize));
+        createTableOperationBuilder.updateIndexFlagOfCurrentLastColumn(true, Numbers.ceilPow2(indexValueBlockSize));
         return null;
     }
 

@@ -626,7 +626,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         populateDenseIndexerList();
 
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
-        columnMetadata.setIndexed(true);
+        columnMetadata.setSymbolIndexFlag(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
         engine.metadataCacheHydrateTable(metadata, true, true);
@@ -735,7 +735,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 isSoftLink = ff.isSoftLink(detachedPath.$()); // returns false regardless in Windows
 
                 // detached metadata files validation
-                CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getName();
+                CharSequence timestampColName = metadata.getColumnMetadata(metadata.getTimestampIndex()).getColumnName();
                 if (partitionSize > -1L) {
                     // read detachedMinTimestamp and detachedMaxTimestamp
                     readPartitionMinMax(ff, timestamp, detachedPath.trimTo(detachedRootLen), timestampColName, partitionSize);
@@ -833,7 +833,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (symbolMapWriter.isCached() != cache) {
             symbolMapWriter.updateCacheFlag(cache);
             TableWriterMetadata.WriterTableColumnMetadata columnMetadata = (TableWriterMetadata.WriterTableColumnMetadata) metadata.getColumnMetadata(columnIndex);
-            columnMetadata.setSymbolCached(cache);
+            columnMetadata.setSymbolCacheFlag(cache);
             updateMetaStructureVersion();
             txWriter.bumpTruncateVersion();
             engine.metadataCacheHydrateTable(metadata, true, true);
@@ -1553,7 +1553,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             swapMetaFile(columnName); // bumps structure version, this is in effect a commit
             // refresh metadata
             TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
-            columnMetadata.setIndexed(false);
+            columnMetadata.setSymbolIndexFlag(false);
             columnMetadata.setIndexValueBlockCapacity(defaultIndexValueBlockSize);
             // remove indexer
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);

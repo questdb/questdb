@@ -1,5 +1,7 @@
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
@@ -20,7 +22,6 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     private final long batchSize;
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private final CharSequenceIntHashMap columnTypeMap = new CharSequenceIntHashMap();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
     private final boolean ignoreIfExists;
     private final String likeTableName;
@@ -41,9 +42,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     // are liable to change every time "select" is recompiled, for example in case of wildcard
     // usage, e.g. create x as select * from y. When "y" changes, such as via drop column,
     // column indexes will shift.
-    // todo: when all test pass, we can consolidate these maps into 1, e.g. text-to-long64
-    private final CharSequenceBoolHashMap symbolCacheFlagMap = new CharSequenceBoolHashMap();
-    private final CharSequenceIntHashMap symbolCapacityMap = new CharSequenceIntHashMap();
+    private final CharSequenceObjHashMap<TableColumnMetadata> augmentedColumnMetadata = new CharSequenceObjHashMap<>();
     private final String tableName;
     private final int tableNamePosition;
     private final int timestampIndex;
@@ -54,7 +53,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     public CreateTableOperation(
             String tableName,
             int tableNamePosition,
-            ObjList<CharSequence> columnNames,
+            ObjList<String> columnNames,
             LongList columnBits,
             int timestampIndex,
             int partitionBy,
@@ -68,24 +67,76 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             int maxUncommittedRows,
             String volumeAlias,
             boolean walEnabled,
-            @Transient CharSequenceObjHashMap<ColumnCastModel> columnCastModeMap
-    ) {
-        // At this point we're creating immutable column names for the operation.
-        // We take this opportunity to capture immutable column names for the cast models
-        // that could be optionally provided
-        for (int i = 0, n = columnNames.size(); i < n; i++) {
-            CharSequence columnName = columnNames.getQuick(i);
-            String columnNameStr = Chars.toString(columnName);
-            this.columnNames.add(columnNameStr);
-            int index = columnCastModeMap.keyIndex(columnName);
-            if (index < 0) {
-                ColumnCastModel ccm = columnCastModeMap.valueAt(index);
-                this.symbolCacheFlagMap.put(columnNameStr, ccm.getSymbolCacheFlag());
-                this.symbolCapacityMap.put(columnNameStr, ccm.getSymbolCapacity());
-                this.columnTypeMap.put(columnNameStr, ccm.getColumnType());
+            @Transient CharSequenceObjHashMap<ColumnCastModel> columnCastModeMap,
+            @Transient CharSequenceIntHashMap createAsSelectIndexColumnNamePositions,
+            @Transient CharSequenceBoolHashMap createAsSelectIndexFlags,
+            @Transient CharSequenceIntHashMap createAsSelectIndexCapacities
+    ) throws SqlException {
+
+        if (recordCursorFactory != null) {
+            // column names and bits are populated from "create table" column list
+            this.columnNames.addAll(columnNames);
+            this.columnBits.add(columnBits);
+        } else {
+            // we have "create as select" SQL, column names will be scraped from the
+            // record cursor during executions time. We might have column
+            // augmentation data from the following sources:
+            // - cast models, provides column types
+            // - (symbol) column index data, e.g. index flag and index capacity
+            // - (symbol) column cache flag
+            ObjList<CharSequence> castColumnNames = columnCastModeMap.keys();
+            for (int i = 0, n = castColumnNames.size(); i < n; i++) {
+                CharSequence columnName = castColumnNames.get(i);
+                ColumnCastModel ccm = columnCastModeMap.get(columnName);
+                int index = createAsSelectIndexFlags.keyIndex(columnName);
+                if (index < 0) {
+                    boolean augIndexFlag = createAsSelectIndexFlags.get(columnName);
+                    int augIndexPos = createAsSelectIndexColumnNamePositions.get(columnName);
+                    int augIndexValueBlockCapacity = createAsSelectIndexCapacities.get(columnName);
+                    // perform some basic validation
+                    if (ccm.getColumnType() != ColumnType.SYMBOL && augIndexFlag) {
+                        throw SqlException.$(augIndexPos, "index flag cannot be applied to ").put(ColumnType.nameOf(ccm.getColumnType()));
+                    }
+
+                    String columnNameStr = Chars.toString(columnName);
+                    TableColumnMetadata tcm = new TableColumnMetadata(
+                            columnNameStr,
+                            ccm.getColumnType(),
+                            augIndexFlag,
+                            augIndexValueBlockCapacity,
+                            true,
+                            null,
+                            -1, // writer index is irrelevant here
+                            false,// dedup flag cannot be set on "create as select", not yet
+                            -1, // irrelvant
+                            ccm.getSymbolCacheFlag(),
+                            ccm.getSymbolCapacity()
+                    );
+                    augmentedColumnMetadata.put(columnNameStr, tcm);
+                } else {
+                    // "index" clause is not used concurrently with the "cast" clause
+                    String columnNameStr = Chars.toString(columnName);
+                    TableColumnMetadata tcm = new TableColumnMetadata(
+                            columnNameStr,
+                            ccm.getColumnType(),
+                            ccm.isIndexed(),
+                            ccm.getIndexValueBlockSize(),
+                            true,
+                            null,
+                            -1, // writer index is irrelevant here
+                            false, // dedup flag cannot be set on "create as select", not yet
+                            -1,
+                            ccm.getSymbolCacheFlag(),
+                            ccm.getSymbolCapacity()
+                    );
+                    augmentedColumnMetadata.put(columnNameStr, tcm);
+                }
             }
+            // column bits must be unset at the compile time
+            // we wil be using this bitset at the runtime
+            assert columnBits.size() == 0;
         }
-        this.columnBits.add(columnBits);
+
         this.likeTableName = likeTableName;
         this.likeTableNamePosition = likeTableNamePosition;
         this.maxUncommittedRows = maxUncommittedRows;
@@ -237,7 +288,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         return walEnabled;
     }
 
-    public void updateMetadataFromSelect(RecordMetadata metadata) {
+    public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata) {
         // This method must only be called in case of "create-as-select".
         // Here we remap data keyed on  column names (from cast maps) to
         // data keyed on column index. We assume that "columnBits" are free to use
@@ -246,29 +297,26 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         columnBits.clear();
 
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            final int columnType;
-            int index = columnTypeMap.keyIndex(metadata.getColumnName(i));
-            if (index < 0) {
-                columnType = columnTypeMap.valueAt(index);
+            TableColumnMetadata augMeta = augmentedColumnMetadata.get(metadata.getColumnName(i));
+            int columnType;
+            boolean symbolIndexed;
+
+            if (augMeta != null) {
+                columnType = augMeta.getColumnType();
+                symbolIndexed = augMeta.
             } else {
                 columnType = metadata.getColumnType(i);
             }
 
-            final int symbolCapacity;
-            index = symbolCapacityMap.keyIndex(metadata.getColumnName(i));
-            if (index < 0) {
-                symbolCapacity = symbolCapacityMap.valueAt(index);
-            } else {
-                symbolCapacity = 0;
+            // todo:
+            if (!ColumnType.isSymbol(metadata.getColumnType(i)) && model.isIndexed(i)) {
+                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
             }
 
-            final int symbolCacheFlag;
-            index = symbolCacheFlagMap.keyIndex(metadata.getColumnName(i));
-            if (index < 0) {
-                symbolCacheFlag = symbolCacheFlagMap.valueAt(index) ? COLUMN_FLAG_CACHED : 0;
-            } else {
-                symbolCacheFlag = 0;
+            if (ColumnType.isNull(metadata.getColumnType(index))) {
+                throw SqlException.$(0, "cannot create NULL-type column, please use type cast, e.g. ").put(columnName).put("::").put("type");
             }
+
             columnBits.add(
                     Numbers.encodeLowHighInts(columnType, symbolCapacity),
                     Numbers.encodeLowHighInts(symbolCacheFlag, 0)

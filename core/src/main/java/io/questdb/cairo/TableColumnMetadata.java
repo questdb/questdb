@@ -33,24 +33,24 @@ public class TableColumnMetadata implements Plannable {
     @Nullable
     private final RecordMetadata metadata;
     private final int replacingIndex;
+    private final int symbolCapacity;
     private final boolean symbolTableStatic;
     private final int writerIndex;
+    private String columnName;
+    private int columnType;
+    private boolean dedupKeyFlag;
     private int indexValueBlockCapacity;
-    private boolean indexed;
-    private boolean isDedupKey;
-    private String name;
-    private int symbolCapacity;
-    private boolean symbolIsCached;
-    private int type;
+    private boolean symbolCacheFlag;
+    private boolean symbolIndexFlag;
 
-    public TableColumnMetadata(String name, int type) {
-        this(name, type, null);
+    public TableColumnMetadata(String columnName, int columnType) {
+        this(columnName, columnType, null);
     }
 
-    public TableColumnMetadata(String name, int type, @Nullable RecordMetadata metadata) {
+    public TableColumnMetadata(String columnName, int columnType, @Nullable RecordMetadata metadata) {
         this(
-                name,
-                type,
+                columnName,
+                columnType,
                 false,
                 0,
                 false,
@@ -63,20 +63,20 @@ public class TableColumnMetadata implements Plannable {
         );
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
-        assert !ColumnType.isSymbol(type);
+        assert !ColumnType.isSymbol(columnType);
     }
 
     public TableColumnMetadata(
-            String name,
-            int type,
+            String columnName,
+            int columnType,
             boolean indexFlag,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata
     ) {
         this(
-                name,
-                type,
+                columnName,
+                columnType,
                 indexFlag,
                 indexValueBlockCapacity,
                 symbolTableStatic,
@@ -90,9 +90,9 @@ public class TableColumnMetadata implements Plannable {
     }
 
     public TableColumnMetadata(
-            String name,
-            int type,
-            boolean indexed,
+            String columnName,
+            int columnType,
+            boolean symbolIndexFlag,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata,
@@ -100,9 +100,9 @@ public class TableColumnMetadata implements Plannable {
             boolean dedupKeyFlag
     ) {
         this(
-                name,
-                type,
-                indexed,
+                columnName,
+                columnType,
+                symbolIndexFlag,
                 indexValueBlockCapacity,
                 symbolTableStatic,
                 metadata,
@@ -115,29 +115,37 @@ public class TableColumnMetadata implements Plannable {
     }
 
     public TableColumnMetadata(
-            String name,
-            int type,
-            boolean indexed,
+            String columnName,
+            int columnType,
+            boolean symbolIndexFlag,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata,
             int writerIndex,
             boolean dedupKeyFlag,
             int replacingIndex,
-            boolean symbolIsCached,
+            boolean symbolCacheFlag,
             int symbolCapacity
     ) {
-        this.name = name;
-        this.type = type;
-        this.indexed = indexed;
+        this.columnName = columnName;
+        this.columnType = columnType;
+        this.symbolIndexFlag = symbolIndexFlag;
         this.indexValueBlockCapacity = indexValueBlockCapacity;
         this.symbolTableStatic = symbolTableStatic;
         this.metadata = GenericRecordMetadata.copyOf(metadata);
         this.writerIndex = writerIndex;
-        this.isDedupKey = dedupKeyFlag;
+        this.dedupKeyFlag = dedupKeyFlag;
         this.replacingIndex = replacingIndex;
-        this.symbolIsCached = symbolIsCached;
+        this.symbolCacheFlag = symbolCacheFlag;
         this.symbolCapacity = symbolCapacity;
+    }
+
+    public String getColumnName() {
+        return columnName;
+    }
+
+    public int getColumnType() {
+        return columnType;
     }
 
     public int getIndexValueBlockCapacity() {
@@ -149,10 +157,6 @@ public class TableColumnMetadata implements Plannable {
         return metadata;
     }
 
-    public String getName() {
-        return name;
-    }
-
     public int getReplacingIndex() {
         return replacingIndex;
     }
@@ -161,24 +165,24 @@ public class TableColumnMetadata implements Plannable {
         return symbolCapacity;
     }
 
-    public int getType() {
-        return type;
-    }
-
     public int getWriterIndex() {
         return writerIndex;
     }
 
-    public boolean isDedupKey() {
-        return isDedupKey;
+    public boolean isDedupKeyFlag() {
+        return dedupKeyFlag;
     }
 
     public boolean isDeleted() {
-        return type < 0;
+        return columnType < 0;
     }
 
-    public boolean isIndexed() {
-        return indexed;
+    public boolean isSymbolCacheFlag() {
+        return symbolCacheFlag;
+    }
+
+    public boolean isSymbolIndexFlag() {
+        return symbolIndexFlag;
     }
 
     public boolean isSymbolTableStatic() {
@@ -186,35 +190,31 @@ public class TableColumnMetadata implements Plannable {
     }
 
     public void markDeleted() {
-        type = -Math.abs(type);
+        columnType = -Math.abs(columnType);
+    }
+
+    public void rename(String name) {
+        this.columnName = name;
     }
 
     public void setDedupKeyFlag(boolean dedupKeyFlag) {
-        isDedupKey = dedupKeyFlag;
+        this.dedupKeyFlag = dedupKeyFlag;
     }
 
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {
         this.indexValueBlockCapacity = indexValueBlockCapacity;
     }
 
-    public void setIndexed(boolean value) {
-        indexed = value;
+    public void setSymbolCacheFlag(boolean cache) {
+        this.symbolCacheFlag = cache;
     }
 
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public void setSymbolCached(boolean cache) {
-        this.symbolIsCached = cache;
-    }
-
-    public boolean symbolIsCached() {
-        return symbolIsCached;
+    public void setSymbolIndexFlag(boolean value) {
+        symbolIndexFlag = value;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(name);
+        sink.val(columnName);
     }
 }

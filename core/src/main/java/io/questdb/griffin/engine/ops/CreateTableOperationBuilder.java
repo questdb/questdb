@@ -47,10 +47,19 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     static final int COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
     static final int COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
     private static final IntList castGroups = new IntList();
+    // This list encodes column attributes from the column definition of the "create table" SQL
+    // these attributes include: column type, index flag, index capacity and symbol capacity.
+    // The list is populated by the SQL parser at compile time.
+    // For create-as-select SQL, parser does not populate this list. Instead the list
+    // is used at the execution time to capture the attributes of columns of the "select" SQL.
     private final LongList columnBits = new LongList();
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final ObjList<String> columnNames = new ObjList<>();
+    private final CharSequenceIntHashMap createAsSelectIndexCapacities = new CharSequenceIntHashMap();
+    // todo: perhaps consolidate both these maps into one str-to-long?
+    private final CharSequenceBoolHashMap createAsSelectIndexFlags = new CharSequenceBoolHashMap();
+    private final CharSequenceIntHashMap createAsSelectIndexColumnNamePositions = new CharSequenceIntHashMap();
     private final IntIntHashMap typeCasts = new IntIntHashMap();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
@@ -69,19 +78,15 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     public CreateTableOperationBuilder() {
     }
 
-    public void addColumn(CharSequence name, int type, int symbolCapacity) throws SqlException {
-        addColumn(0, name, type, symbolCapacity);
-    }
-
-    public void addColumn(int position, CharSequence name, int type, int symbolCapacity) throws SqlException {
-        if (!columnNameIndexMap.put(name, columnNames.size())) {
-            throw SqlException.duplicateColumn(position, name);
+    public void addColumn(int columnPosition, CharSequence columnName, int columnType, int symbolCapacity) throws SqlException {
+        if (!columnNameIndexMap.put(columnName, columnNames.size())) {
+            throw SqlException.duplicateColumn(columnPosition, columnName);
         }
         // todo: columnNames need not to be strings, they can be made
         //       strings when they are copied to the operation
-        columnNames.add(Chars.toString(name));
+        columnNames.add(Chars.toString(columnName));
         columnBits.add(
-                Numbers.encodeLowHighInts(type, symbolCapacity),
+                Numbers.encodeLowHighInts(columnType, symbolCapacity),
                 Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0)
         );
     }
@@ -134,11 +139,14 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                 maxUncommittedRows,
                 Chars.toString(volumeAlias),
                 walEnabled,
-                columnCastModels
+                columnCastModels,
+                createAsSelectIndexColumnNamePositions,
+                createAsSelectIndexFlags,
+                createAsSelectIndexCapacities
         );
     }
 
-    public CreateTableOperationBuilder cached(boolean cached) {
+    public void updateSymbolCacheFlagOfCurrentLastColumn(boolean cached) {
         int last = columnBits.size() - 1;
         assert last > 0;
         assert ColumnType.isSymbol(getLowAt(last - 1));
@@ -147,7 +155,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         } else {
             columnBits.setQuick(last, Numbers.encodeLowHighInts(getLowAt(last) & ~COLUMN_FLAG_CACHED, getHighAt(last)));
         }
-        return this;
     }
 
     @Override
@@ -167,6 +174,9 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         o3MaxLag = -1;
         batchO3MaxLag = -1;
         batchSize = -1;
+        createAsSelectIndexFlags.clear();
+        createAsSelectIndexCapacities.clear();
+        createAsSelectIndexColumnNamePositions.clear();
     }
 
     public CharSequenceObjHashMap<ColumnCastModel> getColumnCastModels() {
@@ -231,6 +241,25 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         this.batchSize = batchSize;
     }
 
+    public void updateIndexFlagOfCurrentLastColumn(boolean indexFlag, int indexValueBlockSize) {
+        int index = columnBits.size() - 1;
+        assert index > 0;
+        final int flags = getLowAt(index);
+        if (indexFlag) {
+            assert indexValueBlockSize > 1;
+            columnBits.setQuick(index, Numbers.encodeLowHighInts(flags | COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
+        } else {
+            columnBits.setQuick(index, Numbers.encodeLowHighInts(flags & ~COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
+        }
+    }
+
+    public void setCreateAsSelectIndexFlag(CharSequence columnName, int columnNamePosition, boolean indexFlag, int indexValueBlockSize) {
+        String columnNameStr = Chars.toString(columnName);
+        createAsSelectIndexFlags.put(columnNameStr, indexFlag);
+        createAsSelectIndexCapacities.put(columnNameStr, indexValueBlockSize);
+        createAsSelectIndexColumnNamePositions.put(columnNameStr, columnNamePosition);
+    }
+
     public void setDedupKeyFlag(int index) {
         int flagsIndex = index * 2 + 1;
         int flags = getLowAt(flagsIndex) | COLUMN_FLAG_DEDUP_KEY;
@@ -270,14 +299,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     public void setIgnoreIfExists(boolean flag) {
         this.ignoreIfExists = flag;
-    }
-
-    public void setIndexFlags(boolean indexFlag, int indexValueBlockSize) {
-        setIndexFlags0(columnBits.size() - 1, indexFlag, indexValueBlockSize);
-    }
-
-    public void setIndexFlags(int columnIndex, boolean indexFlag, int indexValueBlockSize) {
-        setIndexFlags0(columnIndex * 2 + 1, indexFlag, indexValueBlockSize);
     }
 
     public void setLikeTableName(ExpressionNode tableName) {
@@ -450,17 +471,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     private int getLowAt(int index) {
         return Numbers.decodeLowInt(columnBits.getQuick(index));
-    }
-
-    private void setIndexFlags0(int index, boolean indexFlag, int indexValueBlockSize) {
-        assert index > 0;
-        final int flags = getLowAt(index);
-        if (indexFlag) {
-            assert indexValueBlockSize > 1;
-            columnBits.setQuick(index, Numbers.encodeLowHighInts(flags | COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
-        } else {
-            columnBits.setQuick(index, Numbers.encodeLowHighInts(flags & ~COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
-        }
     }
 
     static {

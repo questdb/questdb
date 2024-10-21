@@ -125,7 +125,7 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
             columnNameIndexMap.clear();
             for (int i = 0; i < columnCount; i++) {
                 TableColumnMetadata column = columnMetadata.getQuick(i);
-                columnNameIndexMap.put(column.getName(), i);
+                columnNameIndexMap.put(column.getColumnName(), i);
                 if (column.getWriterIndex() == timestampIndex) {
                     this.timestampIndex = i;
                 }

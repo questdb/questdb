@@ -79,7 +79,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {
-        return getColumnMetadata(columnIndex).symbolIsCached();
+        return getColumnMetadata(columnIndex).isSymbolCacheFlag();
     }
 
     @Override
@@ -108,7 +108,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     @Override
     public boolean isIndexed(int columnIndex) {
-        return getColumnMetadata(columnIndex).isIndexed();
+        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
     }
 
     @Override
@@ -267,11 +267,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     void removeColumn(int columnIndex) {
         TableColumnMetadata deletedMeta = columnMetadata.getQuick(columnIndex);
-        if (ColumnType.isSymbol(deletedMeta.getType())) {
+        if (ColumnType.isSymbol(deletedMeta.getColumnType())) {
             symbolMapCount--;
         }
         deletedMeta.markDeleted();
-        columnNameIndexMap.remove(deletedMeta.getName());
+        columnNameIndexMap.remove(deletedMeta.getColumnName());
     }
 
     void renameColumn(CharSequence name, CharSequence newName) {
@@ -280,7 +280,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         columnNameIndexMap.put(newNameStr, columnIndex);
 
         TableColumnMetadata oldColumnMetadata = columnMetadata.get(columnIndex);
-        oldColumnMetadata.setName(newNameStr);
+        oldColumnMetadata.rename(newNameStr);
     }
 
     public static class WriterTableColumnMetadata extends TableColumnMetadata {

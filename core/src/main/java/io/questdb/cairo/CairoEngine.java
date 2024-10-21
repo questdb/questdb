@@ -1065,9 +1065,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
         for (int i = 0; i < columnCount; i++) {
             final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(i);
-            CharSequence columnName = columnMetadata.getName();
+            CharSequence columnName = columnMetadata.getColumnName();
 
-            int columnType = columnMetadata.getType();
+            int columnType = columnMetadata.getColumnType();
 
             if (columnType < 0) {
                 continue; // marked for deletion
@@ -1080,10 +1080,10 @@ public class CairoEngine implements Closeable, WriterSource {
             column.setName(columnName); // check this, not sure the char sequence is preserved
             column.setType(columnType);
             column.setPosition(columnMetadata.getReplacingIndex() > 0 ? columnMetadata.getReplacingIndex() - 1 : i);
-            column.setIsIndexed(columnMetadata.isIndexed());
+            column.setIsIndexed(columnMetadata.isSymbolIndexFlag());
             column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
             column.setIsSymbolTableStatic(columnMetadata.isSymbolTableStatic());
-            column.setIsDedupKey(columnMetadata.isDedupKey());
+            column.setIsDedupKey(columnMetadata.isDedupKeyFlag());
             column.setWriterIndex(columnMetadata.getWriterIndex());
             column.setIsDesignated(column.getWriterIndex() == timestampIndex);
 

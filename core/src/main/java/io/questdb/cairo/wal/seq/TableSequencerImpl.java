@@ -234,7 +234,7 @@ public class TableSequencerImpl implements TableSequencer {
                     metadata.isSymbolTableStatic(i),
                     i,
                     metadata.isDedupKey(i),
-                    metadata.getColumnMetadata(i).symbolIsCached(),
+                    metadata.getColumnMetadata(i).isSymbolCacheFlag(),
                     metadata.getColumnMetadata(i).getSymbolCapacity()
             );
             if (columnType > -1) {

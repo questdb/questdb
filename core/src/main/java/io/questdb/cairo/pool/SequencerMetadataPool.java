@@ -117,7 +117,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
 
         @Override
         public boolean getSymbolCacheFlag(int columnIndex) {
-            return getColumnMetadata(columnIndex).symbolIsCached();
+            return getColumnMetadata(columnIndex).isSymbolCacheFlag();
         }
 
         @Override
@@ -132,7 +132,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
 
         @Override
         public boolean isIndexed(int columnIndex) {
-            return getColumnMetadata(columnIndex).isIndexed();
+            return getColumnMetadata(columnIndex).isSymbolIndexFlag();
         }
 
         @Override

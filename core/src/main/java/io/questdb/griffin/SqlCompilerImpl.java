@@ -394,7 +394,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 try (final RecordCursor cursor = factory.getCursor(executionContext)) {
                     typeCast.clear();
                     final RecordMetadata metadata = factory.getMetadata();
-                    createTableOp.updateMetadataFromSelect(metadata);
+                    createTableOp.validateAndUpdateMetadataFromSelect(metadata);
                     boolean keepLock = !createTableOp.isWalEnabled();
 
                     // todo: test create table if exists with select

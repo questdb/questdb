@@ -77,7 +77,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {
-        return columnMetadata.getQuick(columnIndex).isIndexed();
+        return columnMetadata.getQuick(columnIndex).isSymbolIndexFlag();
     }
 
     @Override
@@ -180,15 +180,15 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 }
             } else {
                 // existing column
-                boolean rename = existing != null && !Chars.equals(existing.getName(), name);
-                newName = rename || existing == null ? Chars.toString(name) : existing.getName();
+                boolean rename = existing != null && !Chars.equals(existing.getColumnName(), name);
+                newName = rename || existing == null ? Chars.toString(name) : existing.getColumnName();
 
                 if (rename
                         || existing == null
                         || existing.getWriterIndex() != writerIndex
-                        || existing.isIndexed() != isIndexed
+                        || existing.isSymbolIndexFlag() != isIndexed
                         || existing.getIndexValueBlockCapacity() != indexBlockCapacity
-                        || existing.isDedupKey() != isDedupKey
+                        || existing.isDedupKeyFlag() != isDedupKey
                         || existing.getDenseSymbolIndex() != denseSymbolIndex
                         || existing.getStableIndex() != stableIndex
                 ) {
