@@ -1495,7 +1495,7 @@ public class VwmaDoubleWindowFunctionFactory implements FunctionFactory {
                 double sumVolumes;
 
                 if (value.isNew()) {
-                    sumWeightedPrice = price;
+                    sumWeightedPrice = price * volume;
                     sumVolumes = volume;
                 } else {
                     sumWeightedPrice = value.getDouble(0) + (price * volume);
@@ -1514,14 +1514,9 @@ public class VwmaDoubleWindowFunctionFactory implements FunctionFactory {
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
+            double vwma = value != null ? value.getDouble(0) : Double.NaN;
 
-            double sumWeightedPrice = value != null ? value.getDouble(0) : Double.NaN;
-            double sumVolumes = value != null ? value.getDouble(1) : Double.NaN;
-
-            double toWrite = Numbers.isFinite(sumWeightedPrice) && Numbers.isFinite(sumVolumes) ?
-                    sumWeightedPrice / sumVolumes : Double.NaN;
-
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), toWrite);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), vwma);
         }
 
         @Override
@@ -1530,7 +1525,7 @@ public class VwmaDoubleWindowFunctionFactory implements FunctionFactory {
             MapRecord record = map.getRecord();
             while (cursor.hasNext()) {
                 MapValue value = record.getValue();
-                double sumVolumes = value.getLong(1);
+                double sumVolumes = value.getDouble(1);
                 if (sumVolumes > 0) {
                     double sumWeightedPrice = value.getDouble(0);
                     value.putDouble(0, sumWeightedPrice / sumVolumes);
