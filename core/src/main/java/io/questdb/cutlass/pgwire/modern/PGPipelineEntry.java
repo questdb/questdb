@@ -531,7 +531,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 if (message != null) {
                     getErrorMessageSink().put(message);
                 } else {
-                    getErrorMessageSink().put("Internal error. Assert?");
+                    getErrorMessageSink().put("Internal error. Exception type: ").put(e.getClass().getSimpleName());
                 }
             }
         }
