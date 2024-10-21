@@ -163,11 +163,12 @@ public class VwmaDoubleWindowFunctionFactory implements FunctionFactory {
                     );
 
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
-                    return new VwmaDoubleWindowFunctionFactory.AvgOverUnboundedPartitionRowsFrameFunction(
+                    return new VwmaOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            args.get(1)
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -218,11 +219,12 @@ public class VwmaDoubleWindowFunctionFactory implements FunctionFactory {
                             VWMA_COLUMN_TYPES
                     );
 
-                    return new VwmaDoubleWindowFunctionFactory.AvgOverUnboundedPartitionRowsFrameFunction(
+                    return new VwmaOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0)
+                            args.get(0),
+                            args.get(1)
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
@@ -1226,79 +1228,6 @@ public class VwmaDoubleWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    // Handles:
-    // - avg(a) over (partition by x rows between unbounded preceding and current row)
-    // - avg(a) over (partition by x order by ts range between unbounded preceding and current row)
-    // Doesn't require value buffering.
-    static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
-        private double avg;
-
-        public AvgOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
-            super(map, partitionByRecord, partitionBySink, arg);
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue value = key.createValue();
-
-            double sum;
-            long count;
-
-            if (value.isNew()) {
-                sum = 0;
-                count = 0;
-            } else {
-                sum = value.getDouble(0);
-                count = value.getLong(1);
-            }
-
-            double d = arg.getDouble(record);
-            if (Numbers.isFinite(d)) {
-                sum += d;
-                count++;
-
-                value.putDouble(0, sum);
-                value.putLong(1, count);
-            }
-
-            avg = count != 0 ? sum / count : Double.NaN;
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            return avg;
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), avg);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME);
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (");
-            sink.val("partition by ");
-            sink.val(partitionByRecord.getFunctions());
-            sink.val(" rows between unbounded preceding and current row )");
-        }
-    }
-
     // Handles avg() over (rows between unbounded preceding and current row); there's no partition by.
     static class AvgOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
 
@@ -1483,29 +1412,30 @@ public class VwmaDoubleWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.createValue();
+
+            double sumWeightedPrice;
+            double sumVolumes;
+
+            if (value.isNew()) {
+                sumWeightedPrice = 0;
+                sumVolumes = 0;
+            } else {
+                sumWeightedPrice = value.getDouble(0);
+                sumVolumes = value.getDouble(1);
+            }
+
             double price = arg1.getDouble(record);
             double volume = arg2.getDouble(record);
             if (Numbers.isFinite(price) && Numbers.isFinite(volume)) {
-                partitionByRecord.of(record);
-                MapKey key = map.withKey();
-                key.put(partitionByRecord, partitionBySink);
-                MapValue value = key.createValue();
-
-                double sumWeightedPrice;
-                double sumVolumes;
-
-                if (value.isNew()) {
-                    sumWeightedPrice = price * volume;
-                    sumVolumes = volume;
-                } else {
-                    sumWeightedPrice = value.getDouble(0) + (price * volume);
-                    sumVolumes = value.getDouble(1) + volume;
-
-                }
-
-                value.putDouble(0, sumWeightedPrice);
-                value.putDouble(1, sumVolumes);
+                value.putDouble(0, sumWeightedPrice + (price * volume));
+                value.putDouble(1, sumVolumes + volume);
             }
+
+
         }
 
         @Override
@@ -1531,6 +1461,80 @@ public class VwmaDoubleWindowFunctionFactory implements FunctionFactory {
                     value.putDouble(0, sumWeightedPrice / sumVolumes);
                 }
             }
+        }
+    }
+
+    // Handles:
+    // - avg(a) over (partition by x rows between unbounded preceding and current row)
+    // - avg(a) over (partition by x order by ts range between unbounded preceding and current row)
+    // Doesn't require value buffering.
+    static class VwmaOverUnboundedPartitionRowsFrameFunction extends BinaryPartitionedDoubleWindowFunction {
+        private double vwma;
+
+        public VwmaOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function price, Function volume) {
+            super(map, partitionByRecord, partitionBySink, price, volume);
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.createValue();
+
+            double sumWeightedPrice;
+            double sumVolumes;
+
+            if (value.isNew()) {
+                sumWeightedPrice = 0;
+                sumVolumes = 0;
+            } else {
+                sumWeightedPrice = value.getDouble(0);
+                sumVolumes = value.getLong(1);
+            }
+
+            double price = arg1.getDouble(record);
+            double volume = arg2.getDouble(record);
+            if (Numbers.isFinite(price) && Numbers.isFinite(volume)) {
+                sumWeightedPrice = sumWeightedPrice + (price * volume);
+                sumVolumes = sumVolumes + volume;
+            }
+
+            value.putDouble(0, sumWeightedPrice);
+            value.putDouble(1, sumVolumes);
+
+            vwma = sumVolumes != 0 ? sumWeightedPrice / sumVolumes : Double.NaN;
+        }
+
+        @Override
+        public double getDouble(Record rec) {
+            return vwma;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), vwma);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg1).val(", ").val(arg2).val(')');
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(" rows between unbounded preceding and current row )");
         }
     }
 

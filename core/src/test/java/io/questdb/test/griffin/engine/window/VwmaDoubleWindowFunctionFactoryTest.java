@@ -140,7 +140,7 @@ public class VwmaDoubleWindowFunctionFactoryTest extends AbstractCairoTest {
 
 
     @Test
-    public void testVwmaBasic() throws Exception {
+    public void testVwmaOverPartition() throws Exception {
         assertMemoryLeak(() -> {
             ddl(DDL);
             insert(INSERT);
@@ -155,6 +155,26 @@ public class VwmaDoubleWindowFunctionFactoryTest extends AbstractCairoTest {
                     "(select vwap(price, amount) as vwma from trades where symbol = 'ETH-USD' LIMIT 100)");
         });
     }
+
+    @Test
+    public void testVwmaOverUnboundedPartitionRows() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL);
+            insert(INSERT);
+            drainWalQueue();
+            assertSql("vwma\n" +
+                    "2615.663635939613\n", "(select vwma(price, amount) over (partition by symbol rows between unbounded preceding and current row) from trades) LIMIT -1");
+            // check it is the same as vwap
+//            assertSql("vwma\n" +
+//                    "2615.663635939613\n", "\n" +
+//                    "((select vwma(price, amount) over (partition by symbol rows between unbounded preceding and current row) from (select * from trades where symbol = 'ETH-USD' LIMIT 100)) LIMIT -1) \n" +
+//                    "UNION \n" +
+//                    "(select vwap(price, amount) as vwma from trades where symbol = 'ETH-USD' LIMIT 100)");
+        });
+    }
+
+    // - avg(a) over (partition by x rows between unbounded preceding and current row)
+    // - avg(a) over (partition by x order by ts range between unbounded preceding and current row)
 }
 
 
