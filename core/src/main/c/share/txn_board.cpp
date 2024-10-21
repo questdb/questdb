@@ -147,7 +147,6 @@ public:
             }
             // After pushing min as far as possible, take the clean value for next steps
             current_min = min.load();
-
         }
 
         if (txn - current_min < size) {
@@ -168,13 +167,11 @@ public:
         for (int64_t i = 0; i < entry_count; i++) {
             counts[i] = 0;
         }
-        int64_t expected = 0;
-        // Since txn values are guaranteed to be greater than 0, min can be 0 only on
-        // a newly created scoreboard. So, this CAS should only succeed single time.
-        min.compare_exchange_strong(expected, L_MIN);
+        min = L_MIN;
+        max = 0;
     }
 
-    bool isRangeAvailable(int64_t from, int64_t to) {
+    bool is_range_available(int64_t from, int64_t to) {
         if (to >= min && from <= max) {
             for (int64_t txn = from; txn < to; txn++) {
                 if (get_count(txn) > 0) {
@@ -220,7 +217,7 @@ JNIEXPORT void JNICALL Java_io_questdb_cairo_TxnScoreboard_init
 
 JNIEXPORT jboolean JNICALL Java_io_questdb_cairo_TxnScoreboard_isRangeAvailable0
         (JAVA_STATIC, jlong p_txn_scoreboard, jlong from, jlong to) {
-    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->isRangeAvailable(from, to);
+    return reinterpret_cast<txn_scoreboard_t<COUNTER_T> *>(p_txn_scoreboard)->is_range_available(from, to);
 }
 
 }

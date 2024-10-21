@@ -119,10 +119,10 @@ public class TxnScoreboard implements Closeable, Mutable {
         clear();
         int rootLen = root.size();
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME);
-        this.fd = openCleanRW(ff, root.$(), this.size);
+        this.fd = openCleanRW(ff, root.$(), size);
 
         try {
-            this.mem = TableUtils.mapRO(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);
+            this.mem = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
             ff.close(fd);
             root.trimTo(rootLen);
@@ -136,13 +136,16 @@ public class TxnScoreboard implements Closeable, Mutable {
         clear();
         int rootLen = root.size();
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME);
-        this.fd = openCleanRW(ff, root.$(), this.size);
+        this.fd = openCleanRW(ff, root.$(), size);
 
         // truncate is required to give file a size
         // allocate above does not seem to update file system's size entry
-        ff.truncate(fd, this.size);
+        if (!ff.truncate(fd, size)) {
+            throw CairoException.critical(ff.errno()).put("could not truncate file [file=").put(root).put(']');
+        }
+
         try {
-            this.mem = TableUtils.mapRW(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);
+            this.mem = TableUtils.mapRW(ff, fd, size, MemoryTag.MMAP_DEFAULT);
             init(mem, pow2EntryCount);
         } catch (Throwable e) {
             ff.close(fd);
@@ -182,11 +185,18 @@ public class TxnScoreboard implements Closeable, Mutable {
 
     private native static boolean isRangeAvailable0(long pTxnScoreboard, long txnFrom, long txnTo);
 
+    private static long openCleanRW(FilesFacade ff, LPSZ path, long size) {
+        final long fd = ff.openCleanRW(path, size);
+        if (fd > -1) {
+            LOG.debug().$("open clean [file=").$(path).$(", fd=").$(fd).I$();
+            return fd;
+        }
+        throw CairoException.critical(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
+    }
+
     private static long releaseTxn(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
-        LOG.debug().$("release  [p=").$(pTxnScoreboard)
-                .$(", txn=").$(txn)
-                .I$();
+        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).I$();
         final long internalTxn = toInternalTxn(txn);
         return releaseTxn0(pTxnScoreboard, internalTxn);
     }
@@ -200,14 +210,5 @@ public class TxnScoreboard implements Closeable, Mutable {
      */
     private static long toInternalTxn(long txn) {
         return txn + 1;
-    }
-
-    static long openCleanRW(FilesFacade ff, LPSZ path, long size) {
-        final long fd = ff.openCleanRW(path, size);
-        if (fd > -1) {
-            LOG.debug().$("open clean [file=").$(path).$(", fd=").$(fd).I$();
-            return fd;
-        }
-        throw CairoException.critical(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');
     }
 }
