@@ -256,7 +256,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable, DeepClonea
     /**
      * DeepClone does not clone the running-states, only the init states of the function,
      * must be called before Function::init.
-     * Used for parallel filter/groupBy execution, that avoid Function::parser for every worker.
+     * Used for parallel filter/groupBy execution, so that avoid Function::parser for every worker.
      * Note: CursorFunction and Window Function are not supported for temp,
      * those would not be used in Filter/groupBy function.
      *
