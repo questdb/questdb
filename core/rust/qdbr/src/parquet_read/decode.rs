@@ -283,7 +283,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         columns: &[(ParquetColumnIndex, ColumnType)],
         row_group_index: u32,
     ) -> ParquetResult<()> {
-        if row_group_index > self.row_group_count {
+        if row_group_index >= self.row_group_count {
             return Err(fmt_err!(
                 Invalid,
                 "row group index {} out of range [0,{})",
@@ -341,6 +341,15 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         row_hi: usize,
         timestamp_column_index: u32,
     ) -> ParquetResult<u64> {
+        if timestamp_column_index >= self.col_count {
+            return Err(fmt_err!(
+                Invalid,
+                "timestamp column index {} out of range [0,{})",
+                timestamp_column_index,
+                self.col_count
+            ));
+        }
+
         let timestamp_column_index = timestamp_column_index as usize;
         let column_type = self.columns[timestamp_column_index].column_type;
         if column_type.tag() != ColumnTypeTag::Timestamp {
