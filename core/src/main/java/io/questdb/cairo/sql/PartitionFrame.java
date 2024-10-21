@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Interface for retrieving information about a partition frame.
@@ -43,6 +44,7 @@ public interface PartitionFrame {
     /**
      * @return parquet decoder initialized for the partition for parquet partitions; null for native partitions
      */
+    @Nullable
     PartitionDecoder getParquetDecoder();
 
     /**

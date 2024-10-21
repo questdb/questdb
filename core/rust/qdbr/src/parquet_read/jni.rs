@@ -110,7 +110,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_readRowGroupStats(
     mut env: JNIEnv,
     _class: JClass,
-    decoder: *mut ParquetDecoder<NonOwningFile>,
+    decoder: *const ParquetDecoder<NonOwningFile>,
     row_group_stat_bufs: *mut RowGroupStatBuffers,
     columns: *const (ParquetColumnIndex, ColumnType),
     column_count: u32,
@@ -123,7 +123,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     );
     assert!(!columns.is_null(), "columns pointer is null");
 
-    let decoder = unsafe { &mut *decoder };
+    let decoder = unsafe { &*decoder };
     let row_group_stat_bufs = unsafe { &mut *row_group_stat_bufs };
     let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
 
@@ -149,7 +149,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_findRowGroupByTimestamp(
     mut env: JNIEnv,
     _class: JClass,
-    decoder: *mut ParquetDecoder<NonOwningFile>,
+    decoder: *const ParquetDecoder<NonOwningFile>,
     timestamp: i64,
     row_lo: usize,
     row_hi: usize,
@@ -157,7 +157,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 ) -> u64 {
     assert!(!decoder.is_null(), "decoder pointer is null");
 
-    let decoder = unsafe { &mut *decoder };
+    let decoder = unsafe { &*decoder };
 
     match decoder.find_row_group_by_timestamp(timestamp, row_lo, row_hi, timestamp_column_index) {
         Ok(row_group_index) => row_group_index,

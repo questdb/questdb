@@ -988,8 +988,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final long fd = TableUtils.openRO(ff, path.$(), LOG);
                         assert openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD) == -1;
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD, fd);
-                        final long fileSize = this.txFile.getPartitionParquetFileSize(partitionIndex);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE, fileSize);
+                        final long parquetSize = txFile.getPartitionParquetFileSize(partitionIndex);
+                        assert parquetSize > 0;
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE, parquetSize);
                         openPartitionCount++;
                     }
 
