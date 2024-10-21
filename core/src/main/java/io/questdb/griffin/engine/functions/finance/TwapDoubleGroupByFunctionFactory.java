@@ -41,7 +41,7 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 
-public class TwapGroupByFunctionFactory implements FunctionFactory {
+public class TwapDoubleGroupByFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "twap(DN)";
@@ -54,15 +54,15 @@ public class TwapGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new TwapGroupByFunction(args.getQuick(0), args.getQuick(1));
+        return new TwapDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    public static class TwapGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
+    public static class TwapDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
         protected final Function priceFunction;
         protected final Function timestampFunction;
         protected int valueIndex;
 
-        protected TwapGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
+        protected TwapDoubleGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
             this.priceFunction = arg0;
             this.timestampFunction = arg1;
         }
