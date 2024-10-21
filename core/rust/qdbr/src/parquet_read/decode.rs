@@ -354,7 +354,6 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
         let row_group_count = self.row_group_count;
         let mut row_count = 0usize;
-        let mut matched_prev_max = false;
         for (row_group_idx, row_group_meta) in self.metadata.row_groups.iter().enumerate() {
             let columns_meta = row_group_meta.columns();
             let column_metadata = &columns_meta[timestamp_column_index];
@@ -384,29 +383,32 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 let min_value = long_stat_value(&column_chunk_stats.min_value)?;
                 let max_value = long_stat_value(&column_chunk_stats.max_value)?;
 
-                // left boundary
-                if timestamp == min_value && min_value != max_value {
-                    // have to decode the group and search in it
+                // Our overall scan direction is Vect#BIN_SEARCH_SCAN_DOWN (increasing
+                // scan direction) and we're iterating over row groups left-to-right,
+                // so as soon as we find the matching timestamp, we're done.
+                //
+                // The returned value includes the row group index shifted by +1,
+                // as well as a flag to tell the caller that the timestamp is at the
+                // right boundary of a row group or in a gap between two row groups
+                // and, thus, row group decoding is not needed.
+
+                // Check if we're at the left boundary or within the row group.
+                if timestamp >= min_value && timestamp < max_value {
+                    // We'll have to decode the group and search in it (even value).
                     return Ok(2 * (row_group_idx + 1) as u64);
                 }
-                // to the left of the row group
+                // The value is to the left of the row group.
+                // It must be either the right boundary of the previous row group
+                // or a gap between the previous and the current row groups.
                 if timestamp < min_value {
-                    if matched_prev_max {
-                        // right boundary of the previous row group
-                        return Ok((2 * row_group_idx + 1) as u64);
-                    }
-                    // between previous and current row groups
+                    // We don't need to decode the row group (odd value).
                     return Ok((2 * row_group_idx + 1) as u64);
                 }
-                // within the row group
-                if timestamp > min_value && timestamp < max_value {
-                    return Ok(2 * (row_group_idx + 1) as u64);
-                }
-                matched_prev_max = timestamp == max_value;
             }
             row_count += column_chunk_size;
         }
 
+        // The value is to the right of the last row group, no need to decode (odd value).
         Ok((2 * row_group_count + 1) as u64)
     }
 }
