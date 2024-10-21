@@ -1248,16 +1248,37 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long mergeBatchRowCount = mergeRangeHi - mergeRangeLo + 1;
         long mergeRowCount = mergeBatchRowCount + rowGroupSize;
 
-        final long timestampMergeIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
-        final long timestampMergeIndexAddr = createMergeIndex(
-                timestampDataPtr,
-                sortedTimestampsAddr,
-                0,
-                rowGroupSize - 1,
-                mergeRangeLo,
-                mergeRangeHi,
-                timestampMergeIndexSize
-        );
+        long timestampMergeIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
+        long timestampMergeIndexAddr;
+        if (!tableWriter.isDeduplicationEnabled()) {
+            timestampMergeIndexAddr = createMergeIndex(
+                    timestampDataPtr,
+                    sortedTimestampsAddr,
+                    0,
+                    rowGroupSize - 1,
+                    mergeRangeLo,
+                    mergeRangeHi,
+                    timestampMergeIndexSize
+            );
+        } else {
+                timestampMergeIndexAddr = Unsafe.malloc(timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+                long dedupRows = Vect.mergeDedupTimestampWithLongIndexAsc(
+                    timestampDataPtr,
+                    0,
+                    rowGroupSize - 1,
+                    sortedTimestampsAddr,
+                    mergeRangeLo,
+                    mergeRangeHi,
+                    timestampMergeIndexAddr
+                );
+
+                long oldIndexSize = timestampMergeIndexSize;
+                timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
+                timestampMergeIndexAddr = Unsafe.realloc(timestampMergeIndexAddr, oldIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
+                final long duplicateCount = mergeRowCount - dedupRows;
+                System.err.println("Deduplication enabled, removed " + duplicateCount + " duplicates");
+                mergeRowCount = dedupRows;
+        }
 
         try {
             partitionDescriptor.of(tableWriter.getTableToken().getTableName(), mergeRowCount, timestampIndex);
