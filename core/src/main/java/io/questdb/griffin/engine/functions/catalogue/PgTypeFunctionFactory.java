@@ -49,8 +49,8 @@ public class PgTypeFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         return new CursorFunction(
                 new GenericRecordCursorFactory(
-                        TypeCatalogueCursor.METADATA,
-                        new TypeCatalogueCursor(),
+                        PgTypeCatalogueCursor.METADATA,
+                        new PgTypeCatalogueCursor(),
                         false
                 )
         );

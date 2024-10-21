@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.std.WeakSelfReturningObjectPool;
 
 public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
+    private boolean hasBindVariables;
     private InsertOperation insert;
 
     public TypesAndInsert(WeakSelfReturningObjectPool<TypesAndInsert> parentPool) {
@@ -39,8 +40,13 @@ public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
         return insert;
     }
 
+    public boolean hasBindVariables() {
+        return hasBindVariables;
+    }
+
     public void of(InsertOperation insert, BindVariableService bindVariableService) {
         this.insert = insert;
         copyTypesFrom(bindVariableService);
+        this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
     }
 }

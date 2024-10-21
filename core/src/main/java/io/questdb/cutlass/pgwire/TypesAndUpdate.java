@@ -34,6 +34,7 @@ import io.questdb.std.WeakSelfReturningObjectPool;
 
 public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
     private final CompiledQueryImpl compiledQuery;
+    private boolean hasBindVariables;
 
     public TypesAndUpdate(WeakSelfReturningObjectPool<TypesAndUpdate> parentPool, CairoEngine engine) {
         super(parentPool);
@@ -50,14 +51,19 @@ public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
         return compiledQuery;
     }
 
+    public boolean hasBindVariables() {
+        return hasBindVariables;
+    }
+
     public void of(CompiledQuery updateQuery, BindVariableService bindVariableService) {
         // Compiled query from SqlCompiler cannot be used
         // to store compiled statements because the instance re-used for every new compilation
         UpdateOperation updateOperation = updateQuery.getUpdateOperation();
-        String sqlStatement = updateQuery.getSqlStatement();
+        String sqlStatement = updateQuery.getSqlText();
         compiledQuery.ofUpdate(updateOperation);
-        compiledQuery.withSqlStatement(sqlStatement);
+        compiledQuery.withSqlText(sqlStatement);
         updateOperation.withSqlStatement(sqlStatement);
         copyTypesFrom(bindVariableService);
+        this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
     }
 }

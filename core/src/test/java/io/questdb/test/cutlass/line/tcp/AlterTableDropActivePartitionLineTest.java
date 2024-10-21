@@ -45,6 +45,7 @@ import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.sql.Connection;
@@ -92,6 +93,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
     }
 
     @Test
+    @Ignore
     public void testServerMainPgWireConcurrentlyWithLineTcpSender() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {

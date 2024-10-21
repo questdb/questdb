@@ -101,6 +101,8 @@ public interface PGWireConfiguration extends WorkerPoolConfiguration {
 
     boolean isInsertCacheEnabled();
 
+    boolean isLegacyModeEnabled();
+
     boolean isReadOnlyUserEnabled();
 
     boolean isSelectCacheEnabled();

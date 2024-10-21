@@ -29,10 +29,10 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
+import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -61,7 +61,7 @@ public class Table2IlpTest {
     protected static CharSequence root;
     private static DefaultCairoConfiguration configuration;
     private static CairoEngine engine;
-    private static PGWireServer pgServer;
+    private static IPGWireServer pgServer;
     private static LineTcpReceiver receiver;
     private static SqlExecutionContextImpl sqlExecutionContext;
     private static WorkerPool workerPool;
@@ -137,10 +137,10 @@ public class Table2IlpTest {
             }
         };
 
-        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
+        DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
 
         workerPool = new WorkerPool(conf);
-        pgServer = new PGWireServer(
+        pgServer = IPGWireServer.newInstance(
                 conf,
                 engine,
                 workerPool,

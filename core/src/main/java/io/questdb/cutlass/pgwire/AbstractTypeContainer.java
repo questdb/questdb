@@ -54,16 +54,16 @@ public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> 
         defineBindVariables(types, bindVariableService);
     }
 
-    static void copyTypes(BindVariableService bindVariableService, IntList types) {
-        for (int i = 0, n = bindVariableService.getIndexedVariableCount(); i < n; i++) {
-            Function func = bindVariableService.getFunction(i);
+    static void copyTypes(BindVariableService fromBindVariableService, IntList toTypes) {
+        for (int i = 0, n = fromBindVariableService.getIndexedVariableCount(); i < n; i++) {
+            Function func = fromBindVariableService.getFunction(i);
             // For bind variable find in vararg parameters functions are not
             // created upfront. This is due to the type being unknown. On PG
             // wire bind variable type and value are provided *after* the compilation.
             if (func != null) {
-                types.add(func.getType());
+                toTypes.add(func.getType());
             } else {
-                types.add(ColumnType.UNDEFINED);
+                toTypes.add(ColumnType.UNDEFINED);
             }
         }
     }
