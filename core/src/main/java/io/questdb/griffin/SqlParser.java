@@ -1677,7 +1677,12 @@ public class SqlParser {
             lexer.unparseLast();
             final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback);
             model.setQueryModel(queryModel);
-            return model;
+            tok = optTok(lexer);
+            // no more tokens or ';' should indicate end of statement
+            if (tok == null || Chars.equals(tok, ';')) {
+                return model;
+            }
+            throw errUnexpected(lexer, tok);
         }
 
         // if not INSERT INTO SELECT, make it atomic (select returns early)
