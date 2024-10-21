@@ -454,7 +454,13 @@ public class SqlParser {
             CopyModel model = copyModelPool.next();
             model.setCancel(true);
             model.setTarget(target);
-            return model;
+
+            tok = optTok(lexer);
+            // no more tokens or ';' should indicate end of statement
+            if (tok == null || Chars.equals(tok, ';')) {
+                return model;
+            }
+            throw errUnexpected(lexer, tok);
         }
 
         if (isFromKeyword(tok)) {
