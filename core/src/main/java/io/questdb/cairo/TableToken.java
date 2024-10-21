@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Chars;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.GcUtf8String;
@@ -41,6 +42,7 @@ public class TableToken implements Sinkable {
     private final int tableId;
     @NotNull
     private final String tableName;
+    private final boolean dirNameSameAsTableName;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
         this(tableName, new GcUtf8String(dirName), tableId, false, isWal, isSystem, isProtected, false);
@@ -63,6 +65,11 @@ public class TableToken implements Sinkable {
         this.isSystem = isSystem;
         this.isProtected = isProtected;
         this.isPublic = isPublic;
+        String dirNameString = dirName.toString();
+        this.dirNameSameAsTableName = Chars.startsWith(dirNameString, tableName) &&
+                (dirNameString.length() == tableName.length() ||
+                        (dirNameString.length() > tableName.length() && dirNameString.charAt(tableName.length()) == '~')
+                );
     }
 
     @Override
@@ -156,11 +163,13 @@ public class TableToken implements Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put("TableToken{tableName=").put(tableName)
-                .put(", dirName=").put(dirName)
-                .put(", tableId=").put(tableId)
-                .put(", isWal=").put(isWal)
-                .put(", isSystem=").put(isSystem).put('}');
+        if (!dirNameSameAsTableName) {
+            sink.put(dirName);
+        } else {
+            sink.put("TableToken{tableName=").put(tableName)
+                    .put(", dirName=").put(dirName)
+                    .put('}');
+        }
     }
 
     @Override

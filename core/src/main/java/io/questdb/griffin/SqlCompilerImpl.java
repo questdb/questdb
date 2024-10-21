@@ -313,6 +313,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    @Override
+    public BytecodeAssembler getAsm() {
+        return asm;
+    }
+
     public CairoEngine getEngine() {
         return engine;
     }
@@ -2550,7 +2555,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         executionContext.setUseSimpleCircuitBreaker(true);
         try (
-                TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect");
+                TableWriterAPI writer = executionContext.getTableWriterAPI(tableToken, "insertAsSelect");
                 RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
                 TableMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)
         ) {

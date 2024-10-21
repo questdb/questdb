@@ -68,12 +68,13 @@ import java.io.Closeable;
  * See different implementations of the interface for the storage details.
  */
 public interface TableTransactionLogFile extends Closeable {
-    int HEADER_RESERVED = 6 * Long.BYTES + Integer.BYTES;
+    int HEADER_RESERVED = 5 * Long.BYTES + Integer.BYTES;
     long MAX_TXN_OFFSET_64 = Integer.BYTES;
     int STRUCTURAL_CHANGE_WAL_ID = -1;
     long TABLE_CREATE_TIMESTAMP_OFFSET_64 = MAX_TXN_OFFSET_64 + Long.BYTES;
-    long SEQ_PART_SIZE_32 = TABLE_CREATE_TIMESTAMP_OFFSET_64 + Long.BYTES;
-    long HEADER_SIZE = SEQ_PART_SIZE_32 + Integer.BYTES + HEADER_RESERVED;
+    long HEADER_SEQ_PART_SIZE_32 = TABLE_CREATE_TIMESTAMP_OFFSET_64 + Long.BYTES;
+    long HEADER_BASE_TABLE_TXN = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES;
+    long HEADER_SIZE = HEADER_BASE_TABLE_TXN + Long.BYTES + HEADER_RESERVED;
     long TX_LOG_STRUCTURE_VERSION_OFFSET = 0L;
     long TX_LOG_WAL_ID_OFFSET = TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES;
     long TX_LOG_SEGMENT_OFFSET = TX_LOG_WAL_ID_OFFSET + Integer.BYTES;
@@ -131,6 +132,8 @@ public interface TableTransactionLogFile extends Closeable {
      */
     TransactionLogCursor getCursor(long txnLo, @Transient Path path);
 
+    long getLastRefreshBaseTxn();
+
     /**
      * @return Returns true if the table is marked as dropped in the sequencer log files
      */
@@ -148,6 +151,8 @@ public interface TableTransactionLogFile extends Closeable {
      * @return transaction id of the last committed transaction
      */
     long open(Path path);
+
+    void setLastRefreshBaseTxn(long baseTxn);
 
     /**
      * Syncs/flushes the log files to the disk

@@ -1176,38 +1176,33 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupByWithAliasClash1() throws Exception {
+    public void testGroupByTimestampTrunkAsString() throws Exception {
         assertMemoryLeak(() -> {
             compile(
                     "create table t as (" +
-                            "    select 1 as l, 'a' as s, -1 max " +
-                            "    union all " +
-                            "    select 1, 'a', -2" +
-                            "    )"
+                            "    select cast(x as double) as price, " +
+                            "    timestamp_sequence('2020-01-01', 15*60*1000000) as timestamp" +
+                            "    from long_sequence(100)" +
+                            "    ) timestamp(timestamp)"
             );
 
-            String query = "select s, max, max(l) from t group by s, max order by s, max";
-            assertPlanNoLeakCheck(
-                    query,
-                    "Sort light\n" +
-                            "  keys: [s, max]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [s,max]\n" +
-                            "      values: [max(l)]\n" +
-                            "      filter: null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: t\n"
-            );
+            String query = "select to_str(timestamp, 'yyyy-MM-dd'), avg(price) from t";
 
             assertQueryNoLeakCheck(
-                    "s\tmax\tmax1\n" +
-                            "a\t-2\t1\n" +
-                            "a\t-1\t1\n",
-                    query,
+                    "to_str\tavg\n" +
+                            "2020-01-01\t48.5\n" +
+                            "2020-01-02\t98.5\n",
+                    "select to_str(timestamp, 'yyyy-MM-dd'), avg(price) from t\n",
                     null,
                     true,
                     true
+            );
+
+
+            assertPlanNoLeakCheck(
+                    query,
+                    ""
+                    // Expected plan
             );
         });
     }

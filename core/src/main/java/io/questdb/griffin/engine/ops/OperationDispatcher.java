@@ -37,12 +37,10 @@ import org.jetbrains.annotations.Nullable;
 public abstract class OperationDispatcher<T extends AbstractOperation> {
 
     private final DoneOperationFuture doneFuture = new DoneOperationFuture();
-    private final CairoEngine engine;
     private final WeakSelfReturningObjectPool<OperationFutureImpl> futurePool;
     private final String lockReason;
 
     public OperationDispatcher(CairoEngine engine, String lockReason) {
-        this.engine = engine;
         futurePool = new WeakSelfReturningObjectPool<>(pool -> new OperationFutureImpl(engine, pool), 2);
         this.lockReason = lockReason;
     }
@@ -60,7 +58,7 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         boolean isDone = false;
         final TableToken tableToken = operation.getTableToken();
         assert tableToken != null;
-        try (TableWriterAPI writer = engine.getTableWriterAPI(tableToken, lockReason)) {
+        try (TableWriterAPI writer = sqlExecutionContext.getTableWriterAPI(tableToken, lockReason)) {
             final long result = apply(operation, writer);
             isDone = true;
             return doneFuture.of(result);

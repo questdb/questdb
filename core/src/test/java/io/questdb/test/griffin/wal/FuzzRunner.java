@@ -303,6 +303,10 @@ public class FuzzRunner {
         }
     }
 
+    public void checkNoSuspendedTables() {
+        engine.getTableSequencerAPI().forAllWalTables(new ObjHashSet<>(), false, checkNoSuspendedTablesRef);
+    }
+
     @Before
     public void clearSeeds() {
         s0 = 0;

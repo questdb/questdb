@@ -30,6 +30,8 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.MvRefreshTask;
+import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.pool.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
@@ -47,6 +49,7 @@ import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
@@ -111,7 +114,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
-    private final MatViewGraph matViewGraph = new MatViewGraph();
     private final MessageBusImpl messageBus;
     private final MetadataCache metadataCache;
     private final Metrics metrics;
@@ -133,6 +135,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    private final MatViewGraph matViewGraph;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
@@ -148,6 +151,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     configuration,
                     ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
             );
+            this.matViewGraph = new MatViewGraph(configuration);
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
             this.copyContext = new CopyContext(configuration);
@@ -336,6 +340,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public boolean clear() {
         checkpointAgent.clear();
         messageBus.clear();
+        matViewGraph.close();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
         boolean b3 = tableSequencerAPI.releaseAll();
@@ -479,6 +484,16 @@ public class CairoEngine implements Closeable, WriterSource {
         try (SqlCompiler compiler = getSqlCompiler()) {
             ddl(compiler, ddl, sqlExecutionContext, eventSubSeq);
         }
+    }
+
+    public void attachReader(TableReader reader) {
+        // Ignore the object close() call until attached back
+        readerPool.attach(reader);
+    }
+
+    public void detachReader(TableReader reader) {
+        // Ignore the object close() call until attached back
+        readerPool.detach(reader);
     }
 
     public void drop(Path path, TableToken tableToken) {
@@ -1035,6 +1050,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void notifyDropped(TableToken tableToken) {
         tableNameRegistry.dropTable(tableToken);
+    }
+
+    public void notifyMaterializedViewBaseCommit(MvRefreshTask task, long seqTxn) {
+        matViewGraph.notifyTxnApplied(task, seqTxn);
     }
 
     /**
