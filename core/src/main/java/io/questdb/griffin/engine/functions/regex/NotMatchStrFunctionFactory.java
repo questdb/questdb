@@ -64,8 +64,9 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
         }
 
         try {
-            Matcher matcher = Pattern.compile(Chars.toString(regex)).matcher("");
-            return new NoMatchStrFunction(value, matcher);
+            String pattern = Chars.toString(regex);
+            Matcher matcher = Pattern.compile(pattern).matcher("");
+            return new NoMatchStrFunction(value, matcher, pattern);
         } catch (PatternSyntaxException e) {
             throw SqlException.$(argPositions.getQuick(1) + e.getIndex() + 1, e.getMessage());
         }
@@ -74,10 +75,12 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
     private static class NoMatchStrFunction extends BooleanFunction implements UnaryFunction {
         private final Function arg;
         private final Matcher matcher;
+        private final String pattern;
 
-        public NoMatchStrFunction(Function arg, Matcher matcher) {
+        public NoMatchStrFunction(Function arg, Matcher matcher, String pattern) {
             this.arg = arg;
             this.matcher = matcher;
+            this.pattern = pattern;
         }
 
         @Override
@@ -99,6 +102,12 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(arg).val(" !~ ").val(matcher.pattern().toString());
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            Matcher matcher = Pattern.compile(pattern).matcher("");
+            return new NoMatchStrFunction(arg, matcher, pattern);
         }
     }
 }

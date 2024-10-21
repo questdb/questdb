@@ -54,4 +54,9 @@ public class LastDoubleGroupByFunction extends FirstDoubleGroupByFunction {
             destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastDoubleGroupByFunction(arg);
+    }
 }

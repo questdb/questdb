@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long128Function;
@@ -59,5 +60,14 @@ public class Long128Constant extends Long128Function implements ConstantFunction
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(hi).val(lo);
+    }
+
+    @Override
+    public Function deepClone() {
+        return newInstance(lo, hi);
+    }
+
+    private static Long128Constant newInstance(long lo, long hi)  {
+        return lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL ? NULL : new Long128Constant(lo, hi);
     }
 }

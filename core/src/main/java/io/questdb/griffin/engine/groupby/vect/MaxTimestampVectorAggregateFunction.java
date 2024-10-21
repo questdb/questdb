@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Rosti;
@@ -119,5 +120,16 @@ public class MaxTimestampVectorAggregateFunction extends TimestampFunction imple
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntMaxLongWrapUp(pRosti, valueOffset, max.longValue());
+    }
+
+    @Override
+    public Function deepClone() {
+        return new MaxTimestampVectorAggregateFunction(columnIndex, keyValueFunc, distinctFunc);
+    }
+
+    private MaxTimestampVectorAggregateFunction(int columnIndex, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+        this.columnIndex = columnIndex;
+        this.keyValueFunc = keyValueFunc;
+        this.distinctFunc = distinctFunc;
     }
 }

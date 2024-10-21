@@ -86,5 +86,10 @@ public final class LongsToUuidFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return hi;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new LongsToUuidFunction(left, right);
+        }
     }
 }

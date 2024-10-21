@@ -35,11 +35,13 @@ import static io.questdb.std.Chars.trim;
 
 public class TrimStrConstFunction extends StrFunction implements UnaryFunction {
     private final Function arg;
+    private final TrimType type;
     private final StringSink sinkA = new StringSink();
     private final StringSink sinkB = new StringSink();
 
     public TrimStrConstFunction(Function arg, TrimType type) {
         this.arg = arg;
+        this.type = type;
         trim(type, getArg().getStrA(null), sinkA);
         trim(type, getArg().getStrA(null), sinkB);
     }
@@ -67,5 +69,10 @@ public class TrimStrConstFunction extends StrFunction implements UnaryFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val('\'').val(sinkA).val('\'');
+    }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new TrimStrConstFunction(arg, type);
     }
 }

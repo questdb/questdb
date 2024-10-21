@@ -138,6 +138,11 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
             sink.val("replace(").val(value).val(',').val(oldSubStr).val(',').val(newSubStr).val(')');
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new Func(left, center, right, maxLength);
+        }
+
         private void checkLengthLimit(int length) {
             if (length > maxLength) {
                 throw CairoException.nonCritical()

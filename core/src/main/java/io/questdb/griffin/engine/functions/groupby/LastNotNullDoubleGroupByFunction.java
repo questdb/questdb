@@ -61,4 +61,9 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
             destValue.putDouble(valueIndex + 1, srcVal);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastNotNullDoubleGroupByFunction(arg);
+    }
 }

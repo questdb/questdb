@@ -117,5 +117,10 @@ public class LtStrVarcharFunctionFactory implements FunctionFactory {
             sink.val(getName());
             sink.val(right);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstOnLeftFunc(constant, arg);
+        }
     }
 }

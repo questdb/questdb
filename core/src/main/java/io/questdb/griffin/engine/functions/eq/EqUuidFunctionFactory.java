@@ -110,6 +110,11 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
             }
             sink.val("='").valUuid(loConstant, hiConstant).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckFunc(arg, hiConstant, loConstant);
+        }
     }
 
     public static class Func extends AbstractEqBinaryFunction implements BinaryFunction {
@@ -124,6 +129,11 @@ public final class EqUuidFunctionFactory implements FunctionFactory {
             final long rightHi = right.getLong128Hi(rec);
             final long rightLo = right.getLong128Lo(rec);
             return negated != (leftHi == rightHi && leftLo == rightLo);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 }

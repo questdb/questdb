@@ -95,6 +95,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new RndByteFunction(bits);
+        }
     }
 
     private static class RndIntFunction extends GeoIntFunction implements Function {
@@ -125,6 +130,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
+        }
+
+        @Override
+        public Function deepClone() {
+            return new RndIntFunction(type);
         }
     }
 
@@ -157,6 +167,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new RndLongFunction(type);
+        }
     }
 
     private static class RndShortFunction extends GeoShortFunction implements Function {
@@ -182,6 +197,11 @@ public class RndGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_geohash(").val(bits).val(')');
+        }
+
+        @Override
+        public Function deepClone() {
+            return new RndShortFunction(type);
         }
     }
 }

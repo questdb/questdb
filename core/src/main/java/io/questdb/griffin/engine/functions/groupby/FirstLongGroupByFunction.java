@@ -118,4 +118,9 @@ public class FirstLongGroupByFunction extends LongFunction implements GroupByFun
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstLongGroupByFunction(arg);
+    }
 }

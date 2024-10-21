@@ -103,4 +103,9 @@ public class IsIPv4OrderedGroupByFunction extends BooleanFunction implements Gro
     public boolean supportsParallelism() {
         return false;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new IsIPv4OrderedGroupByFunction(arg);
+    }
 }

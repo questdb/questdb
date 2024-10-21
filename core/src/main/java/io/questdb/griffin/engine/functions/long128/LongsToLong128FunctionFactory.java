@@ -94,5 +94,9 @@ public class LongsToLong128FunctionFactory implements FunctionFactory {
             return hi;
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new LongsToLong128Function(left, right);
+        }
     }
 }

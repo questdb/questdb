@@ -66,5 +66,10 @@ public class LengthBinFunctionFactory implements FunctionFactory {
         public String getName() {
             return "length";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new LengthFunc(arg);
+        }
     }
 }

@@ -119,6 +119,11 @@ public class LPadStrFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new LPadStrFunc(left, center, right, maxLength);
+        }
+
         @Nullable
         private StringSink lPadStr(CharSequence str, int len, CharSequence fillText, StringSink sink) {
             if (str != null && len >= 0 && fillText != null && fillText.length() > 0) {

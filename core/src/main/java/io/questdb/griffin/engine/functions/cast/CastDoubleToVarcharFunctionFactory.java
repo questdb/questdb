@@ -90,5 +90,10 @@ public class CastDoubleToVarcharFunctionFactory implements FunctionFactory {
             }
             return null;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg, scale);
+        }
     }
 }

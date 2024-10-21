@@ -109,6 +109,11 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("round(").val(left).val(',').val(right).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 
     private static class FuncNegConst extends DoubleFunction implements UnaryFunction {
@@ -138,6 +143,11 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("round(").val(arg).val(',').val(scale).val(')');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FuncNegConst(arg, scale);
         }
     }
 
@@ -170,6 +180,11 @@ public class RoundDoubleFunctionFactory implements FunctionFactory {
             int i = -scale;
             PlanSink planSink = sink.val("round(").val(arg).val(',').val(i);
             planSink.val(')');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FuncPosConst(arg, scale);
         }
     }
 }

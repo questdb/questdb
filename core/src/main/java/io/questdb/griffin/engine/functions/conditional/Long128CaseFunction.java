@@ -52,4 +52,9 @@ class Long128CaseFunction extends Long128Function implements CaseFunction {
     public long getLong128Lo(Record rec) {
         return picker.pick(rec).getLong128Lo(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new Long128CaseFunction(picker, args);
+    }
 }

@@ -147,6 +147,11 @@ public class SubStringFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new SubStringFunc(strFunc, startFunc, lenFunc);
+        }
+
         @Nullable
         private StringSink getStr0(Record rec, StringSink sink) {
             CharSequence str = strFunc.getStrA(rec);

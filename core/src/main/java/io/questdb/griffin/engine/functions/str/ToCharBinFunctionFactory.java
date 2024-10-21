@@ -108,6 +108,11 @@ public class ToCharBinFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ToCharBinFunc(arg);
+        }
+
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
             final BinarySequence sequence = arg.getBin(rec);

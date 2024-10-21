@@ -151,4 +151,9 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     public CharSequence valueOf(int key) {
         return arg.valueOf(key);
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstSymbolGroupByFunction((SymbolFunction) arg);
+    }
 }

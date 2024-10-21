@@ -110,5 +110,10 @@ public class Base64FunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("base64(").val(data).val(',').val(maxLength).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Base64Func(arg, maxLength);
+        }
     }
 }

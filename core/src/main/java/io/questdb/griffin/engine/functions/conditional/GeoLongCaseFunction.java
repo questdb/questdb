@@ -49,4 +49,9 @@ public class GeoLongCaseFunction extends GeoLongFunction implements MultiArgFunc
     public long getGeoLong(Record rec) {
         return picker.pick(rec).getGeoLong(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new GeoLongCaseFunction(type, picker, args);
+    }
 }

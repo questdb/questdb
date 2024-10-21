@@ -116,6 +116,11 @@ public class SizePrettyFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new SizePretty(arg);
+        }
+
         @Nullable
         private StringSink getStr0(long s, StringSink sink) {
             if (s != Numbers.LONG_NULL) {

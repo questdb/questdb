@@ -681,6 +681,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             public long getTimestamp(Record rec) {
                 return nextBucketTimestamp;
             }
+
+            @Override
+            public Function deepClone() {
+                return new FillRangeTimestampConstant();
+            }
         }
     }
 }

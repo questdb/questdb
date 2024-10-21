@@ -65,5 +65,10 @@ public class CastStrToDoubleFunctionFactory implements FunctionFactory {
                 return Double.NaN;
             }
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

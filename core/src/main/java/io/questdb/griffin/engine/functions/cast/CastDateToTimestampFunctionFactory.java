@@ -55,5 +55,10 @@ public class CastDateToTimestampFunctionFactory implements FunctionFactory {
             final long value = arg.getDate(rec);
             return value == Numbers.LONG_NULL ? value : value * 1000L;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastDateToTimestampFunction(arg);
+        }
     }
 }

@@ -112,6 +112,11 @@ public class RndVarcharListFunctionFactory implements FunctionFactory {
             sink.val("rnd_varchar(").val((Sinkable) symbols).val(')');
         }
 
+        @Override
+        public Function deepClone() {
+            return new RndVarcharListFunction(new ObjList<>(symbols));
+        }
+
         private Utf8String rndSymbol() {
             return symbols.getQuick(rnd.nextPositiveInt() % count);
         }

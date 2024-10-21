@@ -52,5 +52,10 @@ public class CastFloatToCharFunctionFactory implements FunctionFactory {
         public char getChar(Record rec) {
             return (char) arg.getFloat(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

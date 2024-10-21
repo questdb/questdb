@@ -173,6 +173,11 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
         }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new LeastDoubleRecordFunction(args, new IntList(argPositions));
+        }
     }
 
     private static class LeastLongRecordFunction extends LongFunction implements MultiArgFunction {
@@ -210,6 +215,11 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new LeastLongRecordFunction(args, new IntList(argPositions));
         }
     }
 }

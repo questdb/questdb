@@ -158,4 +158,9 @@ public class CountDistinctVarcharGroupByFunction extends LongFunction implements
         UnaryFunction.super.toTop();
         setIndex = 0;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new CountDistinctVarcharGroupByFunction(arg, setInitialCapacity, setLoadFactor);
+    }
 }

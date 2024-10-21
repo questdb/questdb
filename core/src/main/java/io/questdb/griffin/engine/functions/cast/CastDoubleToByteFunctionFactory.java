@@ -54,5 +54,10 @@ public class CastDoubleToByteFunctionFactory implements FunctionFactory {
             final double value = arg.getDouble(rec);
             return Numbers.isNull(value) || value > Byte.MAX_VALUE || value < Byte.MIN_VALUE ? 0 : (byte) value;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

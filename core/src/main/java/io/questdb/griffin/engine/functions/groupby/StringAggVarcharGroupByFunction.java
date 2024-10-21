@@ -178,4 +178,9 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
         UnaryFunction.super.toTop();
         sinkIndex = 0;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new StringAggVarcharGroupByFunction(arg, delimiter);
+    }
 }

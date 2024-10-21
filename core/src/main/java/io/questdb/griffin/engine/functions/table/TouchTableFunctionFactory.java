@@ -123,6 +123,11 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TouchTableFunc(arg);
+        }
+
         private void clearCounters() {
             dataPages = 0;
             indexKeyPages = 0;

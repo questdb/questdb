@@ -35,10 +35,12 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MatchSymbolFunctionFactory implements FunctionFactory {
 
@@ -72,7 +74,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 if (matcher == null) {
                     return BooleanConstant.FALSE;
                 }
-                return new MatchStaticSymbolTableConstPatternFunction(func, matcher);
+                return new MatchStaticSymbolTableConstPatternFunction(func, matcher, pattern);
             } else if (pattern.isRuntimeConstant()) {
                 return new MatchStaticSymbolTableRuntimeConstPatternFunction(func, pattern, patternPosition);
             }
@@ -82,7 +84,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 if (matcher == null) {
                     return BooleanConstant.FALSE;
                 }
-                return new MatchStrFunctionFactory.MatchStrConstPatternFunction(func, matcher);
+                return new MatchStrFunctionFactory.MatchStrConstPatternFunction(func, matcher, pattern);
             } else if (pattern.isRuntimeConstant()) {
                 return new MatchStrFunctionFactory.MatchStrRuntimeConstPatternFunction(func, pattern, patternPosition);
             }
@@ -108,10 +110,12 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private final SymbolFunction symbolFun;
         private final IntList symbolKeys = new IntList();
         private boolean initialized;
+        private final Function pattern;
 
-        public MatchStaticSymbolTableConstPatternFunction(SymbolFunction symbolFun, Matcher matcher) {
+        public MatchStaticSymbolTableConstPatternFunction(SymbolFunction symbolFun, Matcher matcher, Function pattern) {
             this.symbolFun = symbolFun;
             this.matcher = matcher;
+            this.pattern = pattern;
         }
 
         @Override
@@ -142,6 +146,13 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(symbolFun).val(" ~ ").val(matcher.pattern().toString());
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            CharSequence regex = pattern.getStrA(null);
+            Matcher copy =  Pattern.compile(Chars.toString(regex)).matcher("");
+            return new MatchStaticSymbolTableConstPatternFunction((SymbolFunction) arg, copy, pattern);
         }
     }
 
@@ -199,6 +210,11 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(symbolFun).val(" ~ ").val(pattern.toString());
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new MatchStaticSymbolTableRuntimeConstPatternFunction((SymbolFunction) arg, pattern.deepClone(), patternPosition);
         }
     }
 }

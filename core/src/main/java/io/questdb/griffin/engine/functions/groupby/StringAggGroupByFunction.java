@@ -176,4 +176,9 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         UnaryFunction.super.toTop();
         sinkIndex = 0;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new StringAggGroupByFunction(arg, delimiter);
+    }
 }

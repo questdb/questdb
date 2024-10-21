@@ -75,5 +75,10 @@ public class YearFunctionFactory implements FunctionFactory {
         public String getName() {
             return "year";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new YearFunction(arg);
+        }
     }
 }

@@ -67,5 +67,10 @@ public class CastCharToLong256FunctionFactory implements FunctionFactory {
             long256b.setLow(arg.getChar(rec));
             return long256b;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

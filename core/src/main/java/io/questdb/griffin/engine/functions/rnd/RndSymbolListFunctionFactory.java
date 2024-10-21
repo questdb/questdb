@@ -111,6 +111,11 @@ public class RndSymbolListFunctionFactory implements FunctionFactory {
             return symbols.getQuick(symbolKey);
         }
 
+        @Override
+        public Function deepClone() {
+            return new Func(new ObjList<>(symbols));
+        }
+
         private int next() {
             return Math.abs(rnd.nextPositiveInt() % count);
         }

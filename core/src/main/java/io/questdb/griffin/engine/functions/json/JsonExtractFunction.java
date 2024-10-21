@@ -399,6 +399,11 @@ public class JsonExtractFunction implements ScalarFunction {
         return pointer == null;
     }
 
+    @Override
+    public Function deepClone() {
+        return new JsonExtractFunction(targetType, json.deepClone(), path.deepClone(), maxSize);
+    }
+
     private long extractLongFromJsonNumber(long res) {
         switch (stateA.simdJsonResult.getNumberType()) {
             case SimdJsonNumberType.SIGNED_INTEGER:

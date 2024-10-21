@@ -49,6 +49,15 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     }
 
     @SuppressWarnings("unchecked")
+    public ObjList(ObjList<? extends DeepCloneable<T>> other, boolean clone) {
+        this.buffer = (T[]) new Object[Math.max(other.size(), DEFAULT_ARRAY_SIZE)];
+        setPos(other.size());
+        for (int i = 0 ; i < pos; i++) {
+            this.buffer[i] = other.get(i).deepClone();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
     public ObjList(T... other) {
         this.buffer = (T[]) new Object[Math.max(other.length, DEFAULT_ARRAY_SIZE)];
         setPos(other.length);

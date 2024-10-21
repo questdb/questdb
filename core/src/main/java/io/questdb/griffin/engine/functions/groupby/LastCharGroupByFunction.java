@@ -54,4 +54,9 @@ public class LastCharGroupByFunction extends FirstCharGroupByFunction {
             destValue.putChar(valueIndex + 1, srcValue.getChar(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastCharGroupByFunction(0, arg);
+    }
 }

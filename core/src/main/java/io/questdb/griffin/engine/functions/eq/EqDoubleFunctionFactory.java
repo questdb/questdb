@@ -136,6 +136,11 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
             final double r = right.getDouble(rec);
             return negated != Numbers.equals(l, r);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 
     protected static class FuncDateIsNaN extends AbstractIsNaNFunction {
@@ -146,6 +151,11 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (arg.getDate(rec) == Numbers.LONG_NULL);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FuncDateIsNaN(arg);
         }
     }
 
@@ -158,6 +168,11 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (Numbers.isNull(arg.getDouble(rec)));
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FuncDoubleIsNaN(arg);
+        }
     }
 
     protected static class FuncFloatIsNaN extends AbstractIsNaNFunction {
@@ -168,6 +183,11 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (Numbers.isNull(arg.getFloat(rec)));
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FuncFloatIsNaN(arg);
         }
     }
 
@@ -180,6 +200,11 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (arg.getInt(rec) == Numbers.INT_NULL);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FuncIntIsNaN(arg);
+        }
     }
 
     protected static class FuncLongIsNaN extends AbstractIsNaNFunction {
@@ -191,6 +216,11 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (arg.getLong(rec) == Numbers.LONG_NULL);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FuncLongIsNaN(arg);
+        }
     }
 
     protected static class FuncTimestampIsNaN extends AbstractIsNaNFunction {
@@ -201,6 +231,11 @@ public class EqDoubleFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (arg.getTimestamp(rec) == Numbers.LONG_NULL);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FuncTimestampIsNaN(arg);
         }
     }
 }

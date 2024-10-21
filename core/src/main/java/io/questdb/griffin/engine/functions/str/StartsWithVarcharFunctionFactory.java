@@ -65,7 +65,7 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
     public static class ConstFunc extends BooleanFunction implements UnaryFunction {
         protected final Utf8String startsWith;
         protected final Function value;
-        private final long startsWithSixPrefix;
+        protected final long startsWithSixPrefix;
 
         public ConstFunc(Function value, @Transient Utf8Sequence startsWith) {
             this.value = value;
@@ -82,6 +82,12 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
             this.value = value;
             this.startsWith = new Utf8String(startsWith);
             this.startsWithSixPrefix = this.startsWith.zeroPaddedSixPrefix();
+        }
+
+        protected ConstFunc(Function arg, Utf8String startsWith, long startsWithSixPrefix) {
+            this.value = arg;
+            this.startsWith = startsWith;
+            this.startsWithSixPrefix = startsWithSixPrefix;
         }
 
         @Override
@@ -103,6 +109,11 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
             sink.val(NAME).val('(');
             sink.val(value).val(", ");
             sink.val(startsWith).val(')');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstFunc(arg, startsWith, startsWithSixPrefix);
         }
     }
 
@@ -145,6 +156,11 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
             sink.val(NAME).val('(');
             sink.val(value).val(", ");
             sink.val(startsWith).val(')');
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 }

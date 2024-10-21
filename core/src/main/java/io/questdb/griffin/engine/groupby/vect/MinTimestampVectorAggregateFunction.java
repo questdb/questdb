@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Numbers;
@@ -131,5 +132,16 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntMinLongWrapUp(pRosti, valueOffset, accumulator.longValue());
+    }
+
+    @Override
+    public Function deepClone() {
+        return new MinTimestampVectorAggregateFunction(columnIndex, keyValueFunc, distinctFunc);
+    }
+
+    private MinTimestampVectorAggregateFunction(int columnIndex, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+        this.columnIndex = columnIndex;
+        this.keyValueFunc = keyValueFunc;
+        this.distinctFunc = distinctFunc;
     }
 }

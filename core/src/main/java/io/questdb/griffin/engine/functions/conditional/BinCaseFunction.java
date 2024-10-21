@@ -53,4 +53,9 @@ class BinCaseFunction extends BinFunction implements CaseFunction {
     public long getBinLen(Record rec) {
         return picker.pick(rec).getBinLen(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new BinCaseFunction(picker, args);
+    }
 }

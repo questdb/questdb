@@ -47,4 +47,9 @@ class LongCaseFunction extends LongFunction implements CaseFunction {
     public long getLong(Record rec) {
         return picker.pick(rec).getLong(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new LongCaseFunction(picker, args);
+    }
 }

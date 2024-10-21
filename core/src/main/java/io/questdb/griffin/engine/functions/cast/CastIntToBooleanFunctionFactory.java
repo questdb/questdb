@@ -54,5 +54,10 @@ public class CastIntToBooleanFunctionFactory implements FunctionFactory {
             int i = arg.getInt(rec);
             return i != Numbers.INT_NULL && i != 0;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

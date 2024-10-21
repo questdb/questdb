@@ -195,6 +195,11 @@ public class RegexpReplaceStrFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("regexp_replace(").val(value).val(',').val(pattern).val(',').val(replacement).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new RegexpReplaceStrFunction(arg, pattern.deepClone(), patternPos, replacement.deepClone(), maxLength, functionPos);
+        }
     }
 
     private static class StringBuilderSink implements CharSequence {

@@ -113,6 +113,11 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
             }
             sink.val("='").val(constant).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckFunc(arg, constant);
+        }
     }
 
     private static class Func extends AbstractEqBinaryFunction {
@@ -135,6 +140,11 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
             } else {
                 return "=";
             }
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 
@@ -165,6 +175,11 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
             super.init(symbolTableSource, executionContext);
             cachedRuntimeConst = right.getInterval(null);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new HalfRuntimeConstFunc(left, right);
+        }
     }
 
     public static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -192,6 +207,11 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
             } else {
                 sink.val(" is null");
             }
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new NullCheckFunc(arg);
         }
     }
 }

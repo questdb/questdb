@@ -94,6 +94,11 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("simulate_crash(jvm)");
         }
+
+        @Override
+        public Function deepClone() {
+            return INSTANCE;
+        }
     }
 
     private static class CairoExceptionFunction extends BooleanFunction {
@@ -119,6 +124,11 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("simulate_crash(cairoException)");
         }
+
+        @Override
+        public Function deepClone() {
+            return INSTANCE;
+        }
     }
 
     private static class OutOfMemoryFunction extends BooleanFunction {
@@ -138,6 +148,11 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("simulate_crash(oom)");
+        }
+
+        @Override
+        public Function deepClone() {
+            return INSTANCE;
         }
     }
 
@@ -159,6 +174,11 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("simulate_crash(dummy)");
+        }
+
+        @Override
+        public Function deepClone() {
+            return INSTANCE;
         }
     }
 }

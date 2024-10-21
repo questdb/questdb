@@ -58,5 +58,10 @@ public class CastByteToLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             return arg.getByte(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

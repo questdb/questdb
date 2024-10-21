@@ -54,5 +54,10 @@ public class CastIntToLongFunctionFactory implements FunctionFactory {
             final int value = arg.getInt(rec);
             return value != Numbers.INT_NULL ? value : Numbers.LONG_NULL;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

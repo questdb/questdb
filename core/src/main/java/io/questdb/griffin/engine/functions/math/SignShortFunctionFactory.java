@@ -69,5 +69,10 @@ public class SignShortFunctionFactory implements FunctionFactory {
             short s = arg.getShort(rec);
             return (short) Integer.signum(s);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

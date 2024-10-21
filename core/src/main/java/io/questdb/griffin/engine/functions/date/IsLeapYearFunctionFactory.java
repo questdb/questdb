@@ -76,5 +76,10 @@ public class IsLeapYearFunctionFactory implements FunctionFactory {
         public String getName() {
             return "is_leap_year";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

@@ -52,5 +52,10 @@ public class CastShortToTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             return arg.getShort(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastShortToTimestampFunction(arg);
+        }
     }
 }

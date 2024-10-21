@@ -75,5 +75,10 @@ public class IntervalStartFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("interval_start(").val(intervalFunc).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

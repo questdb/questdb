@@ -189,6 +189,11 @@ public final class InUuidFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(arg).val(" in ").val(set);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new InUUIDConstFunction(arg, new LongLongHashSet(set));
+        }
     }
 
     private static class InUUIDRuntimeConstFunction extends BooleanFunction implements MultiArgFunction {
@@ -236,6 +241,11 @@ public final class InUuidFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(keyFunc).val(" in ").val(set);
+        }
+
+        @Override
+        public Function newInstance(ObjList<Function> args) {
+            return new InUUIDRuntimeConstFunction(keyFunc.deepClone(), args, new IntList(valueFunctionPositions), new LongLongHashSet(set));
         }
     }
 }

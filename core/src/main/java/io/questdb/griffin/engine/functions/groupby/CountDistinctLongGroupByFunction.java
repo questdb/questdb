@@ -187,4 +187,15 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     public void toTop() {
         UnaryFunction.super.toTop();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new CountDistinctLongGroupByFunction(arg, new GroupByLongHashSet(setA), new GroupByLongHashSet(setB));
+    }
+
+    private CountDistinctLongGroupByFunction(Function arg, GroupByLongHashSet setA, GroupByLongHashSet setB) {
+        this.arg = arg;
+        this.setA = setA;
+        this.setB = setB;
+    }
 }

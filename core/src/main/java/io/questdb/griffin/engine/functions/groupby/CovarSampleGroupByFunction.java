@@ -48,4 +48,9 @@ public class CovarSampleGroupByFunction extends AbstractCovarGroupByFunction {
     public String getName() {
         return "covar_samp";
     }
+
+    @Override
+    public Function newInstance(final Function left, final Function right) {
+        return new CovarSampleGroupByFunction(left, right);
+    }
 }

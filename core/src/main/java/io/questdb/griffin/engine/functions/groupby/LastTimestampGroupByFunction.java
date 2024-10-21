@@ -54,4 +54,9 @@ public class LastTimestampGroupByFunction extends FirstTimestampGroupByFunction 
             destValue.putTimestamp(valueIndex + 1, srcValue.getTimestamp(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastTimestampGroupByFunction(arg);
+    }
 }

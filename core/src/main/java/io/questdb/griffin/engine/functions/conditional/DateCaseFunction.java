@@ -47,4 +47,9 @@ class DateCaseFunction extends DateFunction implements CaseFunction {
     public long getDate(Record rec) {
         return picker.pick(rec).getDate(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new DateCaseFunction(picker, args);
+    }
 }

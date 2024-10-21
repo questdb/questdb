@@ -132,6 +132,11 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
         return false;
     }
 
+    @Override
+    public Function newInstance(final Function arg) {
+        return new SumLong256GroupByFunction(arg);
+    }
+
     private Long256 getLong256(Record rec, Long256Impl long256) {
         if (rec.getLong(valueIndex + 1) > 0) {
             long256.copyFrom(rec.getLong256A(valueIndex));

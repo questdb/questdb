@@ -54,5 +54,10 @@ public class CastIntToFloatFunctionFactory implements FunctionFactory {
             final int value = arg.getInt(rec);
             return value != Numbers.INT_NULL ? value : Float.NaN;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

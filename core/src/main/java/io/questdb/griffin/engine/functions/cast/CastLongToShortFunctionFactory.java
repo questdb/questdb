@@ -54,5 +54,10 @@ public class CastLongToShortFunctionFactory implements FunctionFactory {
             final long value = arg.getLong(rec);
             return value != Numbers.LONG_NULL ? (short) value : 0;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastLongToShortFunction(arg);
+        }
     }
 }

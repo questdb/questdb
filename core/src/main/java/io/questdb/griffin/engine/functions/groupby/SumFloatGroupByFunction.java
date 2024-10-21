@@ -133,4 +133,9 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new SumFloatGroupByFunction(arg);
+    }
 }

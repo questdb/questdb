@@ -33,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Utf8SequenceHashSet;
@@ -170,6 +171,11 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
     public void toTop() {
         UnaryFunction.super.toTop();
         setIndex = 0;
+    }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new StringDistinctAggVarcharGroupByFunction(arg, delimiter, setInitialCapacity, setLoadFactor);
     }
 
     private Utf8Sequence getVarchar(Record rec, DirectUtf8Sink sink) {

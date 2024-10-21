@@ -94,6 +94,11 @@ public class StrPosVarcharFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("strpos(").val(varcharFunc).val(",'").val(substr).val("')");
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstFunc(arg, substr);
+        }
     }
 
     private static class Func extends IntFunction implements BinaryFunction {
@@ -132,6 +137,11 @@ public class StrPosVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return substrFunc;
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 }

@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
+import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.std.Numbers;
 
 public class CountDistinctIPv4GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
@@ -187,5 +188,16 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
+    }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new CountDistinctIPv4GroupByFunction(arg, new GroupByIntHashSet(setA), new GroupByIntHashSet(setB));
+    }
+
+    private CountDistinctIPv4GroupByFunction(Function arg, GroupByIntHashSet setA, GroupByIntHashSet setB) {
+        this.arg = arg;
+        this.setA = setA;
+        this.setB = setB;
     }
 }

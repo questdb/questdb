@@ -238,6 +238,11 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             }
             return tailWord;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstContainsSwarVarcharFunction(arg, pattern);
+        }
     }
 
     private static class ConstContainsVarcharFunction extends BooleanFunction implements UnaryFunction {
@@ -268,6 +273,11 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             sink.val(pattern);
             sink.val('%');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstContainsVarcharFunction(arg, pattern);
+        }
     }
 
     private static class ConstEndsWithVarcharFunction extends BooleanFunction implements UnaryFunction {
@@ -296,6 +306,16 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             sink.val(" like ");
             sink.val('%');
             sink.val(pattern);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstEndsWithVarcharFunction(arg, pattern);
+        }
+
+        private ConstEndsWithVarcharFunction(Function value, Utf8String pattern) {
+            this.value = value;
+            this.pattern = pattern;
         }
     }
 
@@ -327,6 +347,16 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             sink.val(pattern);
             sink.val('%');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstIContainsAsciiFunction(value, pattern);
+        }
+
+        private ConstIContainsAsciiFunction(Function value, Utf8String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
     }
 
     private static class ConstIEndsWithAsciiFunction extends BooleanFunction implements UnaryFunction {
@@ -355,6 +385,16 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             sink.val(" ilike ");
             sink.val('%');
             sink.val(pattern);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstIEndsWithAsciiFunction(arg, pattern);
+        }
+
+        private ConstIEndsWithAsciiFunction(Function value, Utf8String pattern) {
+            this.value = value;
+            this.pattern = pattern;
         }
     }
 
@@ -385,6 +425,16 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             sink.val(pattern);
             sink.val('%');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstIStartsWithAsciiFunction(arg, pattern);
+        }
+
+        private ConstIStartsWithAsciiFunction(Function value, Utf8String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
     }
 
     private static class ConstStartsWithVarcharFunction extends StartsWithVarcharFunctionFactory.ConstFunc {
@@ -398,6 +448,15 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             sink.val(" like ");
             sink.val(startsWith);
             sink.val('%');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstStartsWithVarcharFunction(arg, startsWith, startsWithSixPrefix);
+        }
+
+        private ConstStartsWithVarcharFunction(Function arg, Utf8String startsWith, long startsWithSixPrefix) {
+            super(arg, startsWith, startsWithSixPrefix);
         }
     }
 }

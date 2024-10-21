@@ -219,6 +219,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                 sink.val(" [case-sensitive]");
             }
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new BindLikeStaticSymbolTableFunction((SymbolFunction) left, right, caseInsensitive);
+        }
     }
 
     private static class ConstContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
@@ -267,6 +272,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             sink.val(pattern);
             sink.val('%');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstContainsStaticSymbolTableFunction((SymbolFunction) arg, pattern);
+        }
     }
 
     private static class ConstEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
@@ -313,6 +323,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             sink.val(" like ");
             sink.val('%');
             sink.val(pattern);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstEndsWithStaticSymbolTableFunction((SymbolFunction) arg, pattern);
         }
     }
 
@@ -362,6 +377,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             sink.val(pattern);
             sink.val('%');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstIContainsStaticSymbolTableFunction((SymbolFunction) arg, pattern);
+        }
     }
 
     private static class ConstIEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
@@ -409,6 +429,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             sink.val('%');
             sink.val(pattern);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstIEndsWithStaticSymbolTableFunction((SymbolFunction) arg, pattern);
+        }
     }
 
     private static class ConstIStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
@@ -455,6 +480,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             sink.val(" ilike ");
             sink.val(pattern);
             sink.val('%');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstIStartsWithStaticSymbolTableFunction((SymbolFunction) arg, pattern);
         }
     }
 
@@ -504,6 +534,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                 sink.val(" [case-sensitive]");
             }
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstLikeStaticSymbolTableFunction((SymbolFunction) arg, matcher);
+        }
     }
 
     private static class ConstStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
@@ -550,6 +585,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             sink.val(" like ");
             sink.val(pattern);
             sink.val('%');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstStartsWithStaticSymbolTableFunction((SymbolFunction) arg, pattern);
         }
     }
 }

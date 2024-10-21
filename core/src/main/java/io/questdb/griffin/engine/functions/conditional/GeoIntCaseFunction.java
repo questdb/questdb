@@ -49,4 +49,9 @@ public class GeoIntCaseFunction extends GeoIntFunction implements MultiArgFuncti
     public int getGeoInt(Record rec) {
         return picker.pick(rec).getGeoInt(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new GeoIntCaseFunction(type, picker, args);
+    }
 }

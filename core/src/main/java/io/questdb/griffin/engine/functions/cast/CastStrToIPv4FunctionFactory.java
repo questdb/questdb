@@ -77,5 +77,10 @@ public class CastStrToIPv4FunctionFactory implements FunctionFactory {
         public int getIPv4(Record rec) {
             return Numbers.parseIPv4Quiet(arg.getStrA(rec));
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

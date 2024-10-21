@@ -110,6 +110,11 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
             sink.val("='");
             sink.val(chrConst).val("'");
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstChrFunc(arg, chrConst);
+        }
     }
 
     private static class ConstStrConstChrFunc extends NegatableBooleanFunction implements ConstantFunction {
@@ -127,6 +132,11 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getBool(null));
+        }
+
+        @Override
+        public Function deepClone() {
+            return new ConstStrConstChrFunc(equals);
         }
     }
 
@@ -158,6 +168,11 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
             sink.val('=');
             sink.val(chrConst);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstStrFunc(arg, chrConst);
+        }
     }
 
     private static class Func extends AbstractEqBinaryFunction {
@@ -168,6 +183,11 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (Chars.equalsNc(left.getStrA(rec), right.getChar(rec)));
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 
@@ -181,6 +201,11 @@ public class EqStrCharFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(getBool(null));
+        }
+
+        @Override
+        public Function deepClone() {
+            return new NegatedAwareBooleanConstantFunc();
         }
     }
 }

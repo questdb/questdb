@@ -79,5 +79,10 @@ public class DegreesDoubleFunctionFactory implements FunctionFactory {
         public String getName() {
             return SYMBOL;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FromRadians(arg);
+        }
     }
 }

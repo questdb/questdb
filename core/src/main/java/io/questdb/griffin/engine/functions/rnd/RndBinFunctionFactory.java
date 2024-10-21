@@ -74,6 +74,11 @@ public class RndBinFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_bin()");
         }
+
+        @Override
+        public Function deepClone() {
+            return new FixLenFunction();
+        }
     }
 
     private static class Sequence implements BinarySequence {

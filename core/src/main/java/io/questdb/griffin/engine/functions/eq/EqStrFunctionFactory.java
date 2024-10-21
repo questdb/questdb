@@ -110,6 +110,11 @@ public class EqStrFunctionFactory implements FunctionFactory {
             }
             sink.val("='").val(constant).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckFunc(arg, constant);
+        }
     }
 
     private static class Func extends AbstractEqBinaryFunction {
@@ -140,6 +145,11 @@ public class EqStrFunctionFactory implements FunctionFactory {
                 return "=";
             }
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 
     public static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -167,6 +177,11 @@ public class EqStrFunctionFactory implements FunctionFactory {
             } else {
                 sink.val(" is null");
             }
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new NullCheckFunc(arg);
         }
     }
 }

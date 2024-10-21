@@ -150,5 +150,10 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
             }
             return value;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

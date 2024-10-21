@@ -79,6 +79,11 @@ class RndVarcharFunction extends VarcharFunction implements Function {
         sink.val("rnd_varchar(").val(lo).val(',').val(range + lo - 1).val(',').val(nullRate - 1).val(')');
     }
 
+    @Override
+    public Function deepClone() {
+        return new RndVarcharFunction(lo, lo + range - 1, nullRate);
+    }
+
     private void sinkRnd(Utf8Sink utf8Sink) {
         int len = lo + rnd.nextPositiveInt() % range;
         if (rnd.nextBoolean()) {

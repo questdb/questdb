@@ -149,6 +149,10 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        protected int getIndexPosition() {
+            return indexPosition;
+        }
+
         @Nullable
         private CharSequence getStrWithClear(Record rec, StringSink sink) {
             sink.clear();
@@ -229,6 +233,11 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new SplitPartConstDelimiterConstIndexFunction(left, center, right, getIndexPosition(), delimiter, index);
+        }
+
+        @Override
         char getDelimiter(Record rec) {
             return delimiter;
         }
@@ -251,6 +260,11 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
             this.delimiter = delimiter;
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new SplitPartConstDelimiterFunction(left, center, right, getIndexPosition(), delimiter);
         }
 
         @Override
@@ -279,6 +293,11 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new SplitPartConstIndexFunction(left, center, right, getIndexPosition(), index);
+        }
+
+        @Override
         char getDelimiter(Record rec) {
             return delimiterFunc.getChar(rec);
         }
@@ -298,6 +317,11 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
                 int indexPosition
         ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new SplitPartFunction(left, center, right, getIndexPosition());
         }
 
         @Override

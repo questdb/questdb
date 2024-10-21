@@ -65,4 +65,9 @@ public class LastNotNullStrGroupByFunction extends FirstStrGroupByFunction {
             destValue.putBool(valueIndex + 2, false);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastNotNullStrGroupByFunction(arg);
+    }
 }

@@ -70,5 +70,10 @@ public class CastByteToStrFunctionFactory implements FunctionFactory {
             sinkB.put(arg.getByte(rec));
             return sinkB;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

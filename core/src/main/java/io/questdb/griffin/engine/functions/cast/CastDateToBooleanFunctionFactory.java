@@ -54,5 +54,10 @@ public class CastDateToBooleanFunctionFactory implements FunctionFactory {
             long date = arg.getDate(rec);
             return date != Numbers.LONG_NULL && date != 0;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

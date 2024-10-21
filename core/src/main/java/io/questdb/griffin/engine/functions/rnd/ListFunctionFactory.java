@@ -107,6 +107,11 @@ public class ListFunctionFactory implements FunctionFactory {
             return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
 
+        @Override
+        public Function deepClone() {
+            return new Func(new ObjList<>(symbols));
+        }
+
         private int next() {
             return position++ % count;
         }

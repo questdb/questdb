@@ -48,4 +48,9 @@ public class VarPopGroupByFunction extends AbstractStdDevGroupByFunction {
     public String getName() {
         return "var_pop";
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new VarPopGroupByFunction(arg);
+    }
 }

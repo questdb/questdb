@@ -61,4 +61,9 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
             }
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstNotNullDoubleGroupByFunction(arg);
+    }
 }

@@ -102,6 +102,11 @@ public class Base64DecodeFunctionFactory implements FunctionFactory {
             sink.val("from_base64(").val(data).val(')');
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Base64DecodeFunc(arg);
+        }
+
         private static class BinarySequenceUtf8Sink implements BinarySequence, Utf8Sink {
             private final Utf8StringSink sink = new Utf8StringSink();
 

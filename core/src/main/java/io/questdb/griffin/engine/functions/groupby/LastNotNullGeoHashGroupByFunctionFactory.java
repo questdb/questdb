@@ -96,6 +96,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                 destValue.putByte(valueIndex + 1, srcVal);
             }
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new LastNotNullGeoHashGroupByFunctionByte(type, arg);
+        }
     }
 
     private static class LastNotNullGeoHashGroupByFunctionInt extends FirstGeoHashGroupByFunctionInt {
@@ -127,6 +132,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putInt(valueIndex + 1, srcVal);
             }
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new LastNotNullGeoHashGroupByFunctionInt(type, arg);
         }
     }
 
@@ -160,6 +170,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                 destValue.putLong(valueIndex + 1, srcVal);
             }
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new LastNotNullGeoHashGroupByFunctionLong(type, arg);
+        }
     }
 
     private static class LastNotNullGeoHashGroupByFunctionShort extends FirstGeoHashGroupByFunctionShort {
@@ -191,6 +206,11 @@ public class LastNotNullGeoHashGroupByFunctionFactory implements FunctionFactory
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putShort(valueIndex + 1, srcVal);
             }
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new LastNotNullGeoHashGroupByFunctionShort(type, arg);
         }
     }
 }

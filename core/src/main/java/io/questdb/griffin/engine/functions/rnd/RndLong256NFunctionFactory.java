@@ -87,6 +87,11 @@ public class RndLong256NFunctionFactory implements FunctionFactory {
             sink.val("rnd_long256(").val(values.length / 4).val(')');
         }
 
+        @Override
+        public Function deepClone() {
+            return new RndFunction(values.length / 4);
+        }
+
         @NotNull
         private Long256 rndLong(Long256Impl long256) {
             int index = rnd.nextPositiveInt() % (values.length / 4);

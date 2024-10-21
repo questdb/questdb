@@ -52,5 +52,10 @@ public class CastShortToFloatFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             return arg.getShort(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

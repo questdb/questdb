@@ -61,4 +61,9 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
             destValue.putFloat(valueIndex + 1, srcVal);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastNotNullFloatGroupByFunction(arg);
+    }
 }

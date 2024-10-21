@@ -137,6 +137,11 @@ public class ToStrDateFunctionFactory implements FunctionFactory {
             sink.val("to_str(").val(arg).val(',').val(formatStr).val(')');
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ToCharDateVCFFunc(arg, format, locale, formatStr);
+        }
+
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
             final long value = arg.getDate(rec);

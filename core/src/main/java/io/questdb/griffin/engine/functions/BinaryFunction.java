@@ -101,4 +101,11 @@ public interface BinaryFunction extends Function {
         getLeft().toTop();
         getRight().toTop();
     }
+
+    Function newInstance(final Function left, final Function right);
+
+    @Override
+    default Function deepClone() {
+        return newInstance(getLeft().deepClone(), getRight().deepClone());
+    }
 }

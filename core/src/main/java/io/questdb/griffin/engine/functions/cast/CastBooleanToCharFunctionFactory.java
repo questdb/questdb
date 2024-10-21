@@ -52,5 +52,10 @@ public class CastBooleanToCharFunctionFactory implements FunctionFactory {
         public char getChar(Record rec) {
             return arg.getChar(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

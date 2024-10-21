@@ -85,4 +85,9 @@ abstract class BasePartitionedDoubleWindowFunction extends BaseDoubleWindowFunct
         super.toTop();
         map.clear();
     }
+
+    @Override
+    public Function deepClone() {
+        throw new UnsupportedOperationException();
+    }
 }

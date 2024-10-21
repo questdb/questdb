@@ -54,5 +54,10 @@ public class CastStrToByteFunctionFactory implements FunctionFactory {
             // Related code ColumnTypeConverter::convertStrToByte
             return (byte) Numbers.parseIntQuiet(arg.getStrA(rec));
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

@@ -47,4 +47,9 @@ class FloatCaseFunction extends FloatFunction implements CaseFunction {
     public float getFloat(Record rec) {
         return picker.pick(rec).getFloat(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new FloatCaseFunction(picker, args);
+    }
 }

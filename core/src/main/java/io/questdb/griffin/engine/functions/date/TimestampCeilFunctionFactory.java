@@ -111,6 +111,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
             return Timestamps.ceilDD(timestamp);
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampCeilDDFunction(arg);
+        }
+
     }
 
     public static class TimestampCeilHHFunction extends AbstractTimestampCeilFunction {
@@ -121,6 +126,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         @Override
         public long ceil(long timestamp) {
             return Timestamps.ceilHH(timestamp);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampCeilHHFunction(arg);
         }
     }
 
@@ -133,6 +143,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         public long ceil(long timestamp) {
             return Timestamps.ceilMI(timestamp);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampCeilMIFunction(arg);
+        }
     }
 
     public static class TimestampCeilMMFunction extends AbstractTimestampCeilFunction {
@@ -143,6 +158,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         @Override
         public long ceil(long timestamp) {
             return Timestamps.ceilMM(timestamp);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampCeilMMFunction(arg);
         }
     }
 
@@ -155,6 +175,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         public long ceil(long timestamp) {
             return Timestamps.ceilMS(timestamp);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampCeilMSFunction(arg);
+        }
     }
 
     public static class TimestampCeilSSFunction extends AbstractTimestampCeilFunction {
@@ -165,6 +190,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         @Override
         public long ceil(long timestamp) {
             return Timestamps.ceilSS(timestamp);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampCeilSSFunction(arg);
         }
     }
 
@@ -177,6 +207,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         public long ceil(long timestamp) {
             return Timestamps.ceilWW(timestamp);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampCeilWWFunction(arg);
+        }
     }
 
     public static class TimestampCeilYYYYFunction extends AbstractTimestampCeilFunction {
@@ -187,6 +222,11 @@ public class TimestampCeilFunctionFactory implements FunctionFactory {
         @Override
         public long ceil(long timestamp) {
             return Timestamps.ceilYYYY(timestamp);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampCeilYYYYFunction(arg);
         }
     }
 }

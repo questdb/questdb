@@ -42,6 +42,12 @@ public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMuta
         this.pos = 0;
     }
 
+    public StringSink(StringSink other) {
+        this.pos = other.pos;
+        this.buffer = new char[other.buffer.length];
+        System.arraycopy(other.buffer, 0, this.buffer, 0, other.buffer.length);
+    }
+
     @Override
     public char charAt(int index) {
         return buffer[index];

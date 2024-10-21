@@ -81,5 +81,10 @@ public class NullIfIntFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("nullif(").val(intFunc1).val(',').val(intFunc2).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new NullIfIntFunction(left, right);
+        }
     }
 }

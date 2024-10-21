@@ -186,6 +186,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             sink.val(" in ").val(inList);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new InTimestampConstFunction(arg, new LongList(inList));
+        }
     }
 
     private static class InTimestampManyRuntimeConstantsFunction extends NegatableBooleanFunction implements MultiArgFunction {
@@ -246,6 +251,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             sink.val(" in ");
             sink.val(args, 1);
+        }
+
+        @Override
+        public Function newInstance(ObjList<Function> args) {
+            return new InTimestampManyRuntimeConstantsFunction(args);
         }
     }
 
@@ -309,6 +319,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             sink.val(" in ").val(intervalFunc);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new InTimestampRuntimeConstIntervalFunction(left, intervalFunc, intervalFuncPos);
+        }
     }
 
     private static class InTimestampVarFunction extends NegatableBooleanFunction implements MultiArgFunction {
@@ -358,6 +373,11 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             sink.val(" in ");
             sink.val(args, 1);
+        }
+
+        @Override
+        public Function newInstance(ObjList<Function> args) {
+            return new InTimestampVarFunction(args);
         }
     }
 }

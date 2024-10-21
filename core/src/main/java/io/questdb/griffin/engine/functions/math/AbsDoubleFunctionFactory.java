@@ -67,5 +67,10 @@ public class AbsDoubleFunctionFactory implements FunctionFactory {
         public String getName() {
             return "abs";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new AbsFunction(arg);
+        }
     }
 }

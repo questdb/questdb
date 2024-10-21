@@ -49,4 +49,9 @@ public class GeoByteCaseFunction extends GeoByteFunction implements MultiArgFunc
     public byte getGeoByte(Record rec) {
         return picker.pick(rec).getGeoByte(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new GeoByteCaseFunction(type, picker, args);
+    }
 }

@@ -52,5 +52,10 @@ public class CastBooleanToIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             return arg.getInt(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

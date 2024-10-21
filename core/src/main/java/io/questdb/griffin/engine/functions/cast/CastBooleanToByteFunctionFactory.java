@@ -52,5 +52,10 @@ public class CastBooleanToByteFunctionFactory implements FunctionFactory {
         public byte getByte(Record rec) {
             return arg.getByte(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

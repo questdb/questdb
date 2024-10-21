@@ -68,5 +68,10 @@ public class FloorFloatFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("floor(").val(function).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new FloorFunction(arg);
+        }
     }
 }

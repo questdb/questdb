@@ -78,5 +78,10 @@ public class DayOfMonthFunctionFactory implements FunctionFactory {
         public String getName() {
             return "day";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new DayOfMonthFunction(arg);
+        }
     }
 }

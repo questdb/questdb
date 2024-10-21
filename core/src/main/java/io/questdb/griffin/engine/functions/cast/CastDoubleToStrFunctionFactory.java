@@ -82,5 +82,10 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
             sinkB.put(value, scale);
             return sinkB;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg, scale);
+        }
     }
 }

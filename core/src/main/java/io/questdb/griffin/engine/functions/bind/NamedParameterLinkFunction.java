@@ -241,6 +241,11 @@ public class NamedParameterLinkFunction implements ScalarFunction {
         sink.val(variableName).val("::").val(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
     }
 
+    @Override
+    public Function deepClone() {
+        return this;
+    }
+
     private Function getBase() {
         assert base != null;
         return base;

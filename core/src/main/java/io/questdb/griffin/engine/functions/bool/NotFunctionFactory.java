@@ -67,5 +67,10 @@ public class NotFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("not (").val(arg).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

@@ -136,6 +136,11 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
             sink.val("to_str(").val(arg).val(')');
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ToCharDateFFunc(arg, format, locale);
+        }
+
         @Nullable
         private CharSequence toSink(Record rec, StringSink sink) {
             final long value = arg.getTimestamp(rec);

@@ -52,5 +52,10 @@ public class CountGeoHashGroupByFunctionByte extends AbstractCountGroupByFunctio
             mapValue.addLong(valueIndex, 1);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new CountGeoHashGroupByFunctionByte(arg);
+    }
 }
 

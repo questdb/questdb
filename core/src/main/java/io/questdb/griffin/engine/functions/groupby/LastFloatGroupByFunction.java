@@ -54,4 +54,9 @@ public class LastFloatGroupByFunction extends FirstFloatGroupByFunction {
             destValue.putFloat(valueIndex + 1, srcValue.getFloat(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastFloatGroupByFunction(arg);
+    }
 }

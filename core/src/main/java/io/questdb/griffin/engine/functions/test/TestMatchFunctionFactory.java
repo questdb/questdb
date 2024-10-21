@@ -97,5 +97,10 @@ public class TestMatchFunctionFactory implements FunctionFactory {
             assert openCounter.get() > 0;
             topCounter.incrementAndGet();
         }
+
+        @Override
+        public Function deepClone() {
+            return new TestMatchFunction();
+        }
     }
 }

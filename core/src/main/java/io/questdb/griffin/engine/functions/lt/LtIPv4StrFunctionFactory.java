@@ -100,6 +100,11 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
             }
             sink.valIPv4(constIPv4);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstStrFunc(arg, constIPv4);
+        }
     }
 
     private static class RuntimeConstStrFunc extends NegatableBooleanFunction implements BinaryFunction {
@@ -142,6 +147,11 @@ public class LtIPv4StrFunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(strFunc);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new RuntimeConstStrFunc(left, right);
         }
     }
 }

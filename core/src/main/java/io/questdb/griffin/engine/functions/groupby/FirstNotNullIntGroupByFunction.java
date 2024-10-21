@@ -61,4 +61,9 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
             destValue.putInt(valueIndex + 1, srcVal);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstNotNullIntGroupByFunction(arg);
+    }
 }

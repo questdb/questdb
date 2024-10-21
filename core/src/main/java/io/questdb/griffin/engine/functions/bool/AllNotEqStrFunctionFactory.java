@@ -90,5 +90,10 @@ public class AllNotEqStrFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(arg).val(" <> all ").val(set);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new AllNotEqualStrFunction(arg, new CharSequenceHashSet(set));
+        }
     }
 }

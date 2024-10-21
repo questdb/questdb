@@ -178,4 +178,15 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
         UnaryFunction.super.toTop();
         sinkIndex = 0;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new StringDistinctAggSymbolGroupByFunction(arg, delimiter, new GroupByIntHashSet(set));
+    }
+
+    private StringDistinctAggSymbolGroupByFunction(Function arg, char delimiter, GroupByIntHashSet set) {
+        this.arg = arg;
+        this.delimiter = delimiter;
+        this.set = set;
+    }
 }

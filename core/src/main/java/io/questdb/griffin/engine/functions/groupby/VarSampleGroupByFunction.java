@@ -48,4 +48,9 @@ public class VarSampleGroupByFunction extends AbstractStdDevGroupByFunction {
     public String getName() {
         return "var_samp";
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new VarSampleGroupByFunction(arg);
+    }
 }

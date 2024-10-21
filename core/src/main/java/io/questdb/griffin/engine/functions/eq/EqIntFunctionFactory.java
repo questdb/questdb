@@ -57,5 +57,10 @@ public class EqIntFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (left.getInt(rec) == right.getInt(rec));
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

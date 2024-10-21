@@ -54,5 +54,10 @@ public class CastFloatToBooleanFunctionFactory implements FunctionFactory {
             float flt = arg.getFloat(rec);
             return !Numbers.isNull(flt) && Math.signum(flt) != 0;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

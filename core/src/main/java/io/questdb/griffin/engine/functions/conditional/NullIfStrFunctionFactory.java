@@ -103,5 +103,10 @@ public class NullIfStrFunctionFactory implements FunctionFactory {
             }
             return Chars.equals(cs1, cs2) ? null : cs1;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

@@ -109,6 +109,11 @@ public class QuoteIdentVarcharFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new QuoteIdentVarcharFunction(arg);
+        }
+
         /**
          * Quotes the varchar.
          * Surrogate pairs are NOT handled. Surrogate pairs will be converted to `0` ie `NUL`.

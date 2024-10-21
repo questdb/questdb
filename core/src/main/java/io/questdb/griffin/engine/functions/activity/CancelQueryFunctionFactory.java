@@ -90,5 +90,10 @@ public class CancelQueryFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(NAME).val('(').val(queryIdFunc).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new Func(queryRegistry, queryIdFunc, position);
+        }
     }
 }

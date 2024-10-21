@@ -52,5 +52,10 @@ public class CastCharToBooleanFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return (arg.getChar(rec) | 32) == 't';
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastCharToBooleanFunction(arg);
+        }
     }
 }

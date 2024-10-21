@@ -98,5 +98,10 @@ public class RndIntCCFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_int(").val(lo).val(',').val(range + lo - 1).val(',').val(nanRate - 1).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new RndFunction(lo, range + lo - 1, nanRate - 1);
+        }
     }
 }

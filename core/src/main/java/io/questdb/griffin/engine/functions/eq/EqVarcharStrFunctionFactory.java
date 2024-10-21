@@ -117,5 +117,10 @@ public class EqVarcharStrFunctionFactory implements FunctionFactory {
                 return "=";
             }
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

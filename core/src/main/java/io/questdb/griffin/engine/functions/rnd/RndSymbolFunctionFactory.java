@@ -131,6 +131,11 @@ public class RndSymbolFunctionFactory implements FunctionFactory {
             return strMem.getStr(symbolKey);
         }
 
+        @Override
+        public Function deepClone() {
+            return new Func(new RndStringMemory(strMem), count, nullRate - 1);
+        }
+
         private int next() {
             if (rnd.nextPositiveInt() % nullRate == 1) {
                 return SymbolTable.VALUE_IS_NULL;

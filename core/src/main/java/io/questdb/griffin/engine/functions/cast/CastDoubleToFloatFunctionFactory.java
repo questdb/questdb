@@ -54,5 +54,10 @@ public class CastDoubleToFloatFunctionFactory implements FunctionFactory {
             double value = arg.getDouble(rec);
             return Numbers.isNull(value) || value > Float.MAX_VALUE || value < -Float.MAX_VALUE ? Float.NaN : (float) value;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastDoubleToFloatFunction(arg);
+        }
     }
 }

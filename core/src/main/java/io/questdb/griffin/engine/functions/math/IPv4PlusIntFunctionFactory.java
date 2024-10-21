@@ -89,6 +89,11 @@ public class IPv4PlusIntFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(left).val('+').val(right);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new IPv4PlusIntFunction(left, right);
+        }
     }
 
 }

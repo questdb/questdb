@@ -53,4 +53,9 @@ public class CountStrGroupByFunction extends AbstractCountGroupByFunction {
             mapValue.addLong(valueIndex, 1);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new CountStrGroupByFunction(arg);
+    }
 }

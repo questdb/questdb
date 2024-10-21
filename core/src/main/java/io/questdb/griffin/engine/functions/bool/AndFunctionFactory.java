@@ -121,6 +121,11 @@ public class AndFunctionFactory implements FunctionFactory {
             sink.val(right);
             sink.val(')');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new AndBooleanFunction(left, right);
+        }
     }
 
     private static class QuaternaryAndBooleanFunction extends BooleanFunction implements QuaternaryFunction {
@@ -173,6 +178,11 @@ public class AndFunctionFactory implements FunctionFactory {
             sink.val(func3);
             sink.val(')');
         }
+
+        @Override
+        public Function newInstance(final Function func0, final Function func1, final Function func2, final Function func3) {
+            return new QuaternaryAndBooleanFunction(func0, func1, func2, func3);
+        }
     }
 
     private static class TernaryAndBooleanFunction extends BooleanFunction implements TernaryFunction {
@@ -215,6 +225,11 @@ public class AndFunctionFactory implements FunctionFactory {
             sink.val(" and ");
             sink.val(right);
             sink.val(')');
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new TernaryAndBooleanFunction(left, right, center);
         }
     }
 }

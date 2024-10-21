@@ -67,5 +67,10 @@ public class CeilDoubleFunctionFactory implements FunctionFactory {
         public String getName() {
             return "ceil";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CeilFunction(arg);
+        }
     }
 }

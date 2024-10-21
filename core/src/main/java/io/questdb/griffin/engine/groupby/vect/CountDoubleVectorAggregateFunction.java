@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.std.Rosti;
 import io.questdb.std.Vect;
 
@@ -60,5 +61,16 @@ public class CountDoubleVectorAggregateFunction extends AbstractCountVectorAggre
         } else {
             return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
         }
+    }
+
+    @Override
+    public Function deepClone() {
+        return new CountDoubleVectorAggregateFunction(getColumnIndex(), keyValueFunc, distinctFunc);
+    }
+
+    private CountDoubleVectorAggregateFunction(int columnIndex, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+        super(columnIndex);
+        this.keyValueFunc = keyValueFunc;
+        this.distinctFunc = distinctFunc;
     }
 }

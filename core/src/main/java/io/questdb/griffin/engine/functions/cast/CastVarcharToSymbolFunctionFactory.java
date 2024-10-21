@@ -168,6 +168,11 @@ public class CastVarcharToSymbolFunctionFactory implements FunctionFactory {
             return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
+
         private CharSequence getSymbol(Utf8Sequence value) {
             final int keyIndex;
             if ((keyIndex = lookupMap.keyIndex(value)) > -1) {

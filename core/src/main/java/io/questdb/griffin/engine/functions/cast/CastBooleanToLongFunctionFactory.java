@@ -52,5 +52,10 @@ public class CastBooleanToLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             return arg.getLong(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

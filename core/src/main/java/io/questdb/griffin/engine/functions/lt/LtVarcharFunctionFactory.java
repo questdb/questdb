@@ -120,5 +120,10 @@ public class LtVarcharFunctionFactory implements FunctionFactory {
             sink.val(getName());
             sink.val(right);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

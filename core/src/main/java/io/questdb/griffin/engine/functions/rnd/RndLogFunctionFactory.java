@@ -96,5 +96,10 @@ public class RndLogFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_log(").val(totalLogLines).val(',').val(errorRatio).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new TestLogFunction(totalLogLines, errorRatio);
+        }
     }
 }

@@ -169,4 +169,9 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     public boolean supportsParallelism() {
         return false;
     }
+
+    @Override
+    public Function newInstance(final Function left, final Function right) {
+        return new ApproxPercentileDoubleGroupByFunction(left, right, precision, funcPosition);
+    }
 }

@@ -54,5 +54,10 @@ public class CastDateToShortFunctionFactory implements FunctionFactory {
             final long value = arg.getDate(rec);
             return value != Numbers.LONG_NULL ? (short) value : 0;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

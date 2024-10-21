@@ -174,6 +174,11 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
         }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new GreatestDoubleRecordFunction(args, new IntList(argPositions));
+        }
     }
 
     private static class GreatestLongRecordFunction extends LongFunction implements MultiArgFunction {
@@ -211,6 +216,11 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             MultiArgFunction.super.init(symbolTableSource, executionContext);
+        }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new GreatestLongRecordFunction(args, new IntList(argPositions));
         }
     }
 }

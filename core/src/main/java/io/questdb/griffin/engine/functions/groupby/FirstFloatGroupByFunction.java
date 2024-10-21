@@ -118,4 +118,9 @@ public class FirstFloatGroupByFunction extends FloatFunction implements GroupByF
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstFloatGroupByFunction(arg);
+    }
 }

@@ -47,6 +47,13 @@ public class IntList implements Mutable, Sinkable {
         this.data = new int[initialCapacity];
     }
 
+    public IntList(final IntList other) {
+        this.initialCapacity = Math.max(other.size(), DEFAULT_ARRAY_SIZE);
+        this.data = new int[initialCapacity];
+        setPos(other.size());
+        System.arraycopy(other.data, 0, this.data, 0, pos);
+    }
+
     public void add(int value) {
         checkCapacity(pos + 1);
         data[pos++] = value;
