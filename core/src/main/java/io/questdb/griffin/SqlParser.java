@@ -454,7 +454,13 @@ public class SqlParser {
             CopyModel model = copyModelPool.next();
             model.setCancel(true);
             model.setTarget(target);
-            return model;
+
+            tok = optTok(lexer);
+            // no more tokens or ';' should indicate end of statement
+            if (tok == null || Chars.equals(tok, ';')) {
+                return model;
+            }
+            throw errUnexpected(lexer, tok);
         }
 
         if (isFromKeyword(tok)) {
@@ -1677,7 +1683,12 @@ public class SqlParser {
             lexer.unparseLast();
             final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback);
             model.setQueryModel(queryModel);
-            return model;
+            tok = optTok(lexer);
+            // no more tokens or ';' should indicate end of statement
+            if (tok == null || Chars.equals(tok, ';')) {
+                return model;
+            }
+            throw errUnexpected(lexer, tok);
         }
 
         // if not INSERT INTO SELECT, make it atomic (select returns early)
@@ -2478,8 +2489,7 @@ public class SqlParser {
         parseWithClauses(lexer, topLevelWithModel, sqlParserCallback);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
-            lexer.unparseLast();
-            return parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback);
+            return parseSelect(lexer, sqlParserCallback);
         }
 
         if (isUpdateKeyword(tok)) {
