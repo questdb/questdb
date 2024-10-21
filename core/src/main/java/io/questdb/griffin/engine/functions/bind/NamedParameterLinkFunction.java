@@ -243,7 +243,7 @@ public class NamedParameterLinkFunction implements ScalarFunction {
 
     @Override
     public Function deepClone() {
-        return this;
+        return new NamedParameterLinkFunction(variableName, type);
     }
 
     private Function getBase() {
