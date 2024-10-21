@@ -26,14 +26,17 @@ package io.questdb.cairo;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
 public class TxnScoreboard implements Closeable, Mutable {
-
     private static final Log LOG = LogFactory.getLog(TxnScoreboard.class);
     private final FilesFacade ff;
     private final int pow2EntryCount;
@@ -62,7 +65,10 @@ public class TxnScoreboard implements Closeable, Mutable {
             return false;
         }
         final long min = fromInternalTxn(-response - 2);
-        throw CairoException.critical(0).put("max txn-inflight limit reached [txn=").put(txn).put(", min=").put(min).put(", size=").put(pow2EntryCount).put(']');
+        throw CairoException.critical(0).put("max txn-inflight limit reached [txn=").put(txn)
+                .put(", min=").put(min)
+                .put(", size=").put(pow2EntryCount)
+                .put(']');
     }
 
     @Override
@@ -114,6 +120,7 @@ public class TxnScoreboard implements Closeable, Mutable {
         int rootLen = root.size();
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME);
         this.fd = openCleanRW(ff, root.$(), this.size);
+
         try {
             this.mem = TableUtils.mapRO(ff, fd, this.size, MemoryTag.MMAP_DEFAULT);
         } catch (Throwable e) {
@@ -127,6 +134,7 @@ public class TxnScoreboard implements Closeable, Mutable {
 
     public TxnScoreboard ofRW(@Transient Path root) {
         clear();
+        int rootLen = root.size();
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME);
         this.fd = openCleanRW(ff, root.$(), this.size);
 
@@ -138,6 +146,7 @@ public class TxnScoreboard implements Closeable, Mutable {
             init(mem, pow2EntryCount);
         } catch (Throwable e) {
             ff.close(fd);
+            root.trimTo(rootLen);
             fd = -1;
             throw e;
         }
@@ -152,7 +161,7 @@ public class TxnScoreboard implements Closeable, Mutable {
 
     private static long acquireTxn(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
-        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(fromInternalTxn(txn)).$(']').$();
+        LOG.debug().$("acquire [p=").$(pTxnScoreboard).$(", txn=").$(fromInternalTxn(txn)).I$();
         return acquireTxn0(pTxnScoreboard, txn);
     }
 
@@ -175,7 +184,9 @@ public class TxnScoreboard implements Closeable, Mutable {
 
     private static long releaseTxn(long pTxnScoreboard, long txn) {
         assert pTxnScoreboard > 0;
-        LOG.debug().$("release  [p=").$(pTxnScoreboard).$(", txn=").$(txn).$(']').$();
+        LOG.debug().$("release  [p=").$(pTxnScoreboard)
+                .$(", txn=").$(txn)
+                .I$();
         final long internalTxn = toInternalTxn(txn);
         return releaseTxn0(pTxnScoreboard, internalTxn);
     }
@@ -194,7 +205,7 @@ public class TxnScoreboard implements Closeable, Mutable {
     static long openCleanRW(FilesFacade ff, LPSZ path, long size) {
         final long fd = ff.openCleanRW(path, size);
         if (fd > -1) {
-            LOG.debug().$("open clean [file=").$(path).$(", fd=").$(fd).$(']').$();
+            LOG.debug().$("open clean [file=").$(path).$(", fd=").$(fd).I$();
             return fd;
         }
         throw CairoException.critical(ff.errno()).put("could not open read-write with clean allocation [file=").put(path).put(']');

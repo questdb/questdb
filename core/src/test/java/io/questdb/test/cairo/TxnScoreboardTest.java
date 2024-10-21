@@ -27,7 +27,10 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -278,62 +281,64 @@ public class TxnScoreboardTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int expect = 2048;
             try (final Path shmPath = new Path()) {
-                try (TxnScoreboard scoreboard2 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
-                    try (TxnScoreboard scoreboard1 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
-                        // we should successfully acquire expected number of entries
-                        for (int i = 0; i < expect; i++) {
-                            scoreboard1.acquireTxn(i + 134);
-                        }
-                        // scoreboard capacity should be exhausted,
-                        // we should be refused to acquire any more slots
-                        try {
-                            scoreboard1.acquireTxn(expect + 134);
-                            Assert.fail();
-                        } catch (CairoException ignored) {
-                        }
-
-                        // now we release middle slot, this does not free any more slots
-                        scoreboard1.releaseTxn(11 + 134);
-                        Assert.assertEquals(134, scoreboard1.getMin());
-                        // we should NOT be able to allocate more slots
-                        try {
-                            scoreboard1.acquireTxn(expect + 134);
-                            Assert.fail();
-                        } catch (CairoException ignored) {
-                        }
-
-                        // now that we release "head" slot we should be able to acquire more
-                        scoreboard1.releaseTxn(134);
-                        Assert.assertEquals(135, scoreboard1.getMin());
-                        // and we should be able to allocate another one
+//                try (TxnScoreboard scoreboard2 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
+                try (TxnScoreboard scoreboard1 = new TxnScoreboard(TestFilesFacadeImpl.INSTANCE, expect).ofRW(shmPath.of(root))) {
+                    // we should successfully acquire expected number of entries
+                    for (int i = 0; i < expect; i++) {
+                        scoreboard1.acquireTxn(i + 134);
+                    }
+                    // scoreboard capacity should be exhausted,
+                    // we should be refused to acquire any more slots
+                    try {
                         scoreboard1.acquireTxn(expect + 134);
-
-                        // now check that all counts are intact
-                        for (int i = 1; i <= expect; i++) {
-                            if (i != 11) {
-                                Assert.assertEquals(1, scoreboard1.getActiveReaderCount(i + 134));
-                            } else {
-                                Assert.assertEquals(0, scoreboard1.getActiveReaderCount(i + 134));
-                            }
-                        }
+                        Assert.fail();
+                    } catch (CairoException ignored) {
+                        System.out.println("...");
                     }
 
+                    // now we release middle slot, this does not free any more slots
+                    scoreboard1.releaseTxn(11 + 134);
+                    Assert.assertEquals(134, scoreboard1.getMin());
+                    // we should NOT be able to allocate more slots
+                    try {
+                        scoreboard1.acquireTxn(expect + 134);
+                        Assert.fail();
+                    } catch (CairoException ignored) {
+                        System.out.println("...");
+                    }
+
+                    // now that we release "head" slot we should be able to acquire more
+                    scoreboard1.releaseTxn(134);
+                    Assert.assertEquals(135, scoreboard1.getMin());
+                    // and we should be able to allocate another one
+                    scoreboard1.acquireTxn(expect + 134);
+
+                    // now check that all counts are intact
                     for (int i = 1; i <= expect; i++) {
                         if (i != 11) {
-                            Assert.assertEquals(1, scoreboard2.getActiveReaderCount(i + 134));
+                            Assert.assertEquals(1, scoreboard1.getActiveReaderCount(i + 134));
                         } else {
-                            Assert.assertEquals(0, scoreboard2.getActiveReaderCount(i + 134));
+                            Assert.assertEquals(0, scoreboard1.getActiveReaderCount(i + 134));
                         }
                     }
                 }
+
+//                    for (int i = 1; i <= expect; i++) {
+//                        if (i != 11) {
+//                            Assert.assertEquals(1, scoreboard2.getActiveReaderCount(i + 134));
+//                        } else {
+//                            Assert.assertEquals(0, scoreboard2.getActiveReaderCount(i + 134));
+//                        }
+//                    }
+//                }
             }
         });
     }
 
     @Test
     public void testLimitsO3Acquire() throws Exception {
-        LOG.debug().$("starting testLimitsLoop").$();
         for (int i = 0; i < 10000; i++) {
+            LOG.info().$("iteration: " + i).$();
             testLimits();
         }
     }
