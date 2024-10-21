@@ -127,7 +127,6 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.finance.MidPriceFunctionFactory,
             io.questdb.griffin.engine.functions.finance.WeightedMidPriceFunctionFactory,
             io.questdb.griffin.engine.functions.finance.SpreadBpsFunctionFactory,
-            io.questdb.griffin.engine.functions.finance.RegressionSlopeFunctionFactory,
 
 
             // query activity functions
@@ -774,6 +773,9 @@ open module io.questdb {
 //                  'isOrdered'
             io.questdb.griffin.engine.functions.groupby.IsIPv4OrderedGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory,
+
+            io.questdb.griffin.engine.functions.groupby.RegressionSlopeFunctionFactory,
+
 //                  round()
             io.questdb.griffin.engine.functions.math.RoundDoubleZeroScaleFunctionFactory,
             io.questdb.griffin.engine.functions.math.RoundDoubleFunctionFactory,
