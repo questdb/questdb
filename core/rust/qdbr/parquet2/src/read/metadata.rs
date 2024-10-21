@@ -62,19 +62,10 @@ pub fn read_metadata_with_size<R: Read + Seek>(
     reader.seek(SeekFrom::Start(file_size - default_end_len as u64))?;
 
     let mut buffer = Vec::with_capacity(default_end_len);
-    let read_bytes = reader
+    reader
         .by_ref()
         .take(default_end_len as u64)
         .read_to_end(&mut buffer)?;
-    if read_bytes < default_end_len {
-        return Err(Error::oos(
-            format!(
-                "Read less bytes than expected: {}, {}",
-                read_bytes,
-                default_end_len,
-            )
-        ));
-    }
 
     // check this is indeed a parquet file
     if buffer[default_end_len - 4..] != PARQUET_MAGIC {
