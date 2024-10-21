@@ -273,7 +273,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                         if (rnd.nextDouble() > 0.2) {
                             // Add table
                             String tableName = "tab" + iteration;
-                            TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, true);
+                            TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, false, true);
                             rw.registerName(tableToken);
                             addedTables.add(iteration);
                             TestUtils.createTable(tm, configuration, ColumnType.VERSION, iteration, tableToken);

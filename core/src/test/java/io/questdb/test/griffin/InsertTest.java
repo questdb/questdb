@@ -78,6 +78,8 @@ public class InsertTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
+        node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
+        engine.getMaterializedViewGraph().clear();
     }
 
     @Test
@@ -109,6 +111,25 @@ public class InsertTest extends AbstractCairoTest {
 
             ddl("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
             assertSql("ccy\tid\tts\n" + "USD\t1\t2019-03-10T00:00:00.000000Z\n" + "EUR\t2\t2019-03-10T01:00:00.000000Z\n" + "GBP\t3\t2019-03-10T02:00:00.000000Z\n", "currencies");
+        });
+    }
+
+    @Test
+    public void testCannotInsertIntoMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts) partition by day wal");
+            insert("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
+            insert("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
+            insert("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
+
+            ddl("create materialized view curr_view as (select ts, max(id) as id from currencies sample by 1h) partition by day");
+            try {
+                insert("insert into curr_view values ('SEK', 3, '2019-03-10T03:00:00.000000Z')");
+                Assert.fail("INSERT should fail");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=curr_view]");
+                Assert.assertEquals(12, e.getPosition());
+            }
         });
     }
 
@@ -362,7 +383,6 @@ public class InsertTest extends AbstractCairoTest {
         assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "with x as (select 1, '123456'::varchar) insert atomic into tab select * from x", null, false);
     }
 
-
     @Test
     public void testInsertContextSwitch() throws Exception {
         assertMemoryLeak(() -> {
@@ -608,6 +628,19 @@ public class InsertTest extends AbstractCairoTest {
             String expected = "timestamp\tfield\tvalue\n" + "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
             assertReaderCheckWal(expected, "TS");
+        });
+    }
+
+    @Test
+    public void testInsertIntoNonExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                insert("insert into tab values (1)");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=tab]");
+                Assert.assertEquals(12, e.getPosition());
+            }
         });
     }
 
@@ -1232,7 +1265,7 @@ public class InsertTest extends AbstractCairoTest {
                     }
                     assertSql(expected, "tab");
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     if (exceptionType == null) throw e;
                     Assert.assertSame(exceptionType, e.getClass());
                     TestUtils.assertContains(e.getMessage(), expected);

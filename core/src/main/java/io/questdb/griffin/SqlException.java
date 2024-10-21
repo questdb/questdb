@@ -100,6 +100,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         return position(position).put("Invalid date");
     }
 
+    public static SqlException nonDeterministicColumn(int position, CharSequence column) {
+        return position(position).put("Non-deterministic column: ").put(column);
+    }
+
     public static SqlException parserErr(int position, @Nullable CharSequence tok, @NotNull CharSequence msg) {
         return tok == null ?
                 SqlException.$(position, msg)

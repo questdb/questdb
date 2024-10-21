@@ -111,6 +111,7 @@ public final class TableUtils {
     public static final int TABLE_EXISTS = 0;
     public static final String TABLE_NAME_FILE = "_name";
     public static final int TABLE_RESERVED = 2;
+    public static final int TABLE_TYPE_MAT = 2;
     public static final int TABLE_TYPE_NON_WAL = 0;
     public static final int TABLE_TYPE_WAL = 1;
     public static final String TAB_INDEX_FILE_NAME = "_tab_index.d";
@@ -162,6 +163,7 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_MAT_VIEW_BASE_TXN_64 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";

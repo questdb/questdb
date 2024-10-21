@@ -89,7 +89,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (lastTxn < 0) {
             return -1;
         }
-        int partTransactionCount = ff.readNonNegativeInt(logFileFd, SEQ_PART_SIZE_32);
+        int partTransactionCount = ff.readNonNegativeInt(logFileFd, HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             return -1;
         }
@@ -196,6 +196,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     @Override
+    public long getLastRefreshBaseTxn() {
+        return txnMem.getLong(HEADER_BASE_TABLE_TXN);
+    }
+
+    @Override
     public boolean isDropped() {
         long lastTxn = maxTxn.get();
         if (lastTxn > 0) {
@@ -221,7 +226,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         long lastTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
         maxTxn.set(lastTxn);
-        partTransactionCount = txnMem.getInt(SEQ_PART_SIZE_32);
+        partTransactionCount = txnMem.getInt(HEADER_SEQ_PART_SIZE_32);
         if (partTransactionCount < 1) {
             throw new CairoException().put("invalid sequencer file part size [size=").put(partTransactionCount).put(", path=").put(path).put(']');
         }
@@ -237,6 +242,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         // Open part can leave prev txn append position when part is the same
         setAppendPosition();
         return maxStructureVersion;
+    }
+
+    @Override
+    public void setLastRefreshBaseTxn(long baseTxn) {
+        txnMem.putLong(HEADER_BASE_TABLE_TXN, baseTxn);
     }
 
     @Override
@@ -440,26 +450,30 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         @Override
         public void toMinTxn() {
-            int rootLen = rootPath.size();
-            rootPath.concat(TXNLOG_PARTS_DIR).slash();
-            long partId = txnLo / partTransactionCount;
-            long minTxn = partId * partTransactionCount;
+            if (txnLo > 0) {
+                int rootLen = rootPath.size();
+                rootPath.concat(TXNLOG_PARTS_DIR).slash();
+                long partId = txnLo / partTransactionCount;
+                long minTxn = partId * partTransactionCount;
 
-            int rootPathLen = rootPath.size();
-            try {
-                for (long part = partId - 1; part > -1L; part--) {
-                    rootPath.trimTo(rootPathLen).put(part);
-                    if (ff.exists(rootPath.$())) {
-                        minTxn = part * partTransactionCount;
-                    } else {
-                        break;
+                int rootPathLen = rootPath.size();
+                try {
+                    for (long part = partId - 1; part > -1L; part--) {
+                        rootPath.trimTo(rootPathLen).put(part);
+                        if (ff.exists(rootPath.$())) {
+                            minTxn = part * partTransactionCount;
+                        } else {
+                            break;
+                        }
                     }
+                } finally {
+                    rootPath.trimTo(rootLen);
                 }
-            } finally {
-                rootPath.trimTo(rootLen);
+                openPart(minTxn);
+                txn = txnLo = minTxn;
+            } else {
+                this.txn = txnLo;
             }
-            openPart(minTxn);
-            txn = txnLo = minTxn;
         }
 
         @Override

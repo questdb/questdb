@@ -75,10 +75,18 @@ public class TableTransactionLog implements Closeable {
         rootPath.clear();
     }
 
+    public long getLastRefreshBaseTxn() {
+        return txnLogFile.getLastRefreshBaseTxn();
+    }
+
     public boolean reload(Path path) {
         close();
         open(path);
         return true;
+    }
+
+    public void setLastRefreshBaseTxn(long baseTxn) {
+        txnLogFile.setLastRefreshBaseTxn(baseTxn);
     }
 
     public void sync() {
