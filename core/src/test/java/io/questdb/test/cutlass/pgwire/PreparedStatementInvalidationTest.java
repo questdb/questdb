@@ -28,12 +28,22 @@ import io.questdb.PropertyKey;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Ignore;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
-import java.sql.*;
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.BrokenBarrierException;
@@ -855,6 +865,36 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                             Assert.assertEquals(10, rowCount);
                         }
                     });
+        });
+    }
+
+    @Test
+    public void testTxInsertSpecificAfterColNameChange() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
+            }
+            mayDrainWalQueue();
+
+            try (PreparedStatement insertStatement = connection.prepareStatement("BEGIN; insert into insert_after_drop (id, val, ts) values (?, 0, '1990-01-01'); COMMIT;")) {
+                insertStatement.setLong(1, 42);
+                insertStatement.executeUpdate();
+                mayDrainWalQueue();
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("alter table insert_after_drop drop column val");
+                    stmt.execute("alter table insert_after_drop add column val2 int");
+                }
+                mayDrainWalQueue();
+
+                insertStatement.setLong(1, 43);
+                try {
+                    insertStatement.executeUpdate();
+                    Assert.fail("val column was dropped, the INSERT should have failed");
+                } catch (SQLException e) {
+                    assertMessageMatches(e, "Invalid column: val");
+                }
+            }
         });
     }
 
