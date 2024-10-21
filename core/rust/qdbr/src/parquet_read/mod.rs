@@ -111,9 +111,10 @@ mod tests {
         );
 
         let (buf, row_count) = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
+        let buf_len = buf.len() as u64;
 
         let reader = Cursor::new(buf);
-        let mut parquet_decoder = ParquetDecoder::read(allocator.clone(), reader)?;
+        let mut parquet_decoder = ParquetDecoder::read(allocator.clone(), reader, buf_len)?;
         let mut rgb = RowGroupBuffers::new(allocator);
         let res = parquet_decoder.decode_row_group(
             &mut rgb,

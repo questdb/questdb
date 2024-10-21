@@ -120,7 +120,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         try {
             // Reopen the file, it could have changed
             this.fd = TableUtils.openRO(ff, path, LOG);
-            decoder.of(fd);
+            final long fileSize = ff.length(fd);
+            decoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             if (metadataHasChanged(metadata, decoder)) {
                 // We need to recompile the factory as the Parquet metadata has changed.
                 throw TableReferenceOutOfDateException.of(path);

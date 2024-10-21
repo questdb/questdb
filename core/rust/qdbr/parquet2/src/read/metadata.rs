@@ -60,7 +60,6 @@ pub fn read_metadata_with_size<R: Read + Seek>(
     // read and cache up to DEFAULT_FOOTER_READ_SIZE bytes from the end and process the footer
     let default_end_len = min(DEFAULT_FOOTER_READ_SIZE, file_size) as usize;
     reader.seek(SeekFrom::Start(file_size - default_end_len as u64))?;
-    // reader.seek(SeekFrom::End(-(default_end_len as i64)))?;
 
     let mut buffer = Vec::with_capacity(default_end_len);
     reader
@@ -74,7 +73,6 @@ pub fn read_metadata_with_size<R: Read + Seek>(
     }
 
     let metadata_len = metadata_len(&buffer, default_end_len);
-
     let metadata_len: u64 = metadata_len.try_into()?;
 
     let footer_len = FOOTER_SIZE + metadata_len;

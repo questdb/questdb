@@ -24,38 +24,28 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import org.jetbrains.annotations.Nullable;
+
 /**
  * Interface for retrieving information about a partition frame.
  * <p>
- * Each native partition frame holds a number of {@link PageFrame}s.
+ * Each partition frame holds a number of {@link PageFrame}s.
  * Think, a partition or a slice of a partition.
  * <p>
- * Each Parquet partition frame corresponds to a single Parquet row group
- * or a slice of a row group. A Parquet partition frame is mapped to
- * a single {@link PageFrame}.
+ * In case of a Parquet partition, frame corresponds to a Parquet file
+ * or a slice within it.
  * <p>
  * Partition frame is an internal API and shouldn't be used for data access.
  * Page frames are meant to be used for data access.
  */
-// TODO(puzpuzpuz): keep partition frames as is and expose partition encoder for parquet partitions
 public interface PartitionFrame {
 
     /**
-     * Return Parquet partition's fd open for reads or -1 in case of a native partition.
+     * @return parquet decoder initialized for the partition for parquet partitions; null for native partitions
      */
-    long getParquetFd();
-
-    /**
-     * @return numeric index of the row group within Parquet partition;
-     * shouldn't be called for native partitions
-     */
-    int getParquetRowGroup();
-
-    /**
-     * @return first row index of the row group within Parquet partition;
-     * shouldn't be called for native partitions
-     */
-    int getParquetRowGroupLo();
+    @Nullable
+    PartitionDecoder getParquetDecoder();
 
     /**
      * @return format of the frame's partition; set to {@link PartitionFormat#NATIVE} or {@link PartitionFormat#PARQUET}

@@ -330,7 +330,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // See `struct CairoException` in the `qdbr` Rust crate.
     @SuppressWarnings("unused")
     private static CairoException paramInstance(
-            int errno,  // pass `NON_CRITICAL` (-1) to create a non-critical exception
+            int errno, // pass `NON_CRITICAL` (-1) to create a non-critical exception
             boolean outOfMemory,
             CharSequence message,
             @Nullable CharSequence nativeBacktrace

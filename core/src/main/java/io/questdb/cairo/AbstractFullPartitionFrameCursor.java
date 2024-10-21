@@ -37,9 +37,6 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
     protected int partitionHi;
     protected int partitionIndex;
     protected TableReader reader;
-    // row group fields are used for Parquet frames generation
-    protected int rowGroupCount;
-    protected int rowGroupIndex;
 
     @Override
     public void close() {
@@ -85,27 +82,14 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
     protected static class FullTablePartitionFrame implements PartitionFrame {
         protected byte format;
-        protected long parquetFd;
+        protected PartitionDecoder parquetDecoder;
         protected int partitionIndex;
-        protected int rowGroupIndex;
-        // we don't need rowGroupLo as it can be calculated as rowGroupLo+(rowHi-rowLo)
-        protected int rowGroupLo;
         protected long rowHi;
         protected long rowLo;
 
         @Override
-        public long getParquetFd() {
-            return parquetFd;
-        }
-
-        @Override
-        public int getParquetRowGroup() {
-            return rowGroupIndex;
-        }
-
-        @Override
-        public int getParquetRowGroupLo() {
-            return rowGroupLo;
+        public PartitionDecoder getParquetDecoder() {
+            return parquetDecoder;
         }
 
         @Override

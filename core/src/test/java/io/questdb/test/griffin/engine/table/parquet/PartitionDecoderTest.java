@@ -93,7 +93,8 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 PartitionEncoder.encode(partitionDescriptor, path);
 
                 fd = TableUtils.openRO(ff, path.$(), LOG);
-                partitionDecoder.of(fd);
+                final long fileSize = ff.length(fd);
+                partitionDecoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 Assert.assertEquals(reader.getMetadata().getColumnCount(), partitionDecoder.metadata().columnCount());
                 Assert.assertEquals(rows, partitionDecoder.metadata().rowCount());
                 Assert.assertEquals(1, partitionDecoder.metadata().rowGroupCount());
@@ -145,7 +146,8 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 }
 
                 fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
-                partitionDecoder.of(fd);
+                final long fileSize = ff.length(fd);
+                partitionDecoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 columns.add(0);
                 columns.add(ColumnType.LONG);
 
@@ -220,7 +222,8 @@ public class PartitionDecoderTest extends AbstractCairoTest {
 
                 // Open it up.
                 fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
-                partitionDecoder.of(fd);
+                final long fileSize = ff.length(fd);
+                partitionDecoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 columns.add(0);
                 columns.add(ColumnType.LONG);
 
