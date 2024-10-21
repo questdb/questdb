@@ -39,7 +39,6 @@
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
         (JNIEnv *e, jclass cl, jint fd, jlong address, jlong len, jlong offset) {
-
     off_t writeOffset = offset;
     ssize_t written;
 
