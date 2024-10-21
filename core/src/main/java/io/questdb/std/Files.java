@@ -25,7 +25,11 @@
 package io.questdb.std;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.str.*;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.MutableUtf8Sink;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -260,16 +264,7 @@ public final class Files {
     }
 
     public static boolean isDirOrSoftLinkDir(LPSZ path) {
-        long ptr = findFirst(path);
-        if (ptr < 1L) {
-            return false;
-        }
-        try {
-            int type = findType(ptr);
-            return type == DT_DIR || (type == DT_LNK && isDir(path.ptr()));
-        } finally {
-            findClose(ptr);
-        }
+        return isDir(path.ptr());
     }
 
     public static boolean isDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type) {
