@@ -278,7 +278,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
     }
 
     pub fn read_column_chunk_stats(
-        &mut self,
+        &self,
         row_group_stat_buffers: &mut RowGroupStatBuffers,
         columns: &[(ParquetColumnIndex, ColumnType)],
         row_group_index: u32,
@@ -335,7 +335,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
     }
 
     pub fn find_row_group_by_timestamp(
-        &mut self,
+        &self,
         timestamp: i64,
         row_lo: usize,
         row_hi: usize,
