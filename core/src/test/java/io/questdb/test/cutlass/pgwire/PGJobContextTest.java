@@ -2453,7 +2453,7 @@ if __name__ == "__main__":
 
     @Test
     public void testBindVariablesWithNonIndexedSymbolInFilter() throws Exception {
-//        @Ignore("ERROR: bind variable at 0 is defined as unknown and cannot accept STRING")
+        // @Ignore("ERROR: bind variable at 0 is defined as unknown and cannot accept STRING")
         Assume.assumeFalse(legacyMode);
         testBindVariablesWithIndexedSymbolInFilter(false);
     }
@@ -2864,7 +2864,9 @@ if __name__ == "__main__":
 
     @Test
     public void testCloseMessageWithBadUtf8InStatementNameHex() throws Exception {
-        // @Ignore("TODO PGWire 2.0")
+        // @Ignore
+        // Test expects the server to disconnect, but modern server
+        // ignores the faulty prepared statement name and returns "ready for query"
         Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // select only
         assertHexScriptAltCreds(
@@ -2891,7 +2893,8 @@ if __name__ == "__main__":
 
     @Test
     public void testCloseMessageWithInvalidTypeHex() throws Exception {
-        // @Ignore("TODO PGWire 2.0")
+        // Test expects the server to disconnect, but modern server
+        // responds with error "invalid type for close message [type=81]", followed by "Ready for query"
         Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // select only
         assertHexScriptAltCreds(
@@ -7019,7 +7022,8 @@ nodejs code:
 
     @Test
     public void testPHPSelectHex() throws Exception {
-        // @Ignore("line = 12, pos = 0, expected: 67, actual: 69")
+        // @Ignore
+        // The test sends a DEALLOCATE query, modern server responds with error "unsupported for now"
         Assume.assumeTrue(legacyMode);
         //         PHP client script to reproduce
         //        $dbName = 'qdb';
@@ -8028,7 +8032,7 @@ nodejs code:
 
     @Test
     public void testQueryAgainstIndexedSymbol() throws Exception {
-//        @Ignore("ERROR: bind variable at 0 is defined as unknown and cannot accept STRING")
+        // @Ignore("ERROR: bind variable at 0 is defined as unknown and cannot accept STRING")
         Assume.assumeFalse(legacyMode);
         final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
         final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
@@ -10940,9 +10944,9 @@ create table tab as (
         )
      */
     @Test
-//    @Ignore("line = 8, pos = 0, expected: 50, actual: 69. " +
-//            "Legacy server's error message: bind variable at 18 is defined as unknown and cannot accept STRING, " +
-//            "Modern server's error message: Internal error. Exception type: UnsupportedOperationException")
+    @Ignore("Legacy server's error message: 'bind variable at 18 is defined as unknown and cannot accept STRING'\n" +
+            "Modern server's error message: 'Internal error. Exception type: UnsupportedOperationException'\n" +
+            "thrown from ShortFunction.getByte()")
     public void testVarargBindVariables() throws Exception {
         skipOnWalRun();
         engine.ddl("CREATE TABLE all_types (" +
