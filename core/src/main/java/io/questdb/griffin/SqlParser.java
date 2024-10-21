@@ -2478,8 +2478,7 @@ public class SqlParser {
         parseWithClauses(lexer, topLevelWithModel, sqlParserCallback);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
-            lexer.unparseLast();
-            return parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback);
+            return parseSelect(lexer, sqlParserCallback);
         }
 
         if (isUpdateKeyword(tok)) {
