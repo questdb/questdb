@@ -1,3 +1,5 @@
+import io.questdb.griffin.engine.functions.finance.TwapGroupByFunctionFactory;
+
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -127,6 +129,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.finance.MidPriceFunctionFactory,
             io.questdb.griffin.engine.functions.finance.WeightedMidPriceFunctionFactory,
             io.questdb.griffin.engine.functions.finance.SpreadBpsFunctionFactory,
+            TwapGroupByFunctionFactory,
 
 
             // query activity functions
