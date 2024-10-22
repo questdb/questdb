@@ -5214,7 +5214,7 @@ if __name__ == "__main__":
     }
 
     @Test
-    public void testInsertBinarySendRecvOverflow() throws Exception {
+    public void testInsertBinarySendBufOverflow() throws Exception {
         final int maxLength = 524287;
         try {
             testBinaryInsert(maxLength, 1024 * 1024 + 100, 2048);
