@@ -135,6 +135,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByCorrelation() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(regr_intercept(adouble, along), 14) FROM tab", "round\n" +
+                "92233.72036854776\n");
+    }
+
+    @Test
     public void testGroupByOverLatestBy() throws Exception {
         // Parallel GROUP BY shouldn't kick in on this query, yet we want
         // to validate the result correctness.
