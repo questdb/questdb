@@ -35,6 +35,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
+import org.slf4j.LoggerFactory;
+import org.slf4j.Logger;
 
 import static io.questdb.std.MemoryTag.NATIVE_DEFAULT;
 
@@ -63,6 +65,8 @@ public final class Unsafe {
     private static final Method implAddExports;
     //#endif
     private static long RSS_MEM_LIMIT = 0;
+
+    private static final Logger logger = LoggerFactory.getLogger(Unsafe.class);
 
     private Unsafe() {
     }
@@ -250,12 +254,15 @@ public final class Unsafe {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [RSS_MEM_USED=")
                     .put(RSS_MEM_USED.get())
+                    .put(", RSS_MEM_LIMIT=")
+                    .put(RSS_MEM_LIMIT)
                     .put(", size=")
                     .put(size)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
+            String errorMssg = e.getFlyweightMessage().toString();
+            logger.error(errorMssg);
             throw e;
         }
     }
@@ -272,6 +279,8 @@ public final class Unsafe {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
                     .put(RSS_MEM_USED.get())
+                    .put(", RSS_MEM_LIMIT=")
+                    .put(RSS_MEM_LIMIT)
                     .put(", oldSize=")
                     .put(oldSize)
                     .put(", newSize=")
@@ -279,7 +288,8 @@ public final class Unsafe {
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
-            System.err.println(e.getFlyweightMessage());
+            String errorMssg = e.getFlyweightMessage().toString();
+            logger.error(errorMssg);
             throw e;
         }
     }

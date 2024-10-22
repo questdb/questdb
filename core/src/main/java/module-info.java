@@ -27,6 +27,8 @@ open module io.questdb {
     requires static org.jetbrains.annotations;
     requires static java.management;
     requires jdk.management;
+    requires org.slf4j;
+    requires logback.classic;
 
     uses io.questdb.griffin.FunctionFactory;
     exports io.questdb;
