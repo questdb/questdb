@@ -35,6 +35,7 @@
 #include <sys/errno.h>
 #include <sys/time.h>
 #include <sys/mount.h>
+#include <string.h>
 #include "files.h"
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
