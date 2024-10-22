@@ -301,13 +301,16 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
         }
 
         public void decode(PartitionDecoder parquetDecoder, DirectIntList parquetColumns, int rowGroup, int rowLo, int rowHi) {
-            parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
             clearAddresses();
-            for (int i = 0, n = parquetDecoder.metadata().columnCount(); i < n; i++) {
-                pageAddresses.add(rowGroupBuffers.getChunkDataPtr(i));
-                pageSizes.add(rowGroupBuffers.getChunkDataSize(i));
-                auxPageAddresses.add(rowGroupBuffers.getChunkAuxPtr(i));
-                auxPageSizes.add(rowGroupBuffers.getChunkAuxSize(i));
+            if (parquetColumns.size() > 0) {
+                parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
+
+                for (int i = 0, n = parquetDecoder.metadata().columnCount(); i < n; i++) {
+                    pageAddresses.add(rowGroupBuffers.getChunkDataPtr(i));
+                    pageSizes.add(rowGroupBuffers.getChunkDataSize(i));
+                    auxPageAddresses.add(rowGroupBuffers.getChunkAuxPtr(i));
+                    auxPageSizes.add(rowGroupBuffers.getChunkAuxSize(i));
+                }
             }
         }
 
