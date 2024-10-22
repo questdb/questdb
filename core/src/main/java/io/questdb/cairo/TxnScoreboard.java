@@ -140,8 +140,8 @@ public class TxnScoreboard implements Closeable, Mutable {
 
         // truncate is required to give file a size
         // allocate above does not seem to update file system's size entry
-        if (!ff.truncate(fd, size)) {
-            throw CairoException.critical(ff.errno()).put("could not truncate file [file=").put(root).put(']');
+        if (ff.length(fd) != size) {
+            ff.truncate(fd, size);
         }
 
         try {
