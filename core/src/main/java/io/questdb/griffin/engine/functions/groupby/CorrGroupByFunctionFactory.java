@@ -181,10 +181,10 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
 
             // So we use this instead:
             double mergedMeanY = (srcCount * srcMeanY + destCount * destMeanY) / mergedCount;
-            double mergedSumY = srcSumY + destSumY + (deltaX * deltaX) * ((double) (srcCount * destCount) / mergedCount);
+            double mergedSumY = srcSumY + destSumY + (deltaY * deltaY) * ((double) (srcCount * destCount) / mergedCount);
             double mergedMeanX = (srcCount * srcMeanX + destCount * destMeanX) / mergedCount;
             double mergedSumX = srcSumX + destSumX + (deltaX * deltaX) * ((double) (srcCount * destCount) / mergedCount);
-            double mergedSumXY = srcSumXY + destSumXY + (deltaX * deltaX) * ((double) (srcCount * destCount) / mergedCount);
+            double mergedSumXY = srcSumXY + destSumXY + (deltaX * deltaY) * ((double) (srcCount * destCount) / mergedCount);
 
             destValue.putDouble(valueIndex, mergedMeanY);
             destValue.putDouble(valueIndex + 1, mergedSumY);
