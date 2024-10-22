@@ -536,7 +536,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 assert mem2 != null;
                 ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                 long newSize = columnTypeDriver.getAuxVectorSize(rowCount);
-                if (newSize != mem1.size()) {
+                if (newSize != mem2.size()) {
                     mem2.extend(newSize);
                 }
                 long dataSize = columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), rowCount - 1);
