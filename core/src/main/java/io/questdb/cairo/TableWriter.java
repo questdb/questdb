@@ -3932,6 +3932,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (!force && ff.exists(path.$())) {
                 return;
+            } else {
+                ff.removeQuiet(path.$());
             }
 
             // reuse memory column object to create index and close it at the end
