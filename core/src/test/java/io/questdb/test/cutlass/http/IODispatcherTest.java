@@ -608,6 +608,51 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testExceptionAfter1100Rows() throws Exception {
+        final StringSink sink = new StringSink();
+        final int numOfRows = 1100;
+        for (int i = 0, n = numOfRows / 2; i < n; i++) {
+            sink.put("[true],[false]");
+            if (i < n - 1) {
+                sink.put(",");
+            }
+        }
+        testJsonQuery0(1, engine -> {
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /exec?query=select%20simulate_crash%28'P'%29%20from%20long_sequence%28" + (numOfRows + 5) + "%29 HTTP/1.1\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "X-Requested-With: XMLHttpRequest\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
+                                    "Sec-Fetch-Site: same-origin\r\n" +
+                                    "Sec-Fetch-Mode: cors\r\n" +
+                                    "Referer: http://localhost:9000/index.html\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: application/json; charset=utf-8\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "2114" + "\r\n" +
+                                    "{\"query\":\"select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")\",\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[" + sink + "],\"count\":" + numOfRows + ",\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"}\r\n" +
+                                    "00\r\n" +
+                                    "\r\n",
+                            1,
+                            0,
+                            false
+                    );
+                    Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
+                }
+                , false);
+    }
+
+    @Test
     public void testExceptionAfterHeader() throws Exception {
         testExceptionAfterHeader(0, "d5", "");
         testExceptionAfterHeader(1, "db", "[true]");

@@ -70,6 +70,8 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
                     return CairoExceptionFunction.INSTANCE_1;
                 case '2':
                     return CairoExceptionFunction.INSTANCE_2;
+                case 'P':
+                    return CairoExceptionFunction.INSTANCE_P;
                 default:
                     throw new UnsupportedOperationException("Unsupported crash type: " + crashType);
             }
@@ -106,17 +108,18 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         private static final CairoExceptionFunction INSTANCE_0 = new CairoExceptionFunction(0);
         private static final CairoExceptionFunction INSTANCE_1 = new CairoExceptionFunction(1);
         private static final CairoExceptionFunction INSTANCE_2 = new CairoExceptionFunction(2);
+        private static final CairoExceptionFunction INSTANCE_P = new CairoExceptionFunction(1100);
 
-        private final int numOfRecordsBeforeError;
+        private final int numOfRecordsBeforeException;
         private int current;
 
-        public CairoExceptionFunction(int numOfRecordsBeforeError) {
-            this.numOfRecordsBeforeError = numOfRecordsBeforeError;
+        public CairoExceptionFunction(int numOfRecordsBeforeException) {
+            this.numOfRecordsBeforeException = numOfRecordsBeforeException;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            if (current < numOfRecordsBeforeError) {
+            if (current < numOfRecordsBeforeException) {
                 return current++ % 2 == 0;
             }
             throw CairoException.critical(1).put("simulated cairo exception");
