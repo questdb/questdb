@@ -454,17 +454,16 @@ public class TableReader implements Closeable, SymbolTableSource {
                     if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs)) {
                         // We used to skip reloading partition size if the row count is the same and name txn is the same
                         // But in case of dedup the row count can be same but the data can be overwritten by splitting and squashing the partition back
-                        // This is ok for fixed size columns but var lenght columns have to be re-mapped to the bigger / smaller sizes
+                        // This is ok for fixed size columns but var length columns have to be re-mapped to the bigger / smaller sizes
                         if (openPartitionSize > -1L) {
                             reloadPartitionFiles(partitionIndex, newPartitionSize, txPartitionNameTxn);
                             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, newPartitionSize);
                             LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                         }
-                        changed = true;
                     } else {
                         prepareForLazyOpen(partitionIndex);
-                        changed = true;
                     }
+                    changed = true;
                 } else if (openPartitionSize > -1L && newPartitionSize > -1L) { // Don't force re-open if not yet opened
                     prepareForLazyOpen(partitionIndex);
                 }
@@ -540,12 +539,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (newSize != mem1.size()) {
                     mem2.extend(newSize);
                 }
-                if (mem1 != null) {
-                    long dataSize = columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), rowCount - 1);
-                    if (dataSize != mem1.size()) {
-                        // because of dedup, size of var data can grow or shrink
-                        mem1.changeSize(dataSize);
-                    }
+                long dataSize = columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), rowCount - 1);
+                if (dataSize != mem1.size()) {
+                    // because of dedup, size of var data can grow or shrink
+                    mem1.changeSize(dataSize);
                 }
             } else {
                 mem1.extend(rowCount << ColumnType.pow2SizeOf(columnType));
@@ -1039,7 +1036,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         if (openPartitionNameTxn == txPartitionNameTxn) {
                             // We used to skip reloading partition size if the row count is the same and name txn is the same
                             // But in case of dedup the row count can be same but the data can be overwritten by splitting and squashing the partition back
-                            // This is ok for fixed size columns but var lenght columns have to be re-mapped to the bigger / smaller sizes
+                            // This is ok for fixed size columns but var length columns have to be re-mapped to the bigger / smaller sizes
                             reloadPartitionFiles(partitionIndex, txPartitionSize, txPartitionNameTxn);
                             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                             LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();

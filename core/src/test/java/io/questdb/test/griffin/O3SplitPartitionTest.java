@@ -37,9 +37,12 @@ import io.questdb.std.Os;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TestName;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -860,7 +863,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     drainWalQueue(engine);
 
                     // Open reader
-                    TestUtils.assertSql(engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", new StringSink(), "sum\tts\tlast\n" +
+                    TestUtils.assertSql(engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink, "sum\tts\tlast\n" +
                             "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
                             "-1987920\t2020-02-04T00:00:00.000000Z\t\n" +
                             "-1942590\t2020-02-05T00:00:00.000000Z\t\n");
@@ -883,7 +886,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     drainWalQueue(engine);
 
-                    TestUtils.assertSql(engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", new StringSink(), "sum\tts\tlast\n" +
+                    TestUtils.assertSql(engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink, "sum\tts\tlast\n" +
                             "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
                             "-51885870\t2020-02-04T00:00:00.000000Z\t\n" +
                             "-1942590\t2020-02-05T00:00:00.000000Z\t\n");
