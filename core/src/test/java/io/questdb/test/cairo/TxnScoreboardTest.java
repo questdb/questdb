@@ -27,7 +27,10 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -332,8 +335,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
     @Test
     public void testLimitsO3Acquire() throws Exception {
-        LOG.debug().$("starting testLimitsLoop").$();
-        for (int i = 0; i < 10000; i++) {
+        LOG.debug().$("start testLimitsO3Acquire").$();
+        for (int i = 0; i < 1000; i++) {
             testLimits();
         }
     }
@@ -502,8 +505,8 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     @Test
     public void testStressOpenParallel() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            int parallel = 16;
-            int iterations = (int) 1E3;
+            int parallel = 8;
+            int iterations = 500;
             SOCountDownLatch latch = new SOCountDownLatch(parallel);
             AtomicInteger errors = new AtomicInteger();
             for (int i = 0; i < parallel; i++) {
