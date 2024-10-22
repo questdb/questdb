@@ -57,35 +57,35 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
     }
 
     private static class RegressionInterceptFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
-        protected final Function xFunction;
-        protected final Function yFunction;
+        protected final Function yFunc;
+        protected final Function xFunc;
         protected int valueIndex;
 
         public RegressionInterceptFunction(@NotNull Function arg0, @NotNull Function arg1) {
-            this.xFunction = arg0;
-            this.yFunction = arg1;
+            this.yFunc = arg0;
+            this.xFunc = arg1;
 
         }
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
-            final double y = yFunction.getDouble(record);
-            final double x = xFunction.getDouble(record);
+            final double x = xFunc.getDouble(record);
+            final double y = yFunc.getDouble(record);
             mapValue.putDouble(valueIndex, 0);
             mapValue.putDouble(valueIndex + 1, 0);
             mapValue.putDouble(valueIndex + 2, 0);
             mapValue.putDouble(valueIndex + 3, 0);
             mapValue.putLong(valueIndex + 4, 0);
 
-            if (Numbers.isFinite(x) && Numbers.isFinite(y)) {
-                aggregate(mapValue, x, y);
+            if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
+                aggregate(mapValue, y, x);
             }
         }
 
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
-            final double y = xFunction.getDouble(record);
-            final double x = yFunction.getDouble(record);
+            final double y = yFunc.getDouble(record);
+            final double x = xFunc.getDouble(record);
             if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
                 aggregate(mapValue, y, x);
             }
@@ -119,6 +119,9 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
             this.valueIndex = valueIndex;
         }
 
+        // regr_slope is covar_pop / var_pop
+        // regr_intercept = avg(y) - regr_slope(y, x) * avg(x)
+        // Map is [ sumY, sumX, sumXY, sumYSquared, count ]
         @Override
         public void initValueTypes(ArrayColumnTypes columnTypes) {
             this.valueIndex = columnTypes.getColumnCount();
@@ -141,33 +144,33 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
 
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {
-            double sum_x = srcValue.getDouble(valueIndex);
-            double sum_y = srcValue.getDouble(valueIndex + 1);
-            double sum_xy = srcValue.getDouble(valueIndex + 2);
-            double sum_x_squared = srcValue.getDouble(valueIndex + 3);
-            long count = srcValue.getLong(valueIndex + 4);
+            double srcSumY = srcValue.getDouble(valueIndex);
+            double srcSumX = srcValue.getDouble(valueIndex + 1);
+            double srcSumXY = srcValue.getDouble(valueIndex + 2);
+            double srcSumYSquared = srcValue.getDouble(valueIndex + 3);
+            long srcCount = srcValue.getLong(valueIndex + 4);
 
-            double sum_x2 = destValue.getDouble(valueIndex);
-            double sum_y2 = destValue.getDouble(valueIndex + 1);
-            double sum_xy2 = destValue.getDouble(valueIndex + 2);
-            double sum_x2_squared = destValue.getDouble(valueIndex + 3);
-            long count2 = destValue.getLong(valueIndex + 4);
+            double destSumY = destValue.getDouble(valueIndex);
+            double destSumX = destValue.getDouble(valueIndex + 1);
+            double destSumXY = destValue.getDouble(valueIndex + 2);
+            double destSumYSquared = destValue.getDouble(valueIndex + 3);
+            long destCount = destValue.getLong(valueIndex + 4);
 
-            destValue.putDouble(valueIndex, sum_x + sum_x2);
-            destValue.putDouble(valueIndex + 1, sum_y + sum_y2);
-            destValue.putDouble(valueIndex + 2, sum_xy + sum_xy2);
-            destValue.putDouble(valueIndex + 3, sum_x_squared + sum_x2_squared);
-            destValue.putLong(valueIndex + 4, count + count2);
+            destValue.putDouble(valueIndex, srcSumY + destSumY);
+            destValue.putDouble(valueIndex + 1, srcSumX + destSumX);
+            destValue.putDouble(valueIndex + 2, srcSumXY + destSumXY);
+            destValue.putDouble(valueIndex + 3, srcSumYSquared + destSumYSquared);
+            destValue.putLong(valueIndex + 4, srcCount + destCount);
         }
 
         @Override
         public Function getLeft() {
-            return xFunction;
+            return yFunc;
         }
 
         @Override
         public Function getRight() {
-            return yFunction;
+            return xFunc;
         }
 
         @Override
@@ -190,16 +193,16 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
         }
 
         protected void aggregate(MapValue mapValue, double y, double x) {
-            double sum_x = mapValue.getDouble(valueIndex);
-            double sum_y = mapValue.getDouble(valueIndex + 1);
-            double sum_xy = mapValue.getDouble(valueIndex + 2);
-            double sum_x_squared = mapValue.getDouble(valueIndex + 3);
+            double sumY = mapValue.getDouble(valueIndex);
+            double sumX = mapValue.getDouble(valueIndex + 1);
+            double sumXY = mapValue.getDouble(valueIndex + 2);
+            double sumYSquared = mapValue.getDouble(valueIndex + 3);
             long count = mapValue.getLong(valueIndex + 4);
 
-            mapValue.putDouble(valueIndex, sum_x + x);
-            mapValue.putDouble(valueIndex + 1, sum_y + y);
-            mapValue.putDouble(valueIndex + 2, sum_xy + x * y);
-            mapValue.putDouble(valueIndex + 3, sum_x_squared + x * x);
+            mapValue.putDouble(valueIndex, sumY + y);
+            mapValue.putDouble(valueIndex + 1, sumX + x);
+            mapValue.putDouble(valueIndex + 2, sumXY + x * y);
+            mapValue.putDouble(valueIndex + 3, sumYSquared + y * y);
             mapValue.putLong(valueIndex + 4, count + 1);
         }
     }
