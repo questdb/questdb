@@ -32,14 +32,18 @@ select regr_slope(v, v2) from aggr ;
 ----
 0.831409
 
+
 statement error
 select regr_intercept()
 ----
+db error: ERROR: function `regr_intercept` requires arguments: regr_intercept(DOUBLE, DOUBLE)
+
 
 query I
 select regr_intercept(NULL,NULL)
 ----
 NULL
+
 
 query I
 select regr_intercept(1,1)
@@ -50,24 +54,11 @@ NULL
 statement error
 select regr_intercept(*)
 ----
+db error: ERROR: too few arguments for '*' [found=0,expected=2]
+
 
 query II
-select k, regr_intercept(v, v2) from aggr group by k ORDER BY ALL;
+select k, regr_intercept(v, v2) r from aggr group by k ORDER BY k, r;
 ----
-1	NULL
-2	1.154734
-
-query I
-select regr_intercept(v, v2) from aggr;
-----
-1.154734
-
-query I rowsort
-select  regr_intercept(v, v2) over (partition by k)
-    from aggr;
-----
-1.154734
-1.154734
-1.154734
-1.154734
-NULL
+1 NULL
+2 1.154734

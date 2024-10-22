@@ -56,21 +56,21 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
         return new RegressionInterceptFunction(args.getQuick(0), args.getQuick(1));
     }
 
+
     private static class RegressionInterceptFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
-        protected final Function yFunc;
         protected final Function xFunc;
+        protected final Function yFunc;
         protected int valueIndex;
 
         public RegressionInterceptFunction(@NotNull Function arg0, @NotNull Function arg1) {
             this.yFunc = arg0;
             this.xFunc = arg1;
-
         }
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
-            final double x = xFunc.getDouble(record);
             final double y = yFunc.getDouble(record);
+            final double x = xFunc.getDouble(record);
             mapValue.putDouble(valueIndex, 0);
             mapValue.putDouble(valueIndex + 1, 0);
             mapValue.putDouble(valueIndex + 2, 0);
@@ -94,19 +94,37 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             long count = rec.getLong(valueIndex + 4);
-            if (count < 2) {
-                return Double.NaN;
+
+            if (count > 0) {
+                double sumXY = rec.getDouble(valueIndex + 2);
+                double covar = sumXY / count;
+
+                double sumX = rec.getDouble(valueIndex + 3);
+                double var = sumX / count;
+
+                double slope = covar / var;
+
+                double meanY = rec.getDouble(valueIndex);
+                double meanX = rec.getDouble(valueIndex + 1);
+
+                return meanY - meanX * slope;
             }
+            return Double.NaN;
+        }
 
-            double sum_x = rec.getDouble(valueIndex);
-            double sum_y = rec.getDouble(valueIndex + 1);
-            double sum_xy = rec.getDouble(valueIndex + 2);
-            double sum_x_squared = rec.getDouble(valueIndex + 3);
-            double slope = (count * sum_xy - sum_x * sum_y) / (count * sum_x_squared - sum_x * sum_x);
-            double avg_x = sum_x / count;
-            double avg_y = sum_y / count;
+        @Override
+        public Function getLeft() {
+            return yFunc;
+        }
 
-            return avg_y - avg_x * slope;
+        @Override
+        public String getName() {
+            return "regr_intercept";
+        }
+
+        @Override
+        public Function getRight() {
+            return xFunc;
         }
 
         @Override
@@ -119,9 +137,6 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
             this.valueIndex = valueIndex;
         }
 
-        // regr_slope is covar_pop / var_pop
-        // regr_intercept = avg(y) - regr_slope(y, x) * avg(x)
-        // Map is [ sumY, sumX, sumXY, sumYSquared, count ]
         @Override
         public void initValueTypes(ArrayColumnTypes columnTypes) {
             this.valueIndex = columnTypes.getColumnCount();
@@ -133,54 +148,48 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isThreadSafe() {
-            return BinaryFunction.super.isThreadSafe();
-        }
-
-        @Override
-        public boolean supportsParallelism() {
-            return true;
-        }
-
-        @Override
-        public void merge(MapValue destValue, MapValue srcValue) {
-            double srcSumY = srcValue.getDouble(valueIndex);
-            double srcSumX = srcValue.getDouble(valueIndex + 1);
-            double srcSumXY = srcValue.getDouble(valueIndex + 2);
-            double srcSumYSquared = srcValue.getDouble(valueIndex + 3);
-            long srcCount = srcValue.getLong(valueIndex + 4);
-
-            double destSumY = destValue.getDouble(valueIndex);
-            double destSumX = destValue.getDouble(valueIndex + 1);
-            double destSumXY = destValue.getDouble(valueIndex + 2);
-            double destSumYSquared = destValue.getDouble(valueIndex + 3);
-            long destCount = destValue.getLong(valueIndex + 4);
-
-            destValue.putDouble(valueIndex, srcSumY + destSumY);
-            destValue.putDouble(valueIndex + 1, srcSumX + destSumX);
-            destValue.putDouble(valueIndex + 2, srcSumXY + destSumXY);
-            destValue.putDouble(valueIndex + 3, srcSumYSquared + destSumYSquared);
-            destValue.putLong(valueIndex + 4, srcCount + destCount);
-        }
-
-        @Override
-        public Function getLeft() {
-            return yFunc;
-        }
-
-        @Override
-        public Function getRight() {
-            return xFunc;
-        }
-
-        @Override
         public boolean isConstant() {
             return false;
         }
 
         @Override
-        public String getName() {
-            return "regr_slope";
+        public boolean isThreadSafe() {
+            return BinaryFunction.super.isThreadSafe();
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            double srcMeanY = srcValue.getDouble(valueIndex);
+            double srcMeanX = srcValue.getDouble(valueIndex + 1);
+            double srcSumXY = srcValue.getDouble(valueIndex + 2);
+            double srcSumX = srcValue.getDouble(valueIndex + 3);
+            long srcCount = srcValue.getLong(valueIndex + 4);
+
+            double destMeanY = destValue.getDouble(valueIndex);
+            double destMeanX = destValue.getDouble(valueIndex + 1);
+            double destSumXY = destValue.getDouble(valueIndex + 2);
+            double destSumX = destValue.getDouble(valueIndex + 3);
+            long destCount = destValue.getLong(valueIndex + 4);
+
+            long mergedCount = srcCount + destCount;
+            double deltaY = destMeanY - srcMeanY;
+            double deltaX = destMeanX - srcMeanX;
+
+            // This is only valid when countA is much larger than countB.
+            // If both are large and similar sizes, delta is not scaled down.
+            // double mergedMean = srcMean + delta * ((double) destCount / mergedCount);
+
+            // So we use this instead:
+            double mergedMeanY = (srcCount * srcMeanY + destCount * destMeanY) / mergedCount;
+            double mergedMeanX = (srcCount * srcMeanX + destCount * destMeanX) / mergedCount;
+            double mergedSumXY = srcSumXY + destSumXY + (deltaY * deltaX) * ((double) (srcCount * destCount) / mergedCount);
+            double mergedSumX = srcSumX + destSumX + (deltaX * deltaX) * ((double) (srcCount * destCount) / mergedCount);
+
+            destValue.putDouble(valueIndex, mergedMeanY);
+            destValue.putDouble(valueIndex + 1, mergedMeanX);
+            destValue.putDouble(valueIndex + 2, mergedSumXY);
+            destValue.putDouble(valueIndex + 3, mergedSumX);
+            destValue.putLong(valueIndex + 4, mergedCount);
         }
 
         @Override
@@ -192,19 +201,30 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
             mapValue.putLong(valueIndex + 4, 0);
         }
 
-        protected void aggregate(MapValue mapValue, double y, double x) {
-            double sumY = mapValue.getDouble(valueIndex);
-            double sumX = mapValue.getDouble(valueIndex + 1);
-            double sumXY = mapValue.getDouble(valueIndex + 2);
-            double sumYSquared = mapValue.getDouble(valueIndex + 3);
-            long count = mapValue.getLong(valueIndex + 4);
+        @Override
+        public boolean supportsParallelism() {
+            return true;
+        }
 
-            mapValue.putDouble(valueIndex, sumY + y);
-            mapValue.putDouble(valueIndex + 1, sumX + x);
-            mapValue.putDouble(valueIndex + 2, sumXY + x * y);
-            mapValue.putDouble(valueIndex + 3, sumYSquared + y * y);
-            mapValue.putLong(valueIndex + 4, count + 1);
+        protected void aggregate(MapValue mapValue, double y, double x) {
+            double meanY = mapValue.getDouble(valueIndex);
+            double meanX = mapValue.getDouble(valueIndex + 1);
+            double sumXY = mapValue.getDouble(valueIndex + 2);
+            double sumX = mapValue.getDouble(valueIndex + 3);
+            long count = mapValue.getLong(valueIndex + 4) + 1;
+
+            double oldMeanY = meanY;
+            double oldMeanX = meanX;
+            meanY += (y - meanY) / count;
+            meanX += (x - meanX) / count;
+            sumXY += (y - oldMeanY) * (x - meanX);
+            sumX += (x - meanX) * (x - oldMeanX);
+
+            mapValue.putDouble(valueIndex, meanY);
+            mapValue.putDouble(valueIndex + 1, meanX);
+            mapValue.putDouble(valueIndex + 2, sumXY);
+            mapValue.putDouble(valueIndex + 3, sumX);
+            mapValue.addLong(valueIndex + 4, 1L);
         }
     }
-
 }
