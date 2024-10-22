@@ -30,7 +30,6 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
-import io.questdb.std.Files;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -52,9 +51,9 @@ public class PartitionDecoder implements QuietCloseable {
     private static final long ROW_GROUP_SIZES_PTR_OFFSET;
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final Metadata metadata = new Metadata();
+    private long addr; // mmapped parquet file's address
     private long columnsPtr;
-    private long fd; // kept around for logging purposes
-    private long fileSize;
+    private long fileSize; // mmapped parquet file's size
     private long ptr;
     private long rowGroupSizesPtr;
 
@@ -69,8 +68,8 @@ public class PartitionDecoder implements QuietCloseable {
     @Override
     public void close() {
         destroy();
-        fd = -1;
-        fileSize = -1;
+        addr = 0;
+        fileSize = 0;
     }
 
     public int decodeRowGroup(
@@ -123,12 +122,12 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
-    public long getFd() {
-        return fd;
+    public long getAddr() {
+        return addr;
     }
 
     public long getFileSize() {
-        assert fileSize > 0 || fd == -1;
+        assert fileSize > 0 || addr == 0;
         return fileSize;
     }
 
@@ -137,14 +136,14 @@ public class PartitionDecoder implements QuietCloseable {
         return metadata;
     }
 
-    public void of(long fd, long fileSize, int memoryTag) {
-        assert fd != -1;
+    public void of(long addr, long fileSize, int memoryTag) {
+        assert addr != 0;
         assert fileSize > 0;
         destroy();
-        this.fd = fd;
+        this.addr = addr;
         this.fileSize = fileSize;
         final long allocator = Unsafe.getNativeAllocator(memoryTag);
-        ptr = create(allocator, Files.toOsFd(fd), fileSize); // throws CairoException on error
+        ptr = create(allocator, addr, fileSize); // throws CairoException on error
         columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
         rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
         metadata.init();
@@ -179,7 +178,7 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long columnsPtrOffset();
 
-    private static native long create(long allocator, int fd, long fileSize) throws CairoException;
+    private static native long create(long allocator, long addr, long fileSize) throws CairoException;
 
     private static native int decodeRowGroup(
             long decoderPtr,

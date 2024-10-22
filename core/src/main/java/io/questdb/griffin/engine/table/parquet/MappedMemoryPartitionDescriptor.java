@@ -38,16 +38,16 @@ public class MappedMemoryPartitionDescriptor extends PartitionDescriptor {
 
             final long columnAddr = columnData.get(rawIndex + COLUMN_ADDR_OFFSET);
             final long columnSize = columnData.get(rawIndex + COLUMN_SIZE_OFFSET);
-            Files.munmap(columnAddr, columnSize, MemoryTag.MMAP_PARTITION_CONVERTER);
+            Files.munmap(columnAddr, columnSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
 
             final long columnSecondaryAddr = columnData.get(rawIndex + COLUMN_SECONDARY_ADDR_OFFSET);
             final long columnSecondarySize = columnData.get(rawIndex + COLUMN_SECONDARY_SIZE_OFFSET);
-            Files.munmap(columnSecondaryAddr, columnSecondarySize, MemoryTag.MMAP_PARTITION_CONVERTER);
+            Files.munmap(columnSecondaryAddr, columnSecondarySize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
 
             final long symbolOffsetsAddr = columnData.get(rawIndex + SYMBOL_OFFSET_ADDR_OFFSET);
             final long symbolOffsetsSize = columnData.get(rawIndex + SYMBOL_OFFSET_SIZE_OFFSET);
             final long offsetsMemSize = SymbolMapWriter.keyToOffset((int) symbolOffsetsSize + 1);
-            Files.munmap(symbolOffsetsAddr - SymbolMapWriter.HEADER_SIZE, offsetsMemSize, MemoryTag.MMAP_PARTITION_CONVERTER);
+            Files.munmap(symbolOffsetsAddr - SymbolMapWriter.HEADER_SIZE, offsetsMemSize, MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER);
 
         }
 

@@ -62,8 +62,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = PARTITIONS_SLOT_OFFSET_SIZE + 1;
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
-    private static final int PARTITIONS_SLOT_OFFSET_PARQUET_FD = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
-    private static final int PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE = PARTITIONS_SLOT_OFFSET_PARQUET_FD + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final MillisecondClock clock;
@@ -75,6 +73,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final MessageBus messageBus;
     private final TableReaderMetadata metadata;
     private final LongList openPartitionInfo;
+    private final ObjList<MemoryCMR> parquetPartitions;
     private final int partitionBy;
     private final PartitionOverwriteControl partitionOverwriteControl;
     private final Path path;
@@ -144,6 +143,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             partitionCount = txFile.getPartitionCount();
 
             int capacity = getColumnBase(partitionCount);
+            parquetPartitions = new ObjList<>(partitionCount);
+            parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
             columns = new ObjList<>(capacity + 2);
             columns.setPos(capacity + 2);
             columns.setQuick(0, NullMemoryCMR.INSTANCE);
@@ -159,15 +160,11 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final int baseOffset = i * PARTITIONS_SLOT_SIZE;
                 final long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
                 final boolean isParquet = txFile.isPartitionParquet(i);
-                final long parquetFileSize = isParquet ? txFile.getPartitionParquetFileSize(i) : -1;
-                assert parquetFileSize > 0 || !isParquet;
                 openPartitionInfo.setQuick(baseOffset, partitionTimestamp);
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1); // -1 means it is not open
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
-                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_PARQUET_FD, -1);
-                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE, parquetFileSize);
             }
             columnTops = new LongList(capacity / 2);
             columnTops.setPos(capacity / 2);
@@ -209,7 +206,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txFile);
             Misc.free(todoMem);
             freeColumns();
-            freeParquetFds();
+            freeParquetPartitions();
             freeTempMem();
             Misc.free(txnScoreboard);
             Misc.free(path);
@@ -306,19 +303,17 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Returns previously open Parquet partition fd or -1 in case of a native partition.
+     * Returns previously open Parquet partition's mmapped address or 0 in case of a native partition.
      */
-    public long getParquetFd(int partitionIndex) {
-        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_PARQUET_FD);
+    public long getParquetAddr(int partitionIndex) {
+        return parquetPartitions.getQuick(partitionIndex).addressOf(0);
     }
 
     /**
      * Returns previously open Parquet partition read size or -1 in case of a native partition.
      */
     public long getParquetFileSize(int partitionIndex) {
-        final long fileSize = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE);
-        assert fileSize > 0 || getParquetFd(partitionIndex) == -1;
-        return fileSize;
+        return parquetPartitions.getQuick(partitionIndex).size();
     }
 
     public int getPartitionCount() {
@@ -448,7 +443,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     /**
      * Opens given partition for reading. Native partitions become immediately readable
      * after this call through mmapped memory. For Parquet partitions, the file is open
-     * for read with fd available via {@link #getParquetFd(int)}} call.
+     * for read with fd available via {@link #getParquetAddr(int)}} call.
      *
      * @param partitionIndex partition index
      * @return partition size in rows
@@ -642,30 +637,29 @@ public class TableReader implements Closeable, SymbolTableSource {
         long partitionTimestamp = openPartitionInfo.getQuick(offset);
         long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
         int columnBase = getColumnBase(partitionIndex);
-        if (partitionSize > -1L) {
-            closePartitionResources(getPartitionFormat(partitionIndex), offset, columnBase);
+        if (partitionSize > -1) {
+            closePartitionResources(partitionIndex, offset);
             openPartitionCount--;
         }
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
         int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
         columns.remove(baseIndex, newBaseIndex - 1);
+        parquetPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
 
         int colTopStart = columnBase / 2;
         int columnSlotSize = getColumnBase(1);
         columnTops.removeIndexBlock(colTopStart, columnSlotSize / 2);
 
         openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
-        LOG.info().$("closed deleted partition [table=").$(tableToken).$(", ts=").$ts(partitionTimestamp).$(", partitionIndex=").$(partitionIndex).I$();
+        LOG.info().$("closed deleted partition [table=").$(tableToken)
+                .$(", ts=").$ts(partitionTimestamp)
+                .$(", partitionIndex=").$(partitionIndex)
+                .I$();
         partitionCount--;
     }
 
-    private void closeParquetFd(int offset) {
-        long fd = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD);
-        if (fd != -1) {
-            ff.close(fd);
-            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD, -1);
-            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE, -1);
-        }
+    private void closeParquetPartition(int partitionIndex) {
+        Misc.free(parquetPartitions.getQuick(partitionIndex));
     }
 
     private void closePartition(int partitionIndex) {
@@ -673,14 +667,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         long partitionTimestamp = openPartitionInfo.getQuick(offset);
         long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
         if (partitionSize > -1) {
-            closePartitionResources(getPartitionFormat(partitionIndex), offset, getColumnBase(partitionIndex));
+            closePartitionResources(partitionIndex, offset);
             openPartitionCount--;
 
             LOG.debug().$("closed partition [path=").$substr(dbRootSize, path).$(", timestamp=").$ts(partitionTimestamp).I$();
         }
     }
 
-    private void closePartitionColumnFile(int base, int columnIndex) {
+    private void closePartitionColumn(int base, int columnIndex) {
         int index = getPrimaryColumnIndex(base, columnIndex);
         Misc.free(columns.get(index));
         Misc.free(columns.get(index + 1));
@@ -690,15 +684,17 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void closePartitionColumns(int columnBase) {
         for (int i = 0; i < columnCount; i++) {
-            closePartitionColumnFile(columnBase, i);
+            closePartitionColumn(columnBase, i);
         }
     }
 
-    private void closePartitionResources(byte format, int offset, int columnBase) {
+    private void closePartitionResources(int partitionIndex, int offset) {
+        final byte format = getPartitionFormat(partitionIndex);
         assert format != -1;
         if (format == PartitionFormat.PARQUET) {
-            closeParquetFd(offset);
+            closeParquetPartition(partitionIndex);
         } else {
+            int columnBase = getColumnBase(partitionIndex);
             closePartitionColumns(columnBase);
         }
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
@@ -715,7 +711,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
             if (getPartitionFormat(partitionIndex) == PartitionFormat.NATIVE) {
                 for (int i = 0; i < columnCount; i++) {
-                    closePartitionColumnFile(oldBase, i);
+                    closePartitionColumn(oldBase, i);
                 }
             }
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1L);
@@ -811,7 +807,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (partitionRowCount > -1L && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, fromBase)) > -1L) {
                     for (int i = 0; i < iterateCount; i++) {
                         if (transitionIndex.closeColumn(i)) {
-                            closePartitionColumnFile(fromBase, i);
+                            closePartitionColumn(fromBase, i);
                         }
 
                         if (transitionIndex.replaceWithNew(i)) {
@@ -869,10 +865,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.freeObjList(columns);
     }
 
-    private void freeParquetFds() {
-        for (int i = 0; i < partitionCount; i++) {
-            closeParquetFd(i * PARTITIONS_SLOT_SIZE);
-        }
+    private void freeParquetPartitions() {
+        Misc.freeObjList(parquetPartitions);
     }
 
     private void freeSymbolMapReaders() {
@@ -895,6 +889,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int idx = getPrimaryColumnIndex(columnBase, 0);
         columns.insert(idx, columnSlotSize, NullMemoryCMR.INSTANCE);
         bitmapIndexes.insert(idx, columnSlotSize, null);
+        parquetPartitions.extendAndSet(partitionIndex, NullMemoryCMR.INSTANCE);
 
         final int topBase = columnBase / 2;
         final int topSlotSize = columnSlotSize / 2;
@@ -908,8 +903,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
-        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD, -1);
-        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE, -1);
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken).$(", timestamp=").$ts(timestamp).I$();
     }
@@ -941,7 +934,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     @NotNull
-    private MemoryCMR openOrCreateMemory(
+    private MemoryCMR openOrCreateColumnMemory(
             Path path,
             ObjList<MemoryCMR> columns,
             int primaryIndex,
@@ -985,12 +978,15 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
 
-                        final long fd = TableUtils.openRO(ff, path.$(), LOG);
-                        assert openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD) == -1;
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD, fd);
                         final long parquetSize = txFile.getPartitionParquetFileSize(partitionIndex);
                         assert parquetSize > 0;
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE, parquetSize);
+                        MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
+                        if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
+                            parquetMem.of(ff, path.$(), parquetSize, parquetSize, MemoryTag.MMAP_TABLE_READER);
+                        } else {
+                            parquetMem = Vm.getCMRInstance(ff, path.$(), parquetSize, MemoryTag.MMAP_TABLE_READER);
+                            parquetPartitions.setQuick(partitionIndex, parquetMem);
+                        }
                         openPartitionCount++;
                     }
 
@@ -1229,17 +1225,17 @@ public class TableReader implements Closeable, SymbolTableSource {
                     long auxSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
                     TableUtils.iFile(path.trimTo(plen), name, columnTxn);
                     MemoryCMR auxMem = columns.getQuick(secondaryIndex);
-                    auxMem = openOrCreateMemory(path, columns, secondaryIndex, auxMem, auxSize);
+                    auxMem = openOrCreateColumnMemory(path, columns, secondaryIndex, auxMem, auxSize);
                     long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
                     if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
                         LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(dataSize).$(", path=").$(path).I$();
                         throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(dataSize).put(']');
                     }
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, dataMem, dataSize);
+                    openOrCreateColumnMemory(path, columns, primaryIndex, dataMem, dataSize);
                 } else {
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(
+                    openOrCreateColumnMemory(
                             path,
                             columns,
                             primaryIndex,
@@ -1434,7 +1430,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         if (transitionIndex.closeColumn(i)) {
                             // This column is deleted (not moved).
                             // Close all files
-                            closePartitionColumnFile(base, i);
+                            closePartitionColumn(base, i);
                         }
 
                         // We should only remove columns from existing metadata if column count has reduced.

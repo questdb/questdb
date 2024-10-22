@@ -96,9 +96,9 @@ public interface PageFrame {
     long getPageSize(int columnIndex);
 
     /**
-     * Return Parquet partition's fd open for reads or -1 in case of a native partition.
+     * Return Parquet partition's mmapped file address or 0 in case of a native partition.
      */
-    long getParquetFd();
+    long getParquetAddr();
 
     /**
      * Return the Parquet partition's read size or -1 in case of a native partition.

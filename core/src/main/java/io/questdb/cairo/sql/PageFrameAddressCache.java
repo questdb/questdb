@@ -26,7 +26,14 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
-import io.questdb.std.*;
+import io.questdb.std.ByteList;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Rows;
+import io.questdb.std.Transient;
 
 /**
  * Holds formats, addresses and sizes for native (mmapped) page frames.
@@ -46,7 +53,8 @@ public class PageFrameAddressCache implements Mutable {
     private final long nativeCacheSizeThreshold;
     private final ObjList<LongList> pageAddresses = new ObjList<>();
     private final ObjList<LongList> pageSizes = new ObjList<>();
-    private final LongList parquetFds = new LongList();
+    private final LongList parquetAddresses = new LongList();
+    private final LongList parquetFileSizes = new LongList();
     private final IntList parquetRowGroupHis = new IntList();
     private final IntList parquetRowGroupLos = new IntList();
     private final IntList parquetRowGroups = new IntList();
@@ -55,7 +63,6 @@ public class PageFrameAddressCache implements Mutable {
     // Sum of all LongList sizes.
     private long cacheSize;
     private int columnCount;
-    private final LongList parquetFileSizes = new LongList();
 
     public PageFrameAddressCache(CairoConfiguration configuration) {
         this.nativeCacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
@@ -99,7 +106,7 @@ public class PageFrameAddressCache implements Mutable {
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(frame.getFormat());
-        parquetFds.add(frame.getParquetFd());
+        parquetAddresses.add(frame.getParquetAddr());
         final long fileSize = frame.getParquetFileSize();
         assert fileSize > 0 || frame.getFormat() != PartitionFormat.PARQUET;
         parquetFileSizes.add(fileSize);
@@ -113,7 +120,7 @@ public class PageFrameAddressCache implements Mutable {
     public void clear() {
         frameSizes.clear();
         frameFormats.clear();
-        parquetFds.clear();
+        parquetAddresses.clear();
         parquetRowGroups.clear();
         parquetRowGroupLos.clear();
         parquetRowGroupHis.clear();
@@ -167,8 +174,8 @@ public class PageFrameAddressCache implements Mutable {
         return pageSizes.getQuick(frameIndex);
     }
 
-    public long getParquetFd(int frameIndex) {
-        return parquetFds.getQuick(frameIndex);
+    public long getParquetAddr(int frameIndex) {
+        return parquetAddresses.getQuick(frameIndex);
     }
 
     public long getParquetFileSize(int frameIndex) {

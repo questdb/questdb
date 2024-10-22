@@ -68,8 +68,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final RecordMetadata metadata;
     private final ParquetRecord record;
     private final RowGroupBuffers rowGroupBuffers;
+    private long addr = 0;
     private int currentRowInRowGroup;
     private long fd = -1;
+    private long fileSize = 0;
     private int rowGroupIndex;
     private long rowGroupRowCount;
 
@@ -96,6 +98,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             ff.close(fd);
             fd = -1;
         }
+        if (addr != -1) {
+            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            addr = 0;
+        }
     }
 
     @Override
@@ -120,8 +126,9 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         try {
             // Reopen the file, it could have changed
             this.fd = TableUtils.openRO(ff, path, LOG);
-            final long fileSize = ff.length(fd);
-            decoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            this.fileSize = ff.length(fd);
+            this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             if (metadataHasChanged(metadata, decoder)) {
                 // We need to recompile the factory as the Parquet metadata has changed.
                 throw TableReferenceOutOfDateException.of(path);

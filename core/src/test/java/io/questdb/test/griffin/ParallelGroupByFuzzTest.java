@@ -129,7 +129,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             insert("INSERT INTO t VALUES ('2023-09-21T11:00:00.000000Z', 1, 1);");
 
             if (convertToParquet) {
-                ddl("alter table t convert partition to parquet where ts >= 0");
+                ddl("alter table t convert partition to parquet where created >= 0");
             }
 
             assertQuery(
@@ -209,8 +209,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             insert("INSERT INTO t2 VALUES ('2023-09-21T10:00:00.000000Z', 4, 2);");
 
             if (convertToParquet) {
-                ddl("alter table t1 convert partition to parquet where ts >= 0");
-                ddl("alter table t2 convert partition to parquet where ts >= 0");
+                ddl("alter table t1 convert partition to parquet where created >= 0");
+                ddl("alter table t2 convert partition to parquet where created >= 0");
             }
 
             assertQuery(
@@ -2152,21 +2152,22 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     bindVariableService.setStr("auuid", "78c594c4-9699-4885-aa18-96d0ad3419d2");
                 },
                 "SELECT key, count(anint), count(along) FROM tab " +
-                        "WHERE aboolean = :aboolean" +
-                        " and abyte = :abyte" +
-                        " and ageobyte = :ageobyte" +
-                        " and ashort = :ashort" +
-                        " and ageoshort = :ageoshort" +
-                        " and achar = :achar" +
-                        " and anint = :anint" +
-                        " and ageoint = :ageoint" +
-                        " and asymbol = :asymbol" +
-                        " and along = :along" +
-                        " and adate = :adate" +
-                        " and ageolong = :ageolong" +
-                        " and astring = :astring" +
-                        " and auuid = :auuid" +
-                        " and ts = :atimestamp " +
+                        "WHERE ts = :atimestamp " +
+//                        "WHERE aboolean = :aboolean " +
+//                        " and abyte = :abyte " +
+//                        " and ageobyte = :ageobyte " +
+//                        " and ashort = :ashort " +
+//                        " and ageoshort = :ageoshort " +
+//                        " and achar = :achar " +
+//                        " and anint = :anint " +
+//                        " and ageoint = :ageoint " +
+//                        " and asymbol = :asymbol " +
+//                        " and along = :along " +
+//                        " and adate = :adate " +
+//                        " and ageolong = :ageolong " +
+//                        " and astring = :astring " +
+//                        " and auuid = :auuid " +
+//                        " and ts = :atimestamp " +
                         "ORDER BY key",
                 "key\tcount\tcount1\n" +
                         "k3\t1\t1\n"

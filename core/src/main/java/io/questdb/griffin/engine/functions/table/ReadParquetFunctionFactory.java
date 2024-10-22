@@ -77,15 +77,19 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             checkPathIsSafeToRead(path, filePath, argPos.getQuick(0), config);
             final FilesFacade ff = config.getFilesFacade();
             final long fd = TableUtils.openRO(ff, path.$(), LOG);
+            long addr = 0;
+            long fileSize = 0;
             try (PartitionDecoder decoder = new PartitionDecoder()) {
-                final long fileSize = ff.length(fd);
-                decoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
                 decoder.metadata().copyTo(metadata, true);
                 return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, config.getFilesFacade()));
             } finally {
                 ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), "error reading parquet file ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());

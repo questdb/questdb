@@ -82,6 +82,8 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
             long fd = -1;
+            long addr = 0;
+            long fileSize = 0;
             try (
                     Path path = new Path();
                     PartitionDecoder partitionDecoder = new PartitionDecoder();
@@ -93,8 +95,9 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 PartitionEncoder.encode(partitionDescriptor, path);
 
                 fd = TableUtils.openRO(ff, path.$(), LOG);
-                final long fileSize = ff.length(fd);
-                partitionDecoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                partitionDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 Assert.assertEquals(reader.getMetadata().getColumnCount(), partitionDecoder.metadata().columnCount());
                 Assert.assertEquals(rows, partitionDecoder.metadata().rowCount());
                 Assert.assertEquals(1, partitionDecoder.metadata().rowGroupCount());
@@ -109,6 +112,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 }
             } finally {
                 ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
         });
     }
@@ -129,10 +133,13 @@ public class PartitionDecoderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final long memInit = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             long fd = -1;
-            try (Path path = new Path();
-                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                 DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                 PartitionDecoder partitionDecoder = new PartitionDecoder()
+            long addr = 0;
+            long fileSize = 0;
+            try (
+                    Path path = new Path();
+                    RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    PartitionDecoder partitionDecoder = new PartitionDecoder()
             ) {
                 path.of(root).concat("x.parquet").$();
 
@@ -146,8 +153,9 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 }
 
                 fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
-                final long fileSize = ff.length(fd);
-                partitionDecoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                partitionDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 columns.add(0);
                 columns.add(ColumnType.LONG);
 
@@ -159,7 +167,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     final String msg = e.getMessage();
                     Assert.assertTrue(e.isOutOfMemory());
-                    TestUtils.assertContains(msg, "could not decode row group 0 with fd ");
+                    TestUtils.assertContains(msg, "could not decode row group 0");
                     TestUtils.assertContains(msg, "memory limit exceeded when allocating");
                 } finally {
                     // Reset to allow allocs again
@@ -174,6 +182,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 Assert.assertTrue(memAfter > memBefore);
             } finally {
                 ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
 
             // Freed memory is tracked.
@@ -187,7 +196,6 @@ public class PartitionDecoderTest extends AbstractCairoTest {
      */
     @Test
     public void testUpdateInvalidRowGroup() throws Exception {
-        final long rows = 1000;
         final FilesFacade ff = configuration.getFilesFacade();
 
         // We first set up the table without memory limits.
@@ -206,11 +214,14 @@ public class PartitionDecoderTest extends AbstractCairoTest {
             ddl("alter table x convert partition to parquet where designated_ts >= 0");
 
             long fd = -1;
-            try (Path path = new Path();
-                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                 RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                 DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                 PartitionDecoder partitionDecoder = new PartitionDecoder()
+            long addr = 0;
+            long fileSize = 0;
+            try (
+                    Path path = new Path();
+                    RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    PartitionDecoder partitionDecoder = new PartitionDecoder()
             ) {
                 // Check that the partition directory and data.parquet file now exists on disk.
                 path.of(root).concat("x~").concat("1970-01-05.1").slash$();
@@ -222,8 +233,9 @@ public class PartitionDecoderTest extends AbstractCairoTest {
 
                 // Open it up.
                 fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
-                final long fileSize = ff.length(fd);
-                partitionDecoder.of(fd, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                partitionDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 columns.add(0);
                 columns.add(ColumnType.LONG);
 
@@ -242,6 +254,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                         "row group index 1000 out of range [0,1)");
             } finally {
                 ff.close(fd);
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             }
         });
     }

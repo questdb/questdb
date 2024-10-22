@@ -25,8 +25,6 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.Reopenable;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -38,7 +36,6 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static final long CHUNK_DATA_PTR_OFFSET;
     private static final long CHUNK_DATA_SIZE_OFFSET;
     private static final long CHUNK_STRUCT_SIZE;
-    private static final Log LOG = LogFactory.getLog(RowGroupBuffers.class);
     private final int memoryTag;
     private long ptr;
 

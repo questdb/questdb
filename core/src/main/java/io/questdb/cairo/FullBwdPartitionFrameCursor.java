@@ -57,11 +57,11 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
                 final byte format = reader.getPartitionFormat(frame.partitionIndex);
                 if (format == PartitionFormat.PARQUET) {
-                    final long fd = reader.getParquetFd(frame.partitionIndex);
-                    assert fd != -1;
+                    final long addr = reader.getParquetAddr(frame.partitionIndex);
+                    assert addr != 0;
                     final long parquetSize = reader.getParquetFileSize(frame.partitionIndex);
                     assert parquetSize > 0;
-                    parquetDecoder.of(fd, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    parquetDecoder.of(addr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                     frame.format = PartitionFormat.PARQUET;
                     frame.parquetDecoder = parquetDecoder;
                     return frame;
