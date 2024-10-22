@@ -29,7 +29,17 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -115,13 +125,13 @@ public class FilesTest {
                 Assert.assertEquals(5, Files.length(path.$()));
                 long fd = Files.openRW(path.$());
 
-                long M50 = 100 * 1024L * 1024L;
+                long M100 = 100 * 1024L * 1024L;
                 try {
                     // If allocate tries to allocate by the given size
                     // instead of to the size this will allocate 2TB and suppose to fail
                     for (int i = 0; i < 20000; i++) {
-                        Files.allocate(fd, M50 + i);
-                        Assert.assertEquals(M50 + i, Files.length(path.$()));
+                        Files.allocate(fd, M100 + i);
+                        Assert.assertEquals(M100 + i, Files.length(path.$()));
                     }
                 } finally {
                     Files.close(fd);
@@ -700,6 +710,39 @@ public class FilesTest {
                 Assert.assertTrue(fd < 0);
             } finally {
                 Files.close(fd);
+            }
+        });
+    }
+
+    @Test
+    public void testOpenCleanRWLoop() throws Exception {
+        // Emulates the syscall sequence from TxnScoreboard's initialization and close.
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                long sizeInLongs = 64;
+                long sizeInBytes = sizeInLongs * Long.BYTES;
+
+                for (int i = 0; i < 100; i++) {
+                    long fd = Files.openCleanRW(path.$(), sizeInBytes);
+                    long mem = 0;
+                    try {
+                        Assert.assertTrue(Files.truncate(fd, sizeInBytes));
+                        mem = Files.mmap(fd, sizeInBytes, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+
+                        for (long j = 0; j < sizeInLongs; j++) {
+                            Assert.assertEquals(0, Unsafe.getUnsafe().getLong(mem + j * Long.BYTES));
+                            Unsafe.getUnsafe().putLong(mem + j * Long.BYTES, i);
+                        }
+                    } finally {
+                        if (mem != 0) {
+                            Files.munmap(mem, sizeInBytes, MemoryTag.MMAP_DEFAULT);
+                        }
+
+                        Assert.assertTrue(Files.close(fd) > -1);
+                    }
+                }
             }
         });
     }
