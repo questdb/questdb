@@ -78,7 +78,7 @@ public class GeoByteColumn extends GeoByteFunction {
 
     @Override
     public Function deepClone() {
-        return newInstance(type, columnIndex);
+        return newInstance(columnIndex, type);
     }
 
     static {

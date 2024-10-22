@@ -208,7 +208,7 @@ public class SplitPartFunctionFactory implements FunctionFactory {
 
         @Override
         public Function newInstance(final Function left, final Function center, final Function right) {
-            return new SplitPartConstIndexFunction(left, delimiterFunc, indexFunc, getIndexPosition(), index);
+            return new SplitPartConstIndexFunction(left, center, right, getIndexPosition(), index);
         }
 
         @Override

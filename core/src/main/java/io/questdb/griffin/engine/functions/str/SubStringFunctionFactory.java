@@ -149,7 +149,7 @@ public class SubStringFunctionFactory implements FunctionFactory {
 
         @Override
         public Function newInstance(final Function left, final Function center, final Function right) {
-            return new SubStringFunc(strFunc, startFunc, lenFunc);
+            return new SubStringFunc(left, center, right);
         }
 
         @Nullable

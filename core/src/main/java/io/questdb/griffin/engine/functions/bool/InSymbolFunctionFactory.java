@@ -205,7 +205,15 @@ public class InSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public Function newInstance(final Function arg) {
-            return new Func((SymbolFunction) arg, new CharSequenceHashSet(set), new ObjList<>(deferredValues), new IntList(deferredValuePositions));
+            ObjList<Function> deferredValues = null;
+            if (this.deferredValues != null) {
+                deferredValues = new ObjList<>(this.deferredValues, true);
+            }
+            IntList deferredValuePositions = null;
+            if (this.deferredValuePositions != null) {
+                deferredValuePositions = new IntList(this.deferredValuePositions);
+            }
+            return new Func((SymbolFunction) arg, new CharSequenceHashSet(set), deferredValues, deferredValuePositions);
         }
 
         private boolean testAsInt(Record rec) {
