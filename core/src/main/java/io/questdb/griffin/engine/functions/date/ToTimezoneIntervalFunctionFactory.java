@@ -35,10 +35,14 @@ import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Numbers;
+import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.Interval;
+import org.jetbrains.annotations.NotNull;
 
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 import static io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory.getTimestampFunction;
 
 public class ToTimezoneIntervalFunctionFactory implements FunctionFactory {
@@ -59,10 +63,39 @@ public class ToTimezoneIntervalFunctionFactory implements FunctionFactory {
         Function timezone = args.getQuick(1);
 
         if (timezone.isConstant()) {
-            //Incomplete return getIntervalFunction(argPositions, interval, timezone, 1);
+            return getIntervalFunction(argPositions, interval, timezone, 1);
         } else {
             return new ToTimezoneIntervalFunctionVar(interval, timezone);
         }
+    }
+
+    @NotNull
+    static IntervalFunction getIntervalFunction(IntList argPositions, Function interval, Function timezone, int multiplier) throws SqlException {
+        final CharSequence tz = timezone.getStrA(null);
+        if (tz != null) {
+            final int hi = tz.length();
+            final long l = Timestamps.parseOffset(tz, 0, hi);
+            if (l == Long.MIN_VALUE) {
+                try {
+                    return new OffsetIntervalFunctionFromRules(
+                            interval,
+                            TimestampFormatUtils.EN_LOCALE.getZoneRules(
+                                    Numbers.decodeLowInt(TimestampFormatUtils.EN_LOCALE.matchZone(tz, 0, hi)), RESOLUTION_MICROS
+                            ),
+                            multiplier
+                    );
+                } catch (NumericException e) {
+                    Misc.free(interval);
+                    throw SqlException.$(argPositions.getQuick(1), "invalid timezone name");
+                }
+            } else {
+                return new OffsetIntervalFunctionFromOffset(
+                        interval,
+                        multiplier * Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS
+                );
+            }
+        }
+        throw SqlException.$(argPositions.getQuick(1), "timezone must not be null");
     }
 
     private static class ToTimezoneIntervalFunctionVar extends IntervalFunction implements BinaryFunction {
