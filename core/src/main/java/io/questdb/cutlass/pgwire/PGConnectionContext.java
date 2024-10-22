@@ -1278,15 +1278,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
-        if (typesAndUpdate != null) {
-            if (typesAndUpdateIsCached) {
-                assert queryText != null;
-                typesAndUpdateCache.put(queryText, typesAndUpdate);
-                this.typesAndUpdate = null;
-            } else {
-                typesAndUpdate = Misc.free(typesAndUpdate);
-            }
-        }
+        freeOrCacheTypesAndUpdate();
     }
 
     private <T extends Mutable> void clearPool(
@@ -1677,6 +1669,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void freeFactory() {
         currentFactory = null;
         typesAndSelect = Misc.free(typesAndSelect);
+    }
+
+    private void freeOrCacheTypesAndUpdate() {
+        if (typesAndUpdate != null) {
+            if (typesAndUpdateIsCached) {
+                assert queryText != null;
+                typesAndUpdateCache.put(queryText, typesAndUpdate);
+                this.typesAndUpdate = null;
+            } else {
+                typesAndUpdate = Misc.free(typesAndUpdate);
+            }
+        }
     }
 
     private void freeUpdateCommand(UpdateOperation op) {
@@ -2429,6 +2433,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (currentCursor != null || typesAndSelect != null) {
             clearCursorAndFactory();
         }
+        // and clear TypesAndUpdate too
+        freeOrCacheTypesAndUpdate();
 
         //TODO: parsePhaseBindVariableCount have to be checked before parseQueryText and fed into it to serve as type hints !
         parseQueryText(lo, hi);
