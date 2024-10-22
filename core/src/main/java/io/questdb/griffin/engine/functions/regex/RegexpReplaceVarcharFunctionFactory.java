@@ -295,7 +295,7 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         @Override
         public Function newInstance(final Function arg) {
             CharSequence regex = pattern.getStrA(null);
-            Matcher matcher =  Pattern.compile(Chars.toString(regex)).matcher("");
+            Matcher matcher = Pattern.compile(Chars.toString(regex)).matcher("");
             return new SingleGroupAsciiFunc(arg, matcher, replacement, group, functionPos, pattern);
         }
 
@@ -408,7 +408,7 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         @Override
         public Function newInstance(final Function arg) {
             CharSequence regex = pattern.getStrA(null);
-            Matcher matcher =  Pattern.compile(Chars.toString(regex)).matcher("");
+            Matcher matcher = Pattern.compile(Chars.toString(regex)).matcher("");
             return new SingleGroupFunc(arg, matcher, replacement, group, functionPos, pattern);
         }
 

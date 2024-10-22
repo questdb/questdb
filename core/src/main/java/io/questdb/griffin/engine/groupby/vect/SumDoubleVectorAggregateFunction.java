@@ -153,7 +153,7 @@ public class SumDoubleVectorAggregateFunction extends DoubleFunction implements 
         return new SumDoubleVectorAggregateFunction(columnIndex, workerCount, keyValueFunc, distinctFunc);
     }
 
-    private SumDoubleVectorAggregateFunction(int columnIndex, int workerCount,KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+    private SumDoubleVectorAggregateFunction(int columnIndex, int workerCount, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
         this.columnIndex = columnIndex;
         this.keyValueFunc = keyValueFunc;
         this.distinctFunc = distinctFunc;

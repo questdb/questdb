@@ -151,7 +151,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         @Override
         public Function newInstance(final Function arg) {
             CharSequence regex = pattern.getStrA(null);
-            Matcher copy =  Pattern.compile(Chars.toString(regex)).matcher("");
+            Matcher copy = Pattern.compile(Chars.toString(regex)).matcher("");
             return new MatchStaticSymbolTableConstPatternFunction((SymbolFunction) arg, copy, pattern);
         }
     }

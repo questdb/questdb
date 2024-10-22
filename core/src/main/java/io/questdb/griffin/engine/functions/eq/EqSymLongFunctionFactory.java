@@ -162,7 +162,7 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
 
         @Override
         public Function newInstance(final Function arg) {
-            return new ConstValueStaticSymbolTableFunction((SymbolFunction)arg, constant);
+            return new ConstValueStaticSymbolTableFunction((SymbolFunction) arg, constant);
         }
     }
 

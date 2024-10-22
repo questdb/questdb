@@ -149,7 +149,7 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
         return new AvgDoubleVectorAggregateFunction(columnIndex, workerCount, keyValueFunc, distinctFunc);
     }
 
-    private AvgDoubleVectorAggregateFunction(int columnIndex, int workerCount,KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+    private AvgDoubleVectorAggregateFunction(int columnIndex, int workerCount, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
         this.columnIndex = columnIndex;
         this.keyValueFunc = keyValueFunc;
         this.distinctFunc = distinctFunc;

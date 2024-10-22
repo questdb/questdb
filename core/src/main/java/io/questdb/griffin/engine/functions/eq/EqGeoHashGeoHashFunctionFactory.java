@@ -114,13 +114,13 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
     private static Function createBinaryFunc(Function geohash1, Function geohash2, int valType) {
         switch (ColumnType.tagOf(valType)) {
             case ColumnType.GEOBYTE:
-                return new GeoEqFunc(geohash1, geohash2, (Function left,Function right, Record rec) -> left.getGeoByte(rec) == right.getGeoByte(rec));
+                return new GeoEqFunc(geohash1, geohash2, (Function left, Function right, Record rec) -> left.getGeoByte(rec) == right.getGeoByte(rec));
             case ColumnType.GEOSHORT:
-                return new GeoEqFunc(geohash1, geohash2, (Function left,Function right, Record rec) -> left.getGeoShort(rec) == right.getGeoShort(rec));
+                return new GeoEqFunc(geohash1, geohash2, (Function left, Function right, Record rec) -> left.getGeoShort(rec) == right.getGeoShort(rec));
             case ColumnType.GEOINT:
-                return new GeoEqFunc(geohash1, geohash2, (Function left,Function right, Record rec) -> left.getGeoInt(rec) == right.getGeoInt(rec));
+                return new GeoEqFunc(geohash1, geohash2, (Function left, Function right, Record rec) -> left.getGeoInt(rec) == right.getGeoInt(rec));
             default:
-                return new GeoEqFunc(geohash1, geohash2, (Function left,Function right, Record rec) -> left.getGeoLong(rec) == right.getGeoLong(rec));
+                return new GeoEqFunc(geohash1, geohash2, (Function left, Function right, Record rec) -> left.getGeoLong(rec) == right.getGeoLong(rec));
         }
     }
 

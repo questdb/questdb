@@ -154,7 +154,7 @@ public class AvgShortVectorAggregateFunction extends DoubleFunction implements V
         return new AvgShortVectorAggregateFunction(columnIndex, workerCount, keyValueFunc, distinctFunc);
     }
 
-    private AvgShortVectorAggregateFunction(int columnIndex, int workerCount,KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+    private AvgShortVectorAggregateFunction(int columnIndex, int workerCount, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
         this.columnIndex = columnIndex;
         this.keyValueFunc = keyValueFunc;
         this.distinctFunc = distinctFunc;

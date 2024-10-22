@@ -154,7 +154,7 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
         return new AvgLongVectorAggregateFunction(columnIndex, workerCount, keyValueFunc, distinctFunc);
     }
 
-    private AvgLongVectorAggregateFunction(int columnIndex, int workerCount,KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+    private AvgLongVectorAggregateFunction(int columnIndex, int workerCount, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
         this.columnIndex = columnIndex;
         this.keyValueFunc = keyValueFunc;
         this.distinctFunc = distinctFunc;

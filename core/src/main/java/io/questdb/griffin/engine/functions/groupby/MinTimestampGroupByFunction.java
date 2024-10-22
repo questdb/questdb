@@ -114,7 +114,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public Function newInstance(final Function arg)  {
+    public Function newInstance(final Function arg) {
         return new MinTimestampGroupByFunction(arg);
     }
 }

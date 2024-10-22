@@ -77,7 +77,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         private final Function value;
         private final Function pattern;
 
-        public MatchStrConstPatternFunction(Function value, @NotNull Matcher matcher,  Function pattern) {
+        public MatchStrConstPatternFunction(Function value, @NotNull Matcher matcher, Function pattern) {
             this.value = value;
             this.matcher = matcher;
             this.pattern = pattern;
@@ -112,7 +112,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         @Override
         public Function newInstance(final Function arg) {
             CharSequence regex = pattern.getStrA(null);
-            Matcher copy =  Pattern.compile(Chars.toString(regex)).matcher("");
+            Matcher copy = Pattern.compile(Chars.toString(regex)).matcher("");
             return new MatchStrConstPatternFunction(arg, copy, pattern);
         }
     }

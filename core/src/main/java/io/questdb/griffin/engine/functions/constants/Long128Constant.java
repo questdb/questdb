@@ -67,7 +67,7 @@ public class Long128Constant extends Long128Function implements ConstantFunction
         return newInstance(lo, hi);
     }
 
-    private static Long128Constant newInstance(long lo, long hi)  {
+    private static Long128Constant newInstance(long lo, long hi) {
         return lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL ? NULL : new Long128Constant(lo, hi);
     }
 }

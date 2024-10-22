@@ -66,7 +66,7 @@ public class GroupByLong128HashSet {
 
     public GroupByLong128HashSet(GroupByLong128HashSet other) {
         this.initialCapacity = other.initialCapacity;
-        this.loadFactor =  other.loadFactor;
+        this.loadFactor = other.loadFactor;
         this.noKeyValue = other.noKeyValue;
     }
 

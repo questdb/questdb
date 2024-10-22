@@ -629,7 +629,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             try {
                 for (int i = 0; i < workerCount; i++) {
                     ObjList<GroupByFunction> workerGroupByFunctions = new ObjList<>(groupByFunctions.size());
-                    for (int j = 0, size = groupByFunctions.size(); j < size ; j++) {
+                    for (int j = 0, size = groupByFunctions.size(); j < size; j++) {
                         workerGroupByFunctions.extendAndSet(j, (GroupByFunction) groupByFunctions.getQuick(j).deepClone());
                     }
                     allWorkerGroupByFunctions.extendAndSet(i, workerGroupByFunctions);

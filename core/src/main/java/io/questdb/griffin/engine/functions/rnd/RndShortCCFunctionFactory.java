@@ -88,7 +88,7 @@ public class RndShortCCFunctionFactory implements FunctionFactory {
 
         @Override
         public Function deepClone() {
-            return new RndFunction(lo, (byte)(range + lo - 1));
+            return new RndFunction(lo, (byte) (range + lo - 1));
         }
     }
 }

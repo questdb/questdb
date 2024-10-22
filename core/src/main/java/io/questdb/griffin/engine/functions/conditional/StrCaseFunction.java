@@ -59,7 +59,7 @@ class StrCaseFunction extends StrFunction implements CaseFunction {
     }
 
     @Override
-    public Function newInstance(final ObjList<Function> args)  {
+    public Function newInstance(final ObjList<Function> args) {
         return new StrCaseFunction(picker, args);
     }
 }
