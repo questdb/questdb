@@ -262,7 +262,7 @@ public class EqGeoHashGeoHashFunctionFactory implements FunctionFactory {
         protected final Function right;
         private final GetBoolFunc getBoolFunc;
 
-        public GeoEqFunc(Function left, Function right, GetBoolFunc getBoolFunc ) {
+        public GeoEqFunc(Function left, Function right, GetBoolFunc getBoolFunc) {
             this.left = left;
             this.right = right;
             this.getBoolFunc = getBoolFunc;
