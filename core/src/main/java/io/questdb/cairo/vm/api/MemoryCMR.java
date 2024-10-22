@@ -30,4 +30,6 @@ public interface MemoryCMR extends MemoryCR, MemoryMR, MemoryCM {
     default boolean isFileBased() {
         return true;
     }
+
+    void changeSize(long dataSize);
 }
