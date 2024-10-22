@@ -82,6 +82,9 @@ public class TxnScoreboard implements Closeable, Mutable {
     public void close() {
         if (mem != 0) {
             if (rw) {
+                // Flush dirty pages to disk, so that we have no unpleasant side effects
+                // on subsequent ofRW() (and underlying ftruncate/fallocate) calls on ZFS.
+                // See https://github.com/questdb/questdb/issues/4756
                 ff.msync(mem, size, false);
             }
             ff.munmap(mem, size, MemoryTag.MMAP_DEFAULT);
