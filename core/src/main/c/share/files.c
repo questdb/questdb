@@ -388,10 +388,19 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
             if (ftruncate(fd, 0) == 0) {
                 // allocate file to `size`
                 if (Java_io_questdb_std_Files_allocate(e, cl, fd, size) == JNI_TRUE) {
-                    // downgrade to shared lock
-                    if (flock((int) fd, LOCK_SH) == 0) {
-                        // success
-                        return fd;
+                    // Zero the file and msync, so that we have no unpleasant side effects like non-zero bytes read on ZFS.
+                    // See https://github.com/questdb/questdb/issues/4756
+                    void *addr = mmap(addr, (size_t) size, PROT_READ | PROT_WRITE, MAP_SHARED, (int) fd, 0);
+                    if (addr != MAP_FAILED) {
+                        memset(addr, 0, size);
+                        if (msync(addr, size, MS_SYNC) == 0) {
+                            munmap(addr, (size_t) size);
+                            // finally, downgrade to shared lock
+                            if (flock((int) fd, LOCK_SH) == 0) {
+                                // success
+                                return fd;
+                            }
+                        }
                     }
                 }
             }

@@ -737,9 +737,6 @@ public class FilesTest {
                         }
                     } finally {
                         if (mem != 0) {
-                            // Without the following msync this test breaks on ZFS.
-                            // See https://github.com/questdb/questdb/issues/4756
-                            Assert.assertTrue(Files.msync(mem, sizeInBytes, false) > -1);
                             Files.munmap(mem, sizeInBytes, MemoryTag.MMAP_DEFAULT);
                         }
 

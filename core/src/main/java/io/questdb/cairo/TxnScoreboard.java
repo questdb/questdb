@@ -43,7 +43,6 @@ public class TxnScoreboard implements Closeable, Mutable {
     private final long size;
     private long fd = -1;
     private long mem;
-    private boolean rw;
 
     public TxnScoreboard(FilesFacade ff, int entryCount) {
         this.ff = ff;
@@ -81,12 +80,6 @@ public class TxnScoreboard implements Closeable, Mutable {
     @Override
     public void close() {
         if (mem != 0) {
-            if (rw) {
-                // Flush dirty pages to disk, so that we have no unpleasant side effects
-                // on subsequent ofRW() (and underlying ftruncate/fallocate) calls on ZFS.
-                // See https://github.com/questdb/questdb/issues/4756
-                ff.msync(mem, size, false);
-            }
             ff.munmap(mem, size, MemoryTag.MMAP_DEFAULT);
             mem = 0;
         }
@@ -126,7 +119,6 @@ public class TxnScoreboard implements Closeable, Mutable {
         clear();
         int rootLen = root.size();
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME);
-        this.rw = false;
         this.fd = openCleanRW(ff, root.$(), size);
 
         try {
@@ -144,7 +136,6 @@ public class TxnScoreboard implements Closeable, Mutable {
         clear();
         int rootLen = root.size();
         root.concat(TableUtils.TXN_SCOREBOARD_FILE_NAME);
-        this.rw = true;
         this.fd = openCleanRW(ff, root.$(), size);
 
         // truncate is required to give file a size
