@@ -38,7 +38,11 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TestName;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -48,6 +52,8 @@ import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
+import static io.questdb.test.tools.TestUtils.assertSql;
+import static io.questdb.test.tools.TestUtils.drainWalQueue;
 
 @RunWith(Parameterized.class)
 public class O3SplitPartitionTest extends AbstractO3Test {
@@ -235,7 +241,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     sqlExecutionContext);
 
 
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select ts, metric, loggerChannel from monthly_col_top", sink,
+            assertSql(compiler, sqlExecutionContext, "select ts, metric, loggerChannel from monthly_col_top", sink,
                     "ts\tmetric\tloggerChannel\n" +
                             "2022-06-08T01:40:00.000000Z\t1\t\n" +
                             "2022-06-08T02:41:00.000000Z\t2\t\n" +
@@ -254,7 +260,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             "2022-06-08T04:50:00.000000Z\t13\t2\n" +
                             "2022-06-08T04:50:00.000000Z\t14\t2\n");
 
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '2'", sink,
+            assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '2'", sink,
                     "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                             "2022-06-08T02:50:00.000000Z\t9\t\t\t2\n" +
                             "2022-06-08T02:50:00.000000Z\t10\t\t\t2\n" +
@@ -269,7 +275,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             "('2022-06-08T04:50:00.000000Z', '18', '4', '3')",
                     sqlExecutionContext);
 
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+            assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                     "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                             "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
                             "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
@@ -285,7 +291,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             "('2022-06-08T02:50:00.000000Z', '21', '4', '3')",
                     sqlExecutionContext);
 
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+            assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                     "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                             "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
                             "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
@@ -832,6 +838,110 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     compiler.compile("insert into x select * from z", executionContext);
 
                     assertX(compiler, executionContext, "zz");
+                });
+    }
+
+    @Test
+    public void testSplitSquashMidPartitionWithDedupSameRowCount() throws Exception {
+        executeWithPool(workerCount,
+                (engine, compiler, executionContext) -> {
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
+                                    " cast(null as string) str2," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2)" +
+                                    ") timestamp (ts) partition by DAY WAL dedup upsert keys(ts)",
+                            executionContext
+                    );
+
+                    drainWalQueue(engine);
+
+                    // Open reader
+                    TestUtils.assertSql(engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink, "sum\tts\tlast\n" +
+                            "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
+                            "-1987920\t2020-02-04T00:00:00.000000Z\t\n" +
+                            "-1942590\t2020-02-05T00:00:00.000000Z\t\n");
+
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
+                                    " rnd_str(1000, 1000, 0) as str2, " +
+                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
+                                    " from long_sequence(50))",
+                            executionContext
+                    );
+
+                    compiler.compile("insert into x select * from z", executionContext);
+
+                    drainWalQueue(engine);
+
+                    TestUtils.assertSql(engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink, "sum\tts\tlast\n" +
+                            "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
+                            "-51885870\t2020-02-04T00:00:00.000000Z\t\n" +
+                            "-1942590\t2020-02-05T00:00:00.000000Z\t\n");
+                });
+    }
+
+    @Test
+    public void testSplitSquashMidPartitionWithDedupSameRowCountVarchar() throws Exception {
+        executeWithPool(workerCount,
+                (engine, compiler, executionContext) -> {
+                    compiler.compile(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " -x j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
+                                    " cast(null as varchar) str2," +
+                                    " timestamp_sequence('2020-02-03T13', 60*1000000L) ts" +
+                                    " from long_sequence(60*24*2)" +
+                                    ") timestamp (ts) partition by DAY WAL dedup upsert keys(ts)",
+                            executionContext
+                    );
+
+                    drainWalQueue(engine);
+
+                    // Open reader
+                    TestUtils.assertSql(engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink, "sum\tts\tlast\n" +
+                            "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
+                            "-1987920\t2020-02-04T00:00:00.000000Z\t\n" +
+                            "-1942590\t2020-02-05T00:00:00.000000Z\t\n");
+
+                    compiler.compile(
+                            "create table z as (" +
+                                    "select" +
+                                    " cast(x as int) * 1000000 i," +
+                                    " -x - 1000000L as j," +
+                                    " rnd_str(5,16,2) as str," +
+                                    " rnd_varchar(5,16,2) as v1," +
+                                    " rnd_varchar(1,1,1) as v2," +
+                                    " rnd_varchar(1000, 1000, 0) as str2, " +
+                                    " timestamp_sequence('2020-02-04T23:01', 60*1000000L) ts" +
+                                    " from long_sequence(50))",
+                            executionContext
+                    );
+
+                    compiler.compile("insert into x select * from z", executionContext);
+
+                    drainWalQueue(engine);
+
+                    TestUtils.assertSql(engine, executionContext, "select sum(j), ts, last(str2) from x sample by 1d", sink, "sum\tts\tlast\n" +
+                            "-218130\t2020-02-03T00:00:00.000000Z\t\n" +
+                            "-51885870\t2020-02-04T00:00:00.000000Z\t\n" +
+                            "-1942590\t2020-02-05T00:00:00.000000Z\t\n");
                 });
     }
 
