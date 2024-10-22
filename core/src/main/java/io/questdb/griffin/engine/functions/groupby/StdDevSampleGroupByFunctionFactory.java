@@ -103,5 +103,10 @@ public class StdDevSampleGroupByFunctionFactory implements FunctionFactory {
         public boolean supportsParallelism() {
             return true;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new StdDevSampleGroupByFunction(arg);
+        }
     }
 }

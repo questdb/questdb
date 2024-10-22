@@ -107,6 +107,11 @@ public class CovarSampleGroupByFunctionFactory implements FunctionFactory {
         public boolean supportsParallelism() {
             return true;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new CovarSampleGroupByFunction(left, right);
+        }
     }
 
 }
