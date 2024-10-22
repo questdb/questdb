@@ -557,7 +557,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 } else {
                     // dataSize can be 0 in case when it's varchar column and all the values are inlined
                     // The data memory was not open but now we need to open it. Mark the partition as not reloaded by returning false
-                    return dataSize <= 0;
+                    return dataSize == 0;
                 }
             } else {
                 if (mem1 == null || !mem1.isOpen()) {
