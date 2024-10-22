@@ -169,6 +169,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             return Numbers.LONG_NULL;
         }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new DateCoalesceFunction(args, size);
+        }
     }
 
     private static class DoubleCoalesceFunction extends DoubleFunction implements MultiArgCoalesceFunction {
@@ -195,6 +200,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             return Double.NaN;
         }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new DoubleCoalesceFunction(args, size);
+        }
     }
 
     private static class FloatCoalesceFunction extends FloatFunction implements MultiArgCoalesceFunction {
@@ -220,6 +230,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return Float.NaN;
+        }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new FloatCoalesceFunction(args, size);
         }
     }
 
@@ -248,6 +263,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             return Numbers.IPv4_NULL;
         }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new IPv4CoalesceFunction(args, size);
+        }
     }
 
     private static class IntCoalesceFunction extends IntFunction implements MultiArgCoalesceFunction {
@@ -274,6 +294,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return Numbers.INT_NULL;
+        }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new IntCoalesceFunction(args, size);
         }
     }
 
@@ -325,6 +350,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             return value;
         }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new Long256CoalesceFunction(args);
+        }
     }
 
     public static class LongCoalesceFunction extends LongFunction implements MultiArgCoalesceFunction {
@@ -351,6 +381,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new LongCoalesceFunction(args, size);
         }
     }
 
@@ -392,6 +427,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             return null;
         }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new SymStrCoalesceFunction(args, size);
+        }
     }
 
     private static class TimestampCoalesceFunction extends TimestampFunction implements MultiArgCoalesceFunction {
@@ -417,6 +457,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new TimestampCoalesceFunction(args);
         }
     }
 
@@ -448,6 +493,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return args1;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoDateCoalesceFunction(new ObjList<>(left, right));
+        }
     }
 
     private static class TwoDoubleCoalesceFunction extends DoubleFunction implements BinaryCoalesceFunction {
@@ -477,6 +527,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return args1;
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoDoubleCoalesceFunction(new ObjList<>(left, right));
         }
     }
 
@@ -508,6 +563,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return args1;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoFloatCoalesceFunction(new ObjList<>(left, right));
+        }
     }
 
     private static class TwoIPv4CoalesceFunction extends IPv4Function implements BinaryCoalesceFunction {
@@ -538,6 +598,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return args1;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoIPv4CoalesceFunction(new ObjList<>(left, right));
+        }
     }
 
     private static class TwoIntCoalesceFunction extends IntFunction implements BinaryCoalesceFunction {
@@ -567,6 +632,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return args1;
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoIntCoalesceFunction(new ObjList<>(left, right));
         }
     }
 
@@ -616,6 +686,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return args1;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoLong256CoalesceFunction(new ObjList<>(left, right));
+        }
     }
 
     public static class TwoLongCoalesceFunction extends LongFunction implements BinaryCoalesceFunction {
@@ -645,6 +720,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return args1;
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoLongCoalesceFunction(new ObjList<>(left, right));
         }
     }
 
@@ -685,6 +765,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             return args1.getStrB(rec);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoStrCoalesceFunction(new ObjList<>(left, right));
+        }
     }
 
     private static class TwoSymCoalesceFunction extends StrFunction implements BinaryCoalesceFunction {
@@ -723,6 +808,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 return value;
             }
             return args1.getSymbolB(rec);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoSymCoalesceFunction(new ObjList<>(left, right));
         }
     }
 
@@ -767,6 +857,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             return arg1IsSymbol ? args1.getSymbolB(rec) : args1.getStrB(rec);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoSymStrCoalesceFunction(new ObjList<>(left, right));
+        }
     }
 
     private static class TwoTimestampCoalesceFunction extends TimestampFunction implements BinaryCoalesceFunction {
@@ -796,6 +891,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 return value;
             }
             return args1.getTimestamp(rec);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoTimestampCoalesceFunction(new ObjList<>(left, right));
         }
     }
 
@@ -846,6 +946,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return args1;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoUuidCoalesceFunction(new ObjList<>(left, right));
+        }
     }
 
     private static class TwoVarcharCoalesceFunction extends VarcharFunction implements BinaryCoalesceFunction {
@@ -884,6 +989,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 return value;
             }
             return args1.getVarcharB(rec);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new TwoVarcharCoalesceFunction(new ObjList<>(left, right));
         }
     }
 
@@ -932,6 +1042,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             return value;
         }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new TwoUuidCoalesceFunction(args);
+        }
     }
 
     private static class VarcharCoalesceFunction extends VarcharFunction implements MultiArgCoalesceFunction {
@@ -970,6 +1085,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
                 }
             }
             return null;
+        }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new TwoVarcharCoalesceFunction(args);
         }
     }
 }

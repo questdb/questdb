@@ -291,5 +291,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         public void toPlan(PlanSink sink) {
             sink.val("Timestamp");
         }
+
+        @Override
+        public Function deepClone() {
+            return new TimestampFunc();
+        }
     }
 }

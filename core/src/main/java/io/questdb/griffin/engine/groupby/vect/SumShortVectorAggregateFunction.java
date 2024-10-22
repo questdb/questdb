@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.Numbers;
@@ -125,5 +126,16 @@ public class SumShortVectorAggregateFunction extends LongFunction implements Vec
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntSumLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
+    }
+
+    @Override
+    public Function deepClone() {
+        return new SumShortVectorAggregateFunction(columnIndex, keyValueFunc, distinctFunc);
+    }
+
+    private SumShortVectorAggregateFunction(int columnIndex, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+        this.columnIndex = columnIndex;
+        this.keyValueFunc = keyValueFunc;
+        this.distinctFunc = distinctFunc;
     }
 }

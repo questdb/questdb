@@ -116,6 +116,11 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
             }
             sink.val("='").val(constant).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstValueDynamicSymbolTableFunction(arg, constant);
+        }
     }
 
     private static class ConstValueStaticSymbolTableFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -154,6 +159,11 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
             }
             sink.val("='").val(constant).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstValueStaticSymbolTableFunction((SymbolFunction) arg, constant);
+        }
     }
 
     private static class EqLongNullFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -181,6 +191,11 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
             }
             sink.val("=").val("null");
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new EqLongNullFunction(arg);
+        }
     }
 
     private static class VariableValueFunction extends AbstractEqBinaryFunction {
@@ -199,6 +214,11 @@ public class EqSymLongFunctionFactory implements FunctionFactory {
                 return negated != Chars.equalsNc(sink, left.getSymbol(rec));
             }
             return negated == (left.getSymbol(rec) != null);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new VariableValueFunction(left, right);
         }
     }
 }

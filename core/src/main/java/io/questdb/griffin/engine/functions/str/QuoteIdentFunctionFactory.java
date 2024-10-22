@@ -105,6 +105,11 @@ public class QuoteIdentFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            return new QuoteIdentFunction(arg);
+        }
+
         private static StringSink quote(StringSink sink, CharSequence str) {
             if (str == null) {
                 return null;

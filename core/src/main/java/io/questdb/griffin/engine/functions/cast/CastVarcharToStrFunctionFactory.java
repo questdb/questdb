@@ -75,5 +75,10 @@ public class CastVarcharToStrFunctionFactory implements FunctionFactory {
         public int getStrLen(Record rec) {
             return arg.getStrLen(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

@@ -134,6 +134,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
             // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
             return true;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new EqTimestampStringFromCursorFunction(factory, left, right, rightFnPos);
+        }
     }
 
     public static class EqTimestampTimestampFromCursorFunction extends BooleanFunction implements BinaryFunction {
@@ -181,6 +186,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
                     epoch = Numbers.LONG_NULL;
                 }
             }
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new EqTimestampTimestampFromCursorFunction(factory, left, right);
         }
     }
 
@@ -236,6 +246,11 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
             // between frame executions. For non-thread-safe function, which operates a cursor,
             // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
             return true;
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new EqTimestampTimestampFromCursorFunction(factory, left, right);
         }
     }
 }

@@ -586,12 +586,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (filter != null && !filter.isThreadSafe()) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
-            for (int i = 0; i < workerCount; i++) {
-                restoreWhereClause(filterExpr); // restore original filters in node query models
-                Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
-                workerFilters.extendAndSet(i, workerFilter);
-                assert filter.getClass() == workerFilter.getClass();
+            boolean supportDeepClone = true;
+            try {
+                for (int i = 0; i < workerCount; i++) {
+                    workerFilters.extendAndSet(i, filter.deepClone());
+                }
+            } catch (UnsupportedOperationException e) {
+                LOG.info().$("Failed to deepClone filter function for parallel worker").I$();
+                supportDeepClone = false;
             }
+            if (!supportDeepClone) {
+                for (int i = 0; i < workerCount; i++) {
+                    restoreWhereClause(filterExpr); // restore original filters in node query models
+                    Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
+                    workerFilters.extendAndSet(i, workerFilter);
+                    assert filter.getClass() == workerFilter.getClass();
+                }
+            }
+
             return workerFilters;
         }
         return null;
@@ -613,18 +625,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         if (!threadSafe) {
             ObjList<ObjList<GroupByFunction>> allWorkerGroupByFunctions = new ObjList<>();
-            for (int i = 0; i < workerCount; i++) {
-                ObjList<GroupByFunction> workerGroupByFunctions = new ObjList<>(groupByFunctions.size());
-                allWorkerGroupByFunctions.extendAndSet(i, workerGroupByFunctions);
-                GroupByUtils.prepareWorkerGroupByFunctions(
-                        model,
-                        metadata,
-                        functionParser,
-                        executionContext,
-                        groupByFunctions,
-                        workerGroupByFunctions
-                );
+            boolean supportDeepClone = true;
+            try {
+                for (int i = 0; i < workerCount; i++) {
+                    ObjList<GroupByFunction> workerGroupByFunctions = new ObjList<>(groupByFunctions.size());
+                    for (int j = 0, size = groupByFunctions.size(); j < size; j++) {
+                        workerGroupByFunctions.extendAndSet(j, (GroupByFunction) groupByFunctions.getQuick(j).deepClone());
+                    }
+                    allWorkerGroupByFunctions.extendAndSet(i, workerGroupByFunctions);
+                }
+            } catch (UnsupportedOperationException e) {
+                LOG.info().$("Failed to deepClone GroupByFunctions for parallel worker").I$();
+                supportDeepClone = false;
             }
+            if (!supportDeepClone) {
+                for (int i = 0; i < workerCount; i++) {
+                    ObjList<GroupByFunction> workerGroupByFunctions = new ObjList<>(groupByFunctions.size());
+                    allWorkerGroupByFunctions.extendAndSet(i, workerGroupByFunctions);
+                    GroupByUtils.prepareWorkerGroupByFunctions(
+                            model,
+                            metadata,
+                            functionParser,
+                            executionContext,
+                            groupByFunctions,
+                            workerGroupByFunctions
+                    );
+                }
+            }
+
             return allWorkerGroupByFunctions;
         }
         return null;
@@ -646,16 +674,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         if (!threadSafe) {
             ObjList<ObjList<Function>> allWorkerKeyFunctions = new ObjList<>();
-            for (int i = 0; i < workerCount; i++) {
-                ObjList<Function> workerKeyFunctions = new ObjList<>(keyFunctionNodes.size());
-                allWorkerKeyFunctions.extendAndSet(i, workerKeyFunctions);
-                for (int j = 0, n = keyFunctionNodes.size(); j < n; j++) {
-                    final Function func = functionParser.parseFunction(
-                            keyFunctionNodes.getQuick(j),
-                            metadata,
-                            executionContext
-                    );
-                    workerKeyFunctions.add(func);
+            boolean supportDeepClone = true;
+            try {
+                for (int i = 0; i < workerCount; i++) {
+                    allWorkerKeyFunctions.extendAndSet(i, new ObjList<>(keyFunctions, true));
+                }
+            } catch (UnsupportedOperationException e) {
+                LOG.info().$("Failed to deepClone keyFunctions for parallel worker").I$();
+                supportDeepClone = false;
+            }
+            if (!supportDeepClone) {
+                for (int i = 0; i < workerCount; i++) {
+                    ObjList<Function> workerKeyFunctions = new ObjList<>(keyFunctionNodes.size());
+                    allWorkerKeyFunctions.extendAndSet(i, workerKeyFunctions);
+                    for (int j = 0, n = keyFunctionNodes.size(); j < n; j++) {
+                        final Function func = functionParser.parseFunction(
+                                keyFunctionNodes.getQuick(j),
+                                metadata,
+                                executionContext
+                        );
+                        workerKeyFunctions.add(func);
+                    }
                 }
             }
             return allWorkerKeyFunctions;

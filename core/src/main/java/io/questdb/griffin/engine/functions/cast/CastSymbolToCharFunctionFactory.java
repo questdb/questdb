@@ -53,5 +53,10 @@ public class CastSymbolToCharFunctionFactory implements FunctionFactory {
             final CharSequence value = arg.getSymbol(rec);
             return value == null || value.length() == 0 ? 0 : value.charAt(0);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

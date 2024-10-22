@@ -64,5 +64,10 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (left.getTimestamp(rec) == right.getTimestamp(rec));
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

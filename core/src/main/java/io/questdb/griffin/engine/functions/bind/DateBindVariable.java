@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
@@ -57,5 +58,10 @@ class DateBindVariable extends DateFunction implements ScalarFunction, Mutable {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::date");
+    }
+
+    @Override
+    public Function deepClone() {
+        return this;
     }
 }

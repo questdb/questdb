@@ -84,6 +84,11 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
+
+        @Override
         protected int shiftFromToday() {
             return 0;
         }
@@ -114,6 +119,11 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
         }
 
         @Override

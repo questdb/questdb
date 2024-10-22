@@ -90,6 +90,11 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(value).val("::geobyte");
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoByteFunc(type, arg);
+        }
     }
 
     private static class CastGeoIntFunc extends GeoIntFunction implements UnaryFunction {
@@ -114,6 +119,11 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value).val("::geoint");
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoIntFunc(type, arg);
         }
     }
 
@@ -140,6 +150,11 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(value).val("::geoshort");
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoLongFunc(type, arg);
+        }
     }
 
     private static class CastGeoShortFunc extends GeoShortFunction implements UnaryFunction {
@@ -164,6 +179,11 @@ public class CastLongToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value).val("::geolong");
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoShortFunc(type, arg);
         }
     }
 }

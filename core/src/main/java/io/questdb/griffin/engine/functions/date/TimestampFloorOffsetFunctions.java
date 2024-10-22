@@ -95,6 +95,11 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampFloorMillenniumFunction(arg);
+        }
+
+        @Override
         CharSequence getUnit() {
             return "millennium";
         }
@@ -109,6 +114,11 @@ final class TimestampFloorOffsetFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorDD(timestamp, stride, offset);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampFloorOffsetDDFunction(arg, stride, offset);
         }
 
         @Override
@@ -129,6 +139,11 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampFloorOffsetHHFunction(arg, stride, offset);
+        }
+
+        @Override
         CharSequence getUnit() {
             return "hour";
         }
@@ -143,6 +158,11 @@ final class TimestampFloorOffsetFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorMC(timestamp, stride, offset);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampFloorOffsetMCFunction(arg, stride, offset);
         }
 
         @Override
@@ -166,6 +186,11 @@ final class TimestampFloorOffsetFunctions {
         CharSequence getUnit() {
             return "minute";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampFloorOffsetMIFunction(arg, stride, offset);
+        }
     }
 
     static class TimestampFloorOffsetMMFunction extends AbstractTimestampFloorOffsetFunction {
@@ -177,6 +202,11 @@ final class TimestampFloorOffsetFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorMM(timestamp, stride, offset);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampFloorOffsetMMFunction(arg, stride, offset);
         }
 
         @Override
@@ -197,6 +227,11 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampFloorOffsetMSFunction(arg, stride, offset);
+        }
+
+        @Override
         CharSequence getUnit() {
             return "millisecond";
         }
@@ -211,6 +246,11 @@ final class TimestampFloorOffsetFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorSS(timestamp, stride, offset);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampFloorOffsetSSFunction(arg, stride, offset);
         }
 
         @Override
@@ -231,6 +271,11 @@ final class TimestampFloorOffsetFunctions {
         }
 
         @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampFloorOffsetWWFunction(arg, stride, offset);
+        }
+
+        @Override
         CharSequence getUnit() {
             return "week";
         }
@@ -245,6 +290,11 @@ final class TimestampFloorOffsetFunctions {
         @Override
         public long floor(long timestamp) {
             return Timestamps.floorYYYY(timestamp, stride, offset);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new TimestampFloorOffsetYYYYFunction(arg, stride, offset);
         }
 
         @Override

@@ -98,5 +98,10 @@ public class CastVarcharToUuidFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NULL;
             }
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

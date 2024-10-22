@@ -96,6 +96,18 @@ public final class LongLongHashSet implements Mutable, Sinkable {
         Arrays.fill(values, noEntryKeyValue);
     }
 
+    public LongLongHashSet(LongLongHashSet other) {
+        this.noEntryKeyValue = other.noEntryKeyValue;
+        this.loadFactor = other.loadFactor;
+        this.capacity = other.capacity;
+        this.mask = other.mask;
+        this.sinkStrategy = other.sinkStrategy;
+        this.size = other.size;
+        this.hasNull = other.hasNull;
+        this.values = new long[other.values.length];
+        System.arraycopy(other.values, 0, this.values, 0, other.values.length);
+    }
+
     /**
      * Adds a tuple to the set.
      *

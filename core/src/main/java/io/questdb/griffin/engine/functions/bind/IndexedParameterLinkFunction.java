@@ -248,6 +248,11 @@ public class IndexedParameterLinkFunction implements ScalarFunction {
         sink.val("$").val(variableIndex).val("::").val(Chars.toLowerCaseAscii(ColumnType.nameOf(type)));
     }
 
+    @Override
+    public Function deepClone() {
+        return new IndexedParameterLinkFunction(variableIndex, type, position);
+    }
+
     private Function getBase() {
         assert base != null;
         return base;

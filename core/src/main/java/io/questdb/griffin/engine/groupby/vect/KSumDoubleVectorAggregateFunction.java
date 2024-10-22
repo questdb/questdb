@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Misc;
@@ -143,6 +144,20 @@ public class KSumDoubleVectorAggregateFunction extends DoubleFunction implements
         types.add(ColumnType.DOUBLE); // sum
         types.add(ColumnType.DOUBLE); // c
         types.add(ColumnType.LONG); // count
+    }
+
+    @Override
+    public Function deepClone() {
+        return new KSumDoubleVectorAggregateFunction(columnIndex, workerCount, keyValueFunc, distinctFunc);
+    }
+
+    private KSumDoubleVectorAggregateFunction(int columnIndex, int workerCount, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+        this.columnIndex = columnIndex;
+        this.keyValueFunc = keyValueFunc;
+        this.distinctFunc = distinctFunc;
+        this.sum = new double[workerCount * SUM_PADDING];
+        this.count = new long[workerCount * COUNT_PADDING];
+        this.workerCount = workerCount;
     }
 
     @Override

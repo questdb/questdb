@@ -61,4 +61,9 @@ public class LastNotNullCharGroupByFunction extends FirstCharGroupByFunction {
             destValue.putChar(valueIndex + 1, srcVal);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastNotNullCharGroupByFunction(0, arg);
+    }
 }

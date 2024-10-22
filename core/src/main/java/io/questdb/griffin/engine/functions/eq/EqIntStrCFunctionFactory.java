@@ -94,6 +94,11 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
                 sink.val("null");
             }
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg, right);
+        }
     }
 
     private static class NegatedAwareBooleanConstantFunc extends NegatableBooleanFunction implements ConstantFunction {
@@ -105,6 +110,11 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(negated);
+        }
+
+        @Override
+        public Function deepClone() {
+            return new NegatedAwareBooleanConstantFunc();
         }
     }
 }

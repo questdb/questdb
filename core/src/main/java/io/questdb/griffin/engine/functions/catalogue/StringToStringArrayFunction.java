@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -41,7 +42,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     private static final int BRANCH_BEFORE_ITEM = 0;
     private static final int BRANCH_DOUBLE_QUOTE = 4;
     private static final int BRANCH_ITEM = 1;
-    private final ObjList<CharSequence> items = new ObjList<>();
+    private final ObjList<CharSequence> items;
     private final StringSink sink = new StringSink();
 
     public StringToStringArrayFunction(int position, CharSequence type) throws SqlException {
@@ -56,6 +57,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
         int lastBackslashIndex = -1;
         StringSink sink = Misc.getThreadLocalSink();
         int len = type.length();
+        this.items = new ObjList<>();
 
         out:
         for (charIndex++; charIndex < len; charIndex++) {
@@ -193,6 +195,15 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(items).val("::string[]");
+    }
+
+    @Override
+    public Function deepClone() {
+        return new StringToStringArrayFunction(new ObjList<>(items));
+    }
+
+    private StringToStringArrayFunction(ObjList<CharSequence> items) {
+        this.items = items;
     }
 
     private void commit(@NotNull CharSequence type, int stringStartIndex, int stringEndIndex, StringSink sink) {

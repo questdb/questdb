@@ -67,5 +67,10 @@ public class CastBooleanToLong256FunctionFactory implements FunctionFactory {
             long256b.setLow(arg.getLong(rec));
             return long256b;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

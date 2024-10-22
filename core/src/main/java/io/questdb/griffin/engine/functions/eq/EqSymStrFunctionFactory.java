@@ -112,6 +112,11 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         public boolean isConstant() {
             return valueIndex == SymbolTable.VALUE_NOT_FOUND;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckColumnFunc((SymbolFunction) arg, constant);
+        }
     }
 
     private static class ConstCheckFunc extends ConstEqSymFunc {
@@ -122,6 +127,11 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != Chars.equalsNc(constant, arg.getSymbol(rec));
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckFunc(arg, constant);
         }
     }
 
@@ -170,6 +180,11 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
             valueIndex = staticSymbolTable.keyOf(constant);
             exists = (valueIndex != SymbolTable.VALUE_NOT_FOUND);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstSymIntCheckFunc((SymbolFunction) arg, constant);
+        }
     }
 
     private static class Func extends AbstractEqBinaryFunction {
@@ -189,6 +204,11 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
                 return negated != (b == null);
             }
             return negated != Chars.equalsNc(a, b);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 
@@ -217,6 +237,11 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
             } else {
                 sink.val(" is null");
             }
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new NullCheckFunc(arg);
         }
     }
 }

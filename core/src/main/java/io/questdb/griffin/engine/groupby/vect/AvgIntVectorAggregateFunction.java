@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.*;
@@ -145,5 +146,18 @@ public class AvgIntVectorAggregateFunction extends DoubleFunction implements Vec
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntAvgLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
+    }
+
+    @Override
+    public Function deepClone() {
+        return new AvgIntVectorAggregateFunction(columnIndex, workerCount, keyValueFunc, distinctFunc);
+    }
+
+    private AvgIntVectorAggregateFunction(int columnIndex, int workerCount, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+        this.columnIndex = columnIndex;
+        this.keyValueFunc = keyValueFunc;
+        this.distinctFunc = distinctFunc;
+        this.workerCount = workerCount;
+        this.countsAddr = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
     }
 }

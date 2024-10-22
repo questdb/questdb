@@ -187,6 +187,11 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             return true;
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new RegressionSlopeFunction(left, right);
+        }
+
         protected void aggregate(MapValue mapValue, double y, double x) {
             double sum_x = mapValue.getDouble(valueIndex);
             double sum_y = mapValue.getDouble(valueIndex + 1);

@@ -116,6 +116,11 @@ public class RndVarcharFunctionFactory implements FunctionFactory {
             sink.val("rnd_str(").val(len).val(',').val(len).val(',').val(nullRate - 1).val(')');
         }
 
+        @Override
+        public Function deepClone() {
+            return new RndFixedVarcharFunction(len, nullRate);
+        }
+
         private void sinkRnd(Utf8Sink utf8Sink) {
             rnd.nextUtf8Str(len, utf8Sink);
         }

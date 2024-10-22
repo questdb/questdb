@@ -148,6 +148,11 @@ public class InStrFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(arg).val(" in ").val(set);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstFunc(arg, new CharSequenceHashSet(set));
+        }
     }
 
     private static class RuntimeConstFunc extends BooleanFunction implements MultiArgFunction {
@@ -180,6 +185,13 @@ public class InStrFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(args.getQuick(0)).val(" in ").val(args, 1);
+        }
+
+        @Override
+        public Function newInstance(ObjList<Function> args) {
+            IntList copy = new IntList(argPositions.size());
+            copy.addAll(argPositions);
+            return new RuntimeConstFunc(args, copy);
         }
     }
 }

@@ -63,4 +63,9 @@ public class FirstNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
             destValue.putLong128(valueIndex + 1, srcValLo, srcValHi);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstNotNullUuidGroupByFunction(arg);
+    }
 }

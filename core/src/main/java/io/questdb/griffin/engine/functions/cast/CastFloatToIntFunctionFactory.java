@@ -60,5 +60,10 @@ public class CastFloatToIntFunctionFactory implements FunctionFactory {
             final float value = arg.getFloat(rec);
             return Numbers.isNull(value) || value > Integer.MAX_VALUE || value < Integer.MIN_VALUE ? Numbers.INT_NULL : (int) value;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

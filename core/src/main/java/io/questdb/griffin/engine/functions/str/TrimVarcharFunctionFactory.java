@@ -73,9 +73,11 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
     private static class ConstFunc extends VarcharFunction implements UnaryFunction {
         private final Function arg;
         private final DirectUtf8Sink sink;
+        private final TrimType type;
 
         public ConstFunc(Function arg, TrimType type) {
             this.arg = arg;
+            this.type = type;
             Utf8Sequence value = getArg().getVarcharA(null);
             if (value == null) {
                 this.sink = null;
@@ -114,6 +116,11 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val('\'').val(this.sink).val('\'');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstFunc(arg, type);
         }
     }
 
@@ -177,6 +184,11 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg, type);
         }
     }
 }

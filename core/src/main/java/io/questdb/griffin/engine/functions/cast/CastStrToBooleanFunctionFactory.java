@@ -62,5 +62,10 @@ public class CastStrToBooleanFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return resolveBoolean(arg.getStrA(rec));
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

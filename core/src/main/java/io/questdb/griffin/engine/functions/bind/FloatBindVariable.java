@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.bind;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
@@ -56,5 +57,10 @@ class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::float");
+    }
+
+    @Override
+    public Function deepClone() {
+        return this;
     }
 }

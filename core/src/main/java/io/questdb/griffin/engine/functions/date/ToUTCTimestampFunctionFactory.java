@@ -126,5 +126,10 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory {
                 return timestampValue;
             }
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new ToTimezoneFunctionVar(left, right);
+        }
     }
 }

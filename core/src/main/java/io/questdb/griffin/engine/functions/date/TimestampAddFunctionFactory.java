@@ -110,6 +110,11 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("dateadd('").val(periodSymbol).val("',").val(interval).val(',').val(arg).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new AddLongIntVarConstFunction(arg, interval, func, periodSymbol);
+        }
     }
 
     private static class AddLongIntVarVarFunction extends TimestampFunction implements BinaryFunction {
@@ -149,6 +154,11 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("dateadd('").val(periodSymbol).val("',").val(left).val(',').val(right).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new AddLongIntVarVarFunction(left, right, func, periodSymbol);
+        }
     }
 
     private static class DateAddFunc extends TimestampFunction implements TernaryFunction {
@@ -180,6 +190,11 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new DateAddFunc(left, center, right);
         }
 
         @Override

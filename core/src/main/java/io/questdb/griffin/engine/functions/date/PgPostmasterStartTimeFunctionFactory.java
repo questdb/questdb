@@ -49,6 +49,11 @@ public class PgPostmasterStartTimeFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
         }
+
+        @Override
+        public Function deepClone() {
+            return this;
+        }
     };
 
     @Override

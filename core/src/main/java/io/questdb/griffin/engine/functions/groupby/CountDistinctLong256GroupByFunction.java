@@ -199,6 +199,17 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
         UnaryFunction.super.toTop();
     }
 
+    @Override
+    public Function newInstance(final Function arg) {
+        return new CountDistinctLong256GroupByFunction(arg, new GroupByLong256HashSet(setA), new GroupByLong256HashSet(setB));
+    }
+
+    private CountDistinctLong256GroupByFunction(Function arg, GroupByLong256HashSet setA, GroupByLong256HashSet setB) {
+        this.arg = arg;
+        this.setA = setA;
+        this.setB = setB;
+    }
+
     private static boolean isNotNull(Long256 value) {
         return value != null && value != Long256Impl.NULL_LONG256
                 && (value.getLong0() != Numbers.LONG_NULL || value.getLong1() != Numbers.LONG_NULL

@@ -55,5 +55,10 @@ public class EqLong256FunctionFactory implements FunctionFactory {
             final Long256 rv = right.getLong256B(rec);
             return negated != lv.equals(rv);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

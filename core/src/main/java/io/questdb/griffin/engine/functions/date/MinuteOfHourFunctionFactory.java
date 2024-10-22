@@ -75,5 +75,10 @@ public class MinuteOfHourFunctionFactory implements FunctionFactory {
         public String getName() {
             return "minute";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new MinuteFunction(arg);
+        }
     }
 }

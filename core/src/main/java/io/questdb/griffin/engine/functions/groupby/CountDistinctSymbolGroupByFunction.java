@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
+import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.std.Numbers;
 
 import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
@@ -219,5 +220,16 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
+    }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new CountDistinctSymbolGroupByFunction(arg, new GroupByIntHashSet(setA), new GroupByIntHashSet(setB));
+    }
+
+    private CountDistinctSymbolGroupByFunction(Function arg, GroupByIntHashSet setA, GroupByIntHashSet setB) {
+        this.arg = arg;
+        this.setA = setA;
+        this.setB = setB;
     }
 }

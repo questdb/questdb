@@ -151,4 +151,9 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public Function newInstance(final Function left, final Function right) {
+        return new VwapDoubleGroupByFunction(left, right);
+    }
 }

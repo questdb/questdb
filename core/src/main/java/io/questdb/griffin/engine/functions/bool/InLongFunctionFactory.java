@@ -177,6 +177,11 @@ public class InLongFunctionFactory implements FunctionFactory {
             }
             sink.val(" in ").val(inList);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new InLongConstFunction(arg, new LongList(inList));
+        }
     }
 
     private static class InLongRuntimeConstFunction extends NegatableBooleanFunction implements MultiArgFunction {
@@ -219,6 +224,11 @@ public class InLongFunctionFactory implements FunctionFactory {
             }
             sink.val(" in ").val(inList);
         }
+
+        @Override
+        public Function newInstance(ObjList<Function> args) {
+            return new InLongRuntimeConstFunction(keyFunc.deepClone(), args, new IntList(valueFunctionPositions));
+        }
     }
 
     private static class InLongSingleConstFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -248,6 +258,11 @@ public class InLongFunctionFactory implements FunctionFactory {
                 sink.val(" not");
             }
             sink.val(" in [").val(inVal).val(']');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new InLongSingleConstFunction(arg, inVal);
         }
     }
 
@@ -280,6 +295,11 @@ public class InLongFunctionFactory implements FunctionFactory {
                 sink.val(" not");
             }
             sink.val(" in [").val(inVal0).val(',').val(inVal1).val(']');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new InLongTwoConstFunction(arg, inVal0, inVal1);
         }
     }
 
@@ -336,6 +356,11 @@ public class InLongFunctionFactory implements FunctionFactory {
             }
             sink.val(" in ");
             sink.val(args, 1);
+        }
+
+        @Override
+        public Function newInstance(ObjList<Function> args) {
+            return new InLongVarFunction(args);
         }
     }
 }

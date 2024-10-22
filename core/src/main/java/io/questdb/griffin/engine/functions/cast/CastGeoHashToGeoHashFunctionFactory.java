@@ -343,6 +343,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         public byte getGeoByte(Record rec) {
             return (byte) (value.getGeoByte(rec) >> shift);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastByteFunc(shift, type, arg);
+        }
     }
 
     private static class CastGeoByteToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
@@ -359,6 +364,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoByteToStrBitsFunc(arg, bits);
         }
     }
 
@@ -377,6 +387,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoByteToStrCharsFunc(arg, bits);
+        }
     }
 
     private static class CastGeoByteToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
@@ -394,6 +409,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         protected void print(long value, CharSink<?> sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoByteToVarcharBitsFunc(arg, bits);
+        }
     }
 
     private static class CastGeoByteToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
@@ -410,6 +430,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         protected void print(long value, CharSink<?> sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoByteToVarcharCharsFunc(arg, bits);
         }
     }
 
@@ -432,6 +457,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         public short getGeoShort(Record rec) {
             return (short) (value.getGeoInt(rec) >> shift);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoIntToGeoShortFunction(shift, type, arg);
+        }
     }
 
     private static class CastGeoIntToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
@@ -448,6 +478,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoIntToStrBitsFunc(arg, bits);
         }
     }
 
@@ -466,6 +501,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoIntToStrCharsFunc(arg, bits);
+        }
     }
 
     private static class CastGeoIntToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
@@ -483,6 +523,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         protected void print(long value, CharSink<?> sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoIntToVarcharBitsFunc(arg, bits);
+        }
     }
 
     private static class CastGeoIntToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
@@ -499,6 +544,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         protected void print(long value, CharSink<?> sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoIntToVarcharCharsFunc(arg, bits);
         }
     }
 
@@ -521,6 +571,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         public short getGeoShort(Record rec) {
             return (short) (value.getGeoLong(rec) >> shift);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoLongToGeoShortFunction(shift, type, arg);
+        }
     }
 
     private static class CastGeoLongToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
@@ -537,6 +592,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoLongToStrBitsFunc(arg, bits);
         }
     }
 
@@ -555,6 +615,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoLongToStrCharsFunc(arg, bits);
+        }
     }
 
     private static class CastGeoLongToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
@@ -572,6 +637,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         protected void print(long value, CharSink<?> sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoLongToVarcharBitsFunc(arg, bits);
+        }
     }
 
     private static class CastGeoLongToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
@@ -588,6 +658,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         protected void print(long value, CharSink<?> sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoLongToVarcharCharsFunc(arg, bits);
         }
     }
 
@@ -610,6 +685,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         public short getGeoShort(Record rec) {
             return (short) (value.getGeoShort(rec) >> shift);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoShortFunction(shift, type, arg);
+        }
     }
 
     private static class CastGeoShortToStrBitsFunc extends AbstractCastGeoByteToStrFunction implements UnaryFunction {
@@ -626,6 +706,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoShortToStrBitsFunc(arg, bits);
         }
     }
 
@@ -644,6 +729,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         protected void print(long value, Utf16Sink sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoShortToStrCharsFunc(arg, bits);
+        }
     }
 
     private static class CastGeoShortToVarcharBitsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
@@ -661,6 +751,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         protected void print(long value, CharSink<?> sink) {
             GeoHashes.appendBinaryStringUnsafe(value, bits, sink);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoShortToVarcharBitsFunc(arg, bits);
+        }
     }
 
     private static class CastGeoShortToVarcharCharsFunc extends AbstractCastGeoByteToVarcharFunction implements UnaryFunction {
@@ -677,6 +772,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         protected void print(long value, CharSink<?> sink) {
             GeoHashes.appendCharsUnsafe(value, bits, sink);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastGeoShortToVarcharCharsFunc(arg, bits);
         }
     }
 
@@ -700,6 +800,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         public int getGeoInt(Record rec) {
             return value.getGeoInt(rec) >> shift;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastIntFunc(shift, type, arg);
+        }
     }
 
     private static class CastIntToByteFunc extends GeoByteFunction implements UnaryFunction {
@@ -720,6 +825,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public byte getGeoByte(Record rec) {
             return (byte) (value.getGeoInt(rec) >> shift);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastIntToByteFunc(shift, type, arg);
         }
     }
 
@@ -742,6 +852,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         public long getGeoLong(Record rec) {
             return value.getGeoLong(rec) >> shift;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastLongFunc(shift, type, arg);
+        }
     }
 
     private static class CastLongToByteFunc extends GeoByteFunction implements UnaryFunction {
@@ -762,6 +877,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public byte getGeoByte(Record rec) {
             return (byte) (value.getGeoLong(rec) >> shift);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastLongToByteFunc(shift, type, arg);
         }
     }
 
@@ -784,6 +904,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         public int getGeoInt(Record rec) {
             return (int) (value.getGeoLong(rec) >> shift);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastLongToIntFunc(shift, type, arg);
+        }
     }
 
     private static class CastShortToByteFunc extends GeoByteFunction implements UnaryFunction {
@@ -804,6 +929,11 @@ public class CastGeoHashToGeoHashFunctionFactory implements FunctionFactory {
         @Override
         public byte getGeoByte(Record rec) {
             return (byte) (value.getGeoShort(rec) >> shift);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastShortToByteFunc(shift, type, arg);
         }
     }
 }

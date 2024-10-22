@@ -54,4 +54,9 @@ public class LastIntGroupByFunction extends FirstIntGroupByFunction {
             destValue.putInt(valueIndex + 1, srcValue.getInt(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastIntGroupByFunction(arg);
+    }
 }

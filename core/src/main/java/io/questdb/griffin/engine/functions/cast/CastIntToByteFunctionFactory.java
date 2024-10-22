@@ -54,5 +54,10 @@ public class CastIntToByteFunctionFactory implements FunctionFactory {
             final int value = arg.getInt(rec);
             return value == Numbers.INT_NULL ? 0 : (byte) value;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

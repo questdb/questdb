@@ -70,5 +70,10 @@ public class CastVarcharToBooleanFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return resolveBoolean(arg.getVarcharA(rec));
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

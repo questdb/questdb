@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
@@ -98,6 +99,15 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntCountWrapUp(pRosti, valueOffset, count.sum() > 0 ? count.sum() : -1);
+    }
+
+    @Override
+    public Function deepClone() {
+        return new CountVectorAggregateFunction(countFunc);
+    }
+
+    private CountVectorAggregateFunction(CountFunc countFunc) {
+        this.countFunc = countFunc;
     }
 
     @FunctionalInterface

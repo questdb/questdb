@@ -103,5 +103,10 @@ public class ToUppercaseFunctionFactory implements FunctionFactory {
         public boolean isThreadSafe() {
             return false;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ToUppercaseFunc(arg);
+        }
     }
 }

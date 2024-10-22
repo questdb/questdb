@@ -71,5 +71,10 @@ public class CastShortToSymbolFunctionFactory implements FunctionFactory {
         protected AbstractCastToSymbolFunction newFunc() {
             return new Func(arg);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

@@ -72,5 +72,10 @@ public class LogDoubleFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("log(").val(function).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new LogFunction(arg);
+        }
     }
 }

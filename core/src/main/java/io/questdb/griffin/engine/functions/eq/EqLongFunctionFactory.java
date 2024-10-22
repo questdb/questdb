@@ -57,5 +57,10 @@ public class EqLongFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             return negated != (left.getLong(rec) == right.getLong(rec));
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

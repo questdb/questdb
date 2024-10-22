@@ -54,4 +54,9 @@ public class LastShortGroupByFunction extends FirstShortGroupByFunction {
             destValue.putShort(valueIndex + 1, srcValue.getShort(valueIndex + 1));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastDateGroupByFunction(0, arg);
+    }
 }

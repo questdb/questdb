@@ -57,4 +57,9 @@ class StrCaseFunction extends StrFunction implements CaseFunction {
     public int getStrLen(Record rec) {
         return picker.pick(rec).getStrLen(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new StrCaseFunction(picker, args);
+    }
 }

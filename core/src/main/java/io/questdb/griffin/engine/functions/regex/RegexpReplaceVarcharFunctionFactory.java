@@ -40,6 +40,7 @@ import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * This is tactical implementation of regex replace over varchar column.
@@ -131,9 +132,9 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
                         throw SqlException.$(replacementPos, "no group ").put(group);
                     }
                     if (canSkipUtf8Decoding(patternStr)) {
-                        return new SingleGroupAsciiFunc(value, matcher, Chars.toString(replacementStr), group, position);
+                        return new SingleGroupAsciiFunc(value, matcher, Chars.toString(replacementStr), group, position, pattern);
                     } else {
-                        return new SingleGroupFunc(value, matcher, Chars.toString(replacementStr), group, position);
+                        return new SingleGroupFunc(value, matcher, Chars.toString(replacementStr), group, position, pattern);
                     }
                 } catch (NumericException ignore) {
                 }
@@ -229,16 +230,18 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         private final DirectUtf8Sink utf8SinkA;
         private final DirectUtf8Sink utf8SinkB;
         private final Function value;
+        private final Function pattern;
         private final DirectAsciiStringView viewA = new DirectAsciiStringView();
         private final DirectAsciiStringView viewB = new DirectAsciiStringView();
 
-        public SingleGroupAsciiFunc(Function value, Matcher matcher, String replacement, int group, int functionPos) {
+        public SingleGroupAsciiFunc(Function value, Matcher matcher, String replacement, int group, int functionPos, Function pattern) {
             try {
                 this.value = value;
                 this.matcher = matcher;
                 this.replacement = replacement;
                 this.group = group;
                 this.functionPos = functionPos;
+                this.pattern = pattern;
                 this.utf8SinkA = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
                 this.utf8SinkB = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
             } catch (Throwable th) {
@@ -289,6 +292,13 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
             sink.val("regexp_replace(").val(value).val(',').val(matcher.pattern().toString()).val(',').val(replacement).val(')');
         }
 
+        @Override
+        public Function newInstance(final Function arg) {
+            CharSequence regex = pattern.getStrA(null);
+            Matcher matcher = Pattern.compile(Chars.toString(regex)).matcher("");
+            return new SingleGroupAsciiFunc(arg, matcher, replacement, group, functionPos, pattern);
+        }
+
         private Utf8Sequence getVarchar(Record rec, DirectUtf8Sink utf8Sink, DirectAsciiStringView view) {
             Utf8Sequence us = value.getVarcharA(rec);
             if (us == null) {
@@ -335,14 +345,16 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         private final DirectUtf16Sink utf16SinkA;
         private final DirectUtf16Sink utf16SinkB;
         private final Function value;
+        private final Function pattern;
 
-        public SingleGroupFunc(Function value, Matcher matcher, String replacement, int group, int functionPos) {
+        public SingleGroupFunc(Function value, Matcher matcher, String replacement, int group, int functionPos, Function pattern) {
             try {
                 this.value = value;
                 this.matcher = matcher;
                 this.replacement = replacement;
                 this.group = group;
                 this.functionPos = functionPos;
+                this.pattern = pattern;
                 this.utf16SinkA = new DirectUtf16Sink(INITIAL_SINK_CAPACITY);
                 this.utf16SinkB = new DirectUtf16Sink(INITIAL_SINK_CAPACITY);
             } catch (Throwable th) {
@@ -391,6 +403,13 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("regexp_replace(").val(value).val(',').val(matcher.pattern().toString()).val(',').val(replacement).val(')');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            CharSequence regex = pattern.getStrA(null);
+            Matcher matcher = Pattern.compile(Chars.toString(regex)).matcher("");
+            return new SingleGroupFunc(arg, matcher, replacement, group, functionPos, pattern);
         }
 
         private CharSequence getStr(Record rec, DirectUtf16Sink utf16Sink) {

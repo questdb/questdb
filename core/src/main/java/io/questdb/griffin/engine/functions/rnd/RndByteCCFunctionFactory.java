@@ -84,5 +84,10 @@ public class RndByteCCFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_byte(").val(lo).val(',').val(range).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new RndFunction(lo, (byte) (range + lo - 1));
+        }
     }
 }

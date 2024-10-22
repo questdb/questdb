@@ -219,5 +219,10 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("replace(").val(value).val(',').val(lookFor).val(',').val(replaceWith).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new Func(left, center, right, maxSize);
+        }
     }
 }

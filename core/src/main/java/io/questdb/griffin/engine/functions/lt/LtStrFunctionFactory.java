@@ -119,6 +119,11 @@ public class LtStrFunctionFactory implements FunctionFactory {
             }
             sink.val(right);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstOnLeftFunc(constant, arg);
+        }
     }
 
     static class ConstOnRightFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -162,6 +167,11 @@ public class LtStrFunctionFactory implements FunctionFactory {
                 sink.val("<");
             }
             sink.val('\'').val(constant).val('\'');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstOnRightFunc(arg, constant);
         }
     }
 
@@ -214,6 +224,11 @@ public class LtStrFunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(right);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 }

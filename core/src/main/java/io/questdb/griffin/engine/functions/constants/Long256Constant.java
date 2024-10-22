@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.Long256Function;
@@ -95,5 +96,10 @@ public class Long256Constant extends Long256Function implements Long256, Constan
     @Override
     public void toPlan(PlanSink sink) {
         sink.val(value);
+    }
+
+    @Override
+    public Function deepClone() {
+        return new Long256Constant(this);
     }
 }

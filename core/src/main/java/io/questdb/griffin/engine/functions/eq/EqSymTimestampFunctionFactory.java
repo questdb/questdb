@@ -98,5 +98,10 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
             long value = right.getTimestamp(rec);
             return negated == (value != symbolTimestampEpoch);
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new VariableTimestampFunction(left, right, symbolTimestampEpoch);
+        }
     }
 }

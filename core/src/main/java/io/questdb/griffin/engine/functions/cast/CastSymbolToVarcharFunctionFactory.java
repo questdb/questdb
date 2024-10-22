@@ -77,5 +77,10 @@ public class CastSymbolToVarcharFunctionFactory implements FunctionFactory {
         public boolean isThreadSafe() {
             return arg.isThreadSafe();
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

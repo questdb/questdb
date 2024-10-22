@@ -105,5 +105,10 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
         public CharSequence valueOf(int symbolKey) {
             return symbolKey == 1 ? "true" : "false";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

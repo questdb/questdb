@@ -108,5 +108,10 @@ public class RndStringListFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_str(").val((Sinkable) symbols).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new Func(new ObjList<>(symbols));
+        }
     }
 }

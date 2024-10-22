@@ -47,4 +47,9 @@ class BooleanCaseFunction extends BooleanFunction implements CaseFunction {
     public boolean getBool(Record rec) {
         return picker.pick(rec).getBool(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new BooleanCaseFunction(picker, args);
+    }
 }

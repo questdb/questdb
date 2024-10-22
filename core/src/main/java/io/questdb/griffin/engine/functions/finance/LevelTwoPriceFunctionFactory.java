@@ -169,6 +169,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             }
             return Double.NaN;
         }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new L2PriceFunction2(args, new IntList(argPositions));
+        }
     }
 
     /**
@@ -207,6 +212,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
                 return ((size0 * value0) + (target - size0) * value1) / target;
             }
             return Double.NaN;
+        }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new L2PriceFunction3(args, new IntList(argPositions));
         }
     }
 
@@ -257,6 +267,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
                 return ((size0 * value0) + (size1 * value1) + (target - size0 - size1) * value2) / target;
             }
             return Double.NaN;
+        }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new L2PriceFunction4(args, new IntList(argPositions));
         }
     }
 
@@ -318,6 +333,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
                 return ((size0 * value0) + (size1 * value1) + (size2 * value2) + (target - size0 - size1 - size2) * value3) / target;
             }
             return Double.NaN;
+        }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new L2PriceFunction5(args, new IntList(argPositions));
         }
     }
 
@@ -393,6 +413,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
             }
             return Double.NaN;
         }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new L2PriceFunction5(args, new IntList(argPositions));
+        }
     }
 
     private static class L2PriceFunctionN extends L2PriceBaseFunction {
@@ -439,6 +464,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
             // if never exceeded the target, then no price, since it can't be fulfilled
             return Double.NaN;
+        }
+
+        @Override
+        public Function newInstance(final ObjList<Function> args) {
+            return new L2PriceFunctionN(args, new IntList(argPositions));
         }
     }
 }

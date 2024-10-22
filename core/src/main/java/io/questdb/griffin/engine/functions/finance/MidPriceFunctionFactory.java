@@ -77,5 +77,10 @@ public class MidPriceFunctionFactory implements FunctionFactory {
             return ask;
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new MidPriceFunction(left, right);
+        }
+
     }
 }

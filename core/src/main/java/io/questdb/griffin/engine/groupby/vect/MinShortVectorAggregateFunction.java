@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Numbers;
@@ -132,5 +133,16 @@ public class MinShortVectorAggregateFunction extends IntFunction implements Vect
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntMinShortWrapUp(pRosti, valueOffset, accumulator.intValue());
+    }
+
+    @Override
+    public Function deepClone() {
+        return new MinShortVectorAggregateFunction(columnIndex, keyValueFunc, distinctFunc);
+    }
+
+    private MinShortVectorAggregateFunction(int columnIndex, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+        this.columnIndex = columnIndex;
+        this.keyValueFunc = keyValueFunc;
+        this.distinctFunc = distinctFunc;
     }
 }

@@ -102,6 +102,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         public void toTop() {
             next = start;
         }
+
+        @Override
+        public Function deepClone() {
+            return new TimestampSequenceFunction(start, longIncrement.deepClone());
+        }
     }
 
     private static final class TimestampSequenceVariableFunction extends TimestampFunction {
@@ -148,6 +153,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         @Override
         public void toTop() {
             next = 0;
+        }
+
+        @Override
+        public Function deepClone() {
+            return new TimestampSequenceVariableFunction(start.deepClone(), longIncrement.deepClone());
         }
     }
 }

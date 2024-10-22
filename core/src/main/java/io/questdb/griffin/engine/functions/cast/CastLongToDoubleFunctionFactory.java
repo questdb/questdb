@@ -52,5 +52,10 @@ public class CastLongToDoubleFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             return arg.getDouble(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

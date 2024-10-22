@@ -82,5 +82,10 @@ public class NullIfDoubleFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("nullif(").val(doubleFunc1).val(',').val(doubleFunc2).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new NullIfDoubleFunction(left, right);
+        }
     }
 }

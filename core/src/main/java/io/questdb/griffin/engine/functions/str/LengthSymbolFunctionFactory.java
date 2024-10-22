@@ -67,5 +67,10 @@ public class LengthSymbolFunctionFactory implements FunctionFactory {
         public String getName() {
             return "length";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new LengthSymbolVFunc(arg);
+        }
     }
 }

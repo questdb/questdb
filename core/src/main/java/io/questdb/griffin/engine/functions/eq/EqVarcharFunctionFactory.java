@@ -116,6 +116,11 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
             }
             sink.val("='").val(constant).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstCheckFunc(arg, constant);
+        }
     }
 
     static class Func extends AbstractEqBinaryFunction {
@@ -142,6 +147,11 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
             } else {
                 return "=";
             }
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 
@@ -178,6 +188,11 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
             cachedRuntimeConst = right.getVarcharA(null);
             cachedSixPrefix = cachedRuntimeConst != null ? cachedRuntimeConst.zeroPaddedSixPrefix() : 0L;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 
     public static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
@@ -205,6 +220,11 @@ public class EqVarcharFunctionFactory implements FunctionFactory {
             } else {
                 sink.val(" is null");
             }
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new NullCheckFunc(arg);
         }
     }
 }

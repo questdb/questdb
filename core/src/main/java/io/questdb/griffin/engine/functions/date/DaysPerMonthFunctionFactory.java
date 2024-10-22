@@ -79,5 +79,10 @@ public class DaysPerMonthFunctionFactory implements FunctionFactory {
         public String getName() {
             return "days_in_month";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

@@ -54,5 +54,10 @@ public class CastTimestampToShortFunctionFactory implements FunctionFactory {
             final long value = arg.getTimestamp(rec);
             return value != Numbers.LONG_NULL ? (short) value : 0;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

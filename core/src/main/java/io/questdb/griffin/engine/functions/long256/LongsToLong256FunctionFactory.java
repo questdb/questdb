@@ -135,5 +135,9 @@ public final class LongsToLong256FunctionFactory implements FunctionFactory {
             return "to_long256";
         }
 
+        @Override
+        public Function newInstance(final Function func0, final Function func1, final Function func2, final Function func3) {
+            return new LongsToLong256Function(func0, func1, func2, func3);
+        }
     }
 }

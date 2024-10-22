@@ -161,5 +161,10 @@ public class CastDoubleToSymbolFunctionFactory implements FunctionFactory {
         public CharSequence valueOf(int symbolKey) {
             return symbols.getQuick(TableUtils.toIndexKey(symbolKey));
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg, scale);
+        }
     }
 }

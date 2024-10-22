@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -101,5 +102,10 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("count(*)");
+    }
+
+    @Override
+    public Function deepClone() {
+        return new CountLongConstGroupByFunction();
     }
 }

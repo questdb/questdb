@@ -66,4 +66,9 @@ public class LastVarcharGroupByFunction extends FirstVarcharGroupByFunction {
             destValue.putBool(valueIndex + 2, srcValue.getBool(valueIndex + 2));
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastVarcharGroupByFunction(arg);
+    }
 }

@@ -107,6 +107,11 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_bin(").val(this.sequence.len).val(',').val(this.sequence.len).val(',').val(nullRate - 1).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new FixLenFunction(sequence.len, nullRate - 1);
+        }
     }
 
     private static class Sequence implements BinarySequence {
@@ -158,6 +163,12 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val("rnd_bin(").val(lo).val(',').val(range + lo - 1).val(',').val(nullRate - 1).val(')');
+        }
+
+        @Override
+        public Function deepClone() {
+            return new VarLenFunction(lo, range + lo - 1, nullRate - 1);
+
         }
     }
 }

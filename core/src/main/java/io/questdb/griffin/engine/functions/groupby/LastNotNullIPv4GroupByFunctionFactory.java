@@ -81,6 +81,11 @@ public class LastNotNullIPv4GroupByFunctionFactory implements FunctionFactory {
                 destValue.putInt(valueIndex + 1, srcVal);
             }
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }
 

@@ -123,4 +123,8 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
         return UnaryFunction.super.supportsParallelism();
     }
 
+    @Override
+    public Function newInstance(final Function arg) {
+        return new MaxIPv4GroupByFunction(arg);
+    }
 }

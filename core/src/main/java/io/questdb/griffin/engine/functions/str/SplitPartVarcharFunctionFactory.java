@@ -187,6 +187,10 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        protected int getIndexPosition() {
+            return indexPosition;
+        }
+
         @Nullable
         private Utf8StringSink getVarcharWithClear(Record rec, Utf8StringSink sink) {
             sink.clear();
@@ -219,6 +223,11 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new SplitPartVarcharConstIndexFunction(left, center, right, getIndexPosition(), index);
+        }
+
+        @Override
         int getIndex(Record rec) {
             return index;
         }
@@ -233,6 +242,11 @@ public class SplitPartVarcharFunctionFactory implements FunctionFactory {
                 int indexPosition
         ) {
             super(varcharFunc, delimiterFunc, indexFunc, indexPosition);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new SplitPartVarcharFunction(left, center, right, getIndexPosition());
         }
 
         @Override

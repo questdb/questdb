@@ -92,5 +92,10 @@ public class SimulateWarningsFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("simulate_warnings(").val(tag).val(", ").val(warning).val(")");
         }
+
+        @Override
+        public Function deepClone() {
+            return new SimulateWarningsFunction(tag, warning);
+        }
     }
 }

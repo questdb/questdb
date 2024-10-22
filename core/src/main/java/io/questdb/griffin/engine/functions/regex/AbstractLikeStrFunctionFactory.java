@@ -249,6 +249,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 sink.val(" [case-sensitive]");
             }
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new BindLikeStrFunction(left, right, caseInsensitive);
+        }
     }
 
     private static class ConstContainsStrFunction extends BooleanFunction implements UnaryFunction {
@@ -282,6 +287,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             sink.val(pattern);
             sink.val('%');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstContainsStrFunction(arg, pattern);
+        }
     }
 
     private static class ConstEndsWithStrFunction extends BooleanFunction implements UnaryFunction {
@@ -310,6 +320,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             sink.val(" like ");
             sink.val('%');
             sink.val(pattern);
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstEndsWithStrFunction(arg, pattern);
         }
     }
 
@@ -344,6 +359,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             sink.val(pattern);
             sink.val('%');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstIContainsStrFunction(arg, pattern);
+        }
     }
 
     static class ConstIEndsWithStrFunction extends BooleanFunction implements UnaryFunction {
@@ -373,6 +393,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             sink.val('%');
             sink.val(pattern);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstIEndsWithStrFunction(arg, pattern);
+        }
     }
 
     static class ConstIStartsWithStrFunction extends BooleanFunction implements UnaryFunction {
@@ -401,6 +426,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             sink.val(" ilike ");
             sink.val(pattern);
             sink.val('%');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstIStartsWithStrFunction(arg, pattern);
         }
     }
 
@@ -439,6 +469,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                 sink.val(" [case-sensitive]");
             }
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstLikeStrFunction(arg, matcher);
+        }
     }
 
     private static class ConstStartsWithStrFunction extends BooleanFunction implements UnaryFunction {
@@ -467,6 +502,11 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             sink.val(" like ");
             sink.val(pattern);
             sink.val('%');
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstStartsWithStrFunction(arg, pattern);
         }
     }
 }

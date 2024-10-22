@@ -79,5 +79,10 @@ public class RndDoubleCCFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_double(").val(nanRate).val(")");
         }
+
+        @Override
+        public Function deepClone() {
+            return new RndFunction(nanRate);
+        }
     }
 }

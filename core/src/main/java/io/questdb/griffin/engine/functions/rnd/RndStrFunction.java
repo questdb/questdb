@@ -66,4 +66,9 @@ class RndStrFunction extends StrFunction implements Function {
     public void toPlan(PlanSink sink) {
         sink.val("rnd_str(").val(lo).val(',').val(range + lo - 1).val(',').val(nullRate - 1).val(')');
     }
+
+    @Override
+    public Function deepClone() {
+        return new RndStrFunction(lo, range + lo - 1, nullRate);
+    }
 }

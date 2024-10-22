@@ -91,5 +91,10 @@ public class ToDateFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("to_date(").val(arg).val(',').val(pattern).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ToDateFunction(arg, dateFormat, locale, pattern);
+        }
     }
 }

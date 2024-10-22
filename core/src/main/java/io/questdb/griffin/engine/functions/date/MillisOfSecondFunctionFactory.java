@@ -75,5 +75,10 @@ public class MillisOfSecondFunctionFactory implements FunctionFactory {
         public String getName() {
             return "millis";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

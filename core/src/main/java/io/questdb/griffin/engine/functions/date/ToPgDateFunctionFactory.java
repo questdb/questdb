@@ -78,5 +78,10 @@ public class ToPgDateFunctionFactory implements FunctionFactory {
         public String getName() {
             return "to_pg_date";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ToPgDateFunction(arg);
+        }
     }
 }

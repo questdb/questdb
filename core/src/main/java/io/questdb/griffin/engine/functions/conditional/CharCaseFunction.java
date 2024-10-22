@@ -47,4 +47,9 @@ class CharCaseFunction extends CharFunction implements CaseFunction {
     public char getChar(Record rec) {
         return picker.pick(rec).getChar(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new CharCaseFunction(picker, args);
+    }
 }

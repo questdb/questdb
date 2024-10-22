@@ -95,4 +95,9 @@ public class TrimStrFunction extends StrFunction implements UnaryFunction {
     public boolean isThreadSafe() {
         return false;
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new TrimStrFunction(arg, type);
+    }
 }

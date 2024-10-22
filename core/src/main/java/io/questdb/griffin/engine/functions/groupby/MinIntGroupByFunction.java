@@ -117,4 +117,9 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new MinIntGroupByFunction(arg);
+    }
 }

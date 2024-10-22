@@ -22,37 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.std;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.engine.functions.ShortFunction;
-
-public class ShortConstant extends ShortFunction implements ConstantFunction {
-    public static final ShortConstant ZERO = new ShortConstant((short) 0);
-    private final short value;
-
-    public ShortConstant(short value) {
-        this.value = value;
-    }
-
-    public static ShortConstant newInstance(short value) {
-        return value != 0 ? new ShortConstant(value) : ZERO;
-    }
-
-    @Override
-    public short getShort(Record rec) {
-        return value;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val(value);
-    }
-
-    @Override
-    public Function deepClone() {
-        return newInstance(value);
-    }
+public interface DeepCloneable<T> {
+    T deepClone();
 }

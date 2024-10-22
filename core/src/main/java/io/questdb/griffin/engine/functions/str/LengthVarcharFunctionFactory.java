@@ -74,6 +74,11 @@ public class LengthVarcharFunctionFactory implements FunctionFactory {
         public String getName() {
             return "length";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 
 }

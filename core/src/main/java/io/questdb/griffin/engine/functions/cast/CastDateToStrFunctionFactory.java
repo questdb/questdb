@@ -79,5 +79,10 @@ public class CastDateToStrFunctionFactory implements FunctionFactory {
             sinkB.putISODateMillis(value);
             return sinkB;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

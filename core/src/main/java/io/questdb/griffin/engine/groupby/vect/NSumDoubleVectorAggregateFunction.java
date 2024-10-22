@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.Misc;
@@ -148,6 +149,20 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     public boolean wrapUp(long pRosti) {
         computeSum();
         return Rosti.keyedIntNSumDoubleWrapUp(pRosti, valueOffset, transientSum, transientCount, transientC);
+    }
+
+    @Override
+    public Function deepClone() {
+        return new NSumDoubleVectorAggregateFunction(columnIndex, workerCount, keyValueFunc, distinctFunc);
+    }
+
+    private NSumDoubleVectorAggregateFunction(int columnIndex, int workerCount, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+        this.columnIndex = columnIndex;
+        this.keyValueFunc = keyValueFunc;
+        this.distinctFunc = distinctFunc;
+        this.sum = new double[workerCount * SUM_PADDING];
+        this.count = new long[workerCount * COUNT_PADDING];
+        this.workerCount = workerCount;
     }
 
     private void computeSum() {

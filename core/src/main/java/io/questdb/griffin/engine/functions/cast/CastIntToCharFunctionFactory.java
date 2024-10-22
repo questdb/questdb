@@ -54,5 +54,10 @@ public class CastIntToCharFunctionFactory implements FunctionFactory {
             final int value = arg.getInt(rec);
             return value != Numbers.INT_NULL ? (char) value : 0;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

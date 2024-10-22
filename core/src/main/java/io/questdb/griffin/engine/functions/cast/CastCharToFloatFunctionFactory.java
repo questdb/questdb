@@ -53,5 +53,10 @@ public class CastCharToFloatFunctionFactory implements FunctionFactory {
             final byte v = (byte) (arg.getChar(rec) - '0');
             return v > -1 && v < 10 ? v : Float.NaN;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

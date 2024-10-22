@@ -52,5 +52,10 @@ public class CastShortToIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             return arg.getShort(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

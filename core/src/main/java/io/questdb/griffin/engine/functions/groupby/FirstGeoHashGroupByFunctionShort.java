@@ -124,4 +124,9 @@ public class FirstGeoHashGroupByFunctionShort extends GeoByteFunction implements
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstGeoHashGroupByFunctionShort(type, arg);
+    }
 }

@@ -170,4 +170,9 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     public void toTop() {
         UnaryFunction.super.toTop();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new MaxVarcharGroupByFunction(arg);
+    }
 }

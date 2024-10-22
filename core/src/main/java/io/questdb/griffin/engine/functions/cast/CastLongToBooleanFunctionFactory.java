@@ -54,5 +54,10 @@ public class CastLongToBooleanFunctionFactory implements FunctionFactory {
             long val = arg.getLong(rec);
             return val != Numbers.LONG_NULL && val != 0;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

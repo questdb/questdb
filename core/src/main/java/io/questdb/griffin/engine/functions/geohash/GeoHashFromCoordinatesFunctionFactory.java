@@ -136,6 +136,11 @@ public class GeoHashFromCoordinatesFunctionFactory implements FunctionFactory {
             sink.val(SYMBOL).val('(').val(lon).val(',').val(lat).val(',').val(bits).val(')');
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new FromCoordinatesFixedBitsFunction(left, right, bits);
+        }
+
         private long getLongValue(Record rec) {
             try {
                 double lon = this.lon.getDouble(rec);

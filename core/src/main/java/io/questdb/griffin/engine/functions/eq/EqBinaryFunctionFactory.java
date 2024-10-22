@@ -77,5 +77,10 @@ public class EqBinaryFunctionFactory implements FunctionFactory {
             }
             return true;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 }

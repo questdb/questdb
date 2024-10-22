@@ -155,6 +155,11 @@ public class RPadVarcharVarcharFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new RPadVarcharFunc(left, center, right, maxLength);
+        }
+
         @Nullable
         private Utf8StringSink rPadVarchar(Utf8Sequence str, int len, Utf8Sequence fillText, Utf8StringSink sink) {
             if (str != null && len >= 0 && fillText != null && fillText.size() > 0) {
@@ -189,6 +194,11 @@ public class RPadVarcharVarcharFunctionFactory implements FunctionFactory {
             return rPadVarchar(strFunc.getVarcharB(rec), lenFunc.getInt(rec), sinkB);
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new RPadVarcharFuncFillTextConst(left, center, right, maxLength);
+        }
+
         @Nullable
         private Utf8StringSink rPadVarchar(Utf8Sequence str, int len, Utf8StringSink sink) {
             if (str != null && len >= 0 && fillText != null && fillText.size() > 0) {
@@ -221,6 +231,11 @@ public class RPadVarcharVarcharFunctionFactory implements FunctionFactory {
         @Override
         public Utf8Sequence getVarcharB(final Record rec) {
             return rPadVarchar(strFunc.getVarcharB(rec), lenFunc.getInt(rec), sinkB);
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function center, final Function right) {
+            return new RPadVarcharFuncStrConst(left, center, right, maxLength);
         }
 
         @Nullable

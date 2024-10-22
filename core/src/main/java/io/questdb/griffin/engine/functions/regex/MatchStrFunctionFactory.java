@@ -35,11 +35,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MatchStrFunctionFactory implements FunctionFactory {
     @Override
@@ -63,7 +65,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
             if (matcher == null) {
                 return BooleanConstant.FALSE;
             }
-            return new MatchStrConstPatternFunction(value, matcher);
+            return new MatchStrConstPatternFunction(value, matcher, pattern);
         } else if (pattern.isRuntimeConstant()) {
             return new MatchStrRuntimeConstPatternFunction(value, pattern, patternPosition);
         }
@@ -73,10 +75,12 @@ public class MatchStrFunctionFactory implements FunctionFactory {
     static class MatchStrConstPatternFunction extends BooleanFunction implements UnaryFunction {
         private final Matcher matcher;
         private final Function value;
+        private final Function pattern;
 
-        public MatchStrConstPatternFunction(Function value, @NotNull Matcher matcher) {
+        public MatchStrConstPatternFunction(Function value, @NotNull Matcher matcher, Function pattern) {
             this.value = value;
             this.matcher = matcher;
+            this.pattern = pattern;
         }
 
         @Override
@@ -103,6 +107,13 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value).val(" ~ ").val(matcher.pattern().toString());
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            CharSequence regex = pattern.getStrA(null);
+            Matcher copy = Pattern.compile(Chars.toString(regex)).matcher("");
+            return new MatchStrConstPatternFunction(arg, copy, pattern);
         }
     }
 
@@ -157,6 +168,11 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(fun).val(" ~ ").val(pattern.toString());
+        }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new MatchStrRuntimeConstPatternFunction(arg, pattern.deepClone(), patternPosition);
         }
     }
 }

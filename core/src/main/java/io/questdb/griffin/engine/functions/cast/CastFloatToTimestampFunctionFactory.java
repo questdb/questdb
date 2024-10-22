@@ -54,5 +54,10 @@ public class CastFloatToTimestampFunctionFactory implements FunctionFactory {
             final float value = arg.getFloat(rec);
             return Numbers.isNull(value) || value > Long.MAX_VALUE || value < Long.MIN_VALUE ? Numbers.LONG_NULL : (long) value;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastFloatToTimestampFunction(arg);
+        }
     }
 }

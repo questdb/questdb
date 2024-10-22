@@ -105,6 +105,11 @@ public class LPadVarcharFunctionFactory implements FunctionFactory {
             return false;
         }
 
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new LPadFunc(lenFunc, strFunc, maxLength);
+        }
+
         @Nullable
         private Utf8StringSink lPad(Utf8Sequence str, int len, Utf8StringSink sink) {
             if (str != null && len >= 0) {

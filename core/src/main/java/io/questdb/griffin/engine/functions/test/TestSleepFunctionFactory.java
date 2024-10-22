@@ -87,5 +87,15 @@ public class TestSleepFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("sleep(").val(sleepMillis).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new Func(clock, sleepMillis);
+        }
+
+        private Func(MillisecondClock clock, long sleepMillis) {
+            this.clock = clock;
+            this.sleepMillis = sleepMillis;
+        }
     }
 }

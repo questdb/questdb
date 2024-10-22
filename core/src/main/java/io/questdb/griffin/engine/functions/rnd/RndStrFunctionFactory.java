@@ -101,5 +101,10 @@ public class RndStrFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("rnd_str(").val(len).val(',').val(len).val(',').val(nullRate - 1).val(')');
         }
+
+        @Override
+        public Function deepClone() {
+            return new FixedFunction(len, nullRate);
+        }
     }
 }

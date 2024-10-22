@@ -54,5 +54,10 @@ public class CastFloatToByteFunctionFactory implements FunctionFactory {
             final float value = arg.getFloat(rec);
             return Numbers.isNull(value) || value > Byte.MAX_VALUE || value < Byte.MIN_VALUE ? 0 : (byte) value;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

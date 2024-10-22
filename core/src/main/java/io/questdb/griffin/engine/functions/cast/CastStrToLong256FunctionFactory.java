@@ -77,5 +77,10 @@ public class CastStrToLong256FunctionFactory implements FunctionFactory {
             }
             return Numbers.parseLong256(value, long256b);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

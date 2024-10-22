@@ -62,4 +62,9 @@ public class FirstNotNullDateGroupByFunction extends FirstDateGroupByFunction {
             destValue.putDate(valueIndex + 1, srcVal);
         }
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstNotNullDateGroupByFunction(arg);
+    }
 }

@@ -77,6 +77,9 @@ public class SpreadFunctionFactory implements FunctionFactory {
             return ask;
         }
 
-
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new SpreadFunction(left, right);
+        }
     }
 }

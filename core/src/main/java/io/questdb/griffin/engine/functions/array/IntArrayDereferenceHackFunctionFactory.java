@@ -83,5 +83,10 @@ public class IntArrayDereferenceHackFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val(arrayFunction).val('[').val(indexFunction).val(']');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new StrArrayDereferenceFunction(left, right);
+        }
     }
 }

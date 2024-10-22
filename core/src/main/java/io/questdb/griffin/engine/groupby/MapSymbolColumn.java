@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
@@ -129,5 +130,10 @@ public class MapSymbolColumn extends SymbolFunction {
     @Override
     public CharSequence valueOf(int symbolKey) {
         return symbolTable.valueOf(symbolKey);
+    }
+
+    @Override
+    public Function deepClone() {
+        return new MapSymbolColumn(mapColumnIndex, cursorColumnIndex, symbolTableStatic);
     }
 }

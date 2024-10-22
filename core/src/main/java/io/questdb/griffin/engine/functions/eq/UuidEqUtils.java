@@ -119,6 +119,11 @@ final class UuidEqUtils {
             }
             sink.val("='").valUuid(constStrLo, constStrHi).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstStrFunc(constStrLo, constStrHi, arg);
+        }
     }
 
     /**
@@ -162,6 +167,11 @@ final class UuidEqUtils {
             }
             sink.val("='").valUuid(constUuidLo, constUuidHi).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstUuidFunc(constUuidLo, constUuidHi, arg);
+        }
     }
 
     /**
@@ -187,6 +197,11 @@ final class UuidEqUtils {
             } catch (NumericException e) {
                 return negated;
             }
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 
@@ -251,6 +266,11 @@ final class UuidEqUtils {
                 sink.val('!');
             }
             sink.val("='").val(strFunc).val('\'');
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 }

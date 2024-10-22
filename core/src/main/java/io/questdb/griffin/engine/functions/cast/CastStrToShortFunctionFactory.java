@@ -63,5 +63,10 @@ public class CastStrToShortFunctionFactory implements FunctionFactory {
                 return 0;
             }
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

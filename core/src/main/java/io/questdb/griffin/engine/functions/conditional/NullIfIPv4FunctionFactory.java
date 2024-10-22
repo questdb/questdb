@@ -81,5 +81,10 @@ public class NullIfIPv4FunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("nullif(").val(arg1).val(',').val(arg2).val(')');
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new NullIfIPv4Function(left, right);
+        }
     }
 }

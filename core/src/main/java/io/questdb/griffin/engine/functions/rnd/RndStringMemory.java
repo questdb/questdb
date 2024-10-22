@@ -40,15 +40,18 @@ class RndStringMemory implements Closeable {
     private final MemoryAR idxMem;
     private final int lo;
     private final MemoryAR strMem;
+    private final String signature;
+    private final int pageSize;
+    private final int maxPages;
 
     RndStringMemory(String signature, int count, int lo, int hi, int position, CairoConfiguration configuration) throws SqlException {
         try {
             this.count = count;
             this.lo = lo;
             this.hi = hi;
-
-            final int pageSize = configuration.getRndFunctionMemoryPageSize();
-            final int maxPages = configuration.getRndFunctionMemoryMaxPages();
+            this.signature = signature;
+            this.pageSize = configuration.getRndFunctionMemoryPageSize();
+            this.maxPages = configuration.getRndFunctionMemoryMaxPages();
             final long memLimit = (long) maxPages * pageSize;
             // check against worst case, the highest possible mem usage
             final long requiredMem = count * (Vm.getStorageLength(hi) + Long.BYTES);
@@ -69,6 +72,18 @@ class RndStringMemory implements Closeable {
             close();
             throw th;
         }
+    }
+
+    RndStringMemory(RndStringMemory other) {
+        this.count = other.count;
+        this.lo = other.lo;
+        this.hi = other.hi;
+        this.signature = other.signature;
+        this.pageSize = other.pageSize;
+        this.maxPages = other.maxPages;
+        final int idxPages = count * 8 / pageSize + 1;
+        this.strMem = Vm.getARInstance(pageSize, maxPages - idxPages, MemoryTag.NATIVE_FUNC_RSS);
+        this.idxMem = Vm.getARInstance(pageSize, idxPages, MemoryTag.NATIVE_FUNC_RSS);
     }
 
     @Override

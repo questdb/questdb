@@ -75,5 +75,10 @@ public class MicrosOfSecondFunctionFactory implements FunctionFactory {
         public String getName() {
             return "micros";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

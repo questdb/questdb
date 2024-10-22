@@ -99,6 +99,11 @@ public class EqIPv4StrFunctionFactory implements FunctionFactory {
             }
             sink.val("='").valIPv4(constIPv4).val('\'');
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new ConstStrFunc(constIPv4, arg);
+        }
     }
 
     /**
@@ -142,6 +147,11 @@ public class EqIPv4StrFunctionFactory implements FunctionFactory {
                 sink.val('!');
             }
             sink.val("='").val(strFunc).val('\'');
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new RuntimeConstStrFunc(left, right);
         }
     }
 }

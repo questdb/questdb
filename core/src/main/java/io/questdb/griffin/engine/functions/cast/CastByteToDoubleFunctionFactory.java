@@ -58,5 +58,10 @@ public class CastByteToDoubleFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             return arg.getByte(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

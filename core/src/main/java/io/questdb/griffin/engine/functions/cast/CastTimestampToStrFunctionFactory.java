@@ -80,5 +80,10 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
             TimestampFormatUtils.appendDateTimeUSec(sinkB, value);
             return sinkB;
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new Func(arg);
+        }
     }
 }

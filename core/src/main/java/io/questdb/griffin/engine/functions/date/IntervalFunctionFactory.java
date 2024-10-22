@@ -114,6 +114,11 @@ public class IntervalFunctionFactory implements FunctionFactory {
         public Function getRight() {
             return hiFunc;
         }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
+        }
     }
 
     private static class RuntimeConstFunc extends IntervalFunction implements BinaryFunction {
@@ -170,6 +175,11 @@ public class IntervalFunctionFactory implements FunctionFactory {
         @Override
         public boolean isRuntimeConstant() {
             return true;
+        }
+
+        @Override
+        public Function newInstance(final Function left, final Function right) {
+            return new Func(left, right);
         }
     }
 }

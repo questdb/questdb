@@ -67,5 +67,10 @@ public class SqrtDoubleFunctionFactory implements FunctionFactory {
         public String getName() {
             return "sqrt";
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new SqrtFunction(arg);
+        }
     }
 }

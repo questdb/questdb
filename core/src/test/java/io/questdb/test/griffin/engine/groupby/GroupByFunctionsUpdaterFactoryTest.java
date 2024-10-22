@@ -76,7 +76,7 @@ public class GroupByFunctionsUpdaterFactoryTest {
         Assert.assertEquals(0, destValue.getLong(1));
     }
 
-    private static class TestGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
+    private static class TestGroupByFunction extends LongFunction implements GroupByFunction {
 
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
@@ -89,11 +89,6 @@ public class GroupByFunctionsUpdaterFactoryTest {
             long value = mapValue.getLong(0);
             mapValue.putLong(0, value + 1);
             mapValue.putLong(1, rowId);
-        }
-
-        @Override
-        public Function getArg() {
-            return null;
         }
 
         @Override

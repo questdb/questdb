@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.columns;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
@@ -51,5 +52,10 @@ public class RecordColumn extends RecordFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.putColumnName(columnIndex);
+    }
+
+    @Override
+    public Function deepClone() {
+        return new RecordColumn(columnIndex, metadata);
     }
 }

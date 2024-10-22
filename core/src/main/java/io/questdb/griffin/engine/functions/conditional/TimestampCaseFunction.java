@@ -47,4 +47,9 @@ class TimestampCaseFunction extends TimestampFunction implements CaseFunction {
     public long getTimestamp(Record rec) {
         return picker.pick(rec).getTimestamp(rec);
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new TimestampCaseFunction(picker, args);
+    }
 }

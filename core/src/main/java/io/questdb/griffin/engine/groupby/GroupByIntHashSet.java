@@ -64,6 +64,12 @@ public class GroupByIntHashSet {
         this.loadFactor = loadFactor;
     }
 
+    public GroupByIntHashSet(GroupByIntHashSet other) {
+        this.noKeyValue = other.noKeyValue;
+        this.initialCapacity = other.initialCapacity;
+        this.loadFactor = other.loadFactor;
+    }
+
     /**
      * Adds key to hash set preserving key uniqueness.
      *

@@ -160,4 +160,9 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     public void toTop() {
         UnaryFunction.super.toTop();
     }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new FirstStrGroupByFunction(arg);
+    }
 }

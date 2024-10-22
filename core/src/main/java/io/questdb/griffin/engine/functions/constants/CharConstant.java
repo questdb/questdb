@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.constants;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.CharFunction;
@@ -62,5 +63,10 @@ public class CharConstant extends CharFunction implements ConstantFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val('\'').val(value).val('\'');
+    }
+
+    @Override
+    public Function deepClone() {
+        return newInstance(value);
     }
 }

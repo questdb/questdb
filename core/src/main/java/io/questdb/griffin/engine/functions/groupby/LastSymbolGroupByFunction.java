@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import org.jetbrains.annotations.NotNull;
@@ -52,5 +53,10 @@ public class LastSymbolGroupByFunction extends FirstSymbolGroupByFunction {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putInt(valueIndex + 1, srcValue.getInt(valueIndex + 1));
         }
+    }
+
+    @Override
+    public Function newInstance(final Function arg) {
+        return new LastSymbolGroupByFunction((SymbolFunction) arg);
     }
 }

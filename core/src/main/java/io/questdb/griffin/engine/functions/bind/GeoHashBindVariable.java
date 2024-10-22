@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.bind;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
@@ -77,6 +78,11 @@ class GeoHashBindVariable extends AbstractGeoHashFunction implements ScalarFunct
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("?::geohash");
+    }
+
+    @Override
+    public Function deepClone() {
+        return this;
     }
 
     void setType(int type) {

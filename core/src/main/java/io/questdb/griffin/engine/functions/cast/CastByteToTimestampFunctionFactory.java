@@ -58,5 +58,10 @@ public class CastByteToTimestampFunctionFactory implements FunctionFactory {
         public long getTimestamp(Record rec) {
             return (int) arg.getByte(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastByteToTimestampFunction(arg);
+        }
     }
 }

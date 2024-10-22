@@ -238,4 +238,9 @@ class NullCaseFunction implements CaseFunction {
     public int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
     }
+
+    @Override
+    public Function newInstance(final ObjList<Function> args) {
+        return new NullCaseFunction(args);
+    }
 }

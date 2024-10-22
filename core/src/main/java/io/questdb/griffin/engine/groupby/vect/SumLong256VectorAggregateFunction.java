@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.mp.SimpleSpinLock;
@@ -153,6 +154,17 @@ public class SumLong256VectorAggregateFunction extends Long256Function implement
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntSumLong256WrapUp(pRosti, valueOffset, sumA.getLong0(), sumA.getLong1(), sumA.getLong2(), sumA.getLong3(), count.sum());
+    }
+
+    @Override
+    public Function deepClone() {
+        return new SumLong256VectorAggregateFunction(columnIndex, keyValueFunc, distinctFunc);
+    }
+
+    private SumLong256VectorAggregateFunction(int columnIndex, KeyValueFunc keyValueFunc, DistinctFunc distinctFunc) {
+        this.columnIndex = columnIndex;
+        this.keyValueFunc = keyValueFunc;
+        this.distinctFunc = distinctFunc;
     }
 
     private Long256Impl sumLong256(Long256Impl sum, long address, long count) {

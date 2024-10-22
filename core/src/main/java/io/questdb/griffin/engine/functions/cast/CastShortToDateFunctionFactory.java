@@ -53,5 +53,10 @@ public class CastShortToDateFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             return arg.getShort(rec);
         }
+
+        @Override
+        public Function newInstance(final Function arg) {
+            return new CastShortToDateFunction(arg);
+        }
     }
 }
