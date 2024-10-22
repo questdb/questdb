@@ -9925,56 +9925,43 @@ create table tab as (
 
     @Test
     public void testUpdateBatch() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()) {
-                workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), true, false)
-                ) {
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR");
-                    statement.execute();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR");
+            statement.execute();
 
-                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
-                            "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
-                            "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                            "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                    insert1.execute();
+            final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                    "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                    "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                    "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+            insert1.execute();
 
-                    final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5; update x set a=3 where b>2.7; update x set a=2 where b<2.2");
-                    int numOfRowsUpdated1 = update1.executeUpdate();
+            final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5; update x set a=3 where b>2.7; update x set a=2 where b<2.2");
+            int numOfRowsUpdated1 = update1.executeUpdate();
 
-                    if (!walEnabled) {
-                        assertEquals(2, numOfRowsUpdated1);
-                    } else {
-                        // TODO: update on WAL should return 0 row count
-                        // assertEquals(0, numOfRowsUpdated1);
-                    }
+            drainWalQueue();
+            assertEquals(2, numOfRowsUpdated1);
 
-                    final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
-                            "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
-                            "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
-                    insert2.execute();
+            final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                    "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                    "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
+            insert2.execute();
 
-                    final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0; update x set a=6 where a=2");
-                    int numOfRowsUpdated2 = update2.executeUpdate();
-                    if (!walEnabled) {
-                        assertEquals(1, numOfRowsUpdated2);
-                    }
+            final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0; update x set a=6 where a=2");
+            int numOfRowsUpdated2 = update2.executeUpdate();
+            if (!walEnabled) {
+                assertEquals(1, numOfRowsUpdated2);
+            }
 
-                    mayDrainWalQueue();
-                    final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
-                            "6,2.0,2020-06-01 00:00:02.0\n" +
-                            "9,2.6,2020-06-01 00:00:06.0\n" +
-                            "3,3.0,2020-06-01 00:00:12.0\n" +
-                            "8,4.0,2020-06-01 00:00:22.0\n" +
-                            "7,6.0,2020-06-01 00:00:32.0\n";
-                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expected, sink, resultSet);
-                    }
-                }
+            mayDrainWalQueue();
+            final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                    "6,2.0,2020-06-01 00:00:02.0\n" +
+                    "9,2.6,2020-06-01 00:00:06.0\n" +
+                    "3,3.0,2020-06-01 00:00:12.0\n" +
+                    "8,4.0,2020-06-01 00:00:22.0\n" +
+                    "7,6.0,2020-06-01 00:00:32.0\n";
+            try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                sink.clear();
+                assertResultSet(expected, sink, resultSet);
             }
         });
     }
