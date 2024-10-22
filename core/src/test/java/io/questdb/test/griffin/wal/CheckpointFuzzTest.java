@@ -132,7 +132,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testCheckpointFullFuzz() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 836279233557L, 1728473322772L);
         fullFuzz(rnd);
         setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
         runFuzzWithCheckpoint(rnd);
