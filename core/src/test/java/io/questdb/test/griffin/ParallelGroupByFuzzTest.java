@@ -2152,22 +2152,21 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     bindVariableService.setStr("auuid", "78c594c4-9699-4885-aa18-96d0ad3419d2");
                 },
                 "SELECT key, count(anint), count(along) FROM tab " +
-                        "WHERE ts = :atimestamp " +
-//                        "WHERE aboolean = :aboolean " +
-//                        " and abyte = :abyte " +
-//                        " and ageobyte = :ageobyte " +
-//                        " and ashort = :ashort " +
-//                        " and ageoshort = :ageoshort " +
-//                        " and achar = :achar " +
-//                        " and anint = :anint " +
-//                        " and ageoint = :ageoint " +
-//                        " and asymbol = :asymbol " +
-//                        " and along = :along " +
-//                        " and adate = :adate " +
-//                        " and ageolong = :ageolong " +
-//                        " and astring = :astring " +
-//                        " and auuid = :auuid " +
-//                        " and ts = :atimestamp " +
+                        "WHERE aboolean = :aboolean " +
+                        " and abyte = :abyte " +
+                        " and ageobyte = :ageobyte " +
+                        " and ashort = :ashort " +
+                        " and ageoshort = :ageoshort " +
+                        " and achar = :achar " +
+                        " and anint = :anint " +
+                        " and ageoint = :ageoint " +
+                        " and asymbol = :asymbol " +
+                        " and along = :along " +
+                        " and adate = :adate " +
+                        " and ageolong = :ageolong " +
+                        " and astring = :astring " +
+                        " and auuid = :auuid " +
+                        " and ts = :atimestamp " +
                         "ORDER BY key",
                 "key\tcount\tcount1\n" +
                         "k3\t1\t1\n"
