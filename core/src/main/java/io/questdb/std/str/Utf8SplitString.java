@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
@@ -98,7 +99,14 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
      */
     public Utf8SplitString of(long prefixLo, long dataLo, long dataLim, int size, boolean ascii) {
         if (dataLim < dataLo + size) {
-            throw new IllegalArgumentException("dataLim < dataLo + size");
+            throw CairoException.critical(0)
+                    .put("varchar is outside of file boundary [dataLim=")
+                    .put(dataLim)
+                    .put(", dataLo=")
+                    .put(dataLo)
+                    .put(", size=")
+                    .put(size)
+                    .put(']');
         }
         this.prefixLo = prefixLo;
         this.dataLo = dataLo;

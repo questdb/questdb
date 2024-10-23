@@ -25,7 +25,11 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -7673,9 +7677,15 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY");
 
             // we need have more partitions than maxOpenPartitions for this test
+            String expected = "count_distinct\n" +
+                    "6\n";
             assertSql(
-                    "count_distinct\n" +
-                            "6\n", "select count_distinct(timestamp_floor('d', ts)) from x"
+                    expected,
+                    "select count_distinct(timestamp_floor('d', ts)) from x"
+            );
+            assertSql(
+                    expected,
+                    "select count(distinct timestamp_floor('d', ts)) from x"
             );
 
             for (int i = 0; i < 10; i++) {

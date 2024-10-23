@@ -207,7 +207,7 @@ public class Overrides {
         properties.clear();
         properties.setProperty(PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CIRCUIT_BREAKER_THROTTLE.getPropertyPath(), "5");
-        properties.setProperty(PropertyKey.QUERY_TIMEOUT_SEC.getPropertyPath(), "9223372036854775807");
+        properties.setProperty(PropertyKey.QUERY_TIMEOUT_SEC.getPropertyPath(), "0");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY.getPropertyPath(), "64");
@@ -293,6 +293,7 @@ public class Overrides {
         properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT.getPropertyPath(), "false");
         properties.setProperty(PropertyKey.CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT.getPropertyPath(), "false");
+        properties.setProperty(PropertyKey.CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED.getPropertyPath(), "true");
     }
 
     private CairoConfiguration getDefaultConfiguration(String root) {

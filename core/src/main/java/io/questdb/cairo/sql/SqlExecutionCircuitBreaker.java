@@ -53,7 +53,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
         @Override
         public long getFd() {
-            return -1;
+            return -1L;
         }
 
         @Override
@@ -66,8 +66,18 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
             return STATE_OK;
         }
 
-        public boolean isCancelled() {
-            return false;
+        @Override
+        public long getTimeout() {
+            return -1L;
+        }
+
+        @Override
+        public void init(SqlExecutionCircuitBreaker circuitBreaker) {
+        }
+
+        @Override
+        public boolean isThreadsafe() {
+            return true;
         }
 
         @Override
@@ -81,7 +91,6 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
         @Override
         public void setCancelledFlag(AtomicBoolean cancelledFlag) {
-
         }
 
         @Override
@@ -140,6 +149,15 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      * - {@link #STATE_TIMEOUT} <br>
      */
     int getState(long millis, long fd);
+
+    long getTimeout();
+
+    /**
+     * Initializes this circuit breaker from the one passed as a parameter by copying its state
+     */
+    void init(SqlExecutionCircuitBreaker circuitBreaker);
+
+    boolean isThreadsafe();
 
     /**
      * Checks if timer is due.

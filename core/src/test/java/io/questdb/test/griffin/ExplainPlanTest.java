@@ -30,23 +30,96 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.*;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.NegatingFunctionFactory;
 import io.questdb.griffin.engine.functions.SwappingArgsFunctionFactory;
-import io.questdb.griffin.engine.functions.bool.*;
+import io.questdb.griffin.engine.functions.bool.InCharFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.InDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.InTimestampStrFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToRegClassFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToStrArrayFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.StringToStringArrayFunction;
 import io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory;
-import io.questdb.griffin.engine.functions.columns.*;
+import io.questdb.griffin.engine.functions.columns.BinColumn;
+import io.questdb.griffin.engine.functions.columns.BooleanColumn;
+import io.questdb.griffin.engine.functions.columns.ByteColumn;
+import io.questdb.griffin.engine.functions.columns.CharColumn;
+import io.questdb.griffin.engine.functions.columns.DateColumn;
+import io.questdb.griffin.engine.functions.columns.DoubleColumn;
+import io.questdb.griffin.engine.functions.columns.FloatColumn;
+import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
+import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
+import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
+import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
+import io.questdb.griffin.engine.functions.columns.IPv4Column;
+import io.questdb.griffin.engine.functions.columns.IntColumn;
+import io.questdb.griffin.engine.functions.columns.Long128Column;
+import io.questdb.griffin.engine.functions.columns.Long256Column;
+import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.griffin.engine.functions.columns.RecordColumn;
+import io.questdb.griffin.engine.functions.columns.ShortColumn;
+import io.questdb.griffin.engine.functions.columns.StrColumn;
+import io.questdb.griffin.engine.functions.columns.SymbolColumn;
+import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.griffin.engine.functions.columns.UuidColumn;
+import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
-import io.questdb.griffin.engine.functions.constants.*;
-import io.questdb.griffin.engine.functions.date.*;
-import io.questdb.griffin.engine.functions.eq.*;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.GeoByteConstant;
+import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
+import io.questdb.griffin.engine.functions.constants.GeoLongConstant;
+import io.questdb.griffin.engine.functions.constants.GeoShortConstant;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.IntervalConstant;
+import io.questdb.griffin.engine.functions.constants.Long128Constant;
+import io.questdb.griffin.engine.functions.constants.Long256Constant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.NullBinConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.constants.UuidConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory;
+import io.questdb.griffin.engine.functions.date.ExtractFromTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory;
+import io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory;
+import io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.ContainsEqIPv4StrFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.ContainsIPv4StrFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqIPv4FunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqIPv4StrFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqIntStrCFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqIntervalFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqLong256StrFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqSymTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.EqTimestampCursorFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.NegContainsEqIPv4StrFunctionFactory;
+import io.questdb.griffin.engine.functions.eq.NegContainsIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
@@ -64,7 +137,12 @@ import io.questdb.griffin.model.WindowColumn;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
@@ -6457,133 +6535,122 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "from long_sequence(10)");
 
             // multiple count_distinct, no re-write
-            assertPlanNoLeakCheck(
-                    "SELECT count_distinct(s), count_distinct(x) FROM test",
-                    "GroupBy vectorized: false\n" +
-                            "  values: [count_distinct(s),count_distinct(x)]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: test\n"
-            );
+            String expected = "GroupBy vectorized: false\n" +
+                    "  values: [count_distinct(s),count_distinct(x)]\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: test\n";
+            assertPlanNoLeakCheck("SELECT count_distinct(s), count_distinct(x) FROM test", expected);
+            assertPlanNoLeakCheck("SELECT count(distinct s), count(distinct x) FROM test", expected);
+
 
             // no where clause, distinct constant
-            assertPlanNoLeakCheck(
-                    "SELECT count_distinct(10) FROM test",
-                    "Async Group By workers: 1\n" +
-                            "  values: [count_distinct(10)]\n" +
-                            "  filter: null\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: test\n"
-            );
+            expected = "Async Group By workers: 1\n" +
+                    "  values: [count_distinct(10)]\n" +
+                    "  filter: null\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: test\n";
+            assertPlanNoLeakCheck("SELECT count_distinct(10) FROM test", expected);
+            assertPlanNoLeakCheck("SELECT count(distinct 10) FROM test", expected);
 
             // no where clause, distinct column
-            assertPlanNoLeakCheck(
-                    "SELECT count_distinct(s) FROM test",
-                    "Count\n" +
-                            "    Async JIT Group By workers: 1\n" +
-                            "      keys: [s]\n" +
-                            "      filter: s is not null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test\n"
-            );
+            expected = "Count\n" +
+                    "    Async JIT Group By workers: 1\n" +
+                    "      keys: [s]\n" +
+                    "      filter: s is not null\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: test\n";
+            assertPlanNoLeakCheck("SELECT count_distinct(s) FROM test", expected);
+            assertPlanNoLeakCheck("SELECT count(distinct s) FROM test", expected);
 
             // with where clause, distinct column
-            assertPlanNoLeakCheck(
-                    "SELECT count_distinct(s) FROM test where s like '%abc%'",
-                    "Count\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [s]\n" +
-                            "      filter: (s like %abc% and s is not null)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test\n"
-            );
+            expected = "Count\n" +
+                    "    Async Group By workers: 1\n" +
+                    "      keys: [s]\n" +
+                    "      filter: (s like %abc% and s is not null)\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: test\n";
+            assertPlanNoLeakCheck("SELECT count_distinct(s) FROM test where s like '%abc%'", expected);
+            assertPlanNoLeakCheck("SELECT count(distinct s) FROM test where s like '%abc%'", expected);
 
             // no where clause, distinct expression 1
-            assertPlanNoLeakCheck(
-                    "SELECT count_distinct(substring(s,1,1)) FROM test;",
-                    "Count\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [substring]\n" +
-                            "      filter: substring(s,1,1) is not null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test\n"
-            );
+            expected = "Count\n" +
+                    "    Async Group By workers: 1\n" +
+                    "      keys: [substring]\n" +
+                    "      filter: substring(s,1,1) is not null\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: test\n";
+            assertPlanNoLeakCheck("SELECT count_distinct(substring(s,1,1)) FROM test;", expected);
+            assertPlanNoLeakCheck("SELECT count(distinct substring(s,1,1)) FROM test;", expected);
 
             // where clause, distinct expression 2
-            assertPlanNoLeakCheck(
-                    "SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%'",
-                    "Count\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [substring]\n" +
-                            "      filter: (s like %abc% and substring(s,1,1) is not null)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test\n"
-            );
+            expected = "Count\n" +
+                    "    Async Group By workers: 1\n" +
+                    "      keys: [substring]\n" +
+                    "      filter: (s like %abc% and substring(s,1,1) is not null)\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: test\n";
+            assertPlanNoLeakCheck("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%'", expected);
+            assertPlanNoLeakCheck("SELECT count(distinct substring(s,1,1)) FROM test where s like '%abc%'", expected);
 
             // where clause, distinct expression 3, function name clash with column name
-            assertPlanNoLeakCheck(
-                    "SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%' and substring != null",
-                    "Count\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [substring]\n" +
-                            "      filter: (s like %abc% and substring is not null and substring(s,1,1) is not null)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test\n"
-            );
+            expected = "Count\n" +
+                    "    Async Group By workers: 1\n" +
+                    "      keys: [substring]\n" +
+                    "      filter: (s like %abc% and substring is not null and substring(s,1,1) is not null)\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: test\n";
+            assertPlanNoLeakCheck("SELECT count_distinct(substring(s,1,1)) FROM test where s like '%abc%' and substring != null", expected);
+            assertPlanNoLeakCheck("SELECT count(distinct substring(s,1,1)) FROM test where s like '%abc%' and substring != null", expected);
 
             // where clause, distinct expression 3
-            assertPlanNoLeakCheck(
-                    "SELECT count_distinct(x+1) FROM test where x > 5",
-                    "Count\n" +
-                            "    Async JIT Group By workers: 1\n" +
-                            "      keys: [column]\n" +
-                            "      filter: (5<x and x+1!=null)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test\n"
-            );
+            expected = "Count\n" +
+                    "    Async JIT Group By workers: 1\n" +
+                    "      keys: [column]\n" +
+                    "      filter: (5<x and x+1!=null)\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: test\n";
+            assertPlanNoLeakCheck("SELECT count_distinct(x+1) FROM test where x > 5", expected);
+            assertPlanNoLeakCheck("SELECT count(distinct x+1) FROM test where x > 5", expected);
 
             // where clause, distinct expression, col alias
-            assertPlanNoLeakCheck(
-                    "SELECT count_distinct(x+1) cnt_dst FROM test where x > 5",
-                    "Count\n" +
-                            "    Async JIT Group By workers: 1\n" +
-                            "      keys: [column]\n" +
-                            "      filter: (5<x and x+1!=null)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test\n"
-            );
+            expected = "Count\n" +
+                    "    Async JIT Group By workers: 1\n" +
+                    "      keys: [column]\n" +
+                    "      filter: (5<x and x+1!=null)\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: test\n";
+            assertPlanNoLeakCheck("SELECT count_distinct(x+1) cnt_dst FROM test where x > 5", expected);
+            assertPlanNoLeakCheck("SELECT count(distinct x+1) cnt_dst FROM test where x > 5", expected);
 
-            assertSql(
-                    "cnt_dst\n" +
-                            "5\n",
-                    "SELECT count_distinct(x+1) cnt_dst FROM test where x > 5"
-            );
+            expected = "cnt_dst\n" +
+                    "5\n";
+            assertSql(expected, "SELECT count_distinct(x+1) cnt_dst FROM test where x > 5");
+            assertSql(expected, "SELECT count(distinct x+1) cnt_dst FROM test where x > 5");
 
             // where clause, distinct expression, table alias
-            assertPlanNoLeakCheck(
-                    "SELECT count_distinct(x+1) FROM test tab where x > 5",
-                    "Count\n" +
-                            "    Async JIT Group By workers: 1\n" +
-                            "      keys: [column]\n" +
-                            "      filter: (5<x and x+1!=null)\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: test\n"
-            );
+            expected = "Count\n" +
+                    "    Async JIT Group By workers: 1\n" +
+                    "      keys: [column]\n" +
+                    "      filter: (5<x and x+1!=null)\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: test\n";
+            assertPlanNoLeakCheck("SELECT count_distinct(x+1) FROM test tab where x > 5", expected);
+            assertPlanNoLeakCheck("SELECT count(distinct x+1) FROM test tab where x > 5", expected);
 
-            assertSql(
-                    "count_distinct\n" +
-                            "5\n",
-                    "SELECT count_distinct(x+1) FROM test tab where x > 5"
-            );
+            expected = "count_distinct\n" +
+                    "5\n";
+            assertSql(expected, "SELECT count_distinct(x+1) FROM test tab where x > 5");
+            assertSql(expected, "SELECT count(distinct x+1) FROM test tab where x > 5");
         });
     }
 
@@ -7292,115 +7359,155 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectCountDistinct1() throws Exception {
+        String expected = "GroupBy vectorized: false\n" +
+                "  values: [count_distinct(s)]\n" +
+                "    PageFrame\n" +
+                "        Row forward scan\n" +
+                "        Frame forward scan on: tab\n";
         assertPlan(
                 "create table tab (s symbol, ts timestamp);",
                 "select count_distinct(s) from tab",
-                "GroupBy vectorized: false\n" +
-                        "  values: [count_distinct(s)]\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
+                expected
+        );
+        assertPlan(
+                "select count(distinct s) from tab",
+                expected
         );
     }
 
     @Test
     public void testSelectCountDistinct2() throws Exception {
+        String expected = "GroupBy vectorized: false\n" +
+                "  values: [count_distinct(s)]\n" +
+                "    PageFrame\n" +
+                "        Row forward scan\n" +
+                "        Frame forward scan on: tab\n";
         assertPlan(
                 "create table tab (s symbol index, ts timestamp);",
                 "select count_distinct(s) from tab",
-                "GroupBy vectorized: false\n" +
-                        "  values: [count_distinct(s)]\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
+                expected
+        );
+        assertPlan(
+                "select count(distinct s) from tab",
+                expected
         );
     }
 
     @Test
     public void testSelectCountDistinct3() throws Exception {
+        String expected = "Count\n" +
+                "    Async JIT Group By workers: 1\n" +
+                "      keys: [l]\n" +
+                "      filter: l!=null\n" +
+                "        PageFrame\n" +
+                "            Row forward scan\n" +
+                "            Frame forward scan on: tab\n";
         assertPlan(
                 "create table tab ( s string, l long )",
                 "select count_distinct(l) from tab",
-                "Count\n" +
-                        "    Async JIT Group By workers: 1\n" +
-                        "      keys: [l]\n" +
-                        "      filter: l!=null\n" +
-                        "        PageFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: tab\n"
+                expected
+        );
+        assertPlan(
+                "select count(distinct l) from tab",
+                expected
         );
     }
 
     @Test
     public void testSelectCountDistinct4() throws Exception {
+        String expected = "Async Group By workers: 1\n" +
+                "  keys: [s]\n" +
+                "  values: [count_distinct(i)]\n" +
+                "  filter: null\n" +
+                "    PageFrame\n" +
+                "        Row forward scan\n" +
+                "        Frame forward scan on: tab\n";
         assertPlan(
                 "create table tab ( s string, i int )",
                 "select s, count_distinct(i) from tab",
-                "Async Group By workers: 1\n" +
-                        "  keys: [s]\n" +
-                        "  values: [count_distinct(i)]\n" +
-                        "  filter: null\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
+                expected
+        );
+        assertPlan(
+                "select s, count(distinct i) from tab",
+                expected
         );
     }
 
     @Test
     public void testSelectCountDistinct5() throws Exception {
+        String expected = "Async Group By workers: 1\n" +
+                "  keys: [s]\n" +
+                "  values: [count_distinct(ip)]\n" +
+                "  filter: null\n" +
+                "    PageFrame\n" +
+                "        Row forward scan\n" +
+                "        Frame forward scan on: tab\n";
         assertPlan(
                 "create table tab ( s string, ip ipv4 )",
                 "select s, count_distinct(ip) from tab",
-                "Async Group By workers: 1\n" +
-                        "  keys: [s]\n" +
-                        "  values: [count_distinct(ip)]\n" +
-                        "  filter: null\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
+                expected
+        );
+        assertPlan(
+                "select s, count(distinct ip) from tab",
+                expected
         );
     }
 
     @Test
     public void testSelectCountDistinct6() throws Exception {
+        String expected = "Async Group By workers: 1\n" +
+                "  keys: [s]\n" +
+                "  values: [count_distinct(l)]\n" +
+                "  filter: null\n" +
+                "    PageFrame\n" +
+                "        Row forward scan\n" +
+                "        Frame forward scan on: tab\n";
         assertPlan(
                 "create table tab ( s string, l long )",
                 "select s, count_distinct(l) from tab",
-                "Async Group By workers: 1\n" +
-                        "  keys: [s]\n" +
-                        "  values: [count_distinct(l)]\n" +
-                        "  filter: null\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
+                expected
+        );
+        assertPlan(
+                "select s, count(distinct l) from tab",
+                expected
         );
     }
 
     @Test
     public void testSelectCountDistinct7() throws Exception {
+        String expected = "Async JIT Group By workers: 1\n" +
+                "  values: [count_distinct(s)]\n" +
+                "  filter: s='foobar'\n" +
+                "    PageFrame\n" +
+                "        Row forward scan\n" +
+                "        Frame forward scan on: tab\n";
         assertPlan(
                 "create table tab (s symbol, ts timestamp);",
                 "select count_distinct(s) from tab where s = 'foobar'",
-                "Async JIT Group By workers: 1\n" +
-                        "  values: [count_distinct(s)]\n" +
-                        "  filter: s='foobar'\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
+                expected
+        );
+        assertPlan(
+                "select count(distinct s) from tab where s = 'foobar'",
+                expected
         );
     }
 
     @Test
     public void testSelectCountDistinct8() throws Exception {
+        String expected = "Async Group By workers: 1\n" +
+                "  values: [count_distinct(s),first(s)]\n" +
+                "  filter: null\n" +
+                "    PageFrame\n" +
+                "        Row forward scan\n" +
+                "        Frame forward scan on: tab\n";
         assertPlan(
                 "create table tab (s symbol, ts timestamp);",
                 "select count_distinct(s), first(s) from tab",
-                "Async Group By workers: 1\n" +
-                        "  values: [count_distinct(s),first(s)]\n" +
-                        "  filter: null\n" +
-                        "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
+                expected
+        );
+        assertPlan(
+                "select count(distinct s), first(s) from tab",
+                expected
         );
     }
 
@@ -10824,8 +10931,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertPlanNoLeakCheck(ddl, query, expectedPlan));
     }
 
+    private void assertPlan(String query, String expectedPlan) throws Exception {
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(null, query, expectedPlan));
+    }
+
     private void assertPlanNoLeakCheck(String ddl, String query, String expectedPlan) throws Exception {
-        compile(ddl);
+        if (ddl != null) {
+            compile(ddl);
+        }
         assertPlanNoLeakCheck(query, expectedPlan);
     }
 

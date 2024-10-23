@@ -28,8 +28,13 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TimeFrameRecordCursor;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.QueryRegistry;
@@ -92,7 +97,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
         if (e instanceof FlyweightMessageContainer) {
             final int pos = ((FlyweightMessageContainer) e).getPosition();
             final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
-            final CharSequence messsage = ((FlyweightMessageContainer) e).getFlyweightMessage();
+            final CharSequence message = ((FlyweightMessageContainer) e).getFlyweightMessage();
             LOG.errorW()
                     .$("err")
                     .$(" [id=").$(sqlId)
@@ -101,7 +106,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                     .$(", cache=").$(cacheHit)
                     .$(", jit=").$(jit)
                     .$(", time=").$(queryTime)
-                    .$(", msg=").$(messsage)
+                    .$(", msg=").$(message)
                     .$(", errno=").$(errno)
                     .$(", pos=").$(pos)
                     .I$();
@@ -310,10 +315,10 @@ public class QueryProgress extends AbstractRecordCursorFactory {
         public boolean hasNext() throws DataUnavailableException {
             try {
                 return base.hasNext();
-            } catch (Throwable e) {
+            } catch (Throwable th) {
                 failed = true;
-                logError(e);
-                throw e;
+                logError(th);
+                throw th;
             }
         }
 
