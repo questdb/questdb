@@ -27,6 +27,7 @@ io.questdb.griffin.engine.functions.finance.SpreadFunctionFactory
 io.questdb.griffin.engine.functions.finance.MidPriceFunctionFactory
 io.questdb.griffin.engine.functions.finance.WeightedMidPriceFunctionFactory
 io.questdb.griffin.engine.functions.finance.SpreadBpsFunctionFactory
+io.questdb.griffin.engine.functions.finance.VwapDoubleGroupByFunctionFactory
 
 io.questdb.griffin.engine.functions.activity.CancelQueryFunctionFactory
 io.questdb.griffin.engine.functions.activity.QueryActivityFunctionFactory
@@ -876,7 +877,7 @@ io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory
 
 # vwap()
-io.questdb.griffin.engine.functions.groupby.VwapDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.SingleShotVwapDoubleGroupByFunctionFactory
 
 # stddev()
 io.questdb.griffin.engine.functions.groupby.StdDevGroupByFunctionFactory

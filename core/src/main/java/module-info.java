@@ -1,3 +1,5 @@
+import io.questdb.griffin.engine.functions.groupby.SingleShotVwapDoubleGroupByFunctionFactory;
+
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -127,6 +129,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.finance.MidPriceFunctionFactory,
             io.questdb.griffin.engine.functions.finance.WeightedMidPriceFunctionFactory,
             io.questdb.griffin.engine.functions.finance.SpreadBpsFunctionFactory,
+            io.questdb.griffin.engine.functions.finance.VwapDoubleGroupByFunctionFactory,
 
 
             // query activity functions
@@ -895,7 +898,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.AvgDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.AvgBooleanGroupByFunctionFactory,
 //                  vwap()
-            io.questdb.griffin.engine.functions.groupby.VwapDoubleGroupByFunctionFactory,
+            SingleShotVwapDoubleGroupByFunctionFactory,
 //                 stddev()
             io.questdb.griffin.engine.functions.groupby.StdDevGroupByFunctionFactory,
 //                 stddev_samp()

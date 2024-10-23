@@ -27,7 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
+public class SingleShotSingleShotVwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {
