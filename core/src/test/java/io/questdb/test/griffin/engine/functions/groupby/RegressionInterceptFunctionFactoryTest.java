@@ -51,7 +51,7 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
             assertSql(
-                    "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
+                    "regr_intercept\nnull\n", "select regr_intercept(x, y) from tbl1"
             );
         });
     }
@@ -121,7 +121,7 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
             assertSql(
-                    "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
+                    "regr_intercept\nnull\n", "select regr_intercept(x, y) from tbl1"
             );
         });
     }
