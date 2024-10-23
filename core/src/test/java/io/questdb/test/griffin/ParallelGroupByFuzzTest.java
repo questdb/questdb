@@ -165,7 +165,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             insert("INSERT INTO t VALUES ('2023-09-21T10:00:01.000000Z', 'b', 'c');");
 
             if (convertToParquet) {
-                ddl("alter table t convert partition to parquet where ts >= 0");
+                ddl("alter table t convert partition to parquet where created >= 0");
             }
 
             assertQuery(
@@ -230,6 +230,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testNonKeyedGroupByEmptyTable() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
+        // The table is empty.
+        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
@@ -241,9 +243,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "  quantity LONG) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
-                        if (convertToParquet) {
-                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
-                        }
                         assertQueries(
                                 engine,
                                 sqlExecutionContext,
@@ -686,6 +685,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testParallelGroupByCastToSymbol() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
+        // The table is non-partitioned.
+        Assume.assumeFalse(convertToParquet);
         // This query shouldn't be executed in parallel,
         // so this test verifies that nothing breaks.
         assertMemoryLeak(() -> {
@@ -696,9 +697,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                 "create table x as (select * from (select rnd_symbol('a','b','c') a, 'x' || x b from long_sequence(" + ROW_COUNT + ")))",
                                 sqlExecutionContext
                         );
-                        if (convertToParquet) {
-                            ddl(compiler, "alter table x convert partition to parquet where ts >= 0", sqlExecutionContext);
-                        }
                         assertQueries(
                                 engine,
                                 sqlExecutionContext,
@@ -1628,6 +1626,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelRegressionSlope() throws Exception {
         Assume.assumeTrue(enableJitCompiler);
+        Assume.assumeFalse(convertToParquet);
 
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
@@ -1635,16 +1634,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-
                         ddl(
                                 compiler,
                                 "create table tbl1 as (select rnd_double() x, rnd_double() y, rnd_symbol('a', 'b', 'c') sym from long_sequence(100000))",
                                 sqlExecutionContext
                         );
-                        if (convertToParquet) {
-                            ddl(compiler, "alter table tbl1 convert partition to parquet where ts >= 0", sqlExecutionContext);
-                        }
-
                         TestUtils.assertSql(
                                 engine,
                                 sqlExecutionContext,
@@ -1657,11 +1651,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         );
                     },
                     configuration,
-
                     LOG
             );
         });
-
     }
 
     @Test
@@ -2795,6 +2787,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     public void testStringKeyGroupByEmptyTable() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
+        // The table is empty, so there is nothing to convert.
+        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
             TestUtils.execute(
@@ -2808,9 +2802,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
-                        if (convertToParquet) {
-                            ddl(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
-                        }
                         assertQueries(
                                 engine,
                                 sqlExecutionContext,
