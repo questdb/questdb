@@ -1176,6 +1176,19 @@ public class InsertTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testInsertSelectTwoWheres() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table result (r long)");
+
+            assertExceptionNoLeakCheck(
+                    "insert into result select * from long_sequence(1) where true where false;",
+                    61,
+                    "unexpected token [where]"
+            );
+        });
+    }
+
     private void assertInsertTimestamp(String expected, String ddl2, Class<?> exceptionType, boolean commitInsert) throws Exception {
         assertMemoryLeak(() -> {
             if (commitInsert) {

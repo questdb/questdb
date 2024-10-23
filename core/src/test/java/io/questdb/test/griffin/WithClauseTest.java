@@ -134,4 +134,12 @@ public class WithClauseTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWithSelectTwoWheres() throws Exception {
+        assertException("with example as (select * from long_sequence(1))\n" +
+                        "select * from example where true where false;",
+                82,
+                "unexpected token [where]"
+        );
+    }
 }
