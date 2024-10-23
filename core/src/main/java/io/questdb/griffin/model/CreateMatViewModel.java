@@ -39,12 +39,12 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     private String baseTableName;
     private long fromMicros = -1;
     private TableToken matViewToken;
-    private String query;
     private long samplingInterval = -1;
     private char samplingIntervalUnit;
     private String timeZone;
     private String timeZoneOffset;
     private long toMicros = -1;
+    private String viewSql;
 
     private CreateMatViewModel() {
         tableModel = CreateTableModel.FACTORY.newInstance();
@@ -54,7 +54,7 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     public void clear() {
         tableModel.clear();
         matViewToken = null;
-        query = null;
+        viewSql = null;
         baseTableName = null;
         samplingInterval = -1;
         samplingIntervalUnit = '\0';
@@ -65,7 +65,8 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     }
 
     public MaterializedViewDefinition generateDefinition() {
-        return new MaterializedViewDefinition(matViewToken, query, baseTableName, samplingInterval, samplingIntervalUnit,
+        assert matViewToken != null;
+        return new MaterializedViewDefinition(matViewToken, viewSql, baseTableName, samplingInterval, samplingIntervalUnit,
                 fromMicros, toMicros, timeZone, timeZoneOffset
         );
     }
@@ -101,10 +102,6 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         this.fromMicros = fromMicros;
     }
 
-    public void setQuery(String query) {
-        this.query = query;
-    }
-
     public void setSamplingInterval(long samplingInterval) {
         this.samplingInterval = samplingInterval;
     }
@@ -129,6 +126,10 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         this.toMicros = toMicros;
     }
 
+    public void setViewSql(String viewSql) {
+        this.viewSql = viewSql;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("create materialized view ");
@@ -136,7 +137,7 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         sink.putAscii(" with base ");
         sink.put(baseTableName);
         sink.putAscii(" as (");
-        sink.put(query);
+        sink.put(viewSql);
         sink.putAscii(')');
         for (int i = 0, n = tableModel.getColumnCount(); i < n; i++) {
             if (tableModel.isIndexed(i)) {

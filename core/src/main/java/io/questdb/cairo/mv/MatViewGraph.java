@@ -24,26 +24,21 @@
 
 package io.questdb.cairo.mv;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentQueue;
-import io.questdb.std.*;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
-
-import java.util.concurrent.atomic.AtomicInteger;
 
 public class MatViewGraph implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewGraph.class);
     private final ConcurrentHashMap<BaseTableMatViewRefreshState> dependantViewsByTableName = new ConcurrentHashMap<>();
-    private final AtomicInteger queueFullCounter = new AtomicInteger();
     private final ConcurrentHashMap<MaterializedViewRefreshState> refreshStateByTableDirName = new ConcurrentHashMap<>();
-    private final ConcurrentQueue<MvRefreshTask> refreshTaskQueue;
-
-    public MatViewGraph(CairoConfiguration configuration) {
-        refreshTaskQueue = new ConcurrentQueue<MvRefreshTask>(MvRefreshTask::new);
-    }
+    private final ConcurrentQueue<MvRefreshTask> refreshTaskQueue = new ConcurrentQueue<>(MvRefreshTask::new);
 
     public void clear() {
         close();
@@ -109,19 +104,15 @@ public class MatViewGraph implements QuietCloseable {
         }
     }
 
-    public int getQueueFullCount() {
-        return queueFullCounter.get();
-    }
-
-    public MaterializedViewDefinition getView(CharSequence baseTableName, TableToken viewTable) {
-        BaseTableMatViewRefreshState state = dependantViewsByTableName.get(baseTableName);
+    public MaterializedViewDefinition getMatView(CharSequence baseTableName, TableToken matViewToken) {
+        final BaseTableMatViewRefreshState state = dependantViewsByTableName.get(baseTableName);
         if (state != null) {
             try {
                 state.readLock();
-                for (int i = 0, size = state.matViews.size(); i < size; i++) {
-                    MaterializedViewDefinition view = state.matViews.get(i);
-                    if (view.getTableToken().equals(viewTable)) {
-                        return view;
+                for (int i = 0, n = state.matViews.size(); i < n; i++) {
+                    final MaterializedViewDefinition matView = state.matViews.get(i);
+                    if (matView.getTableToken().equals(matViewToken)) {
+                        return matView;
                     }
                 }
             } finally {

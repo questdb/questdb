@@ -28,10 +28,24 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.mv.MaterializedViewDefinition;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryMW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -41,9 +55,24 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -69,6 +98,8 @@ public final class TableUtils {
     public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
+    public static final String MAT_VIEW_FILE_NAME = "_mv";
+    public static final String MAT_VIEW_QUERY_FILE_NAME = "_mv.q";
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
@@ -103,6 +134,9 @@ public final class TableUtils {
 
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
+    // 24-byte header left empty for possible future use
+    // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
+    public static final int MV_HEADER_SIZE = 24;
     public static final int NULL_LEN = -1;
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -307,6 +341,22 @@ public final class TableUtils {
             throw SqlException.$(tableNameExpr.position, "function must return CURSOR");
         }
         return function;
+    }
+
+    public static void createMatViewDefinitionFile(MemoryMARW mem, MaterializedViewDefinition matViewDefinition, TableToken baseTableToken) {
+        mem.extend(MV_HEADER_SIZE);
+        mem.jumpTo(MV_HEADER_SIZE);
+        mem.putInt(baseTableToken.getTableId());
+        mem.putLong(matViewDefinition.getFromMicros());
+        mem.putLong(matViewDefinition.getToMicros());
+        mem.putLong(matViewDefinition.getSamplingInterval());
+        mem.putChar(matViewDefinition.getSamplingIntervalUnit());
+        mem.putStr(matViewDefinition.getTimeZone());
+        mem.putStr(matViewDefinition.getTimeZoneOffset());
+    }
+
+    public static void createMatViewQueryFile(MemoryMARW mem, MaterializedViewDefinition matViewDefinition) {
+        mem.putStr(matViewDefinition.getViewSql());
     }
 
     public static void createTable(
@@ -551,6 +601,29 @@ public final class TableUtils {
         txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
     }
 
+    public static void createViewMetaFiles(
+            FilesFacade ff,
+            MemoryMARW mem,
+            Path path,
+            CharSequence root,
+            CharSequence tableDir,
+            MaterializedViewDefinition matViewDefinition,
+            TableToken baseTableToken
+    ) {
+        path.of(root).concat(tableDir).$();
+        final int rootLen = path.size();
+
+        mem.smallFile(ff, path.concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+        createMatViewDefinitionFile(mem, matViewDefinition, baseTableToken);
+        mem.sync(false);
+        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+
+        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_QUERY_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+        createMatViewQueryFile(mem, matViewDefinition);
+        mem.sync(false);
+        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+    }
+
     public static LPSZ dFile(Path path, CharSequence columnName, long columnTxn) {
         path.concat(columnName).put(FILE_SUFFIX_D);
         if (columnTxn > COLUMN_NAME_TXN_NONE) {
@@ -561,6 +634,11 @@ public final class TableUtils {
 
     public static LPSZ dFile(Path path, CharSequence columnName) {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
+    }
+
+    public static boolean doesMvFileExist(CairoConfiguration configuration, Path path, CharSequence dirName, FilesFacade ff) {
+        path.of(configuration.getRoot()).concat(dirName).concat(MAT_VIEW_FILE_NAME);
+        return ff.exists(path.$());
     }
 
     public static long estimateAvgRecordSize(RecordMetadata metadata) {

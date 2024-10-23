@@ -106,6 +106,7 @@ public interface TableNameRegistry extends Closeable {
      * @param tableName table name
      * @param dirName   private table name, e.g. the directory where the table files are stored
      * @param tableId   unique table id
+     * @param isMatView true if the table is a materialized view
      * @param isWal     true if table is WAL enabled
      * @return table token or null if table name with the same tableId, private name is already registered
      */

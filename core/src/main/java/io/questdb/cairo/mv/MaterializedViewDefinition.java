@@ -28,8 +28,8 @@ import io.questdb.cairo.TableToken;
 
 public class MaterializedViewDefinition {
     private final CharSequence baseTableName;
-    private final long sampleByFromEpochMicros;
-    private final long sampleByPeriodMicros;
+    private final long fromMicros;
+    private final long samplingInterval;
     private final char samplingIntervalUnit;
     private final TableToken tableToken;
     private final String timeZone;
@@ -39,7 +39,7 @@ public class MaterializedViewDefinition {
 
     public MaterializedViewDefinition(
             TableToken matViewToken,
-            String query,
+            String viewSql,
             String baseTableName,
             long samplingInterval,
             char samplingIntervalUnit,
@@ -49,11 +49,11 @@ public class MaterializedViewDefinition {
             String timeZoneOffset
     ) {
         this.tableToken = matViewToken;
-        this.viewSql = query;
+        this.viewSql = viewSql;
         this.baseTableName = baseTableName;
-        this.sampleByPeriodMicros = samplingInterval;
+        this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;
-        this.sampleByFromEpochMicros = fromMicros;
+        this.fromMicros = fromMicros;
         this.toMicros = toMicros;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
@@ -64,23 +64,15 @@ public class MaterializedViewDefinition {
     }
 
     public long getFromMicros() {
-        return sampleByFromEpochMicros;
+        return fromMicros;
     }
 
     public TableToken getMatViewToken() {
         return tableToken;
     }
 
-    public CharSequence getQuery() {
-        return viewSql;
-    }
-
-    public long getSampleByFromEpochMicros() {
-        return sampleByFromEpochMicros;
-    }
-
-    public long getSampleByInterval() {
-        return sampleByPeriodMicros;
+    public long getSamplingInterval() {
+        return samplingInterval;
     }
 
     public char getSamplingIntervalUnit() {

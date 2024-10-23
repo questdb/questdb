@@ -1751,6 +1751,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             || type == CompiledQuery.EXPLAIN
                             || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
                             || type == CompiledQuery.CREATE_TABLE || type == CompiledQuery.CREATE_TABLE_AS_SELECT // create table is complete at this point
+                            || type == CompiledQuery.CREATE_MAT_VIEW // create mat view is complete at this point
             ) {
                 queryRegistry.unregister(sqlId, executionContext);
             }
@@ -2090,11 +2091,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             matViewModel.setTableToken(matViewToken);
 
             final MaterializedViewDefinition matViewDefinition = matViewModel.generateDefinition();
-
-            // TODO: persist view definition, i.e. save mat view metadata
-            //  load them back on startup
-
             final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+            TableUtils.createViewMetaFiles(ff, mem, path, configuration.getRoot(), matViewToken.getDirName(), matViewDefinition, baseTableToken);
+
             engine.getMaterializedViewGraph().upsertView(baseTableToken, matViewDefinition);
             compiledQuery.ofCreateMatView(matViewToken);
         }
@@ -3718,6 +3717,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     metadata
                             );
                             mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                        }
+
+                        if (tableToken.isMatView()) {
+                            // todo: clone mat view meta files
                         }
                     } finally {
                         mem.close();

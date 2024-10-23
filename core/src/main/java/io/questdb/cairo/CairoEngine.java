@@ -31,8 +31,15 @@ import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.mv.MvRefreshTask;
-import io.questdb.cairo.mv.MatViewGraph;
-import io.questdb.cairo.pool.*;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
+import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.pool.ReaderPool;
+import io.questdb.cairo.pool.SequencerMetadataPool;
+import io.questdb.cairo.pool.SqlCompilerPool;
+import io.questdb.cairo.pool.TableMetadataPool;
+import io.questdb.cairo.pool.WalWriterPool;
+import io.questdb.cairo.pool.WriterPool;
+import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.InsertMethod;
@@ -49,7 +56,6 @@ import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
-import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
@@ -114,6 +120,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
+    private final MatViewGraph matViewGraph;
     private final MessageBusImpl messageBus;
     private final MetadataCache metadataCache;
     private final Metrics metrics;
@@ -135,7 +142,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
-    private final MatViewGraph matViewGraph;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
@@ -151,7 +157,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     configuration,
                     ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
             );
-            this.matViewGraph = new MatViewGraph(configuration);
+            this.matViewGraph = new MatViewGraph();
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
             this.copyContext = new CopyContext(configuration);
@@ -275,6 +281,11 @@ public class CairoEngine implements Closeable, WriterSource {
         if (token.isWal()) {
             tableSequencerAPI.applyRename(updatedTableToken);
         }
+    }
+
+    public void attachReader(TableReader reader) {
+        // Ignore the object close() call until attached back
+        readerPool.attach(reader);
     }
 
     public void awaitTable(String tableName, long timeout, TimeUnit timeoutUnit) {
@@ -488,11 +499,6 @@ public class CairoEngine implements Closeable, WriterSource {
         try (SqlCompiler compiler = getSqlCompiler()) {
             ddl(compiler, ddl, sqlExecutionContext, eventSubSeq);
         }
-    }
-
-    public void attachReader(TableReader reader) {
-        // Ignore the object close() call until attached back
-        readerPool.attach(reader);
     }
 
     public void detachReader(TableReader reader) {
@@ -1033,22 +1039,21 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableToken lockTableName(CharSequence tableName, boolean isMatView, boolean isWal) {
-        int tableId = (int) getTableIdGenerator().getNextId();
+        final int tableId = (int) getTableIdGenerator().getNextId();
         return lockTableName(tableName, tableId, isMatView, isWal);
     }
 
     @Nullable
     public TableToken lockTableName(CharSequence tableName, int tableId, boolean isMatView, boolean isWal) {
-        String tableNameStr = Chars.toString(tableName);
+        final String tableNameStr = Chars.toString(tableName);
         final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableNameStr, tableId, isWal);
         return lockTableName(tableNameStr, dirName, tableId, isMatView, isWal);
     }
 
-    @SuppressWarnings("unused")
     @Nullable
     public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isMatView, boolean isWal) {
         validNameOrThrow(tableName);
-        String tableNameStr = Chars.toString(tableName);
+        final String tableNameStr = Chars.toString(tableName);
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isMatView, isWal);
     }
 
@@ -1473,8 +1478,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
         fromPath.of(root).concat(fromTableToken).$();
 
-        TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), false, false);
-
+        final TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), fromTableToken.isMatView(), fromTableToken.isWal());
         if (toTableToken == null) {
             LOG.error()
                     .$("rename target exists [from='").utf8(fromTableToken.getTableName())

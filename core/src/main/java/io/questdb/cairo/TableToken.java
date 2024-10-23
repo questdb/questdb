@@ -48,10 +48,6 @@ public class TableToken implements Sinkable {
         this(tableName, new GcUtf8String(dirName), tableId, false, isWal, isSystem, isProtected, false);
     }
 
-    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isMatView, boolean isWal, boolean isSystem, boolean isProtected) {
-        this(tableName, new GcUtf8String(dirName), tableId, isMatView, isWal, isSystem, isProtected, false);
-    }
-
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isMatView, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
         this(tableName, new GcUtf8String(dirName), tableId, isMatView, isWal, isSystem, isProtected, isPublic);
     }

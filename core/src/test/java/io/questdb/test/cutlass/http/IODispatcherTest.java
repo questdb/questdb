@@ -8781,7 +8781,7 @@ public class IODispatcherTest extends AbstractTest {
         DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(baseDir);
 
         String telemetry = TelemetryTask.TABLE_NAME;
-        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, true);
+        TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, false, true);
         try (
                 TableReader reader = new TableReader(configuration, telemetryTableName);
                 TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()

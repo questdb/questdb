@@ -24,12 +24,39 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
-import io.questdb.griffin.model.*;
-import io.questdb.std.*;
+import io.questdb.griffin.model.ColumnCastModel;
+import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.CreateMatViewModel;
+import io.questdb.griffin.model.CreateTableModel;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExplainModel;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WithClauseModel;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
+import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -639,7 +666,7 @@ public class SqlParser {
 
             // find mat view query
             final String matViewSql = Chars.toString(lexer.getContent(), queryStartPos, lexer.getPosition() - 1);
-            matViewModel.setQuery(matViewSql);
+            matViewModel.setViewSql(matViewSql);
 
             // create view columns based on query
             final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();

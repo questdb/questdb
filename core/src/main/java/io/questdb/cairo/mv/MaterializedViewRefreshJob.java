@@ -24,11 +24,27 @@
 
 package io.questdb.cairo.mv;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnFilter;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.griffin.RecordToRowCopierUtils;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
@@ -41,16 +57,14 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 
 public class MaterializedViewRefreshJob extends SynchronizedJob implements QuietCloseable {
-    public static final String MAT_VIEW_REFRESH_TABLE_WRITE_REASON = "Mat View refresh";
     private static final Log LOG = LogFactory.getLog(MaterializedViewRefreshJob.class);
     private final ObjList<CharSequence> baseTables = new ObjList<>();
     private final MatViewGraph.AffectedMatViewsSink childViewSink = new MatViewGraph.AffectedMatViewsSink();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final CairoEngine engine;
     private final MatViewRefreshExecutionContext matViewRefreshExecutionContext;
-    private final WalTxnRangeLoader txnRangeLoader;
     private final MvRefreshTask mvRefreshTask = new MvRefreshTask();
-    private int queueFullCount;
+    private final WalTxnRangeLoader txnRangeLoader;
 
     public MaterializedViewRefreshJob(CairoEngine engine) {
         this.engine = engine;
@@ -76,16 +90,16 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
             long minTs = txnRangeLoader.getMinTimestamp();
             long maxTs = txnRangeLoader.getMaxTimestamp();
 
-            if (minTs <= maxTs && minTs >= viewDefinition.getSampleByFromEpochMicros()) {
+            if (minTs <= maxTs && minTs >= viewDefinition.getFromMicros()) {
                 // TODO: reuse the sampler instance
                 // TODO: Handle sample by with timezones
                 TimestampSampler sampler = TimestampSamplerFactory.getInstance(
-                        viewDefinition.getSampleByInterval(),
+                        viewDefinition.getSamplingInterval(),
                         viewDefinition.getSamplingIntervalUnit(),
                         0
                 );
 
-                long sampleByFromEpoch = viewDefinition.getSampleByFromEpochMicros();
+                long sampleByFromEpoch = viewDefinition.getFromMicros();
                 sampler.setStart(sampleByFromEpoch);
 
                 minTs = sampler.round(minTs);
