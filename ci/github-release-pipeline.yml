@@ -84,7 +84,7 @@ stages:
               tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
               echo "Checking if release ${tag_name} already exists..."
               
-              release_tag=$(gh release view ${tag_name} | grep "github" | sed 's#.*/##')
+              release_tag=$(gh release view ${tag_name} | | grep -E "url:.*github.*/tag/" | sed 's#.*/##')
               echo "Using release tag ${release_tag}"
               
               gh release upload ${release_tag} $(Build.ArtifactStagingDirectory)/drop/*.gz
