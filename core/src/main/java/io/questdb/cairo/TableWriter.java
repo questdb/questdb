@@ -5071,7 +5071,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 newTransientRowCount = txWriter.getPartitionSize(prevIndex);
                 try {
                     setPathForNativePartition(path.trimTo(pathSize), partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                    readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), newTransientRowCount, parquetSize);
+                    readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetSize, newTransientRowCount);
                     nextMaxTimestamp = attachMaxTimestamp;
                 } finally {
                     path.trimTo(pathSize);
