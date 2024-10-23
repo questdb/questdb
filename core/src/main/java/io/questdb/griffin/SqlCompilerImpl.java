@@ -2108,6 +2108,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final RecordMetadata metadata = factory.getMetadata();
             validateMatViewModel(model, metadata);
 
+            // Now we should know the designated timestamp index
+            // Enable dedup
+            model.setDedupKeyFlag(model.getTimestampIndex());
+
             // at the time of view creation we do not insert any data, just validate that the query works
             cursor.hasNext();
 
@@ -3048,22 +3052,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
 
-        // validate type of timestamp column
-        // no need to worry that column will not resolve
-        ExpressionNode timestamp = model.getTimestamp();
-        if (timestamp == null) {
-            for (int i = 0, n = model.getColumnCount(); i < n; i++) {
-                if (ColumnType.isTimestamp(metadata.getColumnType(model.getColumnName(i)))) {
-                    if (timestamp != null) {
-                        throw SqlException.position(0).put("Designated timestamp should be set explicitly");
-                    }
-                    timestamp = model.getQueryModel().getBottomUpColumns().get(i).getAst();
+        // Validate designated of timestamp column
+        ExpressionNode timestamp;
+        if (metadata.getTimestampIndex() != -1) {
+            if (model.getTimestampIndex() != -1) {
+                if (model.getTimestampIndex() != metadata.getTimestampIndex()) {
+                    // TODO: check that these timestamp column are equivalent
                 }
+                timestamp = model.getTimestamp();
+            } else {
+                timestamp = model.getQueryModel().getBottomUpColumns().get(metadata.getTimestampIndex()).getAst();
+                model.setTimestamp(timestamp);
             }
-            if (timestamp == null) {
+        } else {
+            if (model.getTimestampIndex() == -1) {
+                // Designated timestamp does not exist at query factory and not in the query model
                 throw SqlException.position(0).put("Designated timestamp required");
+            } else {
+                timestamp = model.getQueryModel().getBottomUpColumns().get(metadata.getTimestampIndex()).getAst();
+                model.setTimestamp(timestamp);
             }
         }
+
+        // validate type of timestamp column
         if (metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
             throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
         }

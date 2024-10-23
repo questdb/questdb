@@ -731,6 +731,7 @@ public class SqlParser {
         if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
             intervalExpr = sampleBy.token;
         }
+
         // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY)
         if (intervalExpr == null) {
             final ObjList<QueryColumn> queryColumns = queryModel.getBottomUpColumns();
@@ -779,7 +780,6 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "Unsupported materialized view query");
             }
         }
-        viewTableModel.setDedupKeyFlag(viewTableModel.getTimestampIndex());
         return matViewModel;
     }
 
