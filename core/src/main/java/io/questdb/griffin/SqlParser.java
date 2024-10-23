@@ -2800,18 +2800,6 @@ public class SqlParser {
             checkSupportedJoinType(lexer, tok);
             if (SqlKeywords.isAsKeyword(tok)) {
                 tok = tok(lexer, "alias");
-                if (tok.equals("[")) {
-                    ObjStack<CharSequence> sequenceStack = new ObjStack<>();
-                    while (!tok.equals("]")) {
-                        tok = SqlUtil.fetchNext(lexer);
-                        if (tok instanceof GenericLexer.InternalFloatingSequence) {
-                            CharSequence literal = tok.toString();
-                            sequenceStack.push(literal);
-                        }
-                    }
-                    tok = !sequenceStack.notEmpty() ? tok : sequenceStack.pop();
-                    sequenceStack.clear();
-                }
             }
             if (tok.length() == 0 || SqlKeywords.isEmptyAlias(tok)) {
                 throw SqlException.position(lexer.lastTokenPosition()).put("Empty table alias");
