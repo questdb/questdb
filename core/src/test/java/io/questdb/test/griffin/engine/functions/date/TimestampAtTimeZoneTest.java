@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -107,7 +106,7 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimeZoneVariantWhichAdjustsIntervalBasedOnZone() throws SqlException {
+    public void testTimeZoneVariantWhichAdjustsIntervalBasedOnZone() throws Exception {
 
         assertSql("interval\n" + "('2024-08-10T02:00:00.000Z', '2024-08-10T05:00:00.000Z')\n",
                 "SELECT\n" +
