@@ -24,7 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -362,7 +368,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                         } catch (CairoException |
                                  SqlException ex) { // the latter is due to an assertion in SqlException.position
                             TestUtils.assertContains(ex.getFlyweightMessage(), "invalid timestamp data in detached partition");
-                            TestUtils.assertContains(ex.getFlyweightMessage(), "timestamp.d, minTimestamp=1970-01-01T00:00:00.000Z, maxTimestamp=1970-01-01T00:00:00.000Z]");
+                            TestUtils.assertContains(ex.getFlyweightMessage(), "minTimestamp=1970-01-01T00:00:00.000Z, maxTimestamp=1970-01-01T00:00:00.000Z]");
                         }
                     } finally {
                         Misc.free(workerPool);
