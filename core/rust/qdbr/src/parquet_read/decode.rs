@@ -1197,10 +1197,8 @@ fn decode_page0<T: Pushable>(
     row_hi: usize,
     sink: &mut T,
 ) -> ParquetResult<()> {
-    sink.skip(row_lo);
     sink.reserve()?;
-    let row_count = row_hi - row_lo;
-    let iter = decode_null_bitmap(version, page, row_count)?;
+    let iter = decode_null_bitmap(version, page, row_hi)?;
     if let Some(iter) = iter {
         for run in iter {
             let run = run?;
@@ -1208,19 +1206,24 @@ fn decode_page0<T: Pushable>(
                 FilteredHybridEncoded::Bitmap { values, offset, length } => {
                     // consume `length` items
                     let iter = BitmapIter::new(values, offset, length);
+                    let mut row_idx = 0usize;
                     for item in iter {
-                        if item {
-                            sink.push()?;
-                        } else {
-                            sink.push_null()?;
+                        if row_idx >= row_lo {
+                            if item {
+                                sink.push()?;
+                            } else {
+                                sink.push_null()?;
+                            }
                         }
+                        row_idx += 1;
                     }
                 }
-                FilteredHybridEncoded::Repeated { is_set, length } => {
+                FilteredHybridEncoded::Repeated { is_set, length: _ } => {
+                    sink.skip(row_lo);
                     if is_set {
-                        sink.push_slice(length)?;
+                        sink.push_slice(row_hi - row_lo)?;
                     } else {
-                        sink.push_nulls(length)?;
+                        sink.push_nulls(row_hi - row_lo)?;
                     }
                 }
                 FilteredHybridEncoded::Skipped(valids) => {
@@ -1229,7 +1232,8 @@ fn decode_page0<T: Pushable>(
             };
         }
     } else {
-        sink.push_slice(row_count)?;
+        sink.skip(row_lo);
+        sink.push_slice(row_hi - row_lo)?;
     }
     sink.result()
 }
