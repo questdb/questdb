@@ -162,7 +162,7 @@ pub struct RleLocalIsGlobalSymbolDecoder<'a, 'b> {
     decoder: Option<Decoder<'a>>,
     data: RleIterator<'a>,
     next_value: [u8; 4],
-    row_count: usize,
+    sliced_row_count: usize,
     error: Option<ParquetError>,
 
     // TODO(amunra): Clean this up -- non-idiomatic Rust code.
@@ -203,11 +203,11 @@ impl DataPageSlicer for RleLocalIsGlobalSymbolDecoder<'_, '_> {
     }
 
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
-        self.row_count * std::mem::size_of::<u32>()
+        self.sliced_row_count * std::mem::size_of::<u32>()
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -222,6 +222,7 @@ impl<'a, 'b> RleLocalIsGlobalSymbolDecoder<'a, 'b> {
     pub fn try_new(
         mut buffer: &'a [u8],
         row_count: usize,
+        sliced_row_count: usize,
         error_value: &'b [u8],
     ) -> ParquetResult<Self> {
         // TODO(amunra): Deduplicate this code.
@@ -233,7 +234,7 @@ impl<'a, 'b> RleLocalIsGlobalSymbolDecoder<'a, 'b> {
                 decoder: Some(decoder),
                 data: RleIterator::Rle(std::iter::repeat(0).take(0)),
                 next_value: [0; 4],
-                row_count,
+                sliced_row_count,
                 error: None,
                 error_value,
             };
@@ -244,7 +245,7 @@ impl<'a, 'b> RleLocalIsGlobalSymbolDecoder<'a, 'b> {
                 decoder: None,
                 data: RleIterator::Rle(std::iter::repeat(0).take(row_count)),
                 next_value: [0; 4],
-                row_count,
+                sliced_row_count,
                 error: None,
                 error_value,
             })

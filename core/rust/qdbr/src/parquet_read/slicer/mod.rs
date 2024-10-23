@@ -169,7 +169,11 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
 }
 
 impl<'a> DeltaLengthArraySlicer<'a> {
-    pub fn try_new(data: &'a [u8], row_count: usize, sliced_row_count: usize) -> ParquetResult<Self> {
+    pub fn try_new(
+        data: &'a [u8],
+        row_count: usize,
+        sliced_row_count: usize,
+    ) -> ParquetResult<Self> {
         let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
         let lengths: Vec<_> = decoder
             .by_ref()
@@ -261,7 +265,11 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
 }
 
 impl<'a> DeltaBytesArraySlicer<'a> {
-    pub fn try_new(data: &'a [u8], row_count: usize, sliced_row_count: usize) -> ParquetResult<Self> {
+    pub fn try_new(
+        data: &'a [u8],
+        row_count: usize,
+        sliced_row_count: usize,
+    ) -> ParquetResult<Self> {
         let values = data;
         let mut decoder = delta_bitpacked::Decoder::try_new(values)?;
         let prefix = (&mut decoder)

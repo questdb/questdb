@@ -1267,20 +1267,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     bindVariableService.setTimestamp("atimestamp", 400500000000L);
                 },
                 "SELECT max(along), min(along) FROM tab " +
-                        "WHERE aboolean != :aboolean" +
-                        " and abyte != :abyte" +
-                        " and ageobyte != :ageobyte" +
-                        " and ashort != :ashort" +
-                        " and ageoshort != :ageoshort" +
-                        " and achar != :achar" +
-                        " and anint != :anint" +
-                        " and ageoint != :ageoint" +
-                        " and asymbol != :asymbol" +
-                        " and afloat != :afloat" +
-                        " and along != :along" +
-                        " and adouble != :adouble" +
-                        " and adate != :adate" +
-                        " and ageolong != :ageolong" +
+                        "WHERE aboolean != :aboolean " +
+                        " and abyte != :abyte " +
+                        " and ageobyte != :ageobyte " +
+                        " and ashort != :ashort " +
+                        " and ageoshort != :ageoshort " +
+                        " and achar != :achar " +
+                        " and anint != :anint " +
+                        " and ageoint != :ageoint " +
+                        " and asymbol != :asymbol " +
+                        " and afloat != :afloat " +
+                        " and along != :along " +
+                        " and adouble != :adouble " +
+                        " and adate != :adate " +
+                        " and ageolong != :ageolong " +
                         " and ts != :atimestamp",
                 "max\tmin\n" +
                         "9222440717001210457\t-9216152523287705363\n"

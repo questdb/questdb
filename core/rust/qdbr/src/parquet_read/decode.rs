@@ -870,7 +870,8 @@ pub fn decode_page(
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::String) => {
-                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
+                    let mut slicer =
+                        DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
                         version,
                         page,
@@ -881,7 +882,8 @@ pub fn decode_page(
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::Varchar) => {
-                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
+                    let mut slicer =
+                        DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
                         version,
                         page,
@@ -935,7 +937,8 @@ pub fn decode_page(
                     Ok(())
                 }
                 (Encoding::DeltaByteArray, _, ColumnTypeTag::Varchar) => {
-                    let mut slicer = DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
+                    let mut slicer =
+                        DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
                         version,
                         page,
@@ -954,6 +957,7 @@ pub fn decode_page(
                     }
                     let mut slicer = RleLocalIsGlobalSymbolDecoder::try_new(
                         values_buffer,
+                        row_hi,
                         row_count,
                         &SYMBOL_NULL,
                     )?;
@@ -984,7 +988,8 @@ pub fn decode_page(
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::Binary) => {
-                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
+                    let mut slicer =
+                        DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
                         version,
                         page,
