@@ -89,9 +89,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         setPathForParquetPartition(path, partitionBy, partitionTimestamp, srcNameTxn);
 
         final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
-        final long partitionParquetFileSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
+        final long parquetSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
 
-        long parquetFileFd = -1;
+        long parquetAddr = 0;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
         try (
@@ -102,11 +102,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 DirectIntList columnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_O3);
                 PartitionDescriptor partitionDescriptor = new OwnedMemoryPartitionDescriptor()
         ) {
-            parquetFileFd = TableUtils.openRO(ff, path.$(), LOG);
+            parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             partitionDecoder.of(
-                    parquetFileFd,
-                    partitionParquetFileSize,
-                    MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+                    parquetAddr,
+                    parquetSize,
+                    MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER
+            );
 
             final int rowGroupCount = partitionDecoder.metadata().rowGroupCount();
             final int timestampIndex = tableWriterMetadata.getTimestampIndex();
@@ -125,7 +126,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             partitionUpdater.of(
                     path.$(),
                     opts,
-                    partitionParquetFileSize,
+                    parquetSize,
                     timestampIndex,
                     ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                     statisticsEnabled,
@@ -258,15 +259,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // the file is re-opened here because PartitionUpdater owns the file descriptor.
             final long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
             // truncate partition file to the previous uncorrupted size
-            if (!ff.truncate(fd, partitionParquetFileSize)) {
+            if (!ff.truncate(fd, parquetSize)) {
                 LOG.error().$("could not truncate partition file [path=").$(path).$(']').$();
             }
             ff.close(fd);
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
         } finally {
-            if (parquetFileFd != -1) {
-                ff.close(parquetFileFd);
-            }
+            ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             final long fileSize = Files.length(path.$());
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);

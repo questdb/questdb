@@ -24,7 +24,11 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
@@ -45,6 +49,7 @@ import static org.junit.Assert.assertEquals;
 
 public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     private static final int ADD = 0;
+    private static final int CONVERT = 3;
     private static final Log LOG = LogFactory.getLog(TableReaderReloadFuzzTest.class);
     private static final int MAX_NUM_OF_INSERTS = 10;
     private static final int MAX_NUM_OF_STRUCTURE_CHANGES = 10;
@@ -54,8 +59,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     private static final long ONE_YEAR = 365 * 24 * 60 * 60 * 1000L * 1000L;
     private static final int REMOVE = 1;
     private static final int RENAME = 2;
-    private static final int CONVERT = 3;
-    private final AtomicInteger columNameGen = new AtomicInteger(0);
+    private final AtomicInteger columnNameGen = new AtomicInteger(0);
     private final ObjList<Column> columns = new ObjList<>();
     private final IntList removableColumns = new IntList();
     private Rnd random;
@@ -74,6 +78,11 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     @Test
     public void testBalanced() {
         testFuzzReload(20, 1, 1, 1);
+    }
+
+    @Test
+    public void testConvertPartition() {
+        testFuzzReload(10, 1);
     }
 
     @Test
@@ -119,11 +128,6 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
         testFuzzReload(15, 0, 0, 1);
     }
 
-    @Test
-    public void testConvertPartition() {
-        testFuzzReload(10, 1);
-    }
-
     private void assertReaderWriterMetadata(TableWriter writer, TableReader reader) {
         final ObjList<Column> writerColumns = extractLiveColumns(writer.getMetadata());
         final TableReaderMetadata readerMetadata = reader.getMetadata();
@@ -141,7 +145,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
             switch (structureChangeType) {
                 case ADD:
                     final int columnType = random.nextInt(12) + 1;
-                    writer.addColumn("col" + columNameGen.incrementAndGet(), columnType);
+                    writer.addColumn("col" + columnNameGen.incrementAndGet(), columnType);
                     break;
                 case REMOVE:
                     final int removeIndex = selectColumn(writerMetadata);
@@ -152,14 +156,14 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
                 case RENAME:
                     final int renameIndex = selectColumn(writerMetadata);
                     if (renameIndex > -1) {
-                        writer.renameColumn(writerMetadata.getColumnName(renameIndex), "col" + columNameGen.incrementAndGet());
+                        writer.renameColumn(writerMetadata.getColumnName(renameIndex), "col" + columnNameGen.incrementAndGet());
                     }
                     break;
                 case CONVERT:
                     final int partitionCount = writer.getPartitionCount();
                     final boolean convert = partitionCount > 2 && random.nextBoolean();
                     if (convert) {
-                        final int partition = Math.max(0,random.nextInt(partitionCount - 1));
+                        final int partition = Math.max(0, random.nextInt(partitionCount - 1));
                         final boolean delete = random.nextBoolean();
                         final boolean isParquet = writer.getPartitionParquetFileSize(partition) > 0;
                         final long timestamp = writer.getPartitionTimestamp(partition);
@@ -241,7 +245,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
     }
 
     private void testFuzzReload(int numOfReloads, int addFactor, int removeFactor, int renameFactor) {
-       testFuzzReload(numOfReloads, addFactor, removeFactor, renameFactor, 0);
+        testFuzzReload(numOfReloads, addFactor, removeFactor, renameFactor, 0);
     }
 
     private void testFuzzReload(int numOfReloads, int convertFactor) {
@@ -256,7 +260,7 @@ public class TableReaderReloadFuzzTest extends AbstractCairoTest {
                     ingest(writer);
                     reader.reload();
                     for (int j = 0; j < reader.getPartitionCount(); j++) {
-                       reader.openPartition(j);
+                        reader.openPartition(j);
                     }
                     changeTableStructure(addFactor, removeFactor, renameFactor, convertFactor, writer);
                     reader.reload();

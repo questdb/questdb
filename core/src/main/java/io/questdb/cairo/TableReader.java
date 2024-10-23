@@ -128,8 +128,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
             LOG.debug()
                     .$("open [id=").$(metadata.getTableId())
-                    .$(", table=").utf8(this.tableToken.getTableName())
-                    .$(", dirName=").utf8(this.tableToken.getDirName())
+                    .$(", table=").utf8(tableToken.getTableName())
+                    .$(", dirName=").utf8(tableToken.getDirName())
                     .I$();
             txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
@@ -671,12 +671,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         int baseIndex = getPrimaryColumnIndex(columnBase, 0);
         int newBaseIndex = getPrimaryColumnIndex(getColumnBase(partitionIndex + 1), 0);
         columns.remove(baseIndex, newBaseIndex - 1);
-        parquetPartitions.setQuick(partitionIndex, NullMemoryCMR.INSTANCE);
 
         int colTopStart = columnBase / 2;
         int columnSlotSize = getColumnBase(1);
         columnTops.removeIndexBlock(colTopStart, columnSlotSize / 2);
 
+        parquetPartitions.remove(partitionIndex);
         openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
         LOG.info().$("closed deleted partition [table=").$(tableToken)
                 .$(", ts=").$ts(partitionTimestamp)
@@ -741,7 +741,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     closePartitionColumn(oldBase, i);
                 }
             }
-            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1L);
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1);
             openPartitionCount--;
             return -1;
         }
@@ -916,7 +916,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int idx = getPrimaryColumnIndex(columnBase, 0);
         columns.insert(idx, columnSlotSize, NullMemoryCMR.INSTANCE);
         bitmapIndexes.insert(idx, columnSlotSize, null);
-        parquetPartitions.extendAndSet(partitionIndex, NullMemoryCMR.INSTANCE);
+        parquetPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
 
         final int topBase = columnBase / 2;
         final int topSlotSize = columnSlotSize / 2;
