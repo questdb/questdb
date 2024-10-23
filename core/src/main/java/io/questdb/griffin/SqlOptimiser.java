@@ -24,17 +24,56 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowDateStyleCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowMaxIdentifierLengthCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowParametersCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowServerVersionCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowServerVersionNumCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
-import io.questdb.griffin.model.*;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.WindowColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.BoolList;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.IntPriorityQueue;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -205,6 +244,66 @@ public class SqlOptimiser implements Mutable {
         constNameToIndex.clear();
         constNameToNode.clear();
         constNameToToken.clear();
+    }
+
+    /*
+        Rewrite
+        from:
+            select timestamp, symbol, vwap(price, amount) from trades sample by 8h
+        to:
+            select timestamp, symbol, vwap(timestamp, min_price, max_price, closing_price, volume)
+            from (
+                select timestamp, symbol, min(price) min_price, max(price) max_price, last(price) closing_price, sum(amount) volume
+                from trades
+                sample by 8h
+            )
+            group by timestamp, symbol
+            order by timestamp asc
+     */
+    // start:
+    // select-choose timestamp, symbol, vwap(price,amount) vwap from
+    // (trades timestamp (timestamp) sample by 8h align to calendar with offset '00:00')
+    public QueryModel rewriteVwap(QueryModel model) {
+        QueryModel current = model;
+        boolean validModel = false;
+
+        while (current != null && !validModel) {
+            if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
+                for (int i = 0, n = current.getColumns().size(); i < n; i++) {
+                    final QueryColumn column = current.getColumns().getQuick(i);
+                    final ExpressionNode ast = column.getAst();
+
+                    // if it matches vwap(price, amount)
+                    if (ast.type == FUNCTION && ast.paramCount == 2 && Chars.equalsIgnoreCase(ast.token, "vwap")) {
+                        QueryModel nested = current.getNestedModel();
+
+                        if (nested != null && nested.getSampleBy() != null) {
+                            // todo: might need more conditions before this.
+                            validModel = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            current = current.getNestedModel();
+        }
+
+        if (current == null) {
+            return model;
+        }
+
+        QueryModel chooseModel = current;
+        QueryModel sampleModel = current.getNestedModel();
+
+
+        QueryModel outerGroupByModel = queryModelPool.next();
+        outerGroupByModel.setSelectModelType(QueryModel.SELECT_MODEL_GROUP_BY);
+        outerGroupByModel.addBottomUpColumn();
+
+        QueryModel newSampleModel = queryModelPool.next();
+        newSampleModel.setSelectModelType(QueryModel.SELECT_MODEL_NONE);
+
+        return model;
     }
 
     private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {
@@ -6068,6 +6167,7 @@ public class SqlOptimiser implements Mutable {
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
+            rewrittenModel = rewriteVwap(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);

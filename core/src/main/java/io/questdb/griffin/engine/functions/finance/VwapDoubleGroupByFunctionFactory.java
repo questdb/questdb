@@ -128,11 +128,11 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
                     this.volume += volume;
                     this.vwap = cumulativePrice / this.volume;
                 }
+                mapValue.putDouble(valueIndex, this.vwap);
+                mapValue.putDouble(valueIndex + 1, this.volume);
+                return;
             }
-
-            mapValue.putDouble(valueIndex, this.vwap);
-            mapValue.putDouble(valueIndex + 1, this.volume);
-            mapValue.putLong(valueIndex + 2, this.nextDay);
+            setNull(mapValue);
         }
 
         @Override
@@ -185,7 +185,6 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
             this.valueIndex = columnTypes.getColumnCount();
             columnTypes.add(ColumnType.DOUBLE);
             columnTypes.add(ColumnType.DOUBLE);
-            columnTypes.add(ColumnType.LONG);
         }
 
         @Override
@@ -202,7 +201,6 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
         public void setNull(MapValue mapValue) {
             mapValue.putDouble(valueIndex, Double.NaN);
             mapValue.putDouble(valueIndex + 1, Double.NaN);
-            mapValue.putDouble(valueIndex + 2, 0);
         }
 
         @Override
