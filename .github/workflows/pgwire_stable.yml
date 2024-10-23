@@ -41,7 +41,7 @@ jobs:
       - name: Stop QuestDB
         run: ./questdb-*bin/questdb.sh stop
       - name: Upload logs
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           path: ~/.questdb/log/*
           name: logs
