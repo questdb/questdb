@@ -51,6 +51,122 @@ public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
         assertQuery("column\n15\n", "SELECT 10 + 5");
     }
 
+    @Test
+    public void testThatWeDoNotExposeSymbolIndexes() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t (c SYMBOL);");
+            insert("INSERT INTO t\n" +
+                    "SELECT RND_SYMBOL('X', 'Y', 'Z')\n" +
+                    "FROM LONG_SEQUENCE(100);");
+
+            assertSql("cast\tcolumn\tc\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tY\n" +
+                    "null\tnull\tX\n" +
+                    "null\tnull\tZ\n" +
+                    "null\tnull\tX\n", "SELECT\n" +
+                    "CAST(c AS INT),\n" +
+                    "c + 0,\n" +
+                    "c\n" +
+                    "FROM t;");
+        });
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new AddIntFunctionFactory();
