@@ -79,7 +79,6 @@ public class PartitionDecoder implements QuietCloseable {
             int rowLo, // low row index within the row group, inclusive
             int rowHi // high row index within the row group, exclusive
     ) {
-
         assert ptr != 0;
         return decodeRowGroup( // throws CairoException on error
                 ptr,

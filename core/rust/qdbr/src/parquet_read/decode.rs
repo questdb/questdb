@@ -36,6 +36,7 @@ use std::cmp;
 use std::collections::VecDeque;
 use std::io::{Read, Seek};
 use std::ptr;
+use std::cmp::min;
 
 impl RowGroupBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
@@ -1215,21 +1216,24 @@ fn decode_page0<T: Pushable>(
     sink.reserve()?;
     let iter = decode_null_bitmap(version, page, row_hi)?;
     if let Some(iter) = iter {
+        let mut skip_count = row_lo;
         for run in iter {
             let run = run?;
             match run {
                 FilteredHybridEncoded::Bitmap { values, offset, length } => {
                     // consume `length` items
                     let mut iter = BitmapIter::new(values, offset, length);
-                    // first, scan values up to row_lo (rows to skip)
+                    // first, scan values to skip, if any
+                    let local_skip_count = min(skip_count, length);
+                    skip_count -= local_skip_count;
                     let mut to_skip = 0usize;
-                    for _ in 0..row_lo {
+                    for _ in 0..local_skip_count {
                         if let Some(item) = iter.next() {
                             to_skip += item as usize;
                         }
                     }
                     sink.skip(to_skip);
-                    // copy the remaining values
+                    // next, copy the remaining values, if any
                     while let Some(item) = iter.next() {
                         if item {
                             sink.push()?;
@@ -1238,16 +1242,26 @@ fn decode_page0<T: Pushable>(
                         }
                     }
                 }
-                FilteredHybridEncoded::Repeated { is_set, length: _ } => {
+                FilteredHybridEncoded::Repeated { is_set, length } => {
+                    let local_skip_count = min(skip_count, length);
+                    let local_push_count = length - local_skip_count;
+                    skip_count -= local_skip_count;
                     if is_set {
-                        sink.skip(row_lo);
-                        sink.push_slice(row_hi - row_lo)?;
+                        if local_skip_count > 0 {
+                            sink.skip(local_skip_count);
+                        }
+                        if local_push_count > 0 {
+                            sink.push_slice(local_push_count)?;
+                        }
                     } else {
-                        sink.push_nulls(row_hi - row_lo)?;
+                        if local_push_count > 0 {
+                            sink.push_nulls(local_push_count)?;
+                        }
                     }
                 }
-                FilteredHybridEncoded::Skipped(valids) => {
-                    sink.skip(valids);
+                FilteredHybridEncoded::Skipped(length) => {
+                    // TODO(puzpuzpuz): think how to handle this properly
+                    sink.skip(length);
                 }
             };
         }
