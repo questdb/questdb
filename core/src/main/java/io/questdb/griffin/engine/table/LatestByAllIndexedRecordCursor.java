@@ -29,14 +29,22 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Os;
+import io.questdb.std.Rows;
+import io.questdb.std.Transient;
+import io.questdb.std.Vect;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -300,9 +308,9 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         } catch (DataUnavailableException e) {
             // We're not yet done, so no need to cancel the circuit breaker. 
             throw e;
-        } catch (Throwable t) {
+        } catch (Throwable th) {
             sharedCircuitBreaker.cancel();
-            throw t;
+            throw th;
         } finally {
             processTasks(queuedCount);
             if (sharedCircuitBreaker.checkIfTripped()) {
