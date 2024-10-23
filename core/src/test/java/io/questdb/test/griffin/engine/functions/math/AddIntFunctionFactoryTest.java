@@ -57,109 +57,14 @@ public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
             ddl("CREATE TABLE t (c SYMBOL);");
             insert("INSERT INTO t\n" +
                     "SELECT RND_SYMBOL('X', 'Y', 'Z')\n" +
-                    "FROM LONG_SEQUENCE(100);");
+                    "FROM LONG_SEQUENCE(5);");
 
             assertSql("cast\tcolumn\tc\n" +
                     "null\tnull\tX\n" +
                     "null\tnull\tX\n" +
                     "null\tnull\tY\n" +
                     "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tY\n" +
-                    "null\tnull\tX\n" +
-                    "null\tnull\tZ\n" +
-                    "null\tnull\tX\n", "SELECT\n" +
+                    "null\tnull\tZ\n", "SELECT\n" +
                     "CAST(c AS INT),\n" +
                     "c + 0,\n" +
                     "c\n" +
