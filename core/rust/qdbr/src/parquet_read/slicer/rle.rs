@@ -24,7 +24,7 @@ impl RleIterator<'_> {
 pub struct RleDictionarySlicer<'a, 'b, T: DictDecoder> {
     decoder: Option<Decoder<'a>>,
     data: RleIterator<'a>,
-    row_count: usize,
+    sliced_row_count: usize,
     dict: T,
     error: Option<ParquetError>,
 
@@ -76,11 +76,11 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
     }
 
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
-        (self.row_count as f32 * self.dict.avg_key_len()) as usize
+        (self.sliced_row_count as f32 * self.dict.avg_key_len()) as usize
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -96,6 +96,7 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
         mut buffer: &'a [u8],
         dict: T,
         row_count: usize,
+        sliced_row_count: usize,
         error_value: &'b [u8],
     ) -> ParquetResult<Self> {
         let num_bits = buffer[0];
@@ -105,7 +106,7 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
             let mut res = Self {
                 decoder: Some(decoder),
                 data: RleIterator::Rle(std::iter::repeat(0).take(0)),
-                row_count,
+                sliced_row_count,
                 dict,
                 error: None,
                 error_value,
@@ -116,7 +117,7 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
             Ok(Self {
                 decoder: None,
                 data: RleIterator::Rle(std::iter::repeat(0).take(row_count)),
-                row_count,
+                sliced_row_count,
                 dict,
                 error: None,
                 error_value,

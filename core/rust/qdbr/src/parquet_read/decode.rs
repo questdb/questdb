@@ -586,6 +586,7 @@ pub fn decode_page(
                         values_buffer,
                         dict_decoder,
                         row_hi,
+                        row_count,
                         &INT_NULL,
                     )?;
                     decode_page0(
@@ -613,6 +614,7 @@ pub fn decode_page(
                                 values_buffer,
                                 dict_decoder,
                                 row_hi,
+                                row_count,
                                 &INT_NULL,
                             )?;
                             decode_page0(
@@ -658,6 +660,7 @@ pub fn decode_page(
                         values_buffer,
                         dict_decoder,
                         row_hi,
+                        row_count,
                         &INT_NULL,
                     )?;
                     decode_page0(
@@ -680,6 +683,7 @@ pub fn decode_page(
                         values_buffer,
                         dict_decoder,
                         row_hi,
+                        row_count,
                         &INT_NULL,
                     )?;
                     decode_page0(
@@ -794,6 +798,7 @@ pub fn decode_page(
                         values_buffer,
                         dict_decoder,
                         row_hi,
+                        row_count,
                         &LONG_NULL,
                     )?;
                     decode_page0(
@@ -903,6 +908,7 @@ pub fn decode_page(
                         values_buffer,
                         dict_decoder,
                         row_hi,
+                        row_count,
                         &LONG256_NULL,
                     )?;
                     decode_page0(
@@ -1005,8 +1011,13 @@ pub fn decode_page(
                     ColumnTypeTag::Binary,
                 ) => {
                     let dict_decoder = VarDictDecoder::try_new(dict_page, false)?;
-                    let mut slicer =
-                        RleDictionarySlicer::try_new(values_buffer, dict_decoder, row_hi, &[])?;
+                    let mut slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        row_hi,
+                        row_count,
+                        &[],
+                    )?;
                     decode_page0(
                         version,
                         page,
@@ -1047,6 +1058,7 @@ pub fn decode_page(
                         values_buffer,
                         dict_decoder,
                         row_hi,
+                        row_count,
                         &TIMESTAMP_96_EMPTY,
                     )?;
                     decode_page0(
@@ -1091,6 +1103,7 @@ pub fn decode_page(
                         values_buffer,
                         dict_decoder,
                         row_hi,
+                        row_count,
                         &DOUBLE_NULL,
                     )?;
                     decode_page0(
@@ -1112,6 +1125,7 @@ pub fn decode_page(
                     let mut slicer = RleDictionarySlicer::try_new(
                         values_buffer,
                         dict_decoder,
+                        row_hi,
                         row_count,
                         &FLOAT_NULL,
                     )?;
@@ -1205,22 +1219,27 @@ fn decode_page0<T: Pushable>(
             match run {
                 FilteredHybridEncoded::Bitmap { values, offset, length } => {
                     // consume `length` items
-                    let iter = BitmapIter::new(values, offset, length);
-                    let mut row_idx = 0usize;
-                    for item in iter {
-                        if row_idx >= row_lo {
-                            if item {
-                                sink.push()?;
-                            } else {
-                                sink.push_null()?;
-                            }
+                    let mut iter = BitmapIter::new(values, offset, length);
+                    // first, scan values up to row_lo (rows to skip)
+                    let mut to_skip = 0usize;
+                    for _ in 0..row_lo {
+                        if let Some(item) = iter.next() {
+                            to_skip += item as usize;
                         }
-                        row_idx += 1;
+                    }
+                    sink.skip(to_skip);
+                    // copy the remaining values
+                    while let Some(item) = iter.next() {
+                        if item {
+                            sink.push()?;
+                        } else {
+                            sink.push_null()?;
+                        }
                     }
                 }
                 FilteredHybridEncoded::Repeated { is_set, length: _ } => {
-                    sink.skip(row_lo);
                     if is_set {
+                        sink.skip(row_lo);
                         sink.push_slice(row_hi - row_lo)?;
                     } else {
                         sink.push_nulls(row_hi - row_lo)?;
