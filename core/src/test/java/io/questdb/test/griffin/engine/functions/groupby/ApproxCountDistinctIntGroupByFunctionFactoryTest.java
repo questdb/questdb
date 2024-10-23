@@ -49,14 +49,17 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
         assertMemoryLeak(() -> {
             compile("create table x as (select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
 
+            String expected = "count_distinct\n" +
+                    "631884\n";
             assertQueryNoLeakCheck(
-                    "count_distinct\n" +
-                            "631884\n",
+                    expected,
                     "select count_distinct(s) from x",
                     null,
                     false,
                     true
             );
+
+            assertSql(expected, "select count(  distinct s) from x");
 
             long[] expectedEstimates = new long[]{
                     501129L,

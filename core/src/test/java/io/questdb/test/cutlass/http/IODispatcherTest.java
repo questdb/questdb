@@ -27,18 +27,47 @@ package io.questdb.test.cutlass.http;
 import io.questdb.DefaultServerConfiguration;
 import io.questdb.Metrics;
 import io.questdb.ServerConfiguration;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cutlass.Services;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
+import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.cutlass.http.HttpRequestProcessorSelector;
+import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.RescheduleContext;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessor;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
-import io.questdb.griffin.*;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -46,12 +75,56 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.NullLongGauge;
-import io.questdb.mp.*;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.HeartBeatException;
+import io.questdb.network.IOContext;
+import io.questdb.network.IOContextFactory;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.PlainSocketFactory;
+import io.questdb.network.ServerDisconnectException;
+import io.questdb.network.SuspendEvent;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.StationaryNanosClock;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Zip;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -67,7 +140,14 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Ignore;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.Timeout;
 
 import java.io.InputStream;
@@ -459,6 +539,36 @@ public class IODispatcherTest extends AbstractTest {
                 Assert.assertEquals(1, closeCount.get());
             }
         });
+    }
+
+    @Test
+    public void testCursorTypeUnsupportedByCompiler() throws Exception {
+        String expectedErrorResponse = "HTTP/1.1 400 Bad request\r\n" +
+                "Server: questDB/1.0\r\n" +
+                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Content-Type: application/json; charset=utf-8\r\n" +
+                "Keep-Alive: timeout=5, max=10000\r\n" +
+                "\r\n" +
+                "93\r\n" +
+                "{\"query\":\"select query_activity() from long_sequence(1)\",\"error\":\"cursor function cannot be used as a column [column=query_activity]\",\"position\":7}\r\n" +
+                "00\r\n" +
+                "\r\n";
+
+        testJsonQuery(
+                20,
+                "GET /query?query=select%20query_activity%28%29%20from%20long_sequence%281%29 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                expectedErrorResponse
+        );
     }
 
     @Test
@@ -3178,7 +3288,49 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testJsonQueryCommentOnly() throws Exception {
+    public void testJsonQueryCommentOnlyMultiline_apiV2() throws Exception {
+        String expectedErrorResponse = "HTTP/1.1 200 OK\r\n" +
+                "Server: questDB/1.0\r\n" +
+                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Content-Type: application/json; charset=utf-8\r\n" +
+                "Keep-Alive: timeout=5, max=10000\r\n" +
+                "\r\n" +
+                "3f\r\n" +
+                "{\"notice\":\"empty query\",\"query\":\"--\\n--comment\",\"position\":\"0\"}\r\n" +
+                "00\r\n" +
+                "\r\n";
+
+        testJsonQuery(
+                20,
+                "GET /query?query=--%0A--comment&version=2 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                expectedErrorResponse
+        );
+    }
+
+    @Test
+    public void testJsonQueryCommentOnly_apiV1() throws Exception {
+        String expectedErrorResponse = "HTTP/1.1 200 OK\r\n" +
+                "Server: questDB/1.0\r\n" +
+                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Content-Type: application/json; charset=utf-8\r\n" +
+                "Keep-Alive: timeout=5, max=10000\r\n" +
+                "\r\n" +
+                "3a\r\n" +
+                "{\"error\":\"empty query\",\"query\":\"--comment\",\"position\":\"0\"}\r\n" +
+                "00\r\n" +
+                "\r\n";
+
         testJsonQuery(
                 20,
                 "GET /query?query=--comment HTTP/1.1\r\n" +
@@ -3191,17 +3343,67 @@ public class IODispatcherTest extends AbstractTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 200 OK\r\n" +
-                        "Server: questDB/1.0\r\n" +
-                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "Content-Type: application/json; charset=utf-8\r\n" +
-                        "Keep-Alive: timeout=5, max=10000\r\n" +
-                        "\r\n" +
-                        "3a\r\n" +
-                        "{\"error\":\"empty query\",\"query\":\"--comment\",\"position\":\"0\"}\r\n" +
-                        "00\r\n" +
-                        "\r\n"
+                expectedErrorResponse
+        );
+
+        testJsonQuery(
+                20,
+                "GET /query?query=--comment&version=1 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                expectedErrorResponse
+        );
+
+        testJsonQuery(
+                20,
+                "GET /query?query=--comment&version=nonversion HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                expectedErrorResponse
+        );
+    }
+
+    @Test
+    public void testJsonQueryCommentOnly_apiV2() throws Exception {
+        String expectedErrorResponse = "HTTP/1.1 200 OK\r\n" +
+                "Server: questDB/1.0\r\n" +
+                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Content-Type: application/json; charset=utf-8\r\n" +
+                "Keep-Alive: timeout=5, max=10000\r\n" +
+                "\r\n" +
+                "3b\r\n" +
+                "{\"notice\":\"empty query\",\"query\":\"--comment\",\"position\":\"0\"}\r\n" +
+                "00\r\n" +
+                "\r\n";
+
+        testJsonQuery(
+                20,
+                "GET /query?query=--comment&version=2 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                expectedErrorResponse
         );
     }
 
@@ -3804,7 +4006,7 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testJsonQueryEmptyText() throws Exception {
+    public void testJsonQueryEmptyText_apiV1() throws Exception {
         testJsonQuery(
                 20,
                 "GET /query?query= HTTP/1.1\r\n" +
@@ -3826,6 +4028,34 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "31\r\n" +
                         "{\"error\":\"empty query\",\"query\":\"\",\"position\":\"0\"}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testJsonQueryEmptyText_apiV2() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /query?query=&version=2 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "32\r\n" +
+                        "{\"notice\":\"empty query\",\"query\":\"\",\"position\":\"0\"}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -5569,6 +5799,36 @@ public class IODispatcherTest extends AbstractTest {
                         "{\"query\":\"\\n\\n\\n\\nSELECT 'Raphaël' a, 'Léo' b FROM long_sequence(2)\",\"columns\":[{\"name\":\"a\",\"type\":\"STRING\"},{\"name\":\"b\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"Raphaël\",\"Léo\"],[\"Raphaël\",\"Léo\"]],\"count\":2}\r\n" +
                         "00\r\n" +
                         "\r\n"
+        );
+    }
+
+    @Test
+    public void testLong128Unsupported() throws Exception {
+        String expectedErrorResponse = "HTTP/1.1 400 Bad request\r\n" +
+                "Server: questDB/1.0\r\n" +
+                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Content-Type: application/json; charset=utf-8\r\n" +
+                "Keep-Alive: timeout=5, max=10000\r\n" +
+                "\r\n" +
+                "8d\r\n" +
+                "{\"query\":\"select to_long128(1, 1) from long_sequence(1);\",\"error\":\"column type not supported [column=to_long128, type=LONG128]\",\"position\":0}\r\n" +
+                "00\r\n" +
+                "\r\n";
+
+        testJsonQuery(
+                20,
+                "GET /query?query=select%20to_long128%281%2C%201%29%20from%20long_sequence%281%29%3B HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                expectedErrorResponse
         );
     }
 
@@ -8156,7 +8416,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 });
 
-                WorkerPoolUtils.setupQueryJobs(workerPool, engine, engine.getConfiguration().getCircuitBreakerConfiguration());
+                WorkerPoolUtils.setupQueryJobs(workerPool, engine);
                 workerPool.start(LOG);
 
                 try {
@@ -9132,7 +9392,6 @@ public class IODispatcherTest extends AbstractTest {
         return testJsonQuery0(2, engine -> {
             // create table with all column types
             createTableX(engine, recordCount);
-            engine.metadataCacheHydrateAllTables();
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     request,

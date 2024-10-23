@@ -716,6 +716,8 @@ io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByFuncti
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByDefaultFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByFunctionFactory
 
+io.questdb.griffin.engine.functions.groupby.RegressionSlopeFunctionFactory
+
 # 'isOrdered'
 io.questdb.griffin.engine.functions.groupby.IsIPv4OrderedGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.IsLongOrderedGroupByFunctionFactory

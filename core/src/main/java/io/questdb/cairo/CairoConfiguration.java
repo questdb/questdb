@@ -308,6 +308,16 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
+    int getPartitionEncoderParquetCompressionCodec();
+
+    int getPartitionEncoderParquetCompressionLevel();
+
+    int getPartitionEncoderParquetDataPageSize();
+
+    int getPartitionEncoderParquetRowGroupSize();
+
+    int getPartitionEncoderParquetVersion();
+
     long getPartitionO3SplitMinSize();
 
     int getPartitionPurgeListCapacity();
@@ -596,6 +606,8 @@ public interface CairoConfiguration {
 
     boolean isParallelIndexingEnabled();
 
+    boolean getPartitionO3OverwriteControlEnabled();
+
     boolean isReadOnlyInstance();
 
     boolean isSqlJitDebugEnabled();
@@ -626,20 +638,10 @@ public interface CairoConfiguration {
      */
     boolean mangleTableDirNames();
 
+    boolean isPartitionEncoderParquetStatisticsEnabled();
+
     default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
     }
 
     boolean useFastAsOfJoin();
-
-    int getPartitionEncoderParquetVersion();
-
-    boolean isPartitionEncoderParquetStatisticsEnabled();
-
-    int getPartitionEncoderParquetCompressionCodec();
-
-    int getPartitionEncoderParquetCompressionLevel();
-
-    int getPartitionEncoderParquetRowGroupSize();
-
-    int getPartitionEncoderParquetDataPageSize();
 }

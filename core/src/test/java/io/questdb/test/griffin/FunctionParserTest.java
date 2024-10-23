@@ -24,20 +24,52 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.*;
-import io.questdb.griffin.engine.functions.*;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinFunction;
+import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.ByteFunction;
+import io.questdb.griffin.engine.functions.DateFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.ShortFunction;
+import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.bool.InStrFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.NotFunctionFactory;
 import io.questdb.griffin.engine.functions.bool.OrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.catalogue.CursorDereferenceFunctionFactory;
 import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
-import io.questdb.griffin.engine.functions.constants.*;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.DateConstant;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
+import io.questdb.griffin.engine.functions.constants.FloatConstant;
+import io.questdb.griffin.engine.functions.constants.GeoIntConstant;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.Long256Constant;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.date.SysdateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrDateFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToStrTimestampFunctionFactory;
@@ -45,12 +77,28 @@ import io.questdb.griffin.engine.functions.eq.EqDateFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory;
 import io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory;
-import io.questdb.griffin.engine.functions.groupby.*;
-import io.questdb.griffin.engine.functions.math.*;
+import io.questdb.griffin.engine.functions.groupby.CountDistinctLong256GroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.CountGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
+import io.questdb.griffin.engine.functions.groupby.MinDateGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.MinFloatGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunctionFactory;
+import io.questdb.griffin.engine.functions.math.AbsShortFunctionFactory;
+import io.questdb.griffin.engine.functions.math.AddDoubleFunctionFactory;
+import io.questdb.griffin.engine.functions.math.AddFloatFunctionFactory;
+import io.questdb.griffin.engine.functions.math.AddIntFunctionFactory;
+import io.questdb.griffin.engine.functions.math.AddLongFunctionFactory;
+import io.questdb.griffin.engine.functions.math.NegShortFunctionFactory;
+import io.questdb.griffin.engine.functions.math.SubIntFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -1463,6 +1511,14 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                 "io.questdb.griffin.engine.functions.groupby.CountDistinctLong256GroupByFunction",
                 ColumnType.LONG256
         );
+
+        assertBindVariableTypes(
+                "count(distinct $1)",
+                new CountDistinctLong256GroupByFunctionFactory(),
+                "io.questdb.griffin.engine.functions.groupby.CountDistinctLong256GroupByFunction",
+                ColumnType.LONG256
+        );
+
     }
 
     @Test
