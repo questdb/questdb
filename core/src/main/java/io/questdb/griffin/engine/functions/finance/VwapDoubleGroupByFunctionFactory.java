@@ -111,7 +111,6 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
             final double volume = volumeFunc.getDouble(record);
             long day = Timestamps.floorDD(timestamp);
 
-
             if (timestamp >= nextDay) {
                 // reset values
                 this.vwap = Double.NaN;
@@ -125,7 +124,6 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
                     this.volume = volume;
                 } else {
                     double cumulativePrice = this.vwap * this.volume;
-
                     cumulativePrice += (((min + max + close) / 3.0) * volume);
                     this.volume += volume;
                     this.vwap = cumulativePrice / this.volume;
@@ -140,37 +138,6 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             throw new RuntimeException();
-//            final long timestamp = timestampFunc.getTimestamp(record);
-//            final double nextDay = mapValue.getLong(valueIndex + 2);
-//
-//            if (timestamp >= nextDay) {
-//                computeFirst(mapValue, record, rowId);
-//                return;
-//            }
-//
-//            final double cumulativeVwap = mapValue.getDouble(valueIndex);
-//            double cumulativeVolume = mapValue.getDouble(valueIndex + 1);
-//
-//            if (!Numbers.isFinite(cumulativeVwap) && !Numbers.isFinite(cumulativeVolume)) {
-//                computeFirst(mapValue, record, rowId);
-//                return;
-//            }
-//
-//            final double min = minPriceFunc.getDouble(record);
-//            final double max = maxPriceFunc.getDouble(record);
-//            final double close = maxPriceFunc.getDouble(record);
-//            final double volume = volumeFunc.getDouble(record);
-//
-//            if (Numbers.isFinite(min) && Numbers.isFinite(max) && Numbers.isFinite(close) && Numbers.isFinite(volume) && volume > 0.0d) {
-//                double cumulativePrice = cumulativeVwap * cumulativeVolume;
-//
-//                cumulativePrice += (((min + max + close) / 3.0) * volume);
-//                cumulativeVolume += volume;
-//                double vwap = cumulativePrice / cumulativeVolume;
-//
-//                mapValue.putDouble(valueIndex, vwap);
-//                mapValue.putDouble(valueIndex + 1, volume);
-//            }
         }
 
         @Override
