@@ -1204,6 +1204,7 @@ pub fn decode_page(
     }
 }
 
+#[allow(clippy::while_let_on_iterator)]
 fn decode_page0<T: Pushable>(
     version: Version,
     page: &DataPage,
