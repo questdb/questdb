@@ -36,10 +36,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 
-public class MaterializedViewRefreshJob extends SynchronizedJob {
+public class MaterializedViewRefreshJob extends SynchronizedJob implements QuietCloseable {
     public static final String MAT_VIEW_REFRESH_TABLE_WRITE_REASON = "Mat View refresh";
     private static final Log LOG = LogFactory.getLog(MaterializedViewRefreshJob.class);
     private final ObjList<CharSequence> baseTables = new ObjList<>();
@@ -55,6 +56,11 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         this.engine = engine;
         this.matViewRefreshExecutionContext = new MatViewRefreshExecutionContext(engine);
         this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
+    }
+
+    @Override
+    public void close() {
+        Misc.free(matViewRefreshExecutionContext);
     }
 
     private boolean findCommitTimestampRanges(
@@ -332,6 +338,14 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                             viewTxnTracker.setLastRefreshBaseTxn(toBaseTxn);
                         }
                         return changed;
+                    } catch (CairoException ex) {
+                        if (ex.isTableDropped() || ex.tableDoesNotExist()) {
+                            LOG.info().$("materialized view is dropped, removing it from materialized view graph" +
+                                    " [view=").$(viewToken).I$();
+                            viewGraph.dropView(baseToken.getTableName(), viewToken);
+                        } else {
+                            throw ex;
+                        }
                     }
                 }
             } finally {

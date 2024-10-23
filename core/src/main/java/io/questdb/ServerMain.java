@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.mv.MaterializedViewRefreshJob;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -358,6 +359,10 @@ public class ServerMain implements Closeable {
                             sharedPool.assign(copyRequestJob);
                             sharedPool.freeOnExit(copyRequestJob);
                         }
+
+                        if (cairoConfig.isMatViewEnabled()) {
+                            setupMatViewRefreshJob(sharedPool, engine, sharedPool.getWorkerCount());
+                        }
                     }
 
                     // telemetry
@@ -440,6 +445,19 @@ public class ServerMain implements Closeable {
 
     protected Services services() {
         return Services.INSTANCE;
+    }
+
+    protected void setupMatViewRefreshJob(
+            WorkerPool workerPool,
+            CairoEngine engine,
+            int sharedWorkerCount
+    ) {
+        for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final MaterializedViewRefreshJob matViewRefreshJob = new MaterializedViewRefreshJob(engine);
+            workerPool.assign(i, matViewRefreshJob);
+            workerPool.freeOnExit(matViewRefreshJob);
+        }
     }
 
     protected void setupWalApplyJob(

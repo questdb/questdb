@@ -40,24 +40,25 @@ public class MaterializedViewRefreshState implements QuietCloseable {
     private RecordCursorFactory cursorFactory;
     private StringSink error;
     private int errorCode;
+    private volatile boolean isDropped;
     private long lastRefreshRowCount;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
-
-    @Override
-    public void close() {
-        Misc.free(cursorFactory);
-    }
-
-    public void compilationFail(SqlException e) {
-        getSink().put(e.getFlyweightMessage());
-        errorCode = e.getPosition();
-    }
 
     public RecordCursorFactory acquireRecordFactory() {
         RecordCursorFactory factory = cursorFactory;
         cursorFactory = null;
         return factory;
+    }
+
+    @Override
+    public void close() {
+        cursorFactory = Misc.free(cursorFactory);
+    }
+
+    public void compilationFail(SqlException e) {
+        getSink().put(e.getFlyweightMessage());
+        errorCode = e.getPosition();
     }
 
     public long getRecordRowCopierMetadataVersion() {
@@ -66,6 +67,10 @@ public class MaterializedViewRefreshState implements QuietCloseable {
 
     public RecordToRowCopier getRecordToRowCopier() {
         return recordToRowCopier;
+    }
+
+    public void markAsDropped() {
+        isDropped = true;
     }
 
     public boolean notifyTxnApplied(long seqTxn) {
@@ -99,6 +104,11 @@ public class MaterializedViewRefreshState implements QuietCloseable {
     }
 
     public void unlock() {
+        if (locked.get() && isDropped) {
+            // Dropped while it was in use.
+            close();
+        }
+
         if (!locked.compareAndSet(true, false)) {
             throw new IllegalStateException("cannot unlock, not locked");
         }
