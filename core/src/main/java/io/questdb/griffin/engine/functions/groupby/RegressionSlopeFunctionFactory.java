@@ -101,7 +101,6 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
 
                 double sumX = rec.getDouble(valueIndex + 3);
                 double var = sumX / count;
-
                 
                 return covar / var;
             }
