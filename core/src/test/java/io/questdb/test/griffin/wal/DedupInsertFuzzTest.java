@@ -833,7 +833,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 ? symbols
                 : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
 
-        long fromTops = startTimestamp + rnd.nextLong(startCount) * initialDelta;
+        long fromTops = startTimestamp + (startCount > 0 ? rnd.nextLong(startCount) : 0) * initialDelta;
         generateInsertsTransactions(
                 transactions,
                 1,
