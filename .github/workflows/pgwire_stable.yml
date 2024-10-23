@@ -41,6 +41,7 @@ jobs:
       - name: Stop QuestDB
         run: ./questdb-*bin/questdb.sh stop
       - name: Upload logs
+        if: failure() # Only upload logs if the job failed
         uses: actions/upload-artifact@v4
         with:
           path: ~/.questdb/log/*
