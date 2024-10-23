@@ -1,3 +1,5 @@
+import io.questdb.griffin.engine.functions.date.ToTimezoneStartTimestampFunctionFactory;
+
 /*******************************************************************************
  *     ___                  _   ____  ____
  *    / _ \ _   _  ___  ___| |_|  _ \| __ )
@@ -1032,6 +1034,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.IPv4VarcharNetmaskFunctionFactory,
 
             io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.date.ToTimezoneStartTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.date.ToTimezoneEndTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory,
 
             // long128 functions

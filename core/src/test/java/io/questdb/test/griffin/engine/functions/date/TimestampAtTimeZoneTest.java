@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -103,6 +104,21 @@ public class TimestampAtTimeZoneTest extends AbstractCairoTest {
                         "   else 'cde'" +
                         "end"
         );
+    }
+
+    @Test
+    public void testTimeZoneVariantWhichAdjustsIntervalBasedOnZone() throws SqlException {
+
+        assertSql("interval\n" + "('2024-08-10T02:00:00.000Z', '2024-08-10T05:00:00.000Z')\n",
+                "SELECT\n" +
+                        "interval(\n" +
+                        "  to_timezone_start(\n" +
+                        "      interval('2024-08-10T00:00:00Z', '2024-08-10T03:00:00Z'),\n" +
+                        "  'CEST'),\n" +
+                        "  to_timezone_end(\n" +
+                        "      interval('2024-08-10T00:00:00Z', '2024-08-10T03:00:00Z'),\n" +
+                        "  'CEST')\n" +
+                        ")");
     }
 
     @Test
