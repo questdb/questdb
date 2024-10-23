@@ -40,6 +40,12 @@ jobs:
           ./compat/src/test/scenarios_stable.sh
       - name: Stop QuestDB
         run: ./questdb-*bin/questdb.sh stop
+      - name: Upload logs
+        uses: actions/upload-artifact@v2
+        with:
+          path: ~/.questdb/log/*
+          name: logs
+          retention-days: 5
 
         
 
