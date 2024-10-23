@@ -383,7 +383,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     // all we can do in this scenario is to log appropriately
                     // and disconnect socket
                     state.logBufferTooSmall();
-                    throw PeerDisconnectedException.INSTANCE;
+                    throw CairoException.nonCritical()
+                            .put("response buffer is too small for the column value [columnName=").put(state.getCurrentColumnName())
+                            .put(", columnIndex=").put(state.getCurrentColumnIndex())
+                            .put(']');
                 }
             }
         }
@@ -788,7 +791,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             state.configure(header, query, skip, stop);
         } catch (Utf8Exception e) {
             state.info().$("Bad UTF8 encoding").$();
-            sendBadRequestResponse(context.getChunkedResponse(), context, "Bad UTF8 encoding in query text", query, keepAliveHeader);
+            sendBadUtf8EncodingInRequestResponse(context.getChunkedResponse(), context, query, keepAliveHeader);
             return false;
         }
         return true;
@@ -850,15 +853,19 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         response.sendHeader();
     }
 
-    static void sendBadRequestResponse(
+    static void sendBadUtf8EncodingInRequestResponse(
             HttpChunkedResponse response,
             HttpConnectionContext context,
-            CharSequence message,
             DirectUtf8Sequence query,
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         header(response, context, keepAliveHeader, HTTP_BAD_REQUEST);
-        JsonQueryProcessorState.prepareBadRequestResponse(response, message, query);
+        response.putAscii('{')
+                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query.asAsciiCharSequence()).putAscii(',')
+                .putAsciiQuoted("error").putAscii(':').putQuoted("Bad UTF8 encoding in query text").putAscii(',')
+                .putAsciiQuoted("position").putAscii(':').put(0)
+                .putAscii('}');
+        response.sendChunk(true);
     }
 
     static void sendException(

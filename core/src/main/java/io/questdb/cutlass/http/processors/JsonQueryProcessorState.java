@@ -238,6 +238,17 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return apiVersion;
     }
 
+    public int getCurrentColumnIndex() {
+        return columnIndex;
+    }
+
+    public String getCurrentColumnName() {
+        if (columnIndex > -1 && columnIndex < columnNames.size()) {
+            return columnNames.getQuick(columnIndex);
+        }
+        return "undefined";
+    }
+
     public SCSequence getEventSubSequence() {
         return eventSubSequence;
     }
@@ -283,7 +294,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void logBufferTooSmall() {
-        info().$("Response buffer is too small, state=").$(queryState).$();
+        info().$("response buffer is too small, state=").$(queryState).$();
     }
 
     public void logTimings() {
@@ -893,19 +904,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         cursorHasRows = true;
     }
 
-    static void prepareBadRequestResponse(
-            HttpChunkedResponse response,
-            CharSequence message,
-            DirectUtf8Sequence query
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        response.putAscii('{')
-                .putAsciiQuoted("query").putAscii(':').putQuoted(query == null ? "" : query.asAsciiCharSequence()).putAscii(',')
-                .putAsciiQuoted("error").putAscii(':').putQuoted(message).putAscii(',')
-                .putAsciiQuoted("position").putAscii(':').put(0)
-                .putAscii('}');
-        response.sendChunk(true);
-    }
-
     static void prepareExceptionJson(
             HttpChunkedResponse response,
             int position,
@@ -998,10 +996,16 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // is released
         cursor = Misc.free(cursor);
         circuitBreaker = null;
+        int old = queryState;
         queryState = QUERY_SUFFIX;
         if (count > -1) {
             logTimings();
             response.bookmark();
+            if (old == QUERY_RECORD) {
+                // we failed to send mid-record, we have to close the record
+                response.putAscii(']');
+            }
+            // close the dataset
             response.putAscii(']');
             response.putAscii(',').putAsciiQuoted("count").putAscii(':').put(count);
             if (code > 0) {
