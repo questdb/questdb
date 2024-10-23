@@ -455,7 +455,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedInt2ShortColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_hi),
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
                             bufs,
                             &SHORT_NULL,
                         ),
@@ -474,7 +474,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedInt2ShortColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<2>::try_new(values_buffer, row_hi)?,
+                            &mut DeltaBinaryPackedSlicer::<2>::try_new(values_buffer, row_count)?,
                             bufs,
                             &SHORT_NULL,
                         ),
@@ -488,7 +488,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedInt2ByteColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_hi),
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
                             bufs,
                             &BYTE_NULL,
                         ),
@@ -507,7 +507,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedInt2ByteColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<1>::try_new(values_buffer, row_hi)?,
+                            &mut DeltaBinaryPackedSlicer::<1>::try_new(values_buffer, row_count)?,
                             bufs,
                             &BYTE_NULL,
                         ),
@@ -526,7 +526,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedIntColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_hi),
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
                             bufs,
                             &INT_NULL,
                         ),
@@ -541,7 +541,7 @@ pub fn decode_page(
                         row_hi,
                         &mut FixedLongColumnSink::new(
                             &mut ValueConvertSlicer::<8, _, _>::new(
-                                DataPageFixedSlicer::<4>::new(values_buffer, row_hi),
+                                DataPageFixedSlicer::<4>::new(values_buffer, row_count),
                                 |int_val: &[u8], buff: &mut [u8; 8]| {
                                     let days_since_epoch = unsafe {
                                         ptr::read_unaligned(int_val.as_ptr() as *const i32)
@@ -568,7 +568,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedIntColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<4>::try_new(values_buffer, row_hi)?,
+                            &mut DeltaBinaryPackedSlicer::<4>::try_new(values_buffer, row_count)?,
                             bufs,
                             &INT_NULL,
                         ),
@@ -636,7 +636,7 @@ pub fn decode_page(
                                 row_lo,
                                 row_hi,
                                 &mut IntDecimalColumnSink::new(
-                                    &mut DataPageFixedSlicer::<4>::new(values_buffer, row_hi),
+                                    &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
                                     bufs,
                                     &DOUBLE_NULL,
                                     scale as i32,
@@ -711,7 +711,7 @@ pub fn decode_page(
                     }) = logical_type
                     {
                         let mut slicer = ValueConvertSlicer::<8, _, _>::new(
-                            DataPageFixedSlicer::<8>::new(values_buffer, row_hi),
+                            DataPageFixedSlicer::<8>::new(values_buffer, row_count),
                             |nano_ts, out_buff| {
                                 let ts =
                                     unsafe { ptr::read_unaligned(nano_ts.as_ptr() as *const i64) };
@@ -751,7 +751,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedLongColumnSink::new(
-                            &mut DataPageFixedSlicer::<8>::new(values_buffer, row_hi),
+                            &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
                             bufs,
                             &LONG_NULL,
                         ),
@@ -773,7 +773,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedLongColumnSink::new(
-                            &mut DeltaBinaryPackedSlicer::<8>::try_new(values_buffer, row_hi)?,
+                            &mut DeltaBinaryPackedSlicer::<8>::try_new(values_buffer, row_count)?,
                             bufs,
                             &LONG_NULL,
                         ),
@@ -817,7 +817,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut ReverseFixedColumnSink::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, row_hi),
+                            &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
                             bufs,
                             UUID_NULL,
                         ),
@@ -836,7 +836,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedLong128ColumnSink::new(
-                            &mut DataPageFixedSlicer::<16>::new(values_buffer, row_hi),
+                            &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
                             bufs,
                             &UUID_NULL,
                         ),
@@ -855,7 +855,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedLong256ColumnSink::new(
-                            &mut DataPageFixedSlicer::<32>::new(values_buffer, row_hi),
+                            &mut DataPageFixedSlicer::<32>::new(values_buffer, row_count),
                             bufs,
                             &LONG256_NULL,
                         ),
@@ -870,7 +870,7 @@ pub fn decode_page(
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::String) => {
-                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_hi)?;
+                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
                         version,
                         page,
@@ -881,7 +881,7 @@ pub fn decode_page(
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::Varchar) => {
-                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_hi)?;
+                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
                         version,
                         page,
@@ -913,7 +913,7 @@ pub fn decode_page(
                     Ok(())
                 }
                 (Encoding::Plain, None, ColumnTypeTag::String) => {
-                    let mut slicer = PlainVarSlicer::new(values_buffer, row_hi);
+                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
                         version,
                         page,
@@ -924,7 +924,7 @@ pub fn decode_page(
                     Ok(())
                 }
                 (Encoding::Plain, _, ColumnTypeTag::Varchar) => {
-                    let mut slicer = PlainVarSlicer::new(values_buffer, row_hi);
+                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
                         version,
                         page,
@@ -935,7 +935,7 @@ pub fn decode_page(
                     Ok(())
                 }
                 (Encoding::DeltaByteArray, _, ColumnTypeTag::Varchar) => {
-                    let mut slicer = DeltaBytesArraySlicer::try_new(values_buffer, row_hi)?;
+                    let mut slicer = DeltaBytesArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
                         version,
                         page,
@@ -973,7 +973,7 @@ pub fn decode_page(
             let encoding = page.encoding();
             match (encoding, dict, column_type.tag()) {
                 (Encoding::Plain, None, ColumnTypeTag::Binary) => {
-                    let mut slicer = PlainVarSlicer::new(values_buffer, row_hi);
+                    let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page0(
                         version,
                         page,
@@ -984,7 +984,7 @@ pub fn decode_page(
                     Ok(())
                 }
                 (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::Binary) => {
-                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_hi)?;
+                    let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_hi, row_count)?;
                     decode_page0(
                         version,
                         page,
@@ -1024,7 +1024,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut NanoTimestampColumnSink::new(
-                            &mut DataPageFixedSlicer::<12>::new(values_buffer, row_hi),
+                            &mut DataPageFixedSlicer::<12>::new(values_buffer, row_count),
                             bufs,
                             &LONG_NULL,
                         ),
@@ -1068,7 +1068,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedDoubleColumnSink::new(
-                            &mut DataPageFixedSlicer::<8>::new(values_buffer, row_hi),
+                            &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
                             bufs,
                             &DOUBLE_NULL,
                         ),
@@ -1126,7 +1126,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedFloatColumnSink::new(
-                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_hi),
+                            &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
                             bufs,
                             &FLOAT_NULL,
                         ),
@@ -1140,7 +1140,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedBooleanColumnSink::new(
-                            &mut BooleanBitmapSlicer::new(values_buffer, row_hi),
+                            &mut BooleanBitmapSlicer::new(values_buffer, row_hi, row_count),
                             bufs,
                             &[0],
                         ),
@@ -1154,7 +1154,7 @@ pub fn decode_page(
                         row_lo,
                         row_hi,
                         &mut FixedBooleanColumnSink::new(
-                            &mut BooleanBitmapSlicer::new(values_buffer, row_hi),
+                            &mut BooleanBitmapSlicer::new(values_buffer, row_hi, row_count),
                             bufs,
                             &[0],
                         ),

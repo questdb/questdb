@@ -20,7 +20,7 @@ pub trait DataPageSlicer {
 pub struct DataPageFixedSlicer<'a, const N: usize> {
     data: &'a [u8],
     pos: usize,
-    row_count: usize,
+    sliced_row_count: usize,
 }
 
 impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
@@ -41,11 +41,11 @@ impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
     }
 
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
-        self.row_count * N
+        self.sliced_row_count * N
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -55,13 +55,13 @@ impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
 
 impl<'a, const N: usize> DataPageFixedSlicer<'a, N> {
     pub fn new(data: &'a [u8], row_count: usize) -> Self {
-        Self { data, pos: 0, row_count }
+        Self { data, pos: 0, sliced_row_count: row_count }
     }
 }
 
 pub struct DeltaBinaryPackedSlicer<'a, const N: usize> {
     decoder: delta_bitpacked::Decoder<'a>,
-    row_count: usize,
+    sliced_row_count: usize,
     error: ParquetResult<()>,
     error_value: [u8; N],
     buffer: [u8; N],
@@ -102,11 +102,11 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
     }
 
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
-        self.row_count * N
+        self.sliced_row_count * N
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -119,7 +119,7 @@ impl<'a, const N: usize> DeltaBinaryPackedSlicer<'a, N> {
         let decoder = delta_bitpacked::Decoder::try_new(data)?;
         Ok(Self {
             decoder,
-            row_count,
+            sliced_row_count: row_count,
             error: Ok(()),
             error_value: [0; N],
             buffer: [0; N],
@@ -129,7 +129,7 @@ impl<'a, const N: usize> DeltaBinaryPackedSlicer<'a, N> {
 
 pub struct DeltaLengthArraySlicer<'a> {
     data: &'a [u8],
-    row_count: usize,
+    sliced_row_count: usize,
     index: usize,
     lengths: Vec<i32>,
     pos: usize,
@@ -156,7 +156,7 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
     }
 
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
@@ -169,7 +169,7 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
 }
 
 impl<'a> DeltaLengthArraySlicer<'a> {
-    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
+    pub fn try_new(data: &'a [u8], row_count: usize, sliced_row_count: usize) -> ParquetResult<Self> {
         let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
         let lengths: Vec<_> = decoder
             .by_ref()
@@ -180,7 +180,7 @@ impl<'a> DeltaLengthArraySlicer<'a> {
         let data_offset = decoder.consumed_bytes();
         Ok(Self {
             data: &data[data_offset..],
-            row_count,
+            sliced_row_count,
             index: 0,
             lengths,
             pos: 0,
@@ -193,6 +193,7 @@ pub struct DeltaBytesArraySlicer<'a> {
     suffix: std::vec::IntoIter<i32>,
     data: &'a [u8],
     data_offset: usize,
+    sliced_row_count: usize,
     last_value: Vec<u8>,
     error: ParquetResult<()>,
 }
@@ -247,7 +248,7 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
     }
 
     fn count(&self) -> usize {
-        self.prefix.size_hint().0
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
@@ -260,7 +261,7 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
 }
 
 impl<'a> DeltaBytesArraySlicer<'a> {
-    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
+    pub fn try_new(data: &'a [u8], row_count: usize, sliced_row_count: usize) -> ParquetResult<Self> {
         let values = data;
         let mut decoder = delta_bitpacked::Decoder::try_new(values)?;
         let prefix = (&mut decoder)
@@ -280,6 +281,7 @@ impl<'a> DeltaBytesArraySlicer<'a> {
             suffix: suffix.into_iter(),
             data: values,
             data_offset,
+            sliced_row_count,
             last_value: vec![],
             error: Ok(()),
         })
@@ -289,7 +291,7 @@ impl<'a> DeltaBytesArraySlicer<'a> {
 pub struct PlainVarSlicer<'a> {
     data: &'a [u8],
     pos: usize,
-    row_count: usize,
+    sliced_row_count: usize,
 }
 
 impl DataPageSlicer for PlainVarSlicer<'_> {
@@ -319,7 +321,7 @@ impl DataPageSlicer for PlainVarSlicer<'_> {
 
     #[inline]
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     #[inline]
@@ -333,14 +335,14 @@ impl DataPageSlicer for PlainVarSlicer<'_> {
 }
 
 impl<'a> PlainVarSlicer<'a> {
-    pub fn new(data: &'a [u8], row_count: usize) -> Self {
-        Self { data, pos: 0, row_count }
+    pub fn new(data: &'a [u8], sliced_row_count: usize) -> Self {
+        Self { data, pos: 0, sliced_row_count }
     }
 }
 
 pub struct BooleanBitmapSlicer<'a> {
     bitmap_iter: BitmapIter<'a>,
-    row_count: usize,
+    sliced_row_count: usize,
     error: ParquetResult<()>,
 }
 
@@ -370,11 +372,11 @@ impl DataPageSlicer for BooleanBitmapSlicer<'_> {
     }
 
     fn count(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn data_size(&self) -> usize {
-        self.row_count
+        self.sliced_row_count
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -383,9 +385,9 @@ impl DataPageSlicer for BooleanBitmapSlicer<'_> {
 }
 
 impl<'a> BooleanBitmapSlicer<'a> {
-    pub fn new(data: &'a [u8], row_count: usize) -> Self {
+    pub fn new(data: &'a [u8], row_count: usize, sliced_row_count: usize) -> Self {
         let bitmap_iter = BitmapIter::new(data, 0, row_count);
-        Self { bitmap_iter, row_count, error: Ok(()) }
+        Self { bitmap_iter, sliced_row_count, error: Ok(()) }
     }
 }
 
