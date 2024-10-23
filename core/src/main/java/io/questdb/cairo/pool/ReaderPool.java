@@ -81,7 +81,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     public static class R extends TableReader implements PoolTenant<R> {
         private final int index;
         private final ReaderListener readerListener;
-        private boolean attached = true;
+        private boolean detached;
         private Entry<R> entry;
         private AbstractMultiTenantPool<R> pool;
 
@@ -102,12 +102,12 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         }
 
         public void attach() {
-            attached = true;
+            detached = false;
         }
 
         @Override
         public void close() {
-            if (attached && isOpen()) {
+            if (!detached && isOpen()) {
                 goPassive();
                 final AbstractMultiTenantPool<R> pool = this.pool;
                 if (pool == null || entry == null || !pool.returnToPool(this)) {
@@ -117,7 +117,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
         }
 
         public void detach() {
-            attached = false;
+            detached = true;
         }
 
         @Override
