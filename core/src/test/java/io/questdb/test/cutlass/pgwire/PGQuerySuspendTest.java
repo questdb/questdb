@@ -24,21 +24,19 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
-import io.questdb.mp.WorkerPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.suspend.TestCase;
 import io.questdb.test.cutlass.suspend.TestCases;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.sql.CallableStatement;
-import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.Collection;
 
 
 /**
@@ -48,94 +46,101 @@ import java.sql.ResultSet;
  * hasn't been suspended.
  */
 @SuppressWarnings("SqlNoDataSourceInspection")
+@RunWith(Parameterized.class)
 public class PGQuerySuspendTest extends BasePGTest {
 
-    private static final Log LOG = LogFactory.getLog(PGQuerySuspendTest.class);
     private static final StringSink countSink = new StringSink();
     private static final StringSink sinkB = new StringSink();
     private final static TestCases testCases = new TestCases();
 
+    public PGQuerySuspendTest(LegacyMode legacyMode) {
+        super(legacyMode);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return legacyModeParams();
+    }
+
     @Test
     public void testAllCases() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), false, true)) {
-                    CallableStatement stmt = connection.prepareCall(testCases.getDdlX());
-                    stmt.execute();
-                    stmt = connection.prepareCall(testCases.getDdlY());
-                    stmt.execute();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
 
-                    for (int i = 0; i < testCases.size(); i++) {
-                        TestCase tc = testCases.getQuick(i);
+            // clear listeners - we do not want to emit suspend events in DDL statements
+            // since this is not yet supported
+            engine.releaseAllReaders();
+            engine.setReaderListener(null);
 
-                        engine.releaseAllReaders();
-                        engine.setReaderListener(null);
+            CallableStatement stmt = connection.prepareCall(testCases.getDdlX());
+            stmt.execute();
+            stmt = connection.prepareCall(testCases.getDdlY());
+            stmt.execute();
 
-                        try (PreparedStatement statement = connection.prepareStatement(tc.getQuery())) {
-                            sink.clear();
-                            if (tc.getBindVariableValues() != null) {
-                                for (int j = 0; j < tc.getBindVariableValues().length; j++) {
-                                    statement.setString(j + 1, tc.getBindVariableValues()[j]);
-                                }
-                            }
-                            try (ResultSet rs = statement.executeQuery()) {
-                                long rows = printToSink(sink, rs, null);
-                                if (!tc.isAllowEmptyResultSet()) {
-                                    Assert.assertTrue("Query " + tc.getQuery() + " is expected to return non-empty result set", rows > 0);
-                                }
-                            }
+            for (int i = 0; i < testCases.size(); i++) {
+                TestCase tc = testCases.getQuick(i);
+
+                engine.releaseAllReaders();
+                engine.setReaderListener(null);
+
+                try (PreparedStatement statement = connection.prepareStatement(tc.getQuery())) {
+                    sink.clear();
+                    if (tc.getBindVariableValues() != null) {
+                        for (int j = 0; j < tc.getBindVariableValues().length; j++) {
+                            statement.setString(j + 1, tc.getBindVariableValues()[j]);
                         }
-
-                        String countQuery = "select count(*) from (" + tc.getQuery() + ")";
-                        try (PreparedStatement statement = connection.prepareStatement(countQuery)) {
-                            countSink.clear();
-                            if (tc.getBindVariableValues() != null) {
-                                for (int j = 0; j < tc.getBindVariableValues().length; j++) {
-                                    statement.setString(j + 1, tc.getBindVariableValues()[j]);
-                                }
-                            }
-                            try (ResultSet rs = statement.executeQuery()) {
-                                printToSink(countSink, rs, null);
-                            }
+                    }
+                    try (ResultSet rs = statement.executeQuery()) {
+                        long rows = printToSink(sink, rs, null);
+                        if (!tc.isAllowEmptyResultSet()) {
+                            Assert.assertTrue("Query " + tc.getQuery() + " is expected to return non-empty result set", rows > 0);
                         }
-
-                        engine.releaseAllReaders();
-
-                        // Yes, this write is racy, but it's not an issue in the test scenario.
-                        engine.setReaderListener(testCases.getSuspendingListener());
-                        try (PreparedStatement statement = connection.prepareStatement(tc.getQuery())) {
-                            sinkB.clear();
-                            if (tc.getBindVariableValues() != null) {
-                                for (int j = 0; j < tc.getBindVariableValues().length; j++) {
-                                    statement.setString(j + 1, tc.getBindVariableValues()[j]);
-                                }
-                            }
-                            try (ResultSet rs = statement.executeQuery()) {
-                                printToSink(sinkB, rs, null);
-                            }
-                        }
-
-                        TestUtils.assertEquals(tc.getQuery(), sink, sinkB);
-
-                        try (PreparedStatement statement = connection.prepareStatement(countQuery)) {
-                            sinkB.clear();
-                            if (tc.getBindVariableValues() != null) {
-                                for (int j = 0; j < tc.getBindVariableValues().length; j++) {
-                                    statement.setString(j + 1, tc.getBindVariableValues()[j]);
-                                }
-                            }
-                            try (ResultSet rs = statement.executeQuery()) {
-                                printToSink(sinkB, rs, null);
-                            }
-                        }
-
-                        TestUtils.assertEquals(countQuery, countSink, sinkB);
                     }
                 }
+
+                String countQuery = "select count(*) from (" + tc.getQuery() + ")";
+                try (PreparedStatement statement = connection.prepareStatement(countQuery)) {
+                    countSink.clear();
+                    if (tc.getBindVariableValues() != null) {
+                        for (int j = 0; j < tc.getBindVariableValues().length; j++) {
+                            statement.setString(j + 1, tc.getBindVariableValues()[j]);
+                        }
+                    }
+                    try (ResultSet rs = statement.executeQuery()) {
+                        printToSink(countSink, rs, null);
+                    }
+                }
+
+                engine.releaseAllReaders();
+
+                // Yes, this write is racy, but it's not an issue in the test scenario.
+                engine.setReaderListener(testCases.getSuspendingListener());
+                try (PreparedStatement statement = connection.prepareStatement(tc.getQuery())) {
+                    sinkB.clear();
+                    if (tc.getBindVariableValues() != null) {
+                        for (int j = 0; j < tc.getBindVariableValues().length; j++) {
+                            statement.setString(j + 1, tc.getBindVariableValues()[j]);
+                        }
+                    }
+                    try (ResultSet rs = statement.executeQuery()) {
+                        printToSink(sinkB, rs, null);
+                    }
+                }
+
+                TestUtils.assertEquals(tc.getQuery(), sink, sinkB);
+
+                try (PreparedStatement statement = connection.prepareStatement(countQuery)) {
+                    sinkB.clear();
+                    if (tc.getBindVariableValues() != null) {
+                        for (int j = 0; j < tc.getBindVariableValues().length; j++) {
+                            statement.setString(j + 1, tc.getBindVariableValues()[j]);
+                        }
+                    }
+                    try (ResultSet rs = statement.executeQuery()) {
+                        printToSink(sinkB, rs, null);
+                    }
+                }
+
+                TestUtils.assertEquals(countQuery, countSink, sinkB);
             }
         });
     }

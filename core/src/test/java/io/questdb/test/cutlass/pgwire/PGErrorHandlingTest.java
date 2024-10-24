@@ -31,26 +31,49 @@ import io.questdb.network.Socket;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
-import io.questdb.test.BootstrapTest;
+import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.Collection;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class PGErrorHandlingTest extends BootstrapTest {
+import static io.questdb.test.cutlass.pgwire.BasePGTest.legacyModeParams;
+
+@RunWith(Parameterized.class)
+public class PGErrorHandlingTest extends AbstractBootstrapTest {
+
+    private final boolean testParamLegacyMode;
+
+    public PGErrorHandlingTest(BasePGTest.LegacyMode legacyMode) {
+        this.testParamLegacyMode = legacyMode == BasePGTest.LegacyMode.LEGACY;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return legacyModeParams();
+    }
 
     @Before
     public void setUp() {
         super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
+        TestUtils.unchecked(() -> {
+            if (testParamLegacyMode) {
+                createDummyConfiguration("pg.legacy.mode.enabled=true");
+            } else {
+                createDummyConfiguration();
+            }
+        });
         dbPath.parent().$();
     }
 
@@ -116,6 +139,7 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                     @Override
                                     public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
                                         return (pgWireConfiguration, circuitBreaker, registry, optionsListener) -> new SocketAuthenticator() {
+
                                             @Override
                                             public void close() {
                                                 Misc.free(circuitBreaker);

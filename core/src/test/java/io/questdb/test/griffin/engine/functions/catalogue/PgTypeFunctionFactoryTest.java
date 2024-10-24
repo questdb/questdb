@@ -45,7 +45,9 @@ public class PgTypeFunctionFactoryTest extends AbstractCairoTest {
                         "16\tbool\t0\t0\t2200\tfalse\t0\tb\tB\tnull\t0\t0\t0\t0\t0\t1\tfalse\tfalse\ttrue\tc\tp\t0\t0\tfalse\n" +
                         "17\tbinary\t0\t0\t2200\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
                         "1082\tdate\t0\t0\t2200\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
-                        "2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t16\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n",
+                        "2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t16\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
+                        "2281\tinternal\t0\t0\t2200\tfalse\t0\tb\tP\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
+                        "26\toid\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n",
                 "pg_type;",
                 "create table x(a int)",
                 null,
@@ -69,7 +71,9 @@ public class PgTypeFunctionFactoryTest extends AbstractCairoTest {
                         "16\tbool\t0\t0\t2200\tfalse\t0\tb\tB\tnull\t0\t0\t0\t0\t0\t1\tfalse\tfalse\ttrue\tc\tp\t0\t0\tfalse\n" +
                         "17\tbinary\t0\t0\t2200\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
                         "1082\tdate\t0\t0\t2200\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
-                        "2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t16\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n",
+                        "2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t16\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
+                        "2281\tinternal\t0\t0\t2200\tfalse\t0\tb\tP\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n" +
+                        "26\toid\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\n",
                 "pg_catalog.pg_type;",
                 "create table x(a int)",
                 null,

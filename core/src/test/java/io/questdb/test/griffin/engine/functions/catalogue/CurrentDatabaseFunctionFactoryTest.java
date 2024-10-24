@@ -33,7 +33,7 @@ public class CurrentDatabaseFunctionFactoryTest extends AbstractCairoTest {
     public void testCurrentDatabaseFunc() throws Exception {
         assertQuery(
                 "current_database\n" +
-                        "questdb\n",
+                        "qdb\n",
                 "select current_database();",
                 null,
                 null,
@@ -46,7 +46,7 @@ public class CurrentDatabaseFunctionFactoryTest extends AbstractCairoTest {
     public void testPrefixedCurrentDatabaseFunc() throws Exception {
         assertQuery(
                 "current_database\n" +
-                        "questdb\n",
+                        "qdb\n",
                 "select pg_catalog.current_database();",
                 null,
                 null,
