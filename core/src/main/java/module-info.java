@@ -1036,6 +1036,7 @@ open module io.questdb {
 
             io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory,
+            io.questdb.griffin.engine.functions.date.ToTimezoneIntervalFunctionFactory,
 
             // long128 functions
             io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory,
