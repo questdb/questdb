@@ -647,19 +647,19 @@ public class IODispatcherTest extends AbstractTest {
                 sink.put(",");
             }
         }
-        getSimpleTester().run(engine -> {
-            testHttpClient.assertGet(
-                    "{" +
-                            "\"query\":\"select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")\"," +
-                            "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
-                            "\"timestamp\":-1," +
-                            "\"dataset\":[" + sink + "]," +
-                            "\"count\":" + numOfRows + "," +
-                            "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
-                            "}",
-                    "select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")"
-            );
-        });
+        getSimpleTester().run(engine ->
+                testHttpClient.assertGet(
+                        "{" +
+                                "\"query\":\"select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")\"," +
+                                "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
+                                "\"timestamp\":-1," +
+                                "\"dataset\":[" + sink + "]," +
+                                "\"count\":" + numOfRows + "," +
+                                "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                                "}",
+                        "select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")"
+                )
+        );
     }
 
     @Test
