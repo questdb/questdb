@@ -955,6 +955,22 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 's';
     }
 
+    public static boolean isMaterializedKeyword(CharSequence tok) {
+        return tok.length() == 12
+                && (tok.charAt(0) | 32) == 'm'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 't'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 'r'
+                && (tok.charAt(5) | 32) == 'i'
+                && (tok.charAt(6) | 32) == 'a'
+                && (tok.charAt(7) | 32) == 'l'
+                && (tok.charAt(8) | 32) == 'i'
+                && (tok.charAt(9) | 32) == 'z'
+                && (tok.charAt(10) | 32) == 'e'
+                && (tok.charAt(11) | 32) == 'd';
+    }
+
     public static boolean isMaxIdentifierLength(CharSequence tok) {
         return tok.length() == 21
                 && (tok.charAt(0) | 32) == 'm'
