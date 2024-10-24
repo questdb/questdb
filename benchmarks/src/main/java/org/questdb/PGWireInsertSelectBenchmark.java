@@ -41,7 +41,7 @@ public class PGWireInsertSelectBenchmark {
     public static void main(String[] args) throws Exception {
         long runtimeSeconds = 10;
         int nInserters = 2;
-        int nSelectors = 4;
+        int nSelectors = 2;
         int insertBatchSize = 50;
 
         AtomicLongArray inserterProgress = new AtomicLongArray(nInserters);
