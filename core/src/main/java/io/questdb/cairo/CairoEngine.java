@@ -324,7 +324,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
-        checkpointAgent.checkpointCreate(executionContext);
+        checkpointAgent.checkpointCreate(executionContext, false);
+    }
+
+    public void snapshotCreate(SqlExecutionContext executionContext) throws SqlException {
+        checkpointAgent.checkpointCreate(executionContext, true);
     }
 
     /**
