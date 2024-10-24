@@ -33,3 +33,5 @@ core/rust/qdbr/parquet2/target
 .envrc
 .vscode
 core/rust/qdbr/target
+compat/src/test/rust/scenarios/target/
+compat/src/test/rust/scenarios/Cargo.lock
