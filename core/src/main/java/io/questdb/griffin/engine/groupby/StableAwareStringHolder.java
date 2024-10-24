@@ -108,11 +108,11 @@ public class StableAwareStringHolder implements CharSequence {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + LEN_OFFSET) : 0;
     }
 
-    public StableAwareStringHolder of(long ptr) {
+    public StableAwareStringHolder of(long colouredPtr) {
         // clear the top bit
-        this.ptr = ptr & 0x7FFFFFFFFFFFFFFFL;
+        this.ptr = colouredPtr & 0x7FFFFFFFFFFFFFFFL;
         // extract the top bit
-        this.direct = (ptr & 0x8000000000000000L) != 0;
+        this.direct = (colouredPtr & 0x8000000000000000L) != 0;
         return this;
     }
 

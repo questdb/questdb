@@ -112,13 +112,13 @@ public class InSymbolFunctionFactory implements FunctionFactory {
     private static class Func extends BooleanFunction implements UnaryFunction {
         private final SymbolFunction arg;
         private final CharSequenceHashSet deferredSet;
+        private final IntList deferredValuePositions;
         private final ObjList<Function> deferredValues;
         private final IntHashSet intSet = new IntHashSet();
         private final TestFunc intTest = this::testAsInt;
         private final CharSequenceHashSet set;
         private final TestFunc strTest = this::testAsString;
         private TestFunc testFunc;
-        private final IntList deferredValuePositions;
 
         public Func(SymbolFunction arg, CharSequenceHashSet set, ObjList<Function> deferredValues, IntList deferredValuePositions) {
             this.arg = arg;

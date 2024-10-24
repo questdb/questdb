@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.lt;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.lt.LtCharFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class LtCharFunctionFactoryTest extends AbstractFunctionFactoryTest {

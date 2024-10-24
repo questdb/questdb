@@ -27,7 +27,6 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;

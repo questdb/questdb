@@ -26,10 +26,10 @@ package io.questdb.test.griffin.engine.functions.lt;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.lt.LtTimestampFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 import static io.questdb.std.datetime.microtime.TimestampFormatUtils.parseUTCTimestamp;

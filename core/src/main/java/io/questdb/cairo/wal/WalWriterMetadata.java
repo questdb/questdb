@@ -110,6 +110,12 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
+    public void changeColumnType(CharSequence columnName, int newType) {
+        TableUtils.changeColumnTypeInMetadata(columnName, newType, columnNameIndexMap, columnMetadata);
+        columnCount++;
+        structureVersion++;
+    }
+
     @Override
     public void close() {
         clear(true, Vm.TRUNCATE_TO_PAGE);
@@ -163,12 +169,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
 
     public void renameColumn(CharSequence columnName, CharSequence newName) {
         TableUtils.renameColumnInMetadata(columnName, newName, columnNameIndexMap, columnMetadata);
-        structureVersion++;
-    }
-
-    public void changeColumnType(CharSequence columnName, int newType) {
-        TableUtils.changeColumnTypeInMetadata(columnName, newType, columnNameIndexMap, columnMetadata);
-        columnCount++;
         structureVersion++;
     }
 

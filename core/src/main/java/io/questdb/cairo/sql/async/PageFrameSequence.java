@@ -204,7 +204,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
             LOG.debug().$("removed [seq=").$(collectSubSeq).I$();
         }
         if (localTask != null) {
-            localTask.resetCapacities();
+            localTask.reset();
         }
     }
 
@@ -378,13 +378,14 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         final Rnd rnd = executionContext.getAsyncRandom();
         try {
+            assert frameCursor == null;
+            frameCursor = base.getPageFrameCursor(executionContext, order);
+
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            frameAddressCache.of(base.getMetadata());
+            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes());
 
-            assert frameCursor == null;
-            frameCursor = base.getPageFrameCursor(executionContext, order);
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
             done = false;
@@ -567,7 +568,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     private void initRecord(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
         if (localRecord == null) {
-            localRecord = new PageFrameMemoryRecord();
+            localRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         }
         circuitBreaker.init(executionContextCircuitBreaker);
     }

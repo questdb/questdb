@@ -1,7 +1,8 @@
+use crate::allocator::AcVec;
+use crate::parquet::error::ParquetResult;
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
-use crate::parquet_write::ParquetResult;
 use std::ptr;
 
 /// A sink for fixed length columns
@@ -22,47 +23,55 @@ pub type FixedFloatColumnSink<'a, T> = FixedColumnSink<'a, 4, 4, T>;
 pub type FixedInt2ShortColumnSink<'a, T> = FixedColumnSink<'a, 2, 4, T>;
 pub type FixedInt2ByteColumnSink<'a, T> = FixedColumnSink<'a, 1, 4, T>;
 pub type FixedLong256ColumnSink<'a, T> = FixedColumnSink<'a, 32, 32, T>;
+pub type FixedLong128ColumnSink<'a, T> = FixedColumnSink<'a, 16, 16, T>;
 pub type FixedBooleanColumnSink<'a, T> = FixedColumnSink<'a, 1, 1, T>;
 
 impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable for FixedColumnSink<'_, N, R, T> {
-    fn reserve(&mut self) {
-        self.buffers.data_vec.reserve(self.slicer.count() * N);
+    fn reserve(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.reserve(self.slicer.count() * N)?;
+        Ok(())
     }
 
     #[inline]
-    fn push(&mut self) {
+    fn push(&mut self) -> ParquetResult<()> {
         if N == R {
-            self.buffers.data_vec.extend_from_slice(self.slicer.next());
+            self.buffers
+                .data_vec
+                .extend_from_slice(self.slicer.next())?;
         } else {
             self.buffers
                 .data_vec
-                .extend_from_slice(&self.slicer.next()[..N]);
+                .extend_from_slice(&self.slicer.next()[..N])?;
         }
+        Ok(())
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) {
+    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
         if N == R {
             if let Some(slice) = self.slicer.next_slice(count) {
-                self.buffers.data_vec.extend_from_slice(slice);
-                return;
+                self.buffers.data_vec.extend_from_slice(slice)?;
+                return Ok(());
             }
         }
         for _ in 0..count {
-            self.push();
+            self.push()?;
         }
+        Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) {
-        self.buffers.data_vec.extend_from_slice(self.null_value);
+    fn push_null(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.extend_from_slice(self.null_value)?;
+        Ok(())
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) {
+    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            self.buffers.data_vec.extend_from_slice(self.null_value);
+            self.buffers.data_vec.extend_from_slice(self.null_value)?;
         }
+        Ok(())
     }
 
     #[inline]
@@ -84,6 +93,7 @@ impl<'a, const N: usize, const R: usize, T: DataPageSlicer> FixedColumnSink<'a, 
         Self { slicer, buffers, null_value }
     }
 }
+
 pub struct ReverseFixedColumnSink<'a, const N: usize, T: DataPageSlicer> {
     slicer: &'a mut T,
     buffers: &'a mut ColumnChunkBuffers,
@@ -91,35 +101,40 @@ pub struct ReverseFixedColumnSink<'a, const N: usize, T: DataPageSlicer> {
 }
 
 impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, N, T> {
-    fn reserve(&mut self) {
-        self.buffers.data_vec.reserve(self.slicer.count() * N);
+    fn reserve(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.reserve(self.slicer.count() * N)?;
+        Ok(())
     }
 
     #[inline]
-    fn push(&mut self) {
+    fn push(&mut self) -> ParquetResult<()> {
         let slice = self.slicer.next();
         for i in 0..N {
-            self.buffers.data_vec.push(slice[N - i - 1]);
+            self.buffers.data_vec.push(slice[N - i - 1])?;
         }
+        Ok(())
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) {
+    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            self.push();
+            self.push()?;
         }
+        Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) {
-        self.buffers.data_vec.extend_from_slice(&self.null_value);
+    fn push_null(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.extend_from_slice(&self.null_value)?;
+        Ok(())
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) {
+    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            self.buffers.data_vec.extend_from_slice(&self.null_value);
+            self.buffers.data_vec.extend_from_slice(&self.null_value)?;
         }
+        Ok(())
     }
 
     #[inline]
@@ -149,33 +164,38 @@ pub struct NanoTimestampColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for NanoTimestampColumnSink<'_, T> {
-    fn reserve(&mut self) {
-        self.buffers.data_vec.reserve(self.slicer.count() * 8);
+    fn reserve(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.reserve(self.slicer.count() * 8)?;
+        Ok(())
     }
 
     #[inline]
-    fn push(&mut self) {
+    fn push(&mut self) -> ParquetResult<()> {
         let x = self.slicer.next();
-        Self::push_int96_as_epoch_microseconds(&mut self.buffers.data_vec, x);
+        Self::push_int96_as_epoch_microseconds(&mut self.buffers.data_vec, x)?;
+        Ok(())
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) {
+    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            self.push();
+            self.push()?;
         }
+        Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) {
-        self.buffers.data_vec.extend_from_slice(self.null_value);
+    fn push_null(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.extend_from_slice(self.null_value)?;
+        Ok(())
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) {
+    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            self.buffers.data_vec.extend_from_slice(self.null_value);
+            self.buffers.data_vec.extend_from_slice(self.null_value)?;
         }
+        Ok(())
     }
 
     #[inline]
@@ -197,7 +217,10 @@ impl<'a, T: DataPageSlicer> NanoTimestampColumnSink<'a, T> {
         Self { slicer, buffers, null_value }
     }
 
-    fn push_int96_as_epoch_microseconds(data_vec: &mut Vec<u8>, bytes: &[u8]) {
+    fn push_int96_as_epoch_microseconds(
+        data_vec: &mut AcVec<u8>,
+        bytes: &[u8],
+    ) -> ParquetResult<()> {
         // INT96 layout:
         // - bytes[0..8]: nanoseconds within the day (8 bytes)
         // - bytes[8..12]: Julian date (4 bytes)
@@ -217,7 +240,8 @@ impl<'a, T: DataPageSlicer> NanoTimestampColumnSink<'a, T> {
         let microseconds_since_epoch =
             days_since_epoch * 86400i64 * 1_000_000i64 + nanoseconds as i64 / 1_000;
 
-        data_vec.extend_from_slice(microseconds_since_epoch.to_le_bytes().as_ref());
+        data_vec.extend_from_slice(microseconds_since_epoch.to_le_bytes().as_ref())?;
+        Ok(())
     }
 }
 
@@ -229,37 +253,42 @@ pub struct IntDecimalColumnSink<'a, T: DataPageSlicer> {
 }
 
 impl<T: DataPageSlicer> Pushable for IntDecimalColumnSink<'_, T> {
-    fn reserve(&mut self) {
-        self.buffers.data_vec.reserve(self.slicer.count() * 4);
+    fn reserve(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.reserve(self.slicer.count() * 4)?;
+        Ok(())
     }
 
     #[inline]
-    fn push(&mut self) {
+    fn push(&mut self) -> ParquetResult<()> {
         let x = self.slicer.next();
         let x = unsafe { ptr::read_unaligned(x.as_ptr() as *const i32) };
         let double = x as f64 / self.factor;
         self.buffers
             .data_vec
-            .extend_from_slice(double.to_le_bytes().as_ref());
+            .extend_from_slice(double.to_le_bytes().as_ref())?;
+        Ok(())
     }
 
     #[inline]
-    fn push_slice(&mut self, count: usize) {
+    fn push_slice(&mut self, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            self.push();
+            self.push()?;
         }
+        Ok(())
     }
 
     #[inline]
-    fn push_null(&mut self) {
-        self.buffers.data_vec.extend_from_slice(self.null_value);
+    fn push_null(&mut self) -> ParquetResult<()> {
+        self.buffers.data_vec.extend_from_slice(self.null_value)?;
+        Ok(())
     }
 
     #[inline]
-    fn push_nulls(&mut self, count: usize) {
+    fn push_nulls(&mut self, count: usize) -> ParquetResult<()> {
         for _ in 0..count {
-            self.buffers.data_vec.extend_from_slice(self.null_value);
+            self.buffers.data_vec.extend_from_slice(self.null_value)?;
         }
+        Ok(())
     }
 
     #[inline]

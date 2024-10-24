@@ -25,7 +25,10 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericTableRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableTransactionLog;

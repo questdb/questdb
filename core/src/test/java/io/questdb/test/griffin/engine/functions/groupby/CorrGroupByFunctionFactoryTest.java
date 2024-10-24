@@ -29,7 +29,7 @@ import org.junit.Test;
 
 public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
 
-    private static String TRADES_DATA = "INSERT INTO trades(timestamp,price,amount) VALUES ('2022-03-08T18:03:57.609765Z','2615.54','4.4E-4'),\n" +
+    private static final String TRADES_DATA = "INSERT INTO trades(timestamp,price,amount) VALUES ('2022-03-08T18:03:57.609765Z','2615.54','4.4E-4'),\n" +
             "('2022-03-08T18:03:57.710419Z','39269.98','0.001'),\n" +
             "('2022-03-08T18:03:57.764098Z','2615.4','0.001'),\n" +
             "('2022-03-08T18:03:57.764098Z','2615.4','0.002'),\n" +
@@ -129,7 +129,7 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
             "('2022-03-08T18:04:01.991343Z','2615.81','0.001'),\n" +
             "('2022-03-08T18:04:02.006053Z','2616.02','0.001'),\n" +
             "('2022-03-08T18:04:02.006053Z','2616.02','0.00318975');";
-    private static String TRADES_TABLE = "CREATE TABLE trades(\n" +
+    private static final String TRADES_TABLE = "CREATE TABLE trades(\n" +
             "   timestamp TIMESTAMP\n" +
             "  ,price     DOUBLE\n" +
             "  ,amount    DOUBLE\n" +
@@ -232,28 +232,6 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
             );
         });
     }
-
-//    @Test
-//    public void testRndValues() throws Exception {
-//        assertMemoryLeak(() -> {
-//            ddl("create table tbl1 as (select rnd_double(0) x, rnd_double(0) y from long_sequence(100))");
-//            assertPlanNoLeakCheck("select corr(x, y) from tbl1", "Async Group By workers: 1\n" +
-//                    "  values: [corr(x,y)]\n" +
-//                    "  filter: null\n" +
-//                    "    PageFrame\n" +
-//                    "        Row forward scan\n" +
-//                    "        Frame forward scan on: tbl1\n");
-//
-//            assertSql(
-//                    "corr\n" +
-//                            "-0.03043643551979167\n", "select corr(x, y) from tbl1"
-//            );
-//            assertSql(
-//                    "corr\n" +
-//                            "-0.03043643551979167\n", "select corr(x, y) from tbl1"
-//            );
-//        });
-//    }
 
     @Test
     public void testCorrSomeNull() throws Exception {

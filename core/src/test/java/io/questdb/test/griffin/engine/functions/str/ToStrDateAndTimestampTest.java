@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin.engine.functions.str;
 
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -33,6 +32,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 

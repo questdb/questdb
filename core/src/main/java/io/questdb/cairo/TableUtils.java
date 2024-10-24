@@ -28,10 +28,23 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryMW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -41,9 +54,24 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -104,6 +132,7 @@ public final class TableUtils {
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     public static final int NULL_LEN = -1;
+    public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
@@ -991,7 +1020,7 @@ public final class TableUtils {
      * <p>
      * Important note. Linux requires the offset to be page aligned.
      *
-     * @param ff        files facade, - intermediary to allow intercepting calls to the OS.
+     * @param ff        files facade - intermediary to allow intercepting calls to the OS.
      * @param fd        file descriptor, previously provided by one of openFile() functions
      * @param size      size of the mapped file region
      * @param offset    offset in file to begin mapping
@@ -1135,6 +1164,15 @@ public final class TableUtils {
 
     public static void oldPartitionName(Path path, long txn) {
         path.put("-x-").put(txn);
+    }
+
+    public static long openAppend(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openAppend(path);
+        if (fd > -1) {
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
+            return fd;
+        }
+        throw CairoException.critical(ff.errno()).put("could not open append [file=").put(path).put(']');
     }
 
     public static long openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
@@ -1513,18 +1551,8 @@ public final class TableUtils {
         }
     }
 
-    public static void setParquetPartitionPath(
-            Path path,
-            int partitionBy,
-            long partitionTimestamp,
-            long nameTxn
-    ) {
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn);
-        path.concat("data.parquet");
-    }
-
     /**
-     * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
+     * Sets the path to the directory of a native partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
      * @param path        Set to the root directory for a table, this will be updated to the root directory of the partition
@@ -1532,8 +1560,22 @@ public final class TableUtils {
      * @param timestamp   A timestamp in the partition
      * @param nameTxn     Partition txn suffix
      */
-    public static void setPathForPartition(Path path, int partitionBy, long timestamp, long nameTxn) {
-        setSinkForPartition(path.slash(), partitionBy, timestamp, nameTxn);
+    public static void setPathForNativePartition(Path path, int partitionBy, long timestamp, long nameTxn) {
+        setSinkForNativePartition(path.slash(), partitionBy, timestamp, nameTxn);
+    }
+
+    /**
+     * Sets the path to the file of a Parquet partition taking into account the timestamp, the partitioning scheme
+     * and the partition version.
+     *
+     * @param path        Set to the root directory for a table, this will be updated to the file of the partition
+     * @param partitionBy Partitioning scheme
+     * @param timestamp   A timestamp in the partition
+     * @param nameTxn     Partition txn suffix
+     */
+    public static void setPathForParquetPartition(Path path, int partitionBy, long timestamp, long nameTxn) {
+        setSinkForNativePartition(path.slash(), partitionBy, timestamp, nameTxn);
+        path.concat(PARQUET_PARTITION_NAME);
     }
 
     public static void setPathTable(@NotNull Path path, @NotNull CairoConfiguration configuration, @NotNull TableToken token) {
@@ -1542,7 +1584,7 @@ public final class TableUtils {
     }
 
     /**
-     * Sets the sink to the directory of a partition taking into account the timestamp, the partitioning scheme
+     * Sets the sink to the directory of a native partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
      * @param sink        Set to the root directory for a table, this will be updated to the root directory of the partition
@@ -1550,11 +1592,24 @@ public final class TableUtils {
      * @param timestamp   A timestamp in the partition
      * @param nameTxn     Partition txn suffix
      */
-    public static void setSinkForPartition(CharSink<?> sink, int partitionBy, long timestamp, long nameTxn) {
+    public static void setSinkForNativePartition(CharSink<?> sink, int partitionBy, long timestamp, long nameTxn) {
         PartitionBy.setSinkForPartition(sink, partitionBy, timestamp);
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
         }
+    }
+
+    /**
+     * Sets the sink to the directory of a Parquet partition taking into account the timestamp, the partitioning scheme
+     * and the partition version.
+     *
+     * @param sink        Set to the root directory for a table, this will be updated to the file of the partition
+     * @param partitionBy Partitioning scheme
+     * @param timestamp   A timestamp in the partition
+     * @param nameTxn     Partition txn suffix
+     */
+    public static void setSinkForParquetPartition(CharSink<?> sink, int partitionBy, long timestamp, long nameTxn) {
+
     }
 
     public static void setTxReaderPath(@NotNull TxReader reader, @NotNull Path path, int partitionBy) {

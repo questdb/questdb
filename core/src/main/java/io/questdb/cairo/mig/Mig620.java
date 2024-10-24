@@ -35,7 +35,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.setPathForPartition;
+import static io.questdb.cairo.TableUtils.setPathForNativePartition;
 import static io.questdb.cairo.mig.MigrationUtils.openFileSafe;
 
 public class Mig620 {
@@ -220,7 +220,7 @@ public class Mig620 {
         tops.add(partitionTimestamp);
 
         path.trimTo(pathLen);
-        setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+        setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
         int partitionPathLen = path.size();
 
         if (ff.exists(path.put(Files.SEPARATOR).$())) {

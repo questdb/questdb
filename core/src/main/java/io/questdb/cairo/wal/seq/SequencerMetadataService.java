@@ -54,6 +54,21 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
+    public void changeColumnType(CharSequence name, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
+        metadata.changeColumnType(name, newType);
+    }
+
+    @Override
+    public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+        return false;
+    }
+
+    @Override
+    public boolean convertPartitionParquetToNative(long partitionTimestamp) {
+        return false;
+    }
+
+    @Override
     public void disableDeduplication() {
         metadata.disableDeduplication();
     }
@@ -78,11 +93,6 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public boolean convertPartition(long partitionTimestamp) {
-        return false;
-    }
-
-    @Override
     public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
         metadata.renameColumn(columnName, newName);
     }
@@ -91,10 +101,5 @@ public class SequencerMetadataService implements MetadataServiceStub {
     public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
         metadata.renameTable(toTableName);
         tableToken = metadata.getTableToken();
-    }
-
-    @Override
-    public void changeColumnType(CharSequence name, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
-        metadata.changeColumnType(name, newType);
     }
 }

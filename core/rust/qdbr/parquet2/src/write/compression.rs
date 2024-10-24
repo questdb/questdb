@@ -99,14 +99,19 @@ pub fn compress(
 
 /// A [`FallibleStreamingIterator`] that consumes [`Page`] and yields [`CompressedPage`]
 /// holding a reusable buffer ([`Vec<u8>`]) for compression.
-pub struct Compressor<I: Iterator<Item = Result<Page>>> {
+pub struct Compressor<
+    E: std::error::Error + From<Error>,
+    I: Iterator<Item = std::result::Result<Page, E>>,
+> {
     iter: I,
     compression: CompressionOptions,
     buffer: Vec<u8>,
     current: Option<CompressedPage>,
 }
 
-impl<I: Iterator<Item = Result<Page>>> Compressor<I> {
+impl<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<Page, E>>>
+    Compressor<E, I>
+{
     /// Creates a new [`Compressor`]
     pub fn new(iter: I, compression: CompressionOptions, buffer: Vec<u8>) -> Self {
         Self {
@@ -134,9 +139,11 @@ impl<I: Iterator<Item = Result<Page>>> Compressor<I> {
     }
 }
 
-impl<I: Iterator<Item = Result<Page>>> FallibleStreamingIterator for Compressor<I> {
+impl<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<Page, E>>>
+    FallibleStreamingIterator for Compressor<E, I>
+{
     type Item = CompressedPage;
-    type Error = Error;
+    type Error = E;
 
     fn advance(&mut self) -> std::result::Result<(), Self::Error> {
         let mut compressed_buffer = if let Some(page) = self.current.as_mut() {
@@ -149,7 +156,7 @@ impl<I: Iterator<Item = Result<Page>>> FallibleStreamingIterator for Compressor<
         let next = self
             .iter
             .next()
-            .map(|x| x.and_then(|page| compress(page, compressed_buffer, self.compression)))
+            .map(|x| x.and_then(|page| Ok(compress(page, compressed_buffer, self.compression)?)))
             .transpose()?;
         self.current = next;
         Ok(())

@@ -13,7 +13,7 @@ pub trait MakeConnection {
     /// The database type.
     type Conn: AsyncDB;
     /// The future returned by [`MakeConnection::make`].
-    type MakeFuture: Future<Output = Result<Self::Conn, <Self::Conn as AsyncDB>::Error>>;
+    type MakeFuture: Future<Output=Result<Self::Conn, <Self::Conn as AsyncDB>::Error>>;
 
     /// Creates a new connection to the database.
     fn make(&mut self) -> Self::MakeFuture;
@@ -23,7 +23,7 @@ pub trait MakeConnection {
 impl<D: AsyncDB, F, Fut> MakeConnection for F
 where
     F: FnMut() -> Fut,
-    Fut: IntoFuture<Output = Result<D, D::Error>>,
+    Fut: IntoFuture<Output=Result<D, D::Error>>,
 {
     type Conn = D;
     type MakeFuture = Fut::IntoFuture;
@@ -39,7 +39,7 @@ pub(crate) struct Connections<D, M> {
     conns: HashMap<ConnectionName, D>,
 }
 
-impl<D: AsyncDB, M: MakeConnection<Conn = D>> Connections<D, M> {
+impl<D: AsyncDB, M: MakeConnection<Conn=D>> Connections<D, M> {
     pub fn new(make_conn: M) -> Self {
         Connections {
             make_conn,

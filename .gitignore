@@ -24,6 +24,7 @@ core/cmake-build-debug-coverage
 core/cmake-build-release
 core/cmake-build-minsizerel
 core/CMakeCache.txt
+core/rust/qdbr/parquet2/target
 **/.project
 **/.settings
 **/.classpath
