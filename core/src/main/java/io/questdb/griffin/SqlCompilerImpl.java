@@ -865,13 +865,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 break;
             }
 
-            if(SqlKeywords.isIfKeyword(tok)){
+            if (SqlKeywords.isIfKeyword(tok)) {
                 tok = SqlUtil.fetchNext(lexer);
-                if(tok != null && SqlKeywords.isNotKeyword(tok)){
+                if (tok != null && SqlKeywords.isNotKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
-                    if(tok != null && SqlKeywords.isExistsKeyword(tok)){
+                    if (tok != null && SqlKeywords.isExistsKeyword(tok)) {
                         tok = SqlUtil.fetchNext(lexer); // captured column name
-                        if(tableMetadata.getColumnIndexQuiet(tok) != -1){
+                        if (tableMetadata.getColumnIndexQuiet(tok) != -1) {
                             break;
                         }
                     } else {

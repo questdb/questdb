@@ -346,7 +346,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddColumnINotExistsWithMissingNotToken() throws Exception{
+    public void testAddColumnINotExistsWithMissingNotToken() throws Exception {
         assertFailure("alter table x add column if exists b int", 28, "'not' expected");
     }
 
