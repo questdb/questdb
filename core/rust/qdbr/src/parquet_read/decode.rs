@@ -33,10 +33,10 @@ use parquet2::schema::types::{
 };
 use parquet2::write::Version;
 use std::cmp;
+use std::cmp::min;
 use std::collections::VecDeque;
 use std::io::{Read, Seek};
 use std::ptr;
-use std::cmp::min;
 
 impl RowGroupBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
@@ -1253,10 +1253,8 @@ fn decode_page0<T: Pushable>(
                         if local_push_count > 0 {
                             sink.push_slice(local_push_count)?;
                         }
-                    } else {
-                        if local_push_count > 0 {
-                            sink.push_nulls(local_push_count)?;
-                        }
+                    } else if local_push_count > 0 {
+                        sink.push_nulls(local_push_count)?;
                     }
                 }
                 FilteredHybridEncoded::Skipped(length) => {
