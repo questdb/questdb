@@ -543,70 +543,70 @@ public class LogFactoryTest {
             Assert.assertTrue(Files.touch(path.concat("mylog-2015-05-03.log.2").$()));
         }
 
-        RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
+        try (RingQueue<LogRecordUtf8Sink> queue = new RingQueue<>(
                 LogRecordUtf8Sink::new,
                 1024,
                 1024,
                 MemoryTag.NATIVE_DEFAULT
-        );
-
-        SPSequence pubSeq = new SPSequence(queue.getCycle());
-        SCSequence subSeq = new SCSequence();
-        pubSeq.then(subSeq).then(pubSeq);
-
-        try (final LogRollingFileWriter writer = new LogRollingFileWriter(
-                TestFilesFacadeImpl.INSTANCE,
-                clock,
-                queue,
-                subSeq,
-                LogLevel.INFO
         )) {
+            SPSequence pubSeq = new SPSequence(queue.getCycle());
+            SCSequence subSeq = new SCSequence();
+            pubSeq.then(subSeq).then(pubSeq);
 
-            writer.setLocation(logFile);
-            writer.setRollSize("1m");
-            writer.setBufferSize("64k");
-            writer.bindProperties(LogFactory.getInstance());
+            try (final LogRollingFileWriter writer = new LogRollingFileWriter(
+                    TestFilesFacadeImpl.INSTANCE,
+                    clock,
+                    queue,
+                    subSeq,
+                    LogLevel.INFO
+            )) {
 
-            AtomicBoolean running = new AtomicBoolean(true);
-            SOCountDownLatch halted = new SOCountDownLatch();
-            halted.setCount(1);
+                writer.setLocation(logFile);
+                writer.setRollSize("1m");
+                writer.setBufferSize("64k");
+                writer.bindProperties(LogFactory.getInstance());
 
-            new Thread(() -> {
-                while (running.get()) {
-                    writer.runSerially();
+                AtomicBoolean running = new AtomicBoolean(true);
+                SOCountDownLatch halted = new SOCountDownLatch();
+                halted.setCount(1);
+
+                new Thread(() -> {
+                    while (running.get()) {
+                        writer.runSerially();
+                    }
+
+                    //noinspection StatementWithEmptyBody
+                    while (writer.runSerially()) ;
+
+                    halted.countDown();
+                }).start();
+
+                // now publish
+                int published = 0;
+                int toPublish = 100_000;
+                while (published < toPublish) {
+                    long cursor = pubSeq.next();
+
+                    if (cursor < 0) {
+                        Os.pause();
+                        continue;
+                    }
+
+                    final long available = pubSeq.available();
+
+                    while (cursor < available && published < toPublish) {
+                        LogRecordUtf8Sink sink = queue.get(cursor++);
+                        sink.setLevel(LogLevel.INFO);
+                        sink.put("test");
+                        published++;
+                    }
+
+                    pubSeq.done(cursor - 1);
                 }
 
-                //noinspection StatementWithEmptyBody
-                while (writer.runSerially()) ;
-
-                halted.countDown();
-            }).start();
-
-            // now publish
-            int published = 0;
-            int toPublish = 100_000;
-            while (published < toPublish) {
-                long cursor = pubSeq.next();
-
-                if (cursor < 0) {
-                    Os.pause();
-                    continue;
-                }
-
-                final long available = pubSeq.available();
-
-                while (cursor < available && published < toPublish) {
-                    LogRecordUtf8Sink sink = queue.get(cursor++);
-                    sink.setLevel(LogLevel.INFO);
-                    sink.put("test");
-                    published++;
-                }
-
-                pubSeq.done(cursor - 1);
+                running.set(false);
+                halted.await();
             }
-
-            running.set(false);
-            halted.await();
         }
         assertFileLength(expectedLogFile);
         assertFileLength(expectedLogFile + ".1");

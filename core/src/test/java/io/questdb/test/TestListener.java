@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.AllocationsTracker;
 import io.questdb.std.Os;
 import org.junit.runner.Description;
 import org.junit.runner.notification.Failure;
@@ -83,12 +84,14 @@ public class TestListener extends RunListener {
     @Override
     public void testFinished(Description description) {
         LOG.infoW().$("<<<< ").$(description.getClassName()).$('.').$(description.getMethodName()).$(" duration_ms=").$(getTestDuration()).$();
+        AllocationsTracker.dumpAllocations(LOG, "End of test case");
     }
 
     @Override
     public void testStarted(Description description) {
         testStartMs = System.currentTimeMillis();
         LOG.infoW().$(">>>> ").$(description.getClassName()).$('.').$(description.getMethodName()).$();
+        AllocationsTracker.dumpAllocations(LOG, "Start of test case");
     }
 
     private long getTestDuration() {
@@ -100,6 +103,7 @@ public class TestListener extends RunListener {
             try {
                 while (true) {
                     dumpThreadStacks();
+                    AllocationsTracker.dumpAllocations(LOG, "Periodic dump");
                     Os.sleep(10 * 60 * 1000);
                 }
             } catch (Throwable t) {

@@ -220,6 +220,7 @@ public class ServerMain implements Closeable {
                 fileWatcher = Misc.free(fileWatcher);
             }
             freeOnExit.close();
+            Path.clearThreadLocals();
         }
     }
 

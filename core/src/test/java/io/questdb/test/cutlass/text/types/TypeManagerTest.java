@@ -62,6 +62,7 @@ public class TypeManagerTest extends AbstractTest {
     @AfterClass
     public static void tearDownStatic() {
         Misc.free(utf16Sink);
+        Misc.free(utf8Sink);
         Misc.free(jsonLexer);
         AbstractTest.tearDownStatic();
     }

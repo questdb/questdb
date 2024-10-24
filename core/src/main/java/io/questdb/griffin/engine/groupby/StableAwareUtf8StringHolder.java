@@ -93,15 +93,15 @@ public class StableAwareUtf8StringHolder implements Utf8Sequence {
         if (us.isStable()) {
             direct = true;
             checkCapacity(8); // pointer is 8 bytes
-            Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, us.ptr());
-            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, us.size());
+            Unsafe.putLong(ptr + HEADER_SIZE, us.ptr());
+            Unsafe.putInt(ptr + SIZE_OFFSET, us.size());
             Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, us.isAscii());
         } else {
             int thatSize = us.size();
             checkCapacity(thatSize);
             long lo = ptr + HEADER_SIZE;
             us.writeTo(lo, 0, thatSize);
-            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, thatSize);
+            Unsafe.putInt(ptr + SIZE_OFFSET, thatSize);
             Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, us.isAscii());
         }
     }
@@ -155,12 +155,12 @@ public class StableAwareUtf8StringHolder implements Utf8Sequence {
         long newSize = newCapacity + HEADER_SIZE;
         if (ptr == 0) {
             ptr = allocator.malloc(newSize);
-            Unsafe.getUnsafe().putInt(ptr, newCapacity);
-            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(ptr, newCapacity);
+            Unsafe.putInt(ptr + SIZE_OFFSET, 0);
             Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
         } else {
             ptr = allocator.realloc(ptr, capacity + HEADER_SIZE, newSize);
-            Unsafe.getUnsafe().putInt(ptr, newCapacity);
+            Unsafe.putInt(ptr, newCapacity);
         }
 
         assert ptr != 0;
@@ -170,7 +170,7 @@ public class StableAwareUtf8StringHolder implements Utf8Sequence {
 
     private void clear() {
         if (ptr != 0) {
-            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(ptr + SIZE_OFFSET, 0);
             Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, true);
             direct = false;
         }

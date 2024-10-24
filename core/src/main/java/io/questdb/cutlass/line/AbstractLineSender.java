@@ -212,7 +212,7 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         if (ptr >= hi) {
             send00();
         }
-        Unsafe.getUnsafe().putByte(ptr++, c);
+        Unsafe.putByte(ptr++, c);
         return this;
     }
 

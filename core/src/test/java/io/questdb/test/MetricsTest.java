@@ -99,10 +99,11 @@ public class MetricsTest {
     public void testMetricNamesContainGCMetrics() {
         final Metrics metrics = Metrics.enabled();
 
-        final DirectUtf8Sink sink = new DirectUtf8Sink(32);
-        metrics.scrapeIntoPrometheus(sink);
-
-        final String encoded = sink.toString();
+        final String encoded;
+        try (DirectUtf8Sink sink = new DirectUtf8Sink(32)) {
+            metrics.scrapeIntoPrometheus(sink);
+            encoded = sink.toString();
+        }
         TestUtils.assertContains(encoded, "jvm_major_gc_count");
         TestUtils.assertContains(encoded, "jvm_major_gc_time");
         TestUtils.assertContains(encoded, "jvm_minor_gc_count");
