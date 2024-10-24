@@ -133,7 +133,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         @Override
-        public void preCompile(SqlCompiler compiler) {
+        public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
+            return true;
         }
     };
     private static final IntList castGroups = new IntList();
@@ -346,29 +347,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             boolean recompileStale = true;
             for (int retries = 0; recompileStale; retries++) {
-                batchCallback.preCompile(this);
                 clear(); // we don't use normal compile here because we can't reset existing lexer
 
                 // Fetch sqlText, this will move lexer pointer (state change).
                 // We try to avoid logging the entire sql batch, in case batch contains secrets
                 final CharSequence sqlText = query.subSequence(position, goToQueryEnd());
-                // re-position lexer pointer to where sqlText just began
-                lexer.backTo(position, null);
-                compileInner(executionContext, sqlText);
-                // consume residual text, such as semicolon
-                goToQueryEnd();
-                // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
-                // some code in postCompile might need full text of current query
-                try {
-                    batchCallback.postCompile(this, compiledQuery, sqlText);
-                    recompileStale = false;
-                } catch (TableReferenceOutOfDateException e) {
-                    if (retries == maxRecompileAttempts) {
-                        throw e;
+
+                if (batchCallback.preCompile(this, sqlText)) {
+                    // ok, the callback wants us to compile this query, let's go!
+
+                    // re-position lexer pointer to where sqlText just began
+                    lexer.backTo(position, null);
+                    compileInner(executionContext, sqlText);
+
+                    // consume residual text, such as semicolon
+                    goToQueryEnd();
+                    // We've to move lexer because some query handlers don't consume all tokens (e.g. SET )
+                    // some code in postCompile might need full text of current query
+                    try {
+                        batchCallback.postCompile(this, compiledQuery, sqlText);
+                        recompileStale = false;
+                    } catch (TableReferenceOutOfDateException e) {
+                        if (retries == maxRecompileAttempts) {
+                            throw e;
+                        }
+                        LOG.info().$(e.getFlyweightMessage()).$();
+                        // will recompile
+                        lexer.restart();
                     }
-                    LOG.info().$(e.getFlyweightMessage()).$();
-                    // will recompile
-                    lexer.restart();
+                } else {
+                    recompileStale = false;
                 }
             }
         }

@@ -26,7 +26,11 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
@@ -38,14 +42,50 @@ import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.OptionsListener;
 import io.questdb.cutlass.pgwire.PGResponseSink;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.griffin.*;
+import io.questdb.griffin.BatchCallback;
+import io.questdb.griffin.CharacterStore;
+import io.questdb.griffin.CharacterStoreEntry;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
-import io.questdb.network.*;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.QueryPausedException;
+import io.questdb.network.SuspendEvent;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectBinarySequence;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjObjHashMap;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Rnd;
+import io.questdb.std.SimpleAssociativeCache;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -1343,9 +1383,11 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private class PGConnectionBatchCallback implements BatchCallback {
 
         @Override
-        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence text) throws Exception {
+        public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
+            CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(queryText);
             pipelineCurrentEntry.ofSimpleQuery(
-                    Chars.toString(text), // todo: we just need an immutable copy of the text, not a new string
+                    entry.toImmutable(),
                     sqlExecutionContext,
                     cq,
                     taiPool
@@ -1366,9 +1408,43 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
 
         @Override
-        public void preCompile(SqlCompiler compiler) {
+        public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
             addPipelineEntry();
             pipelineCurrentEntry = new PGPipelineEntry(engine);
+
+            final TypesAndSelectModern tas = tasCache.poll(sqlText);
+            if (tas == null) {
+                // cache miss -> we will compile the query for real
+                return true;
+            }
+
+            if (!pipelineCurrentEntry.msgParseReconcileParameterTypes((short) 0, tas)) {
+                // this should not be possible - SIMPLE query do not have parameters.
+                // so if there was a cache hit, the cached plan should not have no parameter either
+                // -> msgParseReconcileParameterTypes() should always pass
+                tas.close();
+                return false;
+            }
+
+            CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(sqlText);
+            try {
+                pipelineCurrentEntry.ofSimpleCachedSelect(entry.toImmutable(), sqlExecutionContext, tas);
+                return false; // we will not compile the query
+            } catch (Throwable e) {
+                // a bad thing happened while we tried to use cached query
+                // let's pretend we never tried and compile the query as if there was no cache
+                CharSequence msg;
+                if (e instanceof FlyweightMessageContainer) {
+                    msg = ((FlyweightMessageContainer) e).getFlyweightMessage();
+                } else {
+                    msg = e.getMessage();
+                }
+                LOG.info().$("could not use cached select [error=").$(msg).$(']').$();
+                pipelineCurrentEntry.clearState();
+                tas.close();
+                return true;
+            }
         }
     }
 

@@ -3062,7 +3062,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
-        public void preCompile(SqlCompiler compiler) {
+        public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
             sendRNQ = true;
             prepareForNewBatchQuery();
             PGConnectionContext.this.typesAndInsert = null;
@@ -3070,6 +3070,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             PGConnectionContext.this.typesAndSelect = null;
             circuitBreaker.resetTimer();
             sqlExecutionContext.initNow();
+            return true;
         }
     }
 

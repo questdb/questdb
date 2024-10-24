@@ -459,7 +459,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 case CompiledQuery.SELECT:
                 case CompiledQuery.PSEUDO_SELECT:
                     msgExecuteSelect(
-                            sqlExecutionContext, characterStore, utf8String, binarySequenceParamsPool, taiPool);
+                            sqlExecutionContext, characterStore, utf8String, binarySequenceParamsPool, taiPool, maxRecompileAttempts);
                     break;
                 case CompiledQuery.INSERT:
                     msgExecuteInsert(
@@ -724,6 +724,28 @@ public class PGPipelineEntry implements QuietCloseable {
         this.outParameterTypeDescriptionTypeOIDs.addAll(tas.getOutPgParameterTypeOIDs());
     }
 
+    public void ofSimpleCachedSelect(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, TypesAndSelectModern tas) throws SqlException {
+        setStateDesc(2); // send out the row description message
+        this.empty = sqlText == null || sqlText.length() == 0;
+        this.sqlText = sqlText;
+        this.factory = tas.getFactory();
+        this.sqlTag = tas.getSqlTag();
+        this.sqlType = tas.getSqlType();
+        this.tas = tas;
+        this.cacheHit = true;
+        copyPgResultSetColumnTypes();
+        this.outParameterTypeDescriptionTypeOIDs.clear();
+        assert tas.getOutPgParameterTypeOIDs().size() == 0;
+
+        // We cannot use regular msgExecuteSelect() since this method is called from a callback in sqlcompiler and
+        // msgExecuteSelect() may try to recompile the query on its own when it gets TableReferenceOutOfDateException.
+        // Calling a compiler while being called from a compiler is a bad idea.
+        sqlExecutionContext.setCacheHit(cacheHit);
+        sqlExecutionContext.getCircuitBreaker().resetTimer();
+        cursor = factory.getCursor(sqlExecutionContext);
+        setStateExec(true);
+    }
+
     public void ofSimpleQuery(
             CharSequence sqlText,
             SqlExecutionContext sqlExecutionContext,
@@ -732,7 +754,7 @@ public class PGPipelineEntry implements QuietCloseable {
     ) throws BadProtocolException {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
-        this.sqlText = sqlText;
+        this.sqlText = sqlText; // todo: should we intern this?
         this.empty = sqlText == null || sqlText.length() == 0;
         cacheHit = false;
 
@@ -1231,7 +1253,8 @@ public class PGPipelineEntry implements QuietCloseable {
             CharacterStore characterStore,
             DirectUtf8String utf8String,
             ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
-            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
+            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
+            int maxRecompileAttempts
     ) throws SqlException, BadProtocolException {
         if (cursor == null) {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
