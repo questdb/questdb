@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -43,18 +44,24 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
     private static final int LIST_CLEAR_THRESHOLD = 64;
     private final Function arg;
     private final char delimiter;
+    private final int functionPosition;
+    private final int maxBytes;
     private final ObjList<DirectUtf16Sink> sinks = new ObjList<>();
     private int sinkIndex = 0;
+    private int touchedMemorySize;
     private int valueIndex;
 
-    public StringAggGroupByFunction(Function arg, char delimiter) {
+    public StringAggGroupByFunction(Function arg, int functionPosition, char delimiter, int maxBytes) {
         this.arg = arg;
         this.delimiter = delimiter;
+        this.maxBytes = maxBytes;
+        this.functionPosition = functionPosition;
     }
 
     @Override
     public void clear() {
         // Free extra sinks.
+        touchedMemorySize = 0;
         if (sinks.size() > LIST_CLEAR_THRESHOLD) {
             for (int i = sinks.size() - 1; i > LIST_CLEAR_THRESHOLD - 1; i--) {
                 Misc.free(sinks.getQuick(i));
@@ -66,6 +73,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
             DirectUtf16Sink sink = sinks.getQuick(i);
             if (sink != null) {
                 sink.resetCapacity();
+                touchedMemorySize += sink.size();
             }
         }
         sinkIndex = 0;
@@ -94,6 +102,8 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
             mapValue.putBool(valueIndex + 1, true);
         }
         mapValue.putInt(valueIndex, sinkIndex++);
+        touchedMemorySize += sink.size();
+        assertTouchedMemoryCompliance();
     }
 
     @Override
@@ -101,12 +111,22 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         final DirectUtf16Sink sink = sinks.getQuick(mapValue.getInt(valueIndex));
         final CharSequence str = arg.getStrA(record);
         if (str != null) {
+            final int hi = sink.size();
             final boolean nullValue = mapValue.getBool(valueIndex + 1);
             if (!nullValue) {
                 sink.putAscii(delimiter);
             }
             sink.put(str);
             mapValue.putBool(valueIndex + 1, false);
+            touchedMemorySize += sink.size() - hi;
+            assertTouchedMemoryCompliance();
+        }
+    }
+
+    private void assertTouchedMemoryCompliance() {
+        if (touchedMemorySize > maxBytes) {
+            throw CairoException.nonCritical().position(functionPosition)
+                    .put("string_agg() result exceeds max size of ").put(maxBytes).put(" bytes");
         }
     }
 
