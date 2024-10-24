@@ -266,7 +266,7 @@ public class SqlOptimiser implements Mutable {
     public QueryModel rewriteVwap(QueryModel model) throws SqlException {
         QueryModel current = model;
         boolean validModel = false;
-        ExpressionNode originalVwapExpr = null;
+        ExpressionNode vwapExpr = null;
 
         while (current != null && !validModel) {
             if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
@@ -282,7 +282,7 @@ public class SqlOptimiser implements Mutable {
                             // todo: might need more conditions before this.
                             validModel = true;
 
-                            originalVwapExpr = ast;
+                            vwapExpr = ast;
                             break;
                         }
                     }
@@ -299,187 +299,102 @@ public class SqlOptimiser implements Mutable {
             return model;
         }
 
-        QueryModel chooseModel = current;
-        QueryModel sampleModel = current.getNestedModel();
-
-        // for prototyping, lets require it to be (timestamp, optional symbol, vwap)
-
-        final ExpressionNode timestamp = sampleModel.getTimestamp();
+        QueryModel outerSelectChoose = current;
+        QueryModel innerSelectNone = current.getNestedModel();
 
 
-        QueryModel outerGroupByModel = queryModelPool.next();
-        outerGroupByModel.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+        ExpressionNode timestamp = innerSelectNone.getTimestamp();
+
+        ExpressionNode vwapPriceExpr = vwapExpr.lhs;
+        ExpressionNode vwapVolumeExpr = vwapExpr.rhs;
+
+        // convert singleshot vwap into the specialised vwap
+        vwapExpr.paramCount = 5;
+        vwapExpr.lhs = null;
+        vwapExpr.rhs = null;
+
+        ExpressionNode volume, closingPrice, maxPrice, minPrice;
+        volume = expressionNodePool.next().of(LITERAL, "volume", -1, -1);
+        closingPrice = expressionNodePool.next().of(LITERAL, "closing_price", -1, -1);
+        maxPrice = expressionNodePool.next().of(LITERAL, "max_price", -1, -1);
+        minPrice = expressionNodePool.next().of(LITERAL, "min_price", -1, -1);
+
+        vwapExpr.args.add(volume);
+        vwapExpr.args.add(closingPrice);
+        vwapExpr.args.add(maxPrice);
+        vwapExpr.args.add(minPrice);
+        vwapExpr.args.add(timestamp);
 
 
-        if (sampleModel.getGroupBy() != null && sampleModel.getGroupBy().size() > 0) {
-            // explicit group by, so just copy it
-            outerGroupByModel.moveGroupByFrom(sampleModel);
-        } else {
-            // implicit
-            for (int i = 0, n = chooseModel.getColumns().size(); i < n; i++) {
-                QueryColumn column = chooseModel.getColumns().getQuick(i);
-                ExpressionNode ast = column.getAst();
-
-                if (ast.type == FUNCTION && ast.paramCount == 2 && Chars.equalsIgnoreCase(ast.token, "vwap")) {
-                    continue;
-                }
-
-                outerGroupByModel.addGroupBy(ast);
-            }
-        }
-
-        outerGroupByModel.addBottomUpColumn(queryColumnPool.next().of(
-                "timestamp",
-                timestamp
-        ));
-
-        for (int i = 0, n = outerGroupByModel.getGroupBy().size(); i < n; i++) {
-            ExpressionNode groupByExpr = outerGroupByModel.getGroupBy().getQuick(i);
-            if (outerGroupByModel.getColumnNameToAliasMap().contains(groupByExpr.token)) {
+        QueryModel nextInnerSelectNone = queryModelPool.next();
+        nextInnerSelectNone.setSelectModelType(QueryModel.SELECT_MODEL_NONE);
+        ObjList<CharSequence> columnAliases = nextInnerSelectNone.getBottomUpColumnAliases();
+        columnAliases.add(timestamp.token);
+        for (int i = 0, n = outerSelectChoose.getBottomUpColumnAliases().size(); i < n; i++) {
+            CharSequence cs = outerSelectChoose.getBottomUpColumnAliases().getQuick(i);
+            if (Chars.equalsIgnoreCase(cs, "vwap") || Chars.equalsIgnoreCase(cs, timestamp.token)) {
                 continue;
-            }
-
-            outerGroupByModel.addBottomUpColumn(queryColumnPool.next().of(
-                    groupByExpr.token, // todo: handle aliases
-                    groupByExpr
-            ));
-        }
-
-        ExpressionNode newVwapFunc = expressionNodePool.next().of(
-                FUNCTION,
-                "vwap",
-                -1,
-                -1
-        );
-        newVwapFunc.paramCount = 5;
-        newVwapFunc.args.add(
-                expressionNodePool.next().of(
-                        LITERAL,
-                        "volume",
-                        -1,
-                        -1
-                )
-        );
-        newVwapFunc.args.add(
-                expressionNodePool.next().of(
-                        LITERAL,
-                        "closing_price",
-                        -1,
-                        -1
-                )
-        );
-        newVwapFunc.args.add(
-                expressionNodePool.next().of(
-                        LITERAL,
-                        "max_price",
-                        -1,
-                        -1
-                )
-        );
-        newVwapFunc.args.add(
-                expressionNodePool.next().of(
-                        LITERAL,
-                        "min_price",
-                        -1,
-                        -1
-                )
-        );
-        newVwapFunc.args.add(
-                timestamp
-        );
-
-        outerGroupByModel.addBottomUpColumn(queryColumnPool.next().of(
-                "vwap",
-                newVwapFunc
-        ));
-
-        QueryModel newSampleModel = queryModelPool.next();
-        newSampleModel.setSelectModelType(QueryModel.SELECT_MODEL_NONE);
-        newSampleModel.setTableNameExpr(sampleModel.getTableNameExpr());
-
-        // columns for new sample
-        ExpressionNode priceColAst = originalVwapExpr.lhs;
-        ExpressionNode volumeColAst = originalVwapExpr.rhs;
-
-
-        ExpressionNode minPrice = expressionNodePool.next().of(
-                FUNCTION,
-                "min",
-                -1,
-                -1
-        );
-        minPrice.paramCount = 1;
-        minPrice.rhs = priceColAst;
-
-        ExpressionNode maxPrice = expressionNodePool.next().of(
-                FUNCTION,
-                "max",
-                -1,
-                -1
-        );
-        maxPrice.paramCount = 1;
-        maxPrice.rhs = priceColAst;
-
-        ExpressionNode closingPrice = expressionNodePool.next().of(
-                FUNCTION,
-                "last",
-                -1,
-                -1
-        );
-        maxPrice.paramCount = 1;
-        maxPrice.rhs = priceColAst;
-
-        ExpressionNode volume = expressionNodePool.next().of(
-                FUNCTION,
-                "sum",
-                -1,
-                -1
-        );
-        maxPrice.paramCount = 1;
-        maxPrice.rhs = volumeColAst;
-
-        for (int i = 0, n = outerGroupByModel.getColumns().size(); i < n; i++) {
-            QueryColumn column = outerGroupByModel.getColumns().getQuick(i);
-            if (column.getAst().type == FUNCTION) {
-                continue; // todo: make this robust, we are just copying the group by columns we need
             } else {
-                newSampleModel.addBottomUpColumn(column);
+                columnAliases.add(cs);
+            }
+        }
+        columnAliases.add(minPrice.token);
+        columnAliases.add(maxPrice.token);
+        columnAliases.add(closingPrice.token);
+        columnAliases.add(volume.token);
+
+        nextInnerSelectNone.moveGroupByFrom(innerSelectNone);
+
+        if (innerSelectNone.getOrderBy() != null) {
+            for (int i = 0, n = innerSelectNone.getOrderBy().size(); i < n; i++) {
+                nextInnerSelectNone.addOrderBy(innerSelectNone.getOrderBy().getQuick(i), innerSelectNone.getOrderByDirection().getQuick(i));
             }
         }
 
-
-        newSampleModel.addBottomUpColumn(queryColumnPool.next().of(
-                "min_price",
-                minPrice
-        ));
-
-        newSampleModel.addBottomUpColumn(queryColumnPool.next().of(
-                "max_price",
-                maxPrice
-        ));
-
-        newSampleModel.addBottomUpColumn(queryColumnPool.next().of(
-                "closing_price",
-                closingPrice
-        ));
-
-        newSampleModel.addBottomUpColumn(queryColumnPool.next().of(
-                "volume",
-                volume
-        ));
+        innerSelectNone.getOrderBy().clear();
+        innerSelectNone.getOrderByDirection().clear();
 
 
-        newSampleModel.setSampleByOffset(sampleModel.getSampleByOffset());
-        newSampleModel.setSampleByTimezoneName(sampleModel.getSampleByTimezoneName());
-        newSampleModel.setSampleBy(sampleModel.getSampleBy(), sampleModel.getSampleByUnit());
+        QueryModel nextInnerSelectChoose = queryModelPool.next();
+        nextInnerSelectChoose.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
 
-        outerGroupByModel.addOrderBy(sampleModel.getTimestamp(), QueryModel.ORDER_DIRECTION_ASCENDING);
-        outerGroupByModel.setTimestamp(sampleModel.getTimestamp());
-        outerGroupByModel.setNestedModel(newSampleModel);
+        for (int i = 0, n = outerSelectChoose.getBottomUpColumns().size(); i < n; i++) {
+            QueryColumn col = outerSelectChoose.getBottomUpColumns().getQuick(i);
+            if (col.getAst().equals(vwapExpr)) {
+                continue;
+            } else {
+                nextInnerSelectChoose.addBottomUpColumn(col);
+            }
+        }
 
-        String modelText = outerGroupByModel.toString0();
+        ExpressionNode minPriceExpr = expressionNodePool.next().of(FUNCTION, "min", -1, -1);
+        minPriceExpr.paramCount = 1;
+        minPriceExpr.rhs = vwapPriceExpr;
+        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("min_price", minPriceExpr));
 
-        return model;
+        ExpressionNode maxPriceExpr = expressionNodePool.next().of(FUNCTION, "max", -1, -1);
+        maxPriceExpr.paramCount = 1;
+        maxPriceExpr.rhs = vwapPriceExpr;
+        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("max_price", maxPriceExpr));
+
+        ExpressionNode closingPriceExpr = expressionNodePool.next().of(FUNCTION, "last", -1, -1);
+        closingPriceExpr.paramCount = 1;
+        closingPriceExpr.rhs = vwapPriceExpr;
+        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("closing_price", closingPriceExpr));
+
+        ExpressionNode volumeExpr = expressionNodePool.next().of(FUNCTION, "sum", -1, -1);
+        volumeExpr.paramCount = 1;
+        volumeExpr.rhs = vwapVolumeExpr;
+        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("volume", volumeExpr));
+
+
+        outerSelectChoose.setNestedModel(nextInnerSelectNone);
+        nextInnerSelectNone.setNestedModel(nextInnerSelectChoose);
+        nextInnerSelectChoose.setNestedModel(innerSelectNone);
+
+
+        // other aliases
+        return outerSelectChoose;
     }
 
     private static boolean isOrderedByDesignatedTimestamp(QueryModel model) {

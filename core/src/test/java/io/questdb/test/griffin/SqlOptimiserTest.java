@@ -2573,6 +2573,56 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteVwapModelsAreEquivalent() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            String model = "select-group-by timestamp, symbol, vwap(timestamp,min_price,max_price,closing_price,volume) vwap from (select-group-by [timestamp_floor('5m',timestamp) timestamp, symbol, last(price) closing_price, max(price) max_price, min(price) min_price, sum(amount) volume] timestamp_floor('5m',timestamp) timestamp, symbol, min(price) min_price, max(price) max_price, last(price) closing_price, sum(amount) volume from (select [timestamp, symbol, price, amount] from trades timestamp (timestamp) where symbol = 'ETH-USD' stride 5m) order by timestamp) order by timestamp";
+            String target = "select timestamp, symbol, vwap(timestamp,min_price, max_price, closing_price, volume)\n" +
+                    "from (\n" +
+                    "    select timestamp, symbol, min(price) min_price, max(price) max_price, last(price) closing_price, sum(amount) volume\n" +
+                    "    from trades\n" +
+                    "    where symbol = 'ETH-USD'\n" +
+                    "    sample by 5m\n" +
+                    ")\n" +
+                    "group by timestamp, symbol\n" +
+                    "order by timestamp asc;";
+            String source = "select timestamp, symbol, vwap(price,amount) vwap from\n" +
+                    "trades \n" +
+                    "where symbol = 'ETH-USD'\n" +
+                    "sample by 5m align to calendar with offset '00:00'\n" +
+                    "group by timestamp, symbol\n" +
+                    "order by timestamp asc";
+            assertModel(model, target, ExecutionModel.QUERY);
+            assertModel(model, source, ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testRewriteVwapModelsAssertPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            assertPlanNoLeakCheck("select timestamp, symbol, vwap(price,amount) vwap from\n" +
+                    "trades \n" +
+                    "where symbol = 'ETH-USD'\n" +
+                    "sample by 5m align to calendar with offset '00:00'\n" +
+                    "group by timestamp, symbol\n" +
+                    "order by timestamp asc", "");
+        });
+    }
+
+    @Test
     public void testSampleByFromToBasicWhereOptimisationBetween() throws Exception {
         assertMemoryLeak(() -> {
             ddl(SampleByTest.DDL_FROMTO);
