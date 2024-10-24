@@ -56,16 +56,24 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) {
         if (configuration.isDevModeEnabled()) {
-            final char killType = args.getQuick(0).getChar(null);
-            switch (killType) {
-                case '0':
+            final char crashType = args.getQuick(0).getChar(null);
+            switch (crashType) {
+                case 'C':
                     return SimulateCrashFunction.INSTANCE;
                 case 'M':
                     return OutOfMemoryFunction.INSTANCE;
-                case 'C':
+                case 'E':
                     return CairoErrorFunction.INSTANCE;
-                case 'D':
-                    return CairoExceptionFunction.INSTANCE;
+                case '0':
+                    return CairoExceptionFunction.INSTANCE_0;
+                case '1':
+                    return CairoExceptionFunction.INSTANCE_1;
+                case '2':
+                    return CairoExceptionFunction.INSTANCE_2;
+                case 'P':
+                    return CairoExceptionFunction.INSTANCE_P;
+                default:
+                    throw new UnsupportedOperationException("Unsupported crash type: " + crashType);
             }
         }
         return BooleanConstant.FALSE;
@@ -97,10 +105,23 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
     }
 
     private static class CairoExceptionFunction extends BooleanFunction {
-        private static final CairoExceptionFunction INSTANCE = new CairoExceptionFunction();
+        private static final CairoExceptionFunction INSTANCE_0 = new CairoExceptionFunction(0);
+        private static final CairoExceptionFunction INSTANCE_1 = new CairoExceptionFunction(1);
+        private static final CairoExceptionFunction INSTANCE_2 = new CairoExceptionFunction(2);
+        private static final CairoExceptionFunction INSTANCE_P = new CairoExceptionFunction(1100);
+
+        private final int numOfRecordsBeforeException;
+        private int current;
+
+        public CairoExceptionFunction(int numOfRecordsBeforeException) {
+            this.numOfRecordsBeforeException = numOfRecordsBeforeException;
+        }
 
         @Override
         public boolean getBool(Record rec) {
+            if (current < numOfRecordsBeforeException) {
+                return current++ % 2 == 0;
+            }
             throw CairoException.critical(1).put("simulated cairo exception");
         }
 
@@ -158,7 +179,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("simulate_crash(dummy)");
+            sink.val("simulate_crash(crash)");
         }
     }
 }
