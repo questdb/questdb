@@ -42,7 +42,7 @@ public class PGWireInsertSelectBenchmark {
         long runtimeSeconds = 10;
         int nInserters = 2;
         int nSelectors = 2;
-        int insertBatchSize = 50;
+        int insertBatchSize = 500;
 
         AtomicLongArray inserterProgress = new AtomicLongArray(nInserters);
         AtomicLongArray selectorProgress = new AtomicLongArray(nSelectors);
