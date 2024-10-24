@@ -47,19 +47,23 @@ public class PGWireInsertSelectBenchmark {
         AtomicLongArray inserterProgress = new AtomicLongArray(nInserters);
         AtomicLongArray selectorProgress = new AtomicLongArray(nSelectors);
         ExecutorService pool = Executors.newFixedThreadPool(nInserters + nSelectors);
-        try (Connection connection = createConnection();
-             Statement ddlStatement = connection.createStatement()
-        ) {
-            ddlStatement.execute("drop table if exists tango");
-            ddlStatement.execute("create table tango (" +
-                    "ts timestamp, " +
-                    "n long" +
-                    ") timestamp(ts) partition by hour");
+        try {
+            try (Connection connection = createConnection();
+                 Statement ddlStatement = connection.createStatement()
+            ) {
+                ddlStatement.execute("drop table if exists tango");
+                ddlStatement.execute("create table tango (" +
+                        "ts timestamp, " +
+                        "n long" +
+                        ") timestamp(ts) partition by hour");
+            }
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(runtimeSeconds);
             for (int taskid = 0; taskid < nInserters; taskid++) {
                 final int taskId = taskid;
                 pool.submit(() -> {
-                    try (PreparedStatement st = connection.prepareStatement("insert into tango values (?, ?)")) {
+                    try (Connection connection = createConnection();
+                         PreparedStatement st = connection.prepareStatement("insert into tango values (?, ?)")
+                    ) {
                         for (long i = 1; ; i++) {
                             st.setLong(1, TimeUnit.MILLISECONDS.toMicros(10 * i + taskId));
                             st.setLong(2, 0);
@@ -80,7 +84,9 @@ public class PGWireInsertSelectBenchmark {
             for (int taskid = 0; taskid < nSelectors; taskid++) {
                 final int taskId = taskid;
                 pool.submit(() -> {
-                    try (PreparedStatement st = connection.prepareStatement("select ts, n from tango limit -1")) {
+                    try (Connection connection = createConnection();
+                         PreparedStatement st = connection.prepareStatement("select ts, n from tango limit -1")
+                    ) {
                         for (long i = 1; ; i++) {
                             ResultSet rs = st.executeQuery();
                             while (rs.next()) {
