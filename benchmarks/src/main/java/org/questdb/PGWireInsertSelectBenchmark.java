@@ -70,9 +70,13 @@ public class PGWireInsertSelectBenchmark {
                             st.addBatch();
                             if (i % insertBatchSize == 0) {
                                 st.executeBatch();
+                                inserterProgress.lazySet(taskId, i);
                             }
-                            inserterProgress.lazySet(taskId, i);
                             if (System.nanoTime() > deadline) {
+                                if (i % insertBatchSize != 0) {
+                                    st.executeBatch();
+                                    inserterProgress.lazySet(taskId, i);
+                                }
                                 break;
                             }
                         }
