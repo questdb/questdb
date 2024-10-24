@@ -34,9 +34,10 @@ import io.questdb.std.str.StringSink;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class MaterializedViewRefreshState implements QuietCloseable {
+public class MatViewRefreshState implements QuietCloseable {
     private final AtomicBoolean locked = new AtomicBoolean(false);
     private final AtomicBoolean newNotification = new AtomicBoolean();
+    private final MaterializedViewDefinition viewDefinition;
     private RecordCursorFactory cursorFactory;
     private StringSink error;
     private int errorCode;
@@ -44,6 +45,10 @@ public class MaterializedViewRefreshState implements QuietCloseable {
     private long lastRefreshRowCount;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
+
+    public MatViewRefreshState(MaterializedViewDefinition viewDefinition) {
+        this.viewDefinition = viewDefinition;
+    }
 
     public RecordCursorFactory acquireRecordFactory() {
         RecordCursorFactory factory = cursorFactory;
@@ -67,6 +72,14 @@ public class MaterializedViewRefreshState implements QuietCloseable {
 
     public RecordToRowCopier getRecordToRowCopier() {
         return recordToRowCopier;
+    }
+
+    public MaterializedViewDefinition getViewDefinition() {
+        return viewDefinition;
+    }
+
+    public boolean isDropped() {
+        return this.isDropped;
     }
 
     public void markAsDropped() {

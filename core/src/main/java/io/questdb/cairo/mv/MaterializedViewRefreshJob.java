@@ -55,11 +55,12 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 
 public class MaterializedViewRefreshJob extends SynchronizedJob implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MaterializedViewRefreshJob.class);
     private final ObjList<CharSequence> baseTables = new ObjList<>();
-    private final MatViewGraph.AffectedMatViewsSink childViewSink = new MatViewGraph.AffectedMatViewsSink();
+    private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final CairoEngine engine;
     private final MatViewRefreshExecutionContext matViewRefreshExecutionContext;
@@ -166,7 +167,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
     }
 
     private boolean insertAsSelect(MatViewGraph viewGraph, MaterializedViewDefinition viewDef, TableWriterAPI tableWriter) throws SqlException {
-        MaterializedViewRefreshState refreshState = viewGraph.getViewRefreshState(viewDef.getTableToken());
+        MatViewRefreshState refreshState = viewGraph.getViewRefreshState(viewDef.getTableToken());
         RecordCursorFactory factory;
         RecordToRowCopier copier;
         long rowCount = 0;
@@ -269,13 +270,35 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
         return refreshed;
     }
 
-    private boolean refreshDependentViews(TableToken baseToken, MatViewGraph viewGraph) {
-        childViewSink.viewsList.clear();
+    private boolean refreshDependentView(@NotNull TableToken baseToken, @NotNull TableToken viewToken, MatViewGraph viewGraph) {
         CharSequence baseName = baseToken.getTableName();
         boolean refreshed = false;
 
         if (!baseToken.isWal()) {
-            // TODO: include more details of the views not to be refreshed
+            LOG.error().$("Found materialized views dependent on non-WAL table that will not be refreshed [parent=")
+                    .$(baseName).I$();
+        }
+
+        SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
+        long minRefreshToTxn = baseSeqTracker.getWriterTxn();
+
+        SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+        long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
+        long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
+
+        if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
+            refreshed = refreshView(viewGraph, baseToken, viewSeqTracker, viewToken, appliedToParentTxn, lastBaseQueryableTxn);
+        }
+
+        return refreshed;
+    }
+
+    private boolean refreshDependentViews(TableToken baseToken, MatViewGraph viewGraph) {
+        childViewSink.clear();
+        CharSequence baseName = baseToken.getTableName();
+        boolean refreshed = false;
+
+        if (!baseToken.isWal()) {
             LOG.error().$("Found materialized views dependent on non-WAL table that will not be refreshed [parent=")
                     .$(baseName).I$();
         }
@@ -284,15 +307,14 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
         SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
         long minRefreshToTxn = baseSeqTracker.getWriterTxn();
 
-        for (int v = 0, vsize = childViewSink.viewsList.size(); v < vsize; v++) {
-            MaterializedViewDefinition viewDef = childViewSink.viewsList.get(v);
-            TableToken viewToken = viewDef.getTableToken();
+        for (int v = 0, vsize = childViewSink.size(); v < vsize; v++) {
+            TableToken viewToken = childViewSink.get(v);
             SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
             long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
             long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
 
             if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
-                refreshed = refreshView(viewGraph, baseToken, viewSeqTracker, viewToken, viewDef, appliedToParentTxn, lastBaseQueryableTxn);
+                refreshed = refreshView(viewGraph, baseToken, viewSeqTracker, viewToken, appliedToParentTxn, lastBaseQueryableTxn);
             }
         }
         mvRefreshTask.baseTable = baseToken;
@@ -305,8 +327,14 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
         boolean refreshed = false;
         while (materializedViewGraph.tryDequeueRefreshTask(mvRefreshTask)) {
             TableToken baseTable = mvRefreshTask.baseTable;
-            LOG.info().$("refreshing materialized views dependent on [table=").$(baseTable).I$();
-            refreshed |= refreshDependentViews(baseTable, materializedViewGraph);
+            TableToken viewToken = mvRefreshTask.viewToken;
+            if (viewToken == null) {
+                LOG.info().$("refreshing materialized views dependent on [table=").$(baseTable).I$();
+                refreshed = refreshDependentViews(baseTable, materializedViewGraph);
+            } else {
+                refreshed = refreshDependentView(baseTable, viewToken, materializedViewGraph);
+            }
+
         }
         return refreshed;
     }
@@ -316,10 +344,16 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
             TableToken baseToken,
             SeqTxnTracker viewTxnTracker,
             TableToken viewToken,
-            MaterializedViewDefinition viewDef,
             long fromBaseTxn,
             long toBaseTxn
     ) {
+        MaterializedViewDefinition viewDef = viewGraph.getMatView(viewToken);
+        if (viewDef == null) {
+            // View must be deleted
+            LOG.info().$("not refreshing mat view, new definition does not exist [view=").$(viewToken).$(", base=").$(baseToken).I$();
+            return false;
+        }
+
         // Steps:
         // - compile view and execute with timestamp ranges from the unprocessed commits
         // - write the result set to WAL (or directly to table writer O3 area)

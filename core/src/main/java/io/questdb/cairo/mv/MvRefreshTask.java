@@ -29,9 +29,11 @@ import io.questdb.mp.QueueValueHolder;
 
 public class MvRefreshTask implements QueueValueHolder<MvRefreshTask> {
     public TableToken baseTable;
+    public TableToken viewToken;
 
     @Override
     public void copyTo(MvRefreshTask anotherHolder) {
         anotherHolder.baseTable = baseTable;
+        anotherHolder.viewToken = viewToken;
     }
 }

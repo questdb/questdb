@@ -24,16 +24,17 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.ObjList;
 import io.questdb.std.SimpleReadWriteLock;
 
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReadWriteLock;
 
-public class BaseTableMatViewRefreshState {
+public class MatViewRefreshList {
     private final AtomicLong lastCommittedBaseTableTxn = new AtomicLong(0);
     private final ReadWriteLock lock = new SimpleReadWriteLock();
-    ObjList<MaterializedViewDefinition> matViews = new ObjList<>();
+    ObjList<TableToken> matViews = new ObjList<>();
 
     public boolean notifyOnBaseTableCommitNoLock(long seqTxn) {
         boolean retry;

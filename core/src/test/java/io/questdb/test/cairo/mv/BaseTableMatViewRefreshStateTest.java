@@ -24,7 +24,7 @@
 
 package io.questdb.test.cairo.mv;
 
-import io.questdb.cairo.mv.BaseTableMatViewRefreshState;
+import io.questdb.cairo.mv.MatViewRefreshList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -50,7 +50,7 @@ public class BaseTableMatViewRefreshStateTest extends AbstractCairoTest {
         AtomicBoolean stop = new AtomicBoolean();
 
 
-        BaseTableMatViewRefreshState state = new BaseTableMatViewRefreshState();
+        MatViewRefreshList state = new MatViewRefreshList();
         int commits = rnd.nextInt(10_000_000);
         System.out.println("commits: " + commits);
 

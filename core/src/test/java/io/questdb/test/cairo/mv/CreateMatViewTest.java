@@ -520,7 +520,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             String name, String query, String baseTableName, long samplingInterval, char samplingIntervalUnit,
             long fromMicros, long toMicros, String timeZone, String timeZoneOffset
     ) {
-        final MaterializedViewDefinition matViewDefinition = getMatViewDefinition(baseTableName, name);
+        final MaterializedViewDefinition matViewDefinition = getMatViewDefinition(name);
         assertNotNull(matViewDefinition);
         assertTrue(matViewDefinition.getMatViewToken().isMatView());
         assertTrue(matViewDefinition.getMatViewToken().isWal());
@@ -603,16 +603,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
         }
     }
 
-    private static MaterializedViewDefinition getMatViewDefinition(String baseTableName, String viewName) {
+    private static MaterializedViewDefinition getMatViewDefinition(String viewName) {
         final TableToken matViewToken = engine.getTableTokenIfExists(viewName);
         if (matViewToken == null) {
             return null;
         }
-        return engine.getMaterializedViewGraph().getMatView(baseTableName, matViewToken);
-    }
-
-    private static MaterializedViewDefinition getMatViewDefinition(String viewName) {
-        return getMatViewDefinition(TABLE1, viewName);
+        return engine.getMaterializedViewGraph().getMatView(matViewToken);
     }
 
     private static long mapRO(FilesFacade ff, Path path, MemoryCMR mem, String fileName) {

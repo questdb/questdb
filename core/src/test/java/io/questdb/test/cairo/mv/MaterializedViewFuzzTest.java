@@ -243,6 +243,7 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
             refreshJobs.getQuick(i).join();
         }
 
+        drainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
