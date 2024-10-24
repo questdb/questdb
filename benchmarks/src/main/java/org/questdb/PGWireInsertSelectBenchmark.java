@@ -65,7 +65,7 @@ public class PGWireInsertSelectBenchmark {
                          PreparedStatement st = connection.prepareStatement("insert into tango values (?, ?)")
                     ) {
                         for (long i = 1; ; i++) {
-                            st.setLong(1, TimeUnit.MILLISECONDS.toMicros(10 * i + taskId));
+                            st.setLong(1, TimeUnit.MILLISECONDS.toMicros(10 * i) + taskId);
                             st.setLong(2, 0);
                             st.addBatch();
                             if (i % insertBatchSize == 0) {
