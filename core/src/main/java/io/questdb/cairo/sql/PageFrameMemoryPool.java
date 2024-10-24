@@ -85,6 +85,7 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
 
     @Override
     public void clear() {
+        Misc.free(parquetDecoder);
         parquetColumnIndexes.restoreInitialCapacity();
         parquetColumns.resetCapacity();
         freeParquetBuffers.addAll(cachedParquetBuffers);
@@ -193,6 +194,7 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
             freeParquetBuffers.getQuick(i).reopen();
         }
         frameMemory.clear();
+        Misc.free(parquetDecoder);
     }
 
     // We don't use additional data structures to speed up the lookups
@@ -249,7 +251,7 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
     private void openParquet(int frameIndex) {
         final long addr = addressCache.getParquetAddr(frameIndex);
         final long fileSize = addressCache.getParquetFileSize(frameIndex);
-        if ((parquetDecoder.getAddr() != addr) || (parquetDecoder.getFileSize() != fileSize)) {
+        if (parquetDecoder.getAddr() != addr || parquetDecoder.getFileSize() != fileSize) {
             parquetDecoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
         final PartitionDecoder.Metadata metadata = parquetDecoder.metadata();
