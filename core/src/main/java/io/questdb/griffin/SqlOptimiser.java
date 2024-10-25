@@ -333,11 +333,11 @@ public class SqlOptimiser implements Mutable {
                 vwapExpr.paramCount = 5;
 
                 // reverse ordering
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "volume", Integer.MIN_VALUE, 4));
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "closing_price", Integer.MIN_VALUE, 3));
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "volume", Integer.MIN_VALUE, 0));
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "closing_price", Integer.MIN_VALUE, 1));
                 vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "max_price", Integer.MIN_VALUE, 2));
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "min_price", Integer.MIN_VALUE, 1));
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, timestamp.token, Integer.MIN_VALUE, 0));
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "min_price", Integer.MIN_VALUE, 3));
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, timestamp.token, Integer.MIN_VALUE, 4));
 
                 outerSelectChoose.addBottomUpColumn(queryColumnPool.next().of(column.getAlias(), vwapExpr));
             } else {

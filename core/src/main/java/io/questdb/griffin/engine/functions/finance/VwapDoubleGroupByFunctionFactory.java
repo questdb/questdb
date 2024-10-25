@@ -107,7 +107,7 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
             final long timestamp = timestampFunc.getTimestamp(record);
             final double min = minPriceFunc.getDouble(record);
             final double max = maxPriceFunc.getDouble(record);
-            final double close = maxPriceFunc.getDouble(record);
+            final double close = closePriceFunc.getDouble(record);
             final double volume = volumeFunc.getDouble(record);
             long day = Timestamps.floorDD(timestamp);
 
