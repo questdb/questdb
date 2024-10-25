@@ -182,7 +182,7 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
             // So we use this instead:
             double mergedMeanY = (srcCount * srcMeanY + destCount * destMeanY) / mergedCount;
             double mergedMeanX = (srcCount * srcMeanX + destCount * destMeanX) / mergedCount;
-            double mergedSumXY = srcSumXY + destSumXY + (deltaY * deltaX) * ((double) (srcCount * destCount) / mergedCount);
+            double mergedSumXY = srcSumXY + destSumXY + (deltaY * deltaX) * (((double) srcCount * destCount) / mergedCount);
             double mergedSumX = srcSumX + destSumX + (deltaX * deltaX) * ((double) (srcCount * destCount) / mergedCount);
 
             destValue.putDouble(valueIndex, mergedMeanY);
