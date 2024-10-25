@@ -6802,6 +6802,7 @@ nodejs code:
 
     @Test
     public void testNamedPortalForInsert() throws Exception {
+        Assume.assumeTrue("implicit tx", legacyMode);
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (

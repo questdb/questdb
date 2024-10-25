@@ -186,6 +186,22 @@ public class PGPipelineEntry implements QuietCloseable {
         this.pgResultSetColumnTypes = pgResultSetColumnTypes;
     }
 
+    public static void freePendingWriters(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters, boolean commit) {
+        try {
+            for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
+                final TableWriterAPI m = pendingWriter.value;
+                if (commit) {
+                    m.commit();
+                } else {
+                    m.rollback();
+                }
+                Misc.free(m);
+            }
+        } finally {
+            pendingWriters.clear();
+        }
+    }
+
     public void bindPortalName(CharSequence portalName) {
         portalNames.add(portalName);
     }
@@ -513,7 +529,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 case CompiledQuery.COMMIT:
                 case CompiledQuery.ROLLBACK:
                     freePendingWriters(pendingWriters, this.sqlType == CompiledQuery.COMMIT);
-                    return NO_TRANSACTION;
+                    return IMPLICIT_TRANSACTION;
                 default:
                     // execute DDL that has not been parse-executed
                     if (!empty) {
@@ -1087,22 +1103,6 @@ public class PGPipelineEntry implements QuietCloseable {
                 .put(']');
     }
 
-    private void freePendingWriters(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters, boolean commit) {
-        try {
-            for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
-                final TableWriterAPI m = pendingWriter.value;
-                if (commit) {
-                    m.commit();
-                } else {
-                    m.rollback();
-                }
-                Misc.free(m);
-            }
-        } finally {
-            pendingWriters.clear();
-        }
-    }
-
     private short getPgResultSetColumnFormatCode(int columnIndex) {
         // binary is always sent as binary (e.g.) we never Base64 encode that
         if (pgResultSetColumnTypes.getQuick(columnIndex * 2) != ColumnType.BINARY) {
@@ -1181,6 +1181,8 @@ public class PGPipelineEntry implements QuietCloseable {
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
         switch (transactionState) {
+            case IMPLICIT_TRANSACTION:
+                // fall through, there is no difference between implicit and explicit transaction at this stage
             case IN_TRANSACTION: {
                 for (int attempt = 1; ; attempt++) {
                     copyParameterValuesToBindVariableService(
@@ -1216,35 +1218,8 @@ public class PGPipelineEntry implements QuietCloseable {
             case ERROR_TRANSACTION:
                 // when transaction is in error state, skip execution
                 break;
-            default: {
-                // in any other case we will commit in place
-                for (int attempt = 1; ; attempt++) {
-                    try {
-                        copyParameterValuesToBindVariableService(
-                                sqlExecutionContext,
-                                characterStore,
-                                utf8String,
-                                binarySequenceParamsPool
-                        );
-                        try (final InsertMethod m2 = insertOp.createMethod(sqlExecutionContext, writerSource)) {
-                            sqlAffectedRowCount = m2.execute();
-                            m2.commit();
-                        }
-                        if (tai.hasBindVariables()) {
-                            taiCache.put(sqlText, tai);
-                        }
-                        break;
-                    } catch (TableReferenceOutOfDateException e) {
-                        if (attempt == maxRecompileAttempts) {
-                            throw e;
-                        }
-                        tai.close();
-                        taiPool.push(tai);
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
-                    }
-                }
-            }
-            break;
+            default:
+                assert false : "unknown transaction state: " + transactionState;
         }
     }
 

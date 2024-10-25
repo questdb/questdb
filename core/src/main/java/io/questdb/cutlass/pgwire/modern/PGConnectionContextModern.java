@@ -117,6 +117,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     public static final String TAG_SET = "SET";
     public static final String TAG_UPDATE = "UPDATE";
     static final int ERROR_TRANSACTION = 3;
+    static final int IMPLICIT_TRANSACTION = 0;
     static final int INT_BYTES_X = Numbers.bswap(Integer.BYTES);
     static final int INT_NULL_X = Numbers.bswap(-1);
     static final int IN_TRANSACTION = 1;
@@ -131,7 +132,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
     static final byte MESSAGE_TYPE_PORTAL_SUSPENDED = 's';
     static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
-    static final int NO_TRANSACTION = 0;
     private static final int CACHE_HIT_INSERT_INVALID = 1;
     private static final int CACHE_HIT_INSERT_VALID = 2;
     private static final int CACHE_HIT_SELECT_INVALID = 3;
@@ -189,7 +189,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private AssociativeCache<TypesAndSelectModern> tasCache;
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
-    private int transactionState = NO_TRANSACTION;
+    private int transactionState = IMPLICIT_TRANSACTION;
 
     public PGConnectionContextModern(
             CairoEngine engine,
@@ -312,7 +312,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         suspendEvent = null;
         tlsSessionStarting = false;
         totalReceived = 0;
-        transactionState = NO_TRANSACTION;
+        transactionState = IMPLICIT_TRANSACTION;
     }
 
     @Override
@@ -1060,6 +1060,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     }
 
     private void msgSync() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
+        if (transactionState == IMPLICIT_TRANSACTION) {
+            // implicit transacations must be committed on SYNC
+            // todo: can this throw an exception? we should handle it!
+            // todo: PGPipelineEntry.freePendingWriters() is ugly, it smells like a certain kind of pasta to me. Fix it.
+            PGPipelineEntry.freePendingWriters(pendingWriters, true);
+        }
         addPipelineEntry();
 
         // the sync0 is liable to get interrupted due to:

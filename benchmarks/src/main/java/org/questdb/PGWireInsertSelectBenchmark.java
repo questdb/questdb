@@ -24,11 +24,14 @@
 
 package org.questdb;
 
+import io.questdb.client.Sender;
+
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.time.temporal.ChronoUnit;
 import java.util.Properties;
 import java.util.TimeZone;
 import java.util.concurrent.ExecutorService;
@@ -43,6 +46,7 @@ public class PGWireInsertSelectBenchmark {
         int nInserters = 2;
         int nSelectors = 2;
         int insertBatchSize = 50;
+        boolean useIlp = false;
 
         AtomicLongArray inserterProgress = new AtomicLongArray(nInserters);
         AtomicLongArray selectorProgress = new AtomicLongArray(nSelectors);
@@ -60,26 +64,46 @@ public class PGWireInsertSelectBenchmark {
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(runtimeSeconds);
             for (int taskid = 0; taskid < nInserters; taskid++) {
                 final int taskId = taskid;
-                pool.submit(() -> {
-                    try (Connection connection = createConnection();
-                         PreparedStatement st = connection.prepareStatement("insert into tango values (?, ?)")
-                    ) {
-                        for (long i = 1; ; i++) {
-                            st.setLong(1, TimeUnit.MILLISECONDS.toMicros(10 * i + taskId));
-                            st.setLong(2, 0);
-                            st.addBatch();
-                            if (i % insertBatchSize == 0) {
-                                st.executeBatch();
+                if (useIlp) {
+                    pool.submit(() -> {
+                        try (Sender sender = Sender.fromConfig("http::addr=localhost:9000;auto_flush=off;")) {
+                            for (long i = 1; ; i++) {
+                                sender.table("tango").longColumn("n", 0).at(10 * i + taskId, ChronoUnit.MILLIS);
+                                if (i % insertBatchSize == 0) {
+                                    sender.flush();
+                                }
+                                inserterProgress.lazySet(taskId, i);
+                                if (System.nanoTime() > deadline) {
+                                    break;
+                                }
                             }
-                            inserterProgress.lazySet(taskId, i);
-                            if (System.nanoTime() > deadline) {
-                                break;
-                            }
+                        } catch (Exception e) {
+                            e.printStackTrace(System.err);
                         }
-                    } catch (Exception e) {
-                        e.printStackTrace(System.err);
-                    }
-                });
+                    });
+                } else {
+                    pool.submit(() -> {
+                        try (Connection connection = createConnection();
+                             PreparedStatement st = connection.prepareStatement("insert into tango values (?, ?)")
+                        ) {
+                            for (long i = 1; ; i++) {
+                                st.setLong(1, TimeUnit.MILLISECONDS.toMicros(10 * i + taskId));
+                                st.setLong(2, 0);
+                                st.addBatch();
+                                if (i % insertBatchSize == 0) {
+                                    st.executeBatch();
+                                }
+                                inserterProgress.lazySet(taskId, i);
+                                if (System.nanoTime() > deadline) {
+                                    break;
+                                }
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace(System.err);
+                        }
+                    });
+                }
+
             }
             for (int taskid = 0; taskid < nSelectors; taskid++) {
                 final int taskId = taskid;
