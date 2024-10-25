@@ -45,7 +45,7 @@ public class PGWireInsertSelectBenchmark {
         long runtimeSeconds = 10;
         int nInserters = 2;
         int nSelectors = 2;
-        int insertBatchSize = 50;
+        int insertBatchSize = 500;
         boolean useIlp = false;
 
         AtomicLongArray inserterProgress = new AtomicLongArray(nInserters);
@@ -87,14 +87,19 @@ public class PGWireInsertSelectBenchmark {
                              PreparedStatement st = connection.prepareStatement("insert into tango values (?, ?)")
                         ) {
                             for (long i = 1; ; i++) {
-                                st.setLong(1, TimeUnit.MILLISECONDS.toMicros(10 * i + taskId));
+                                st.setLong(1, TimeUnit.MILLISECONDS.toMicros(10 * i) + taskId);
                                 st.setLong(2, 0);
                                 st.addBatch();
                                 if (i % insertBatchSize == 0) {
                                     st.executeBatch();
-                                }
+
                                 inserterProgress.lazySet(taskId, i);
-                                if (System.nanoTime() > deadline) {
+                                }
+                            if (System.nanoTime() > deadline) {
+                                if (i % insertBatchSize != 0) {
+                                    st.executeBatch();
+                                    inserterProgress.lazySet(taskId, i);
+                                }
                                     break;
                                 }
                             }
@@ -103,7 +108,6 @@ public class PGWireInsertSelectBenchmark {
                         }
                     });
                 }
-
             }
             for (int taskid = 0; taskid < nSelectors; taskid++) {
                 final int taskId = taskid;
