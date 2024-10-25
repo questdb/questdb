@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.finance;
+package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
