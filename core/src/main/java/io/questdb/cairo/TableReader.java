@@ -453,18 +453,21 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 if (!forceTruncate) {
                     if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs)) {
-                        if (openPartitionSize != newPartitionSize) {
-                            if (openPartitionSize > -1L) {
-                                reloadGrowPartition(partitionIndex, newPartitionSize, txPartitionNameTxn);
+                        // We used to skip reloading partition size if the row count is the same and name txn is the same
+                        // But in case of dedup the row count can be same but the data can be overwritten by splitting and squashing the partition back
+                        // This is ok for fixed size columns but var length columns have to be re-mapped to the bigger / smaller sizes
+                        if (openPartitionSize > -1L) {
+                            if (reloadPartitionFiles(partitionIndex, newPartitionSize, txPartitionNameTxn)) {
                                 openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, newPartitionSize);
                                 LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
+                            } else {
+                                prepareForLazyOpen(partitionIndex);
                             }
-                            changed = true;
                         }
                     } else {
                         prepareForLazyOpen(partitionIndex);
-                        changed = true;
                     }
+                    changed = true;
                 } else if (openPartitionSize > -1L && newPartitionSize > -1L) { // Don't force re-open if not yet opened
                     prepareForLazyOpen(partitionIndex);
                 }
@@ -534,13 +537,35 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static boolean growColumn(MemoryCMRDetachedImpl mem1, MemoryCMRDetachedImpl mem2, int columnType, long rowCount) {
         if (rowCount > 0) {
             if (ColumnType.isVarSize(columnType)) {
-                assert mem2 != null;
-                ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-                if (!mem2.tryExtend(columnTypeDriver.getAuxVectorSize(rowCount))) {
+                if (mem2 == null || !mem2.isOpen()) {
                     return false;
                 }
-                return mem1.tryExtend(columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), rowCount - 1));
+
+                // Extend aux memory
+                ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                long newSize = columnTypeDriver.getAuxVectorSize(rowCount);
+                if (newSize != mem2.size()) {
+                    if (!mem2.tryExtend(newSize)) {
+                        return false;
+                    }
+                }
+
+                // Extend data memory
+                long dataSize = columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), rowCount - 1);
+                if (mem1 != null && mem1.isOpen()) {
+                    if (dataSize != mem1.size()) {
+                        // because of dedup, size of var data can grow or shrink
+                        return mem1.tryChangeSize(dataSize);
+                    }
+                } else {
+                    // dataSize can be 0 in case when it's varchar column and all the values are inlined
+                    // The data memory was not open but now we need to open it. Mark the partition as not reloaded by returning false
+                    return dataSize == 0;
+                }
             } else {
+                if (mem1 == null || !mem1.isOpen()) {
+                    return false;
+                }
                 return mem1.tryExtend(rowCount << ColumnType.pow2SizeOf(columnType));
             }
         }
@@ -1034,10 +1059,14 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
 
                         if (openPartitionNameTxn == txPartitionNameTxn) {
-                            if (openPartitionSize != txPartitionSize) {
-                                reloadGrowPartition(partitionIndex, txPartitionSize, txPartitionNameTxn);
+                            // We used to skip reloading partition size if the row count is the same and name txn is the same
+                            // But in case of dedup the row count can be same but the data can be overwritten by splitting and squashing the partition back
+                            // This is ok for fixed size columns but var length columns have to be re-mapped to the bigger / smaller sizes
+                            if (reloadPartitionFiles(partitionIndex, txPartitionSize, txPartitionNameTxn)) {
                                 openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                 LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
+                            } else {
+                                prepareForLazyOpen(partitionIndex);
                             }
                         } else {
                             prepareForLazyOpen(partitionIndex);
@@ -1178,65 +1207,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader.getVersion() == columnVersion;
     }
 
-    /**
-     * Updates boundaries of all columns in partition.
-     *
-     * @param partitionIndex index of partition
-     * @param rowCount       number of rows in partition
-     */
-    private void reloadGrowPartition(int partitionIndex, long rowCount, long openPartitionNameTxn) {
-        Path path = pathGenPartitioned(partitionIndex, openPartitionNameTxn);
-        try {
-            int columnBase = getColumnBase(partitionIndex);
-            for (int i = 0; i < columnCount; i++) {
-                final int index = getPrimaryColumnIndex(columnBase, i);
-                final MemoryCMR mem1 = columns.getQuick(index);
-                if (mem1 == null || mem1 == NullMemoryCMR.INSTANCE || !mem1.isOpen()) {
-                    reloadColumnAt(
-                            partitionIndex,
-                            path,
-                            columns,
-                            columnTops,
-                            bitmapIndexes,
-                            columnBase,
-                            i,
-                            rowCount
-                    );
-                } else {
-                    // Last partitions columns can grow, we keep FDs open.
-                    // Other partitions FDs are closed, they need full file re-opening.
-                    boolean lastPartition = partitionIndex == partitionCount - 1;
-                    if (!lastPartition || !growColumn(
-                            (MemoryCMRDetachedImpl) mem1,
-                            (MemoryCMRDetachedImpl) columns.getQuick(index + 1),
-                            metadata.getColumnType(i),
-                            rowCount - getColumnTop(columnBase, i)
-                    )) {
-                        reloadColumnAt(
-                                partitionIndex,
-                                path,
-                                columns,
-                                columnTops,
-                                bitmapIndexes,
-                                columnBase,
-                                i,
-                                rowCount
-                        );
-                    }
-                }
-
-                // reload symbol map
-                SymbolMapReader reader = symbolMapReaders.getQuick(i);
-                if (reader == null) {
-                    continue;
-                }
-                reader.updateSymbolCount(txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(i)));
-            }
-        } finally {
-            path.trimTo(rootLen);
-        }
-    }
-
     private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
         // create transition index, which will help us reuse already open resources
         if (txnMetadataVersion == metadata.getMetadataVersion()) {
@@ -1280,6 +1250,37 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             return true;
         }
+    }
+
+    /**
+     * Updates boundaries of all columns in partition.
+     *
+     * @param partitionIndex index of partition
+     * @param rowCount       number of rows in partition
+     */
+    private boolean reloadPartitionFiles(int partitionIndex, long rowCount, long openPartitionNameTxn) {
+        Path path = pathGenPartitioned(partitionIndex, openPartitionNameTxn);
+        try {
+            int columnBase = getColumnBase(partitionIndex);
+            for (int i = 0; i < columnCount; i++) {
+                final int index = getPrimaryColumnIndex(columnBase, i);
+
+                // Last partitions columns can grow, we keep FDs open.
+                // Other partitions FDs are closed, they need full file re-opening.
+                boolean lastPartition = partitionIndex == partitionCount - 1;
+                if (!lastPartition || !growColumn(
+                        (MemoryCMRDetachedImpl) columns.getQuick(index),
+                        (MemoryCMRDetachedImpl) columns.getQuick(index + 1),
+                        metadata.getColumnType(i),
+                        rowCount - getColumnTop(columnBase, i)
+                )) {
+                    return false;
+                }
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+        return true;
     }
 
     private void reloadSlow(final boolean reshuffle) {
