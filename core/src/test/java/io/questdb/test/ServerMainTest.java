@@ -383,7 +383,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.enabled\tQDB_HTTP_MIN_ENABLED\ttrue\tconf\tfalse\tfalse\n" +
                                     "http.min.net.bind.to\tQDB_HTTP_MIN_NET_BIND_TO\t0.0.0.0:9011\tconf\tfalse\tfalse\n" +
                                     "http.min.net.connection.hint\tQDB_HTTP_MIN_NET_CONNECTION_HINT\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "http.min.net.connection.limit\tQDB_HTTP_MIN_NET_CONNECTION_LIMIT\t32\tdefault\tfalse\tfalse\n" +
+                                    "http.min.net.connection.limit\tQDB_HTTP_MIN_NET_CONNECTION_LIMIT\t64\tdefault\tfalse\tfalse\n" +
                                     "http.min.net.connection.queue.timeout\tQDB_HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
                                     "http.min.net.connection.rcvbuf\tQDB_HTTP_MIN_NET_CONNECTION_RCVBUF\t1024\tdefault\tfalse\tfalse\n" +
                                     "http.min.net.connection.sndbuf\tQDB_HTTP_MIN_NET_CONNECTION_SNDBUF\t1024\tdefault\tfalse\tfalse\n" +
