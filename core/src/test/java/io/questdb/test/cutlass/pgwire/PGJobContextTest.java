@@ -5584,7 +5584,7 @@ nodejs code:
                                 "     rnd_long(),\n" +
                                 "     timestamp_sequence(0, 100000)\n" +
                                 "     from long_sequence(50000);"
-																);
+                        );
                     }
 
                     mayDrainWalQueue();
