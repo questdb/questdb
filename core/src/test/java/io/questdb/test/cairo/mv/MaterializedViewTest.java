@@ -35,6 +35,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.griffin.model.IntervalUtils.parseFloorPartialTimestamp;
+
 
 public class MaterializedViewTest extends AbstractCairoTest {
     @Before
@@ -42,6 +44,71 @@ public class MaterializedViewTest extends AbstractCairoTest {
         super.setUp();
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+    }
+
+    @Test
+    public void testBaseTableRename() throws Exception {
+
+        assertMemoryLeak(() -> {
+
+            ddl("create table base_price (" +
+                    "sym varchar, price double, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+
+            TableToken baseToken = engine.verifyTableName("base_price");
+            createMatView(baseToken, "select sym, last(price) as price, ts from base_price sample by 1h");
+
+            insert("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                    ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                    ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                    ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainWalQueue();
+
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T17:22:09.842574Z");
+            MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(engine);
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "name\tbase_table_name\tlast_refresh_timestamp\trefresh_pending\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\n" +
+                            "price_1h\tbase_price\t2024-10-24T17:22:09.842574Z\tfalse\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\t\tnull\n",
+                    "views"
+            );
+
+            compile("rename table base_price to base_price2");
+            assertSql("refresh_mat_view\n" +
+                    "true\n", "select refresh_mat_view('price_1h')");
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "name\tbase_table_name\tlast_refresh_timestamp\trefresh_pending\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\n" +
+                            "price_1h\tbase_price\t2024-10-24T18:00:00.000000Z\tfalse\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\ttable does not exist [table=base_price]\t-105\n",
+                    "views"
+            );
+
+            // Create another base table instead of the one that was renamed
+            ddl("create table base_price (" +
+                    "sym varchar, price double, ts timestamp" +
+                    ") timestamp(ts) partition by DAY BYPASS WAL"
+            );
+            assertSql("refresh_mat_view\n" +
+                    "true\n", "select refresh_mat_view('price_1h')");
+            currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql(
+                    "name\tbase_table_name\tlast_refresh_timestamp\trefresh_pending\tview_sql\tview_table_dir_name\tlast_error\tlast_error_code\n" +
+                            "price_1h\tbase_price\t2024-10-24T19:00:00.000000Z\tfalse\tselect sym, last(price) as price, ts from base_price sample by 1h\tprice_1h~2\tBase table is not WAL table\tnull\n",
+                    "views"
+            );
+        });
+
     }
 
     @Test

@@ -876,6 +876,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedVersionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CheckpointStatusFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.RefreshMaterializedViewFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.ViewsFunctionFactory,
 
 //            PostgreSQL advisory locks functions
             io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll,

@@ -42,7 +42,7 @@ public class MatViewRefreshState implements QuietCloseable {
     private StringSink error;
     private int errorCode;
     private volatile boolean isDropped;
-    private long lastRefreshRowCount;
+    private long lastRefreshTimestamp;
     private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
 
@@ -61,9 +61,24 @@ public class MatViewRefreshState implements QuietCloseable {
         cursorFactory = Misc.free(cursorFactory);
     }
 
-    public void compilationFail(SqlException e) {
+    public void compilationFail(SqlException e, long refreshTimestamp) {
+        assert locked.get();
+        this.lastRefreshTimestamp = refreshTimestamp;
         getSink().put(e.getFlyweightMessage());
         errorCode = e.getPosition();
+    }
+
+    public CharSequence getLastError() {
+        // TODO: synchronize read and write
+        return error;
+    }
+
+    public int getLastErrorCode() {
+        return errorCode;
+    }
+
+    public long getLastRefreshTimestamp() {
+        return lastRefreshTimestamp;
     }
 
     public long getRecordRowCopierMetadataVersion() {
@@ -82,6 +97,10 @@ public class MatViewRefreshState implements QuietCloseable {
         return this.isDropped;
     }
 
+    public boolean isRefreshPending() {
+        return newNotification.get();
+    }
+
     public void markAsDropped() {
         isDropped = true;
     }
@@ -90,7 +109,9 @@ public class MatViewRefreshState implements QuietCloseable {
         return newNotification.compareAndSet(false, true);
     }
 
-    public void refreshFail(Throwable th) {
+    public void refreshFail(Throwable th, long refreshTimestamp) {
+        assert locked.get();
+        this.lastRefreshTimestamp = refreshTimestamp;
         if (th instanceof CairoException) {
             getSink().put(((CairoException) th).getFlyweightMessage());
             errorCode = ((CairoException) th).getErrno();
@@ -105,11 +126,19 @@ public class MatViewRefreshState implements QuietCloseable {
         }
     }
 
-    public void refreshSuccess(RecordCursorFactory factory, RecordToRowCopier copier, long recordRowCopierMetadataVersion, long rowCount) {
+    public void refreshFail(CharSequence errorMessage, long refreshTimestamp) {
+        assert locked.get();
+        this.lastRefreshTimestamp = refreshTimestamp;
+        getSink().put(errorMessage);
+        this.errorCode = Integer.MIN_VALUE;
+    }
+
+    public void refreshSuccess(RecordCursorFactory factory, RecordToRowCopier copier, long recordRowCopierMetadataVersion, long rowCount, long refreshTimestamp) {
+        assert locked.get();
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
-        this.lastRefreshRowCount = rowCount;
+        this.lastRefreshTimestamp = refreshTimestamp;
     }
 
     public boolean tryLock() {

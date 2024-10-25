@@ -25,21 +25,84 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class RefreshMaterializedViewFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "refresh_mat_view(Ø)";
+        return "refresh_mat_view(S)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return null;
+        return new RefreshMaterializedViewFunction(args.get(0));
+    }
+
+    private static class RefreshMaterializedViewFunction extends BooleanFunction implements UnaryFunction {
+        private final Function function;
+        private SqlExecutionContext executionContext;
+        private MatViewGraph matViewGraph;
+
+        public RefreshMaterializedViewFunction(Function arg) {
+            this.function = arg;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            this.executionContext = null;
+        }
+
+        @Override
+        public Function getArg() {
+            return function;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            if (executionContext == null) {
+                return false;
+            }
+
+            CharSequence viewName = function.getStrA(rec);
+            if (viewName == null) {
+                return false;
+            }
+            TableToken token = executionContext.getTableTokenIfExists(viewName);
+            if (token == null) {
+                return false;
+            }
+
+            matViewGraph.refresh(token);
+            return true;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            matViewGraph = executionContext.getCairoEngine().getMaterializedViewGraph();
+            this.executionContext = executionContext;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return true;
+        }
     }
 }

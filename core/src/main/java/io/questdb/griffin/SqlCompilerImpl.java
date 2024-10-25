@@ -2094,7 +2094,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
             TableUtils.createViewMetaFiles(ff, mem, path, configuration.getRoot(), matViewToken.getDirName(), matViewDefinition, baseTableToken);
 
-            engine.getMaterializedViewGraph().upsertView(baseTableToken, matViewDefinition);
+            engine.getMaterializedViewGraph().createView(baseTableToken, matViewDefinition);
             compiledQuery.ofCreateMatView(matViewToken);
         }
     }
