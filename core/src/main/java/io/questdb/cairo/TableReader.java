@@ -544,19 +544,15 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // Extend aux memory
                 ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                 long newSize = columnTypeDriver.getAuxVectorSize(rowCount);
-                if (newSize != mem2.size()) {
-                    if (!mem2.tryExtend(newSize)) {
-                        return false;
-                    }
+                if (!mem2.tryExtend(newSize)) {
+                    return false;
                 }
 
                 // Extend data memory
                 long dataSize = columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), rowCount - 1);
                 if (mem1 != null) {
-                    if (dataSize != mem1.size()) {
-                        // because of dedup, size of var data can grow or shrink
-                        return mem1.tryChangeSize(dataSize);
-                    }
+                    // because of dedup, size of var data can grow or shrink
+                    return mem1.tryChangeSize(dataSize);
                 } else {
                     // dataSize can be 0 in case when it's varchar column and all the values are inlined
                     // The data memory was not open but now we need to open it. Mark the partition as not reloaded by returning false
@@ -566,6 +562,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (mem1 == null) {
                     return false;
                 }
+
                 return mem1.tryExtend(rowCount << ColumnType.pow2SizeOf(columnType));
             }
         }
@@ -1268,12 +1265,14 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final int index = getPrimaryColumnIndex(columnBase, i);
                 MemoryCMR mem1 = columns.getQuick(index);
 
-                if (mem1 == NullMemoryCMR.INSTANCE || !growColumn(
-                        (MemoryCMRDetachedImpl) mem1,
-                        (MemoryCMRDetachedImpl) columns.getQuick(index + 1),
-                        metadata.getColumnType(i),
-                        rowCount - getColumnTop(columnBase, i)
-                )) {
+                long columnFilesRowCount = rowCount - getColumnTop(columnBase, i);
+                if (columnFilesRowCount > 0 &&
+                        (mem1 == NullMemoryCMR.INSTANCE || !growColumn(
+                                (MemoryCMRDetachedImpl) mem1,
+                                (MemoryCMRDetachedImpl) columns.getQuick(index + 1),
+                                metadata.getColumnType(i),
+                                rowCount
+                        ))) {
                     return false;
                 }
             }

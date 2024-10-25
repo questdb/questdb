@@ -68,6 +68,9 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
     }
 
     public boolean tryChangeSize(long newSize) {
+        if (newSize == size()) {
+            return true;
+        }
         if (fd != -1) {
             super.changeSize(newSize);
             return true;
@@ -76,6 +79,9 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
     }
 
     public boolean tryExtend(long newSize) {
+        if (newSize == size()) {
+            return true;
+        }
         if (fd != -1) {
             super.extend(newSize);
             return true;
