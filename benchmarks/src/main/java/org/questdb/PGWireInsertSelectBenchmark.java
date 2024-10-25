@@ -41,16 +41,17 @@ import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.stream.IntStream;
 
 public class PGWireInsertSelectBenchmark {
-    public static void main(String[] args) throws Exception {
-        long runtimeSeconds = 10;
-        int nInserters = 2;
-        int nSelectors = 2;
-        int insertBatchSize = 500;
-        boolean useIlp = false;
+    private static final int INSERT_BATCH_SIZE = 1000;
+    private static final int N_INSERTERS = 2;
+    private static final int N_SELECTORS = 2;
+    private static final long RUNTIME_SECONDS = 10;
+    private static final boolean USE_ILP = true;
 
-        AtomicLongArray inserterProgress = new AtomicLongArray(nInserters);
-        AtomicLongArray selectorProgress = new AtomicLongArray(nSelectors);
-        ExecutorService pool = Executors.newFixedThreadPool(nInserters + nSelectors);
+    public static void main(String[] args) throws Exception {
+
+        AtomicLongArray inserterProgress = new AtomicLongArray(N_INSERTERS);
+        AtomicLongArray selectorProgress = new AtomicLongArray(N_SELECTORS);
+        ExecutorService pool = Executors.newFixedThreadPool(N_INSERTERS + N_SELECTORS);
         try {
             try (Connection connection = createConnection();
                  Statement ddlStatement = connection.createStatement()
@@ -61,28 +62,31 @@ public class PGWireInsertSelectBenchmark {
                         "n long" +
                         ") timestamp(ts) partition by hour");
             }
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(runtimeSeconds);
-            for (int taskid = 0; taskid < nInserters; taskid++) {
+            long start = System.nanoTime();
+            long deadline = start + TimeUnit.SECONDS.toNanos(RUNTIME_SECONDS);
+            for (int taskid = 0; taskid < N_INSERTERS; taskid++) {
                 final int taskId = taskid;
-                if (useIlp) {
-                    pool.submit(() -> {
+                pool.submit(() -> {
+                    if (USE_ILP) {
                         try (Sender sender = Sender.fromConfig("http::addr=localhost:9000;auto_flush=off;")) {
                             for (long i = 1; ; i++) {
                                 sender.table("tango").longColumn("n", 0).at(10 * i + taskId, ChronoUnit.MILLIS);
-                                if (i % insertBatchSize == 0) {
+                                boolean batchComplete = i % INSERT_BATCH_SIZE == 0;
+                                if (batchComplete) {
                                     sender.flush();
+                                    inserterProgress.lazySet(taskId, i);
                                 }
-                                inserterProgress.lazySet(taskId, i);
                                 if (System.nanoTime() > deadline) {
+                                    if (!batchComplete) {
+                                        inserterProgress.set(taskId, i);
+                                    }
                                     break;
                                 }
                             }
                         } catch (Exception e) {
                             e.printStackTrace(System.err);
                         }
-                    });
-                } else {
-                    pool.submit(() -> {
+                    } else {
                         try (Connection connection = createConnection();
                              PreparedStatement st = connection.prepareStatement("insert into tango values (?, ?)")
                         ) {
@@ -90,26 +94,26 @@ public class PGWireInsertSelectBenchmark {
                                 st.setLong(1, TimeUnit.MILLISECONDS.toMicros(10 * i) + taskId);
                                 st.setLong(2, 0);
                                 st.addBatch();
-                                if (i % insertBatchSize == 0) {
-                                    st.executeBatch();
-
-                                inserterProgress.lazySet(taskId, i);
-                                }
-                            if (System.nanoTime() > deadline) {
-                                if (i % insertBatchSize != 0) {
+                                boolean batchComplete = i % INSERT_BATCH_SIZE == 0;
+                                if (batchComplete) {
                                     st.executeBatch();
                                     inserterProgress.lazySet(taskId, i);
                                 }
+                                if (System.nanoTime() > deadline) {
+                                    if (!batchComplete) {
+                                        st.executeBatch();
+                                        inserterProgress.set(taskId, i);
+                                    }
                                     break;
                                 }
                             }
                         } catch (Exception e) {
                             e.printStackTrace(System.err);
                         }
-                    });
-                }
+                    }
+                });
             }
-            for (int taskid = 0; taskid < nSelectors; taskid++) {
+            for (int taskid = 0; taskid < N_SELECTORS; taskid++) {
                 final int taskId = taskid;
                 pool.submit(() -> {
                     try (Connection connection = createConnection();
@@ -136,6 +140,8 @@ public class PGWireInsertSelectBenchmark {
                 reportProgress(inserterProgress, selectorProgress);
                 if (done) break;
             }
+            long finish = System.nanoTime();
+            reportResult(finish - start, inserterProgress, selectorProgress);
         } catch (Exception e) {
             e.printStackTrace(System.err);
         }
@@ -161,5 +167,16 @@ public class PGWireInsertSelectBenchmark {
         long doneInserts = IntStream.range(0, inserterProgress.length()).mapToLong(inserterProgress::get).sum();
         long doneSelects = IntStream.range(0, selectorProgress.length()).mapToLong(selectorProgress::get).sum();
         System.out.printf("%,9d inserts %,9d selects\n", doneInserts, doneSelects);
+    }
+
+    private static void reportResult(long tookNs, AtomicLongArray inserterTotals, AtomicLongArray selectorTotals) {
+        long nsPerSecond = TimeUnit.SECONDS.toNanos(1);
+        long doneInserts = IntStream.range(0, inserterTotals.length()).mapToLong(inserterTotals::get).sum();
+        long doneSelects = IntStream.range(0, selectorTotals.length()).mapToLong(selectorTotals::get).sum();
+        long insertsPerSecond = doneInserts * nsPerSecond / tookNs;
+        long selectsPerSecond = doneSelects * nsPerSecond / tookNs;
+
+        System.out.printf("\nBenchmark result:\n" +
+                "%,d inserts per second, %,d selects per second\n", insertsPerSecond, selectsPerSecond);
     }
 }
