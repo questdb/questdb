@@ -537,7 +537,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static boolean growColumn(MemoryCMRDetachedImpl mem1, MemoryCMRDetachedImpl mem2, int columnType, long rowCount) {
         if (rowCount > 0) {
             if (ColumnType.isVarSize(columnType)) {
-                if (mem2 == null || !mem2.isOpen()) {
+                if (mem2 == null) {
                     return false;
                 }
 
@@ -552,7 +552,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 // Extend data memory
                 long dataSize = columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), rowCount - 1);
-                if (mem1 != null && mem1.isOpen()) {
+                if (mem1 != null) {
                     if (dataSize != mem1.size()) {
                         // because of dedup, size of var data can grow or shrink
                         return mem1.tryChangeSize(dataSize);
@@ -563,7 +563,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     return dataSize == 0;
                 }
             } else {
-                if (mem1 == null || !mem1.isOpen()) {
+                if (mem1 == null) {
                     return false;
                 }
                 return mem1.tryExtend(rowCount << ColumnType.pow2SizeOf(columnType));
@@ -1154,7 +1154,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     MemoryCMR auxMem = columns.getQuick(secondaryIndex);
                     // Keep aux files fds open, they are read every time TableReader partition is reopened
                     // to find out what memory to map of the data file.
-                    auxMem = openOrCreateMemory(path, columns, secondaryIndex, auxMem, auxSize, true);
+                    auxMem = openOrCreateMemory(path, columns, secondaryIndex, auxMem, auxSize, lastPartition);
                     long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
                     if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
                         LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(dataSize).$(", path=").$(path).I$();
