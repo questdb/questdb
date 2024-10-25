@@ -173,10 +173,11 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             // double mergedMean = srcMean + delta * ((double) destCount / mergedCount);
 
             // So we use this instead:
+            double weighting = ((double) srcCount * destCount) / mergedCount;
             double mergedMeanY = (srcCount * srcMeanY + destCount * destMeanY) / mergedCount;
             double mergedMeanX = (srcCount * srcMeanX + destCount * destMeanX) / mergedCount;
-            double mergedSumXY = srcSumXY + destSumXY + (deltaY * deltaX) * ((double) (srcCount * destCount) / mergedCount);
-            double mergedSumX = srcSumX + destSumX + (deltaX * deltaX) * ((double) (srcCount * destCount) / mergedCount);
+            double mergedSumXY = srcSumXY + destSumXY + (deltaY * deltaX) * weighting;
+            double mergedSumX = srcSumX + destSumX + (deltaX * deltaX) * weighting;
 
             destValue.putDouble(valueIndex, mergedMeanY);
             destValue.putDouble(valueIndex + 1, mergedMeanX);
