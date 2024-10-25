@@ -35,7 +35,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.QuaternaryFunction;
+import io.questdb.griffin.engine.functions.QuinaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -76,7 +76,7 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
         return new VwapDoubleGroupByFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3), args.getQuick(4));
     }
 
-    private static class VwapDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, QuaternaryFunction {
+    private static class VwapDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, QuinaryFunction {
         private final Function closePriceFunc; // close price of time period
         private final Function maxPriceFunc; // low price of time period
         private final Function minPriceFunc; // high price of time period
@@ -147,21 +147,26 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public Function getFunc0() {
-            return minPriceFunc;
+            return timestampFunc;
         }
 
         @Override
         public Function getFunc1() {
-            return maxPriceFunc;
+            return minPriceFunc;
         }
 
         @Override
         public Function getFunc2() {
-            return closePriceFunc;
+            return maxPriceFunc;
         }
 
         @Override
         public Function getFunc3() {
+            return closePriceFunc;
+        }
+
+        @Override
+        public Function getFunc4() {
             return volumeFunc;
         }
 
@@ -194,7 +199,7 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            return QuaternaryFunction.super.isThreadSafe();
+            return QuinaryFunction.super.isThreadSafe();
         }
 
         @Override

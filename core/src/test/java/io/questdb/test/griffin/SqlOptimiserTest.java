@@ -2590,7 +2590,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             String source = "select timestamp, symbol, vwap(price,amount) vwap from\n" +
                     "trades \n" +
                     "where symbol = 'ETH-USD'\n" +
-                    "sample by 5m align to calendar with offset '00:00'\n" +
+                    "sample by 5m\n" +
                     "group by timestamp, symbol\n" +
                     "order by timestamp asc";
             assertModel(model, target, ExecutionModel.QUERY);
@@ -2602,6 +2602,30 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testRewriteVwapModelsAssertPlanExplicitGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             ddl(tradesDdl);
+//            assertPlanNoLeakCheck("select timestamp, symbol, vwap(timestamp,min_price, max_price, closing_price, volume)\n" +
+//                    "from (\n" +
+//                    "    select timestamp, symbol, min(price) min_price, max(price) max_price, last(price) closing_price, sum(amount) volume\n" +
+//                    "    from trades\n" +
+//                    "    where symbol = 'ETH-USD'\n" +
+//                    "    sample by 5m\n" +
+//                    ")\n" +
+//                    "group by timestamp, symbol\n" +
+//                    "order by timestamp asc;", "Radix sort light\n" +
+//                    "  keys: [timestamp]\n" +
+//                    "    GroupBy vectorized: false\n" +
+//                    "      keys: [timestamp,symbol]\n" +
+//                    "      values: [vwap(timestamp,min_price,max_price,closing_price,volume)]\n" +
+//                    "        Radix sort light\n" +
+//                    "          keys: [timestamp]\n" +
+//                    "            Async Group By workers: 1\n" +
+//                    "              keys: [timestamp,symbol]\n" +
+//                    "              values: [last(price),max(price),min(price),sum(amount)]\n" +
+//                    "              filter: symbol='ETH-USD'\n" +
+//                    "                PageFrame\n" +
+//                    "                    Row forward scan\n" +
+//                    "                    Frame forward scan on: trades\n");
+
+
             assertPlanNoLeakCheck("select timestamp, symbol, vwap(price,amount) vwap from\n" +
                     "trades \n" +
                     "where symbol = 'ETH-USD'\n" +
@@ -2611,7 +2635,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "  keys: [timestamp]\n" +
                     "    GroupBy vectorized: false\n" +
                     "      keys: [timestamp,symbol]\n" +
-                    "      values: [vwap(closing_price,max_price,min_price,timestamp)]\n" +
+                    "      values: [vwap(volume,closing_price,max_price,min_price,timestamp)]\n" +
                     "        Sort light\n" +
                     "          keys: [timestamp]\n" +
                     "            Async Group By workers: 1\n" +

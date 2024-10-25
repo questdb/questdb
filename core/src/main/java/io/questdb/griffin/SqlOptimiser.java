@@ -266,7 +266,6 @@ public class SqlOptimiser implements Mutable {
     public QueryModel rewriteVwap(QueryModel model) throws SqlException {
         QueryModel current = model;
         boolean validModel = false;
-        ExpressionNode vwapExpr = null;
 
         while (current != null && !validModel) {
             if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
@@ -275,14 +274,12 @@ public class SqlOptimiser implements Mutable {
                     final ExpressionNode ast = column.getAst();
 
                     // if it matches vwap(price, amount)
-                    if (ast.type == FUNCTION && ast.paramCount == 2 && Chars.equalsIgnoreCase(ast.token, "vwap")) {
+                    if (isSingleShotVwap(ast)) {
                         QueryModel nested = current.getNestedModel();
 
                         if (nested != null && nested.getSampleBy() != null) {
                             // todo: might need more conditions before this.
                             validModel = true;
-
-                            vwapExpr = ast;
                             break;
                         }
                     }
@@ -299,100 +296,124 @@ public class SqlOptimiser implements Mutable {
             return model;
         }
 
-        QueryModel outerSelectChoose = current;
-        QueryModel innerSelectNone = current.getNestedModel();
+        QueryModel originalSelectChoose = current;
+        QueryModel originalSelectNone = current.getNestedModel();
 
 
-        ExpressionNode timestamp = innerSelectNone.getTimestamp();
-
-        ExpressionNode vwapPriceExpr = vwapExpr.lhs;
-        ExpressionNode vwapVolumeExpr = vwapExpr.rhs;
-
-        // convert singleshot vwap into the specialised vwap
-        vwapExpr.paramCount = 5;
-        vwapExpr.lhs = null;
-        vwapExpr.rhs = null;
-
-        ExpressionNode volume, closingPrice, maxPrice, minPrice;
-        volume = expressionNodePool.next().of(LITERAL, "volume", -1, 0);
-        closingPrice = expressionNodePool.next().of(LITERAL, "closing_price", -1, 0);
-        maxPrice = expressionNodePool.next().of(LITERAL, "max_price", -1, 0);
-        minPrice = expressionNodePool.next().of(LITERAL, "min_price", -1, 0);
-
-        vwapExpr.args.add(volume);
-        vwapExpr.args.add(closingPrice);
-        vwapExpr.args.add(maxPrice);
-        vwapExpr.args.add(minPrice);
-        vwapExpr.args.add(timestamp);
-
+        QueryModel outerSelectChoose = queryModelPool.next();
+        outerSelectChoose.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
 
         QueryModel nextInnerSelectNone = queryModelPool.next();
         nextInnerSelectNone.setSelectModelType(QueryModel.SELECT_MODEL_NONE);
+
+        QueryModel nextInnerSelectChoose = queryModelPool.next();
+        nextInnerSelectChoose.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+
+
+        ExpressionNode priceColName = null, volumeColName = null, timestamp;
+        timestamp = originalSelectNone.getTimestamp();
+
+        // outerSelectChoose
+
+        for (int i = 0, n = originalSelectChoose.getColumns().size(); i < n; i++) {
+            QueryColumn column = originalSelectChoose.getColumns().getQuick(i);
+            ExpressionNode ast = column.getAst();
+
+            if (isSingleShotVwap(ast)) {
+                priceColName = ast.lhs;
+                volumeColName = ast.rhs;
+
+                ExpressionNode vwapExpr = expressionNodePool.next().of(
+                        FUNCTION,
+                        ast.token,
+                        ast.precedence,
+                        ast.position
+                );
+
+                vwapExpr.paramCount = 5;
+
+                // reverse ordering
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "volume", Integer.MIN_VALUE, 4));
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "closing_price", Integer.MIN_VALUE, 3));
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "max_price", Integer.MIN_VALUE, 2));
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "min_price", Integer.MIN_VALUE, 1));
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, timestamp.token, Integer.MIN_VALUE, 0));
+
+                outerSelectChoose.addBottomUpColumn(queryColumnPool.next().of(column.getAlias(), vwapExpr));
+            } else {
+                outerSelectChoose.addBottomUpColumn(
+                        queryColumnPool.next().of(column.getAlias(),
+                                expressionNodePool.next().of(ast.type, ast.token, ast.precedence, ast.position)
+                        ));
+            }
+        }
+
+
+        nextInnerSelectNone.setSelectModelType(QueryModel.SELECT_MODEL_NONE);
         ObjList<CharSequence> columnAliases = nextInnerSelectNone.getBottomUpColumnAliases();
-        columnAliases.add(timestamp.token);
-        for (int i = 0, n = outerSelectChoose.getBottomUpColumnAliases().size(); i < n; i++) {
-            CharSequence cs = outerSelectChoose.getBottomUpColumnAliases().getQuick(i);
-            if (Chars.equalsIgnoreCase(cs, "vwap") || Chars.equalsIgnoreCase(cs, timestamp.token)) {
+        for (int i = 0, n = originalSelectChoose.getBottomUpColumnAliases().size(); i < n; i++) {
+            CharSequence cs = originalSelectChoose.getBottomUpColumnAliases().getQuick(i);
+            if (Chars.equalsIgnoreCase(cs, "vwap")) {
                 continue;
             } else {
                 columnAliases.add(cs);
             }
         }
-        columnAliases.add(minPrice.token);
-        columnAliases.add(maxPrice.token);
-        columnAliases.add(closingPrice.token);
-        columnAliases.add(volume.token);
+        columnAliases.add("min_price");
+        columnAliases.add("max_price");
+        columnAliases.add("closing_price");
+        columnAliases.add("volume");
 
-        nextInnerSelectNone.moveGroupByFrom(innerSelectNone);
+        nextInnerSelectNone.moveGroupByFrom(originalSelectNone);
 
-        if (innerSelectNone.getOrderBy() != null) {
-            for (int i = 0, n = innerSelectNone.getOrderBy().size(); i < n; i++) {
-                nextInnerSelectNone.addOrderBy(innerSelectNone.getOrderBy().getQuick(i), innerSelectNone.getOrderByDirection().getQuick(i));
+        if (originalSelectNone.getOrderBy() != null) {
+            for (int i = 0, n = originalSelectNone.getOrderBy().size(); i < n; i++) {
+                nextInnerSelectNone.addOrderBy(originalSelectNone.getOrderBy().getQuick(i), originalSelectNone.getOrderByDirection().getQuick(i));
             }
         } else {
             nextInnerSelectNone.addOrderBy(timestamp, QueryModel.ORDER_DIRECTION_ASCENDING);
         }
 
-        innerSelectNone.getOrderBy().clear();
-        innerSelectNone.getOrderByDirection().clear();
+        originalSelectNone.getOrderBy().clear();
+        originalSelectNone.getOrderByDirection().clear();
 
 
-        QueryModel nextInnerSelectChoose = queryModelPool.next();
-        nextInnerSelectChoose.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-
-        for (int i = 0, n = outerSelectChoose.getBottomUpColumns().size(); i < n; i++) {
-            QueryColumn col = outerSelectChoose.getBottomUpColumns().getQuick(i);
-            if (col.getAst().equals(vwapExpr)) {
+        for (int i = 0, n = originalSelectChoose.getBottomUpColumns().size(); i < n; i++) {
+            QueryColumn col = originalSelectChoose.getBottomUpColumns().getQuick(i);
+            if (isSingleShotVwap(col.getAst())) {
                 continue;
             } else {
                 nextInnerSelectChoose.addBottomUpColumn(col);
             }
         }
 
-        ExpressionNode minPriceExpr = expressionNodePool.next().of(FUNCTION, "min", -1, 0);
+        assert priceColName != null && volumeColName != null;
+
+
+        ExpressionNode minPriceExpr = expressionNodePool.next().of(FUNCTION, "min", Integer.MIN_VALUE, 0);
         minPriceExpr.paramCount = 1;
-        minPriceExpr.rhs = vwapPriceExpr;
+        minPriceExpr.rhs = priceColName;
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("min_price", minPriceExpr));
 
-        ExpressionNode maxPriceExpr = expressionNodePool.next().of(FUNCTION, "max", -1, 0);
+        ExpressionNode maxPriceExpr = expressionNodePool.next().of(FUNCTION, "max", Integer.MIN_VALUE, 0);
         maxPriceExpr.paramCount = 1;
-        maxPriceExpr.rhs = vwapPriceExpr;
+        maxPriceExpr.rhs = priceColName;
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("max_price", maxPriceExpr));
 
-        ExpressionNode closingPriceExpr = expressionNodePool.next().of(FUNCTION, "last", -1, 0);
+        ExpressionNode closingPriceExpr = expressionNodePool.next().of(FUNCTION, "last", Integer.MIN_VALUE, 0);
         closingPriceExpr.paramCount = 1;
-        closingPriceExpr.rhs = vwapPriceExpr;
+        closingPriceExpr.rhs = priceColName;
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("closing_price", closingPriceExpr));
 
-        ExpressionNode volumeExpr = expressionNodePool.next().of(FUNCTION, "sum", -1, 0);
+        ExpressionNode volumeExpr = expressionNodePool.next().of(FUNCTION, "sum", Integer.MIN_VALUE, 0);
         volumeExpr.paramCount = 1;
-        volumeExpr.rhs = vwapVolumeExpr;
+        volumeExpr.rhs = volumeColName;
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("volume", volumeExpr));
 
 
         outerSelectChoose.setNestedModel(nextInnerSelectNone);
         nextInnerSelectNone.setNestedModel(nextInnerSelectChoose);
-        nextInnerSelectChoose.setNestedModel(innerSelectNone);
+        nextInnerSelectChoose.setNestedModel(originalSelectNone);
 
 
         // other aliases
@@ -2561,6 +2582,10 @@ public class SqlOptimiser implements Mutable {
 
     private boolean isSimpleIntegerColumn(ExpressionNode column, QueryModel model) {
         return checkSimpleIntegerColumn(column, model) != null;
+    }
+
+    private boolean isSingleShotVwap(ExpressionNode ast) {
+        return (ast.type == FUNCTION && ast.paramCount == 2 && Chars.equalsIgnoreCase(ast.token, "vwap"));
     }
 
     private ExpressionNode makeJoinAlias() {
