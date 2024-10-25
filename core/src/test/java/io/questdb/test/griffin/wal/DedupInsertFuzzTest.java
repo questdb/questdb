@@ -24,15 +24,32 @@
 
 package io.questdb.test.griffin.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.LogRecordSinkAdapter;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -833,7 +850,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 ? symbols
                 : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
 
-        long fromTops = startTimestamp + rnd.nextLong(startCount) * initialDelta;
+        long fromTops = startTimestamp + (startCount > 0 ? rnd.nextLong(startCount) : 0) * initialDelta;
         generateInsertsTransactions(
                 transactions,
                 1,
@@ -853,7 +870,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         applyWal(transactions, tableName, 1, rnd);
 
         transactions.clear();
-        long shift = rnd.nextLong(startCount) * Timestamps.MINUTE_MICROS * 15 +
+        long shift = (startCount > 0 ? rnd.nextLong(startCount) : 0) * Timestamps.MINUTE_MICROS * 15 +
                 rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
         long from = startTimestamp + shift;
         long delta = Timestamps.MINUTE_MICROS;
