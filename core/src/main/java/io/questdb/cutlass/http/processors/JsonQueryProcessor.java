@@ -380,8 +380,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 } else {
                     // what we have here is out unit of data, column value or query
                     // is larger that response content buffer
-                    // all we can do in this scenario is to log appropriately
-                    // and disconnect socket
                     state.logBufferTooSmall();
                     throw CairoException.nonCritical()
                             .put("response buffer is too small for the column value [columnName=").put(state.getCurrentColumnName())

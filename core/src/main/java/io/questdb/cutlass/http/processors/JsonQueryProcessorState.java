@@ -714,7 +714,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     private void doQueryRecordPrefix(HttpChunkedResponse response) {
         queryState = QUERY_RECORD_PREFIX;
-        response.bookmarkRow();
+        response.bookmark();
         if (count > skip) {
             response.putAscii(',');
         }
@@ -750,8 +750,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         } catch (DataUnavailableException | EntryUnavailableException | NoSpaceLeftInResponseBufferException e) {
             throw e;
         } catch (Throwable e) {
-            response.resetToRowBookmark();
-            count--;
+            response.resetToBookmark();
             throw e;
         }
         doQuerySuffix(response, columnCount);
@@ -996,16 +995,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // is released
         cursor = Misc.free(cursor);
         circuitBreaker = null;
-        int old = queryState;
         queryState = QUERY_SUFFIX;
         if (count > -1) {
             logTimings();
             response.bookmark();
-            if (old == QUERY_RECORD) {
-                // we failed to send mid-record, we have to close the record
+            if (code > 0) {
+                // closing the failed record to make the json response parsable
                 response.putAscii(']');
             }
-            // close the dataset
+            // always close the dataset
             response.putAscii(']');
             response.putAscii(',').putAsciiQuoted("count").putAscii(':').put(count);
             if (code > 0) {

@@ -31,15 +31,11 @@ import io.questdb.std.str.Utf8Sink;
 public interface HttpChunkedResponse extends Utf8Sink {
     void bookmark();
 
-    void bookmarkRow();
-
     void done() throws PeerDisconnectedException, PeerIsSlowToReadException;
 
     HttpResponseHeader headers();
 
     boolean resetToBookmark();
-
-    boolean resetToRowBookmark();
 
     void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException;
 

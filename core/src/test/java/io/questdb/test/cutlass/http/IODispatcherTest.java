@@ -642,11 +642,10 @@ public class IODispatcherTest extends AbstractTest {
         final StringSink sink = new StringSink();
         final int numOfRows = 1100;
         for (int i = 0, n = numOfRows / 2; i < n; i++) {
-            sink.put("[true],[false]");
-            if (i < n - 1) {
-                sink.put(",");
-            }
+            sink.put("[true],[false],");
         }
+        sink.put("[]");
+
         getSimpleTester().run(engine ->
                 testHttpClient.assertGet(
                         "{" +
@@ -654,7 +653,7 @@ public class IODispatcherTest extends AbstractTest {
                                 "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
                                 "\"timestamp\":-1," +
                                 "\"dataset\":[" + sink + "]," +
-                                "\"count\":" + numOfRows + "," +
+                                "\"count\":" + (numOfRows + 1) + "," +
                                 "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
                                 "}",
                         "select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")"
@@ -664,9 +663,9 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testExceptionAfterHeader() throws Exception {
-        testExceptionAfterHeader(0, "");
-        testExceptionAfterHeader(1, "[true]");
-        testExceptionAfterHeader(2, "[true],[false]");
+        testExceptionAfterHeader(0, "[]");
+        testExceptionAfterHeader(1, "[true],[]");
+        testExceptionAfterHeader(2, "[true],[false],[]");
     }
 
     @Test
@@ -7887,8 +7886,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"query\":\"select simulate_crash('E')\"," +
                             "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
                             "\"timestamp\":-1," +
-                            "\"dataset\":[]," +
-                            "\"count\":0," +
+                            "\"dataset\":[[]]," +
+                            "\"count\":1," +
                             "\"error\":\"HTTP 500 (Internal server error), simulated cairo error\"" +
                             "}",
                     "select simulate_crash('E')"
@@ -7905,8 +7904,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"query\":\"select simulate_crash('0')\"," +
                             "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
                             "\"timestamp\":-1," +
-                            "\"dataset\":[]," +
-                            "\"count\":0," +
+                            "\"dataset\":[[]]," +
+                            "\"count\":1," +
                             "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
                             "}",
                     "select simulate_crash('0')"
@@ -7923,8 +7922,8 @@ public class IODispatcherTest extends AbstractTest {
                             "\"query\":\"select npe()\"," +
                             "\"columns\":[{\"name\":\"npe\",\"type\":\"BOOLEAN\"}]," +
                             "\"timestamp\":-1," +
-                            "\"dataset\":[]," +
-                            "\"count\":0," +
+                            "\"dataset\":[[]]," +
+                            "\"count\":1," +
                             "\"error\":\"HTTP 500 (Internal server error)\"" +
                             "}",
                     "select npe()"
@@ -9045,7 +9044,7 @@ public class IODispatcherTest extends AbstractTest {
                             "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
                             "\"timestamp\":-1," +
                             "\"dataset\":[" + rows + "]," +
-                            "\"count\":" + numOfRows + "," +
+                            "\"count\":" + (numOfRows + 1) + "," +
                             "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
                             "}",
                     "select simulate_crash('" + numOfRows + "') from long_sequence(5)"

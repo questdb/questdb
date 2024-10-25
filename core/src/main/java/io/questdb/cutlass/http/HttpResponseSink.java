@@ -453,18 +453,11 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponse {
-        private long bookmark = 0;
-        private long rowBookmark = 0;
+        private long bookmark = 0L;
 
         @Override
         public void bookmark() {
             bookmark = buffer._wptr;
-        }
-
-        @Override
-        public void bookmarkRow() {
-            bookmark();
-            rowBookmark = bookmark;
         }
 
         @Override
@@ -483,12 +476,6 @@ public class HttpResponseSink implements Closeable, Mutable {
         public boolean resetToBookmark() {
             buffer._wptr = bookmark;
             return bookmark != buffer.bufStartOfData;
-        }
-
-        @Override
-        public boolean resetToRowBookmark() {
-            bookmark = rowBookmark;
-            return resetToBookmark();
         }
 
         @Override
