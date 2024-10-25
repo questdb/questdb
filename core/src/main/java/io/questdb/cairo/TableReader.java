@@ -1152,7 +1152,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                     long auxSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
                     TableUtils.iFile(path.trimTo(plen), name, columnTxn);
                     MemoryCMR auxMem = columns.getQuick(secondaryIndex);
-                    auxMem = openOrCreateMemory(path, columns, secondaryIndex, auxMem, auxSize, lastPartition);
+                    // Keep aux files fds open, they are read every time TableReader partition is reopened
+                    // to find out what memory to map of the data file.
+                    auxMem = openOrCreateMemory(path, columns, secondaryIndex, auxMem, auxSize, true);
                     long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
                     if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
                         LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(dataSize).$(", path=").$(path).I$();
@@ -1265,10 +1267,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int i = 0; i < columnCount; i++) {
                 final int index = getPrimaryColumnIndex(columnBase, i);
 
-                // Last partitions columns can grow, we keep FDs open.
-                // Other partitions FDs are closed, they need full file re-opening.
-                boolean lastPartition = partitionIndex == partitionCount - 1;
-                if (!lastPartition || !growColumn(
+                if (!growColumn(
                         (MemoryCMRDetachedImpl) columns.getQuick(index),
                         (MemoryCMRDetachedImpl) columns.getQuick(index + 1),
                         metadata.getColumnType(i),

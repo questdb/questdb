@@ -45,11 +45,6 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
     }
 
     @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
-        of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts, false);
-    }
-
-    @Override
     public long getFd() {
         throw new IllegalStateException("not supported");
     }
@@ -59,12 +54,25 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
         return pageAddress != 0;
     }
 
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+        of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts, false);
+    }
+
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts, boolean keepFdOpen) {
         super.of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts);
         if (!keepFdOpen && ff != null && ff.close(fd)) {
             LOG.debug().$("closing [fd=").$(fd).I$();
             fd = -1;
         }
+    }
+
+    public boolean tryChangeSize(long newSize) {
+        if (fd != -1) {
+            super.changeSize(newSize);
+            return true;
+        }
+        return false;
     }
 
     public boolean tryExtend(long newSize) {
