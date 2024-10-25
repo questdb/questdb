@@ -43,7 +43,6 @@ import io.questdb.std.Interval;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
-import static io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory.getTimestampFunction;
 
 public class ToTimezoneIntervalFunctionFactory implements FunctionFactory {
     @Override
