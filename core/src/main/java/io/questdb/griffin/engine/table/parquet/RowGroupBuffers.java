@@ -54,21 +54,25 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
 
     public long getChunkAuxPtr(int columnIndex) {
         final long chunksPtr = Unsafe.getUnsafe().getLong(ptr + CHUNKS_PTR_OFFSET);
+        assert chunksPtr != 0;
         return Unsafe.getUnsafe().getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_AUX_PTR_OFFSET);
     }
 
     public long getChunkAuxSize(int columnIndex) {
         final long chunksPtr = Unsafe.getUnsafe().getLong(ptr + CHUNKS_PTR_OFFSET);
+        assert chunksPtr != 0;
         return Unsafe.getUnsafe().getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_AUX_SIZE_OFFSET);
     }
 
     public long getChunkDataPtr(int columnIndex) {
         final long chunksPtr = Unsafe.getUnsafe().getLong(ptr + CHUNKS_PTR_OFFSET);
+        assert chunksPtr != 0;
         return Unsafe.getUnsafe().getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_DATA_PTR_OFFSET);
     }
 
     public long getChunkDataSize(int columnIndex) {
         final long chunksPtr = Unsafe.getUnsafe().getLong(ptr + CHUNKS_PTR_OFFSET);
+        assert chunksPtr != 0;
         return Unsafe.getUnsafe().getLong(chunksPtr + columnIndex * CHUNK_STRUCT_SIZE + CHUNK_DATA_SIZE_OFFSET);
     }
 
