@@ -597,7 +597,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertAlterTableAddIndexSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
+        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple ALTER TABLE parsing from execution
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -613,7 +613,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertAlterTableAlterColumnCacheSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
+        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple ALTER TABLE parsing from execution
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -628,7 +628,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertAlterTableAlterColumnNoCacheSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
+        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple ALTER TABLE parsing from execution
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute(
@@ -747,7 +747,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertAlterTableSetSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
+        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple ALTER TABLE parsing from execution
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -861,7 +861,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertDropTableSelectFromTableInBlockThrowsErrorBecauseTableDoesntExist() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
+        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple DROP TABLE parsing from execution
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try {
                 Statement statement = connection.createStatement();
@@ -879,11 +879,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertRenameTableSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
+        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple RENAME TABLE parsing from execution
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute(
-                    "CREATE TABLE test(l long,ts timestamp); " +
+                    "CREATE TABLE test(l long,ts timestamp) timestamp(ts) partition by day; " +
                             "INSERT INTO test VALUES(1989, 0); " +
                             "RENAME TABLE test TO newtest; " +
                             "SELECT l from newtest;"
@@ -901,7 +901,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertRepairTableSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute(
@@ -943,7 +942,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertRollbackOnTwoTables() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             connection.setAutoCommit(false);
@@ -977,7 +975,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertSelectWithFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -1074,7 +1071,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateMultiInsertSelectFromTableInBlock() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -1537,7 +1533,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testRunBlockWithCreateInsertTruncateSelectReturnsNoResult() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
+        Assume.assumeTrue("implicit tx", legacyMode); // requires to decouple TRUNCATE parsing from execution
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -1554,7 +1550,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testRunSeveralQueriesInBlockReturnsAllSelectResultsInOrder() throws Exception {
-        Assume.assumeTrue("implicit tx", legacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute(

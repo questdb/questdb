@@ -475,7 +475,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 case CompiledQuery.SELECT:
                 case CompiledQuery.PSEUDO_SELECT:
                     msgExecuteSelect(
-                            sqlExecutionContext, characterStore, utf8String, binarySequenceParamsPool, taiPool, maxRecompileAttempts);
+                            sqlExecutionContext, transactionState, pendingWriters, characterStore, utf8String, binarySequenceParamsPool, taiPool, maxRecompileAttempts);
                     break;
                 case CompiledQuery.INSERT:
                     msgExecuteInsert(
@@ -1225,6 +1225,8 @@ public class PGPipelineEntry implements QuietCloseable {
 
     private void msgExecuteSelect(
             SqlExecutionContext sqlExecutionContext,
+            int transactionState,
+            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             CharacterStore characterStore,
             DirectUtf8String utf8String,
             ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
@@ -1232,6 +1234,12 @@ public class PGPipelineEntry implements QuietCloseable {
             int maxRecompileAttempts
     ) throws SqlException, BadProtocolException {
         if (cursor == null) {
+            // commit implicitly if we are not in a transaction
+            // this makes data inserted in the same pipeline visible to the select
+            if (transactionState == IMPLICIT_TRANSACTION) {
+                freePendingWriters(pendingWriters, true);
+            }
+
             sqlExecutionContext.getCircuitBreaker().resetTimer();
             sqlExecutionContext.setCacheHit(cacheHit);
             try {
