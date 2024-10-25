@@ -39,11 +39,7 @@ public class ToTimezoneIntervalFunctionFactoryTest extends AbstractCairoTest {
         assertToTimezoneInterval("select to_timezone(interval(0,0), 'Europe/Prague')",
                 "('1970-01-01T01:00:00.000Z', '1970-01-01T01:00:00.000Z')\n");
     }
-@Test
-    public void testSanityCheckAgainstTimestamp() throws Exception {
-        assertSql("column\ntrue\n", "select interval(to_timezone(now(), 'Antarctica/McMurdo'), to_timezone(now(), 'Antarctica/McMurdo')) = to_timezone(interval(now(), now()), 'Antarctica/McMurdo')");
-    }
-    
+
     @Test
     public void testInvalidConstantOffset() throws Exception {
         assertMemoryLeak(() -> {
@@ -78,6 +74,11 @@ public class ToTimezoneIntervalFunctionFactoryTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "timezone must not be null");
             }
         });
+    }
+
+    @Test
+    public void testSanityCheckAgainstTimestamp() throws Exception {
+        assertSql("column\ntrue\n", "select interval(to_timezone(now(), 'Antarctica/McMurdo'), to_timezone(now(), 'Antarctica/McMurdo')) = to_timezone(interval(now(), now()), 'Antarctica/McMurdo')");
     }
 
     @Test
