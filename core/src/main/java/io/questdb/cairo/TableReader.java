@@ -1266,9 +1266,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             int columnBase = getColumnBase(partitionIndex);
             for (int i = 0; i < columnCount; i++) {
                 final int index = getPrimaryColumnIndex(columnBase, i);
+                MemoryCMR mem1 = columns.getQuick(index);
 
-                if (!growColumn(
-                        (MemoryCMRDetachedImpl) columns.getQuick(index),
+                if (mem1 == NullMemoryCMR.INSTANCE || !growColumn(
+                        (MemoryCMRDetachedImpl) mem1,
                         (MemoryCMRDetachedImpl) columns.getQuick(index + 1),
                         metadata.getColumnType(i),
                         rowCount - getColumnTop(columnBase, i)
