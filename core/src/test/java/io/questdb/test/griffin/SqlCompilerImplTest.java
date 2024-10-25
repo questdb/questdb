@@ -3523,6 +3523,52 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCursorFunctionCannotBeUsedAsColumn() throws Exception {
+        assertExceptionNoLeakCheck(
+                "select query_activity() from long_sequence(100L);",
+                7,
+                "cursor function cannot be used as a column [column=query_activity]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select 1 from long_sequence(1)\n" +
+                        "UNION ALL\n" +
+                        "select query_activity() from long_sequence(100L);",
+                48,
+                "cursor function cannot be used as a column [column=query_activity]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1 as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select a, n from q;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1L as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select q.a from long_sequence(10) ls \n" +
+                        "inner join q on ls.x = q.n;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1L as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select q.* from long_sequence(10) ls \n" +
+                        "inner join q on ls.x = q.n;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
+    }
+
+    @Test
     public void testDeallocateMissingStatementName() throws Exception {
         assertMemoryLeak(() -> {
             try {

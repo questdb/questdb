@@ -24,6 +24,7 @@
 #ifndef QUESTDB_DEDUP_COMPARERS_H
 #define QUESTDB_DEDUP_COMPARERS_H
 
+#include <stddef.h>
 #include "dedup.h"
 #include "column_type.h"
 #include <algorithm>

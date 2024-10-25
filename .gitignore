@@ -18,6 +18,7 @@ win64svc/build
 win64svc/CMakeCache.txt
 win64svc/cmake-build-release
 core/src/main/resources/io/questdb/bin/linux/libasm.a
+core/questdb/bin-local
 core/cmake-build-debug
 core/cmake-build-debug-coverage
 core/cmake-build-release
@@ -31,3 +32,5 @@ core/CMakeCache.txt
 .envrc
 .vscode
 core/rust/qdbr/target
+compat/src/test/rust/scenarios/target/
+compat/src/test/rust/scenarios/Cargo.lock

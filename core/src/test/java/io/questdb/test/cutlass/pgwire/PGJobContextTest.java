@@ -171,6 +171,7 @@ public class PGJobContextTest extends BasePGTest {
     @Before
     public void setUp() {
         super.setUp();
+        selectCacheBlockCount = -1;
         sendBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
         forceSendFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, sendBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
 
@@ -189,6 +190,50 @@ public class PGJobContextTest extends BasePGTest {
     @After
     public void tearDown() throws Exception {
         super.tearDown();
+    }
+
+    @Test
+    public void testSimpleQueryLoopThenSchemaChangeThenExtendedQuery() throws Exception {
+        // This is a regression test. The bug scenario occurred as follows:
+        // 1. A client using a simple protocol poisoned a query cache. This was due to a bug where a simple query would
+        //    never poll() from the cache, but would populate it after completion. As a result, each query execution
+        //    added a new entry to the cache.
+        // 2. A schema change invalidated all cached queries. This is expected.
+        // 3. A client using extended protocol then attempted to execute the same query. Upon receiving the PARSE message,
+        //    it consulted the query cache and found a stale query plan. This triggered a retry, but subsequent retries
+        //    also failed because they consulted the cache and found other stale plans.
+
+        selectCacheBlockCount = 100; // large cache, must me larger than 'cairo.sql.max.recompile.attempts'
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(2);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                // first poison the cache using the SIMPLE protocol
+                try (
+                        final Connection connection = getConnection(server.getPort(), true, false);
+                        final Statement statement = connection.createStatement()
+                ) {
+                    statement.execute("create table tab(ts timestamp, value double)");
+                    for (int i = 0; i < selectCacheBlockCount; i++) {
+                        statement.execute("select * from tab"); // an attempt to populate cache
+                    }
+
+                    // change the schema. if the previous SELECT queries are cached then they are all stale by now
+                    statement.execute("alter table tab add column x int");
+                }
+
+                // now run a query with an extended protocol - this consults query cache
+                try (
+                        final Connection connection = getConnection(server.getPort(), false, false);
+                        final Statement statement = connection.createStatement()
+                ) {
+                    statement.execute("select * from tab;");
+                }
+            }
+        });
     }
 
     @Test
@@ -9925,56 +9970,43 @@ create table tab as (
 
     @Test
     public void testUpdateBatch() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()) {
-                workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), true, false)
-                ) {
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR");
-                    statement.execute();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR");
+            statement.execute();
 
-                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
-                            "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
-                            "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                            "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                    insert1.execute();
+            final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                    "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                    "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                    "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+            insert1.execute();
 
-                    final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5; update x set a=3 where b>2.7; update x set a=2 where b<2.2");
-                    int numOfRowsUpdated1 = update1.executeUpdate();
+            final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5; update x set a=3 where b>2.7; update x set a=2 where b<2.2");
+            int numOfRowsUpdated1 = update1.executeUpdate();
 
-                    if (!walEnabled) {
-                        assertEquals(2, numOfRowsUpdated1);
-                    } else {
-                        // TODO: update on WAL should return 0 row count
-                        // assertEquals(0, numOfRowsUpdated1);
-                    }
+            drainWalQueue();
+            assertEquals(2, numOfRowsUpdated1);
 
-                    final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
-                            "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
-                            "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
-                    insert2.execute();
+            final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                    "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                    "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
+            insert2.execute();
 
-                    final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0; update x set a=6 where a=2");
-                    int numOfRowsUpdated2 = update2.executeUpdate();
-                    if (!walEnabled) {
-                        assertEquals(1, numOfRowsUpdated2);
-                    }
+            final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0; update x set a=6 where a=2");
+            int numOfRowsUpdated2 = update2.executeUpdate();
+            if (!walEnabled) {
+                assertEquals(1, numOfRowsUpdated2);
+            }
 
-                    mayDrainWalQueue();
-                    final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
-                            "6,2.0,2020-06-01 00:00:02.0\n" +
-                            "9,2.6,2020-06-01 00:00:06.0\n" +
-                            "3,3.0,2020-06-01 00:00:12.0\n" +
-                            "8,4.0,2020-06-01 00:00:22.0\n" +
-                            "7,6.0,2020-06-01 00:00:32.0\n";
-                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expected, sink, resultSet);
-                    }
-                }
+            mayDrainWalQueue();
+            final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                    "6,2.0,2020-06-01 00:00:02.0\n" +
+                    "9,2.6,2020-06-01 00:00:06.0\n" +
+                    "3,3.0,2020-06-01 00:00:12.0\n" +
+                    "8,4.0,2020-06-01 00:00:22.0\n" +
+                    "7,6.0,2020-06-01 00:00:32.0\n";
+            try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                sink.clear();
+                assertResultSet(expected, sink, resultSet);
             }
         });
     }

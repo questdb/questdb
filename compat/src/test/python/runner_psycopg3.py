@@ -19,6 +19,7 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 #
+import os
 
 import psycopg
 import re
@@ -136,12 +137,14 @@ def main(yaml_file):
     global_variables = data.get('variables', {})
     tests = data.get('tests', [])
 
+    port = int(os.getenv('PGPORT', 8812))
     for test in tests:
         iterations = test.get('iterations', 50)
         for i in range(iterations):
+            print(f"Running test '{test['name']}' (iteration {i + 1})")
             connection = psycopg.connect(
                 host='localhost',
-                port=8812,
+                port=port,
                 user='admin',
                 password='quest',
                 dbname='qdb'
