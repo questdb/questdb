@@ -55,6 +55,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     " ('c', '2023-09-01T01:00:00.000Z')," +
                     " ('c', '2023-09-01T02:00:00.000Z')," +
                     " ('c', '2023-09-01T03:00:00.000Z')";
+    private static final String tradesDdl = "CREATE TABLE 'trades' (\n" +
+            "  symbol SYMBOL capacity 256 CACHE,\n" +
+            "  side SYMBOL capacity 256 CACHE,\n" +
+            "  price DOUBLE,\n" +
+            "  amount DOUBLE,\n" +
+            "  timestamp TIMESTAMP\n" +
+            ") timestamp (timestamp) PARTITION BY DAY WAL;";
 
     @Test
     public void testAliasAppearsInFuncArgs1() throws Exception {
@@ -2548,13 +2555,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testRangeFillWhenThereAreNoRecords() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'trades' (\n" +
-                    "  symbol SYMBOL capacity 256 CACHE,\n" +
-                    "  side SYMBOL capacity 256 CACHE,\n" +
-                    "  price DOUBLE,\n" +
-                    "  amount DOUBLE,\n" +
-                    "  timestamp TIMESTAMP\n" +
-                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            ddl(tradesDdl);
             drainWalQueue();
 
             String query = "with a as (\n" +
@@ -2575,13 +2576,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testRewriteVwapModelsAreEquivalent() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'trades' (\n" +
-                    "  symbol SYMBOL capacity 256 CACHE,\n" +
-                    "  side SYMBOL capacity 256 CACHE,\n" +
-                    "  price DOUBLE,\n" +
-                    "  amount DOUBLE,\n" +
-                    "  timestamp TIMESTAMP\n" +
-                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            ddl(tradesDdl);
             String model = "select-group-by timestamp, symbol, vwap(timestamp,min_price,max_price,closing_price,volume) vwap from (select-group-by [timestamp_floor('5m',timestamp) timestamp, symbol, last(price) closing_price, max(price) max_price, min(price) min_price, sum(amount) volume] timestamp_floor('5m',timestamp) timestamp, symbol, min(price) min_price, max(price) max_price, last(price) closing_price, sum(amount) volume from (select [timestamp, symbol, price, amount] from trades timestamp (timestamp) where symbol = 'ETH-USD' stride 5m) order by timestamp) order by timestamp";
             String target = "select timestamp, symbol, vwap(timestamp,min_price, max_price, closing_price, volume)\n" +
                     "from (\n" +
@@ -2604,7 +2599,33 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testRewriteVwapModelsAssertPlan() throws Exception {
+    public void testRewriteVwapModelsAssertPlanExplicitGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            assertPlanNoLeakCheck("select timestamp, symbol, vwap(price,amount) vwap from\n" +
+                    "trades \n" +
+                    "where symbol = 'ETH-USD'\n" +
+                    "sample by 5m align to calendar with offset '00:00'\n" +
+                    "group by timestamp, symbol\n" +
+                    "order by timestamp asc", "Sort light\n" +
+                    "  keys: [timestamp]\n" +
+                    "    GroupBy vectorized: false\n" +
+                    "      keys: [timestamp,symbol]\n" +
+                    "      values: [vwap(closing_price,max_price,min_price,timestamp)]\n" +
+                    "        Sort light\n" +
+                    "          keys: [timestamp]\n" +
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [symbol,volume]\n" +
+                    "              values: [min(price),max(price),last(price),sum(amount)]\n" +
+                    "              filter: symbol='ETH-USD'\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteVwapModelsAssertPlanImplicitGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE 'trades' (\n" +
                     "  symbol SYMBOL capacity 256 CACHE,\n" +
@@ -2618,7 +2639,70 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "where symbol = 'ETH-USD'\n" +
                     "sample by 5m align to calendar with offset '00:00'\n" +
                     "group by timestamp, symbol\n" +
-                    "order by timestamp asc", "");
+                    "order by timestamp asc", "Sort light\n" +
+                    "  keys: [timestamp]\n" +
+                    "    GroupBy vectorized: false\n" +
+                    "      keys: [timestamp,symbol]\n" +
+                    "      values: [vwap(closing_price,max_price,min_price,timestamp)]\n" +
+                    "        Sort light\n" +
+                    "          keys: [timestamp]\n" +
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [symbol,volume]\n" +
+                    "              values: [min(price),max(price),last(price),sum(amount)]\n" +
+                    "              filter: symbol='ETH-USD'\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteVwapModelsAssertPlanKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            assertPlanNoLeakCheck("select timestamp, symbol, vwap(price,amount) vwap from\n" +
+                    "trades \n" +
+                    "sample by 5m align to calendar with offset '00:00'\n" +
+                    "group by timestamp, symbol\n" +
+                    "order by timestamp asc", "Sort light\n" +
+                    "  keys: [timestamp]\n" +
+                    "    GroupBy vectorized: false\n" +
+                    "      keys: [timestamp,symbol]\n" +
+                    "      values: [vwap(closing_price,max_price,min_price,timestamp)]\n" +
+                    "        Sort light\n" +
+                    "          keys: [timestamp]\n" +
+                    "            Async Group By workers: 1\n" +
+                    "              keys: [symbol,volume]\n" +
+                    "              values: [min(price),max(price),last(price),sum(amount)]\n" +
+                    "              filter: null\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteVwapModelsAssertPlanMinimal() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            assertPlanNoLeakCheck("select timestamp, symbol, vwap(price,amount) vwap from\n" +
+                    "trades \n" +
+                    "sample by 5m\n", "GroupBy vectorized: false\n" +
+                    "  keys: [timestamp,symbol]\n" +
+                    "  values: [vwap(closing_price,max_price,min_price,timestamp)]\n" +
+                    "    Async Group By workers: 1\n" +
+                    "      keys: [symbol,volume]\n" +
+                    "      values: [min(price),max(price),last(price),sum(amount)]\n" +
+                    "      filter: null\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: trades\n");
         });
     }
 

@@ -314,10 +314,10 @@ public class SqlOptimiser implements Mutable {
         vwapExpr.rhs = null;
 
         ExpressionNode volume, closingPrice, maxPrice, minPrice;
-        volume = expressionNodePool.next().of(LITERAL, "volume", -1, -1);
-        closingPrice = expressionNodePool.next().of(LITERAL, "closing_price", -1, -1);
-        maxPrice = expressionNodePool.next().of(LITERAL, "max_price", -1, -1);
-        minPrice = expressionNodePool.next().of(LITERAL, "min_price", -1, -1);
+        volume = expressionNodePool.next().of(LITERAL, "volume", -1, 0);
+        closingPrice = expressionNodePool.next().of(LITERAL, "closing_price", -1, 0);
+        maxPrice = expressionNodePool.next().of(LITERAL, "max_price", -1, 0);
+        minPrice = expressionNodePool.next().of(LITERAL, "min_price", -1, 0);
 
         vwapExpr.args.add(volume);
         vwapExpr.args.add(closingPrice);
@@ -349,6 +349,8 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = innerSelectNone.getOrderBy().size(); i < n; i++) {
                 nextInnerSelectNone.addOrderBy(innerSelectNone.getOrderBy().getQuick(i), innerSelectNone.getOrderByDirection().getQuick(i));
             }
+        } else {
+            nextInnerSelectNone.addOrderBy(timestamp, QueryModel.ORDER_DIRECTION_ASCENDING);
         }
 
         innerSelectNone.getOrderBy().clear();
@@ -367,22 +369,22 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        ExpressionNode minPriceExpr = expressionNodePool.next().of(FUNCTION, "min", -1, -1);
+        ExpressionNode minPriceExpr = expressionNodePool.next().of(FUNCTION, "min", -1, 0);
         minPriceExpr.paramCount = 1;
         minPriceExpr.rhs = vwapPriceExpr;
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("min_price", minPriceExpr));
 
-        ExpressionNode maxPriceExpr = expressionNodePool.next().of(FUNCTION, "max", -1, -1);
+        ExpressionNode maxPriceExpr = expressionNodePool.next().of(FUNCTION, "max", -1, 0);
         maxPriceExpr.paramCount = 1;
         maxPriceExpr.rhs = vwapPriceExpr;
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("max_price", maxPriceExpr));
 
-        ExpressionNode closingPriceExpr = expressionNodePool.next().of(FUNCTION, "last", -1, -1);
+        ExpressionNode closingPriceExpr = expressionNodePool.next().of(FUNCTION, "last", -1, 0);
         closingPriceExpr.paramCount = 1;
         closingPriceExpr.rhs = vwapPriceExpr;
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("closing_price", closingPriceExpr));
 
-        ExpressionNode volumeExpr = expressionNodePool.next().of(FUNCTION, "sum", -1, -1);
+        ExpressionNode volumeExpr = expressionNodePool.next().of(FUNCTION, "sum", -1, 0);
         volumeExpr.paramCount = 1;
         volumeExpr.rhs = vwapVolumeExpr;
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("volume", volumeExpr));
