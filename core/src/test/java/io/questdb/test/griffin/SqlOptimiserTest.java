@@ -2561,7 +2561,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             String query = "with a as (\n" +
                     "SELECT \n" +
                     "    timestamp,\n" +
-                    "    vwap(price, amount) AS vwap_price,\n" +
+                    "    price * amount AS weightedPrice,\n" +
                     "    sum(amount) AS volume\n" +
                     "FROM trades\n" +
                     "WHERE symbol = 'MEH' AND timestamp > dateadd('d', -1, now())\n" +
@@ -2569,7 +2569,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ")\n" +
                     "select * from a;";
 
-            assertSql("timestamp\tvwap_price\tvolume\n", query);
+            assertSql("timestamp\tweightedPrice\tvolume\n", query);
         });
     }
 
@@ -2663,16 +2663,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "where symbol = 'ETH-USD'\n" +
                     "sample by 5m align to calendar with offset '00:00'\n" +
                     "group by timestamp, symbol\n" +
-                    "order by timestamp asc", "Sort light\n" +
+                    "order by timestamp asc", "Radix sort light\n" +
                     "  keys: [timestamp]\n" +
                     "    GroupBy vectorized: false\n" +
                     "      keys: [timestamp,symbol]\n" +
-                    "      values: [vwap(closing_price,max_price,min_price,timestamp)]\n" +
-                    "        Sort light\n" +
+                    "      values: [vwap(timestamp,min_price,max_price,closing_price,volume)]\n" +
+                    "        Radix sort light\n" +
                     "          keys: [timestamp]\n" +
                     "            Async Group By workers: 1\n" +
-                    "              keys: [symbol,volume]\n" +
-                    "              values: [min(price),max(price),last(price),sum(amount)]\n" +
+                    "              keys: [timestamp,symbol]\n" +
+                    "              values: [last(price),max(price),min(price),sum(amount)]\n" +
                     "              filter: symbol='ETH-USD'\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
@@ -2694,16 +2694,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "trades \n" +
                     "sample by 5m align to calendar with offset '00:00'\n" +
                     "group by timestamp, symbol\n" +
-                    "order by timestamp asc", "Sort light\n" +
+                    "order by timestamp asc", "Radix sort light\n" +
                     "  keys: [timestamp]\n" +
                     "    GroupBy vectorized: false\n" +
                     "      keys: [timestamp,symbol]\n" +
-                    "      values: [vwap(closing_price,max_price,min_price,timestamp)]\n" +
-                    "        Sort light\n" +
+                    "      values: [vwap(timestamp,min_price,max_price,closing_price,volume)]\n" +
+                    "        Radix sort light\n" +
                     "          keys: [timestamp]\n" +
                     "            Async Group By workers: 1\n" +
-                    "              keys: [symbol,volume]\n" +
-                    "              values: [min(price),max(price),last(price),sum(amount)]\n" +
+                    "              keys: [timestamp,symbol]\n" +
+                    "              values: [last(price),max(price),min(price),sum(amount)]\n" +
                     "              filter: null\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
@@ -2719,10 +2719,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "trades \n" +
                     "sample by 5m\n", "GroupBy vectorized: false\n" +
                     "  keys: [timestamp,symbol]\n" +
-                    "  values: [vwap(closing_price,max_price,min_price,timestamp)]\n" +
+                    "  values: [vwap(timestamp,min_price,max_price,closing_price,volume)]\n" +
                     "    Async Group By workers: 1\n" +
-                    "      keys: [symbol,volume]\n" +
-                    "      values: [min(price),max(price),last(price),sum(amount)]\n" +
+                    "      keys: [timestamp,symbol]\n" +
+                    "      values: [last(price),max(price),min(price),sum(amount)]\n" +
                     "      filter: null\n" +
                     "        PageFrame\n" +
                     "            Row forward scan\n" +
