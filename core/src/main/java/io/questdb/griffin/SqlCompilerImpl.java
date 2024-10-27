@@ -1698,7 +1698,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
 
         if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
-            engine.checkpointCreate(executionContext);
+            engine.snapshotCreate(executionContext);
             compiledQuery.ofCheckpointCreate();
         } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
             engine.checkpointRelease();

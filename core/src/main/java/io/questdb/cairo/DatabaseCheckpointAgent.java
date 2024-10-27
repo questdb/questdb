@@ -268,15 +268,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
-        // Windows doesn't support sync() system call.
-        if (Os.isWindows()) {
-            throw SqlException.position(0).put("Checkpoint is not supported on Windows");
-        }
 
-        if (!lock.tryLock()) {
-            throw SqlException.position(0).put("Another checkpoint command is in progress");
-        }
+    private void checkpointCreate(SqlExecutionContext executionContext, CharSequence checkpointRoot) throws SqlException {
         try {
             final long startedAt = microClock.getTicks();
             if (!startedAtTimestamp.compareAndSet(Numbers.LONG_NULL, startedAt)) {
@@ -284,7 +277,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             }
 
             try {
-                path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+                path.of(checkpointRoot).concat(configuration.getDbDirectory());
                 int checkpointDbLen = path.size();
                 // delete  contents of the checkpoint's "db" dir.
                 if (ff.exists(path.slash$())) {
@@ -326,7 +319,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             }
 
                             boolean isWalTable = engine.isWalTable(tableToken);
-                            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+                            path.of(checkpointRoot).concat(configuration.getDbDirectory());
                             LOG.info().$("creating table checkpoint [table=").$(tableToken).I$();
 
                             path.trimTo(checkpointDbLen).concat(tableToken);
@@ -402,7 +395,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                             }
                         }
 
-                        path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.CHECKPOINT_META_FILE_NAME);
+                        path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(TableUtils.CHECKPOINT_META_FILE_NAME);
                         mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                         mem.putStr(configuration.getSnapshotInstanceId());
                         mem.close();
@@ -434,6 +427,33 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
+    void checkpointCreate(SqlExecutionContext executionContext, boolean isLegacy) throws SqlException {
+        // Windows doesn't support sync() system call.
+        if (Os.isWindows()) {
+            if (isLegacy) {
+                throw SqlException.position(0).put("Snapshot is not supported on Windows");
+            }
+            throw SqlException.position(0).put("Checkpoint is not supported on Windows");
+        }
+
+        if (!lock.tryLock()) {
+            if (isLegacy) {
+                throw SqlException.position(0).put("Another snapshot command is in progress");
+            }
+            throw SqlException.position(0).put("Another checkpoint command is in progress");
+        }
+        CharSequence checkpointRoot = isLegacy ? configuration.getLegacyCheckpointRoot() : configuration.getCheckpointRoot();
+
+        if (isLegacy) {
+            path.of(configuration.getCheckpointRoot());
+            if (ff.exists(path.$())) {
+                LOG.info().$("removing checkpoint directory to create legacy snapshot [path=").$(path).I$();
+                ff.rmdir(path);
+            }
+        }
+        checkpointCreate(executionContext, checkpointRoot);
+    }
+
     void checkpointRelease() throws SqlException {
         if (!lock.tryLock()) {
             throw SqlException.position(0).put("Another checkpoint command is in progress");
@@ -441,6 +461,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         try {
             // Delete checkpoint's "db" directory.
             path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).$();
+            ff.rmdir(path); // it's fine to ignore errors here
+
+            // Delete snapshot's "db" directory.
+            path.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory()).$();
             ff.rmdir(path); // it's fine to ignore errors here
 
             // Resume the WalPurgeJob

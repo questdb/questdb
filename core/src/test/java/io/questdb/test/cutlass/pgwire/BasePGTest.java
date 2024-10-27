@@ -99,6 +99,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected long maxQueryTime = Long.MAX_VALUE;
     protected int recvBufferSize = 1024 * 1024;
     protected int sendBufferSize = 1024 * 1024;
+    protected int selectCacheBlockCount = -1;
 
     protected BasePGTest(@NonNull LegacyMode legacyMode) {
         this.legacyMode = legacyMode == LegacyMode.LEGACY;
@@ -496,6 +497,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
         };
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration(-1, legacyMode) {
+
+            @Override
+            public int getSelectCacheBlockCount() {
+                return selectCacheBlockCount == -1 ? super.getSelectCacheBlockCount() : selectCacheBlockCount;
+            }
 
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {

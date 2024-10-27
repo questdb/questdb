@@ -39,6 +39,7 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
@@ -76,6 +77,7 @@ import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -216,6 +218,7 @@ public class PGJobContextTest extends BasePGTest {
     @Before
     public void setUp() {
         super.setUp();
+        selectCacheBlockCount = -1;
         sendBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
         forceSendFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, sendBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
 
@@ -1983,6 +1986,11 @@ if __name__ == "__main__":
         });
     }
 
+    @Test
+    public void testBindVariableDropLastPartitionListByMonthHigherPrecision() throws Exception {
+        testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.MONTH);
+    }
+
 //Testing through postgres - need to establish connection
 //    @Test
 //    public void testReadINet() throws SQLException, IOException {
@@ -2004,11 +2012,6 @@ if __name__ == "__main__":
 //                    "12.2.65.90\n", sink, rs);
 //        }
 //    }
-
-    @Test
-    public void testBindVariableDropLastPartitionListByMonthHigherPrecision() throws Exception {
-        testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.MONTH);
-    }
 
     @Test
     public void testBindVariableDropLastPartitionListByNoneHigherPrecision() throws Exception {
@@ -9433,6 +9436,50 @@ create table tab as (
                     // In order to guarantee that the temporary read lock is released before the next iteration of this loop we execute
                     // a new query, with this connection, which does not lock the table.
                     connection.prepareStatement("select 1").execute();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleQueryLoopThenSchemaChangeThenExtendedQuery() throws Exception {
+        // This is a regression test. The bug scenario occurred as follows:
+        // 1. A client using a simple protocol poisoned a query cache. This was due to a bug where a simple query would
+        //    never poll() from the cache, but would populate it after completion. As a result, each query execution
+        //    added a new entry to the cache.
+        // 2. A schema change invalidated all cached queries. This is expected.
+        // 3. A client using extended protocol then attempted to execute the same query. Upon receiving the PARSE message,
+        //    it consulted the query cache and found a stale query plan. This triggered a retry, but subsequent retries
+        //    also failed because they consulted the cache and found other stale plans.
+
+        selectCacheBlockCount = 100; // large cache, must me larger than 'cairo.sql.max.recompile.attempts'
+        assertMemoryLeak(() -> {
+            try (
+                    final IPGWireServer server = createPGServer(2);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                // first poison the cache using the SIMPLE protocol
+                try (
+                        final Connection connection = getConnection(server.getPort(), true, false);
+                        final Statement statement = connection.createStatement()
+                ) {
+                    statement.execute("create table tab(ts timestamp, value double)");
+                    for (int i = 0; i < selectCacheBlockCount; i++) {
+                        statement.execute("select * from tab"); // an attempt to populate cache
+                    }
+
+                    // change the schema. if the previous SELECT queries are cached then they are all stale by now
+                    statement.execute("alter table tab add column x int");
+                }
+
+                // now run a query with an extended protocol - this consults query cache
+                try (
+                        final Connection connection = getConnection(server.getPort(), false, false);
+                        final Statement statement = connection.createStatement()
+                ) {
+                    statement.execute("select * from tab;");
                 }
             }
         });

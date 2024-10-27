@@ -2544,6 +2544,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         CharacterStoreEntry e = characterStore.newEntry();
 
         if (Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
+            // do not cache simple queries, because we don't consult query cache when executing
+            // simple queries anyway. thus caching simple queries would only evict other cached queries
+            // from other clients, but they would not be used.
+            typesAndSelectIsCached = false;
+            typesAndUpdateIsCached = false;
             queryText = characterStore.toImmutable();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
@@ -2842,9 +2847,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     if (retries == maxRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
                     }
-                    LOG.info().$(e.getFlyweightMessage()).$();
+                    LOG.info().$(e.getFlyweightMessage()).$("setupFactoryAndCursor [retries=").$(retries).I$();
                     freeFactory();
-                    compileQuery();
+                    if (!compileQuery()) {
+                        // when we get a query from cache then we don't count it as
+                        // a recompile attempt. since a large cache full of stale queries
+                        // can trigger a lot of recompiles yet it's not an indication of
+                        // a problem with the query itself or a volatile schema.
+                        // it just means the cache had been populated and then the schema changed.
+                        retries--;
+                    }
                     buildSelectColumnTypes();
                     applyLatestBindColumnFormats();
                 } catch (Throwable e) {

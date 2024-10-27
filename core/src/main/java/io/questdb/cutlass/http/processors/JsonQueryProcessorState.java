@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
@@ -507,10 +508,46 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     private void addColumnTypeAndName(RecordMetadata metadata, int i) {
         int columnType = metadata.getColumnType(i);
+        String columnName = metadata.getColumnName(i);
+
+        switch (ColumnType.tagOf(columnType)) {
+            // list of explicitly supported types, to be keep in sync with doQueryRecord()
+
+            // we use a while-list since if we add a new type to QuestDB
+            // the support has to be explicitly added to the JSON REST API
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.DOUBLE:
+            case ColumnType.FLOAT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.SHORT:
+            case ColumnType.CHAR:
+            case ColumnType.STRING:
+            case ColumnType.VARCHAR:
+            case ColumnType.SYMBOL:
+            case ColumnType.BINARY:
+            case ColumnType.LONG256:
+            case ColumnType.GEOBYTE:
+            case ColumnType.GEOSHORT:
+            case ColumnType.GEOINT:
+            case ColumnType.GEOLONG:
+            case ColumnType.RECORD:
+            case ColumnType.NULL:
+            case ColumnType.UUID:
+            case ColumnType.IPv4:
+            case ColumnType.INTERVAL:
+                break;
+            default:
+                throw CairoException.nonCritical().put("column type not supported [column=").put(columnName).put(", type=").put(ColumnType.nameOf(columnType)).put(']');
+        }
+
         int flags = GeoHashes.getBitFlags(columnType);
         this.columnTypesAndFlags.add(columnType);
         this.columnTypesAndFlags.add(flags);
-        this.columnNames.add(metadata.getColumnName(i));
+        this.columnNames.add(columnName);
     }
 
     private void doNextRecordLoop(
@@ -645,8 +682,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 case ColumnType.NULL:
                     response.putAscii("null");
                     break;
-                case ColumnType.LONG128:
-                    throw new UnsupportedOperationException();
                 case ColumnType.UUID:
                     putUuidValue(response, record, columnIdx);
                     break;
@@ -657,9 +692,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putIntervalValue(response, record, columnIdx);
                     break;
                 default:
-                    assert false : "Not supported type in output " + ColumnType.nameOf(columnType);
-                    response.putAscii("null"); // To make JSON valid
-                    break;
+                    // this should never happen since metadata are already validated
+                    throw CairoException.nonCritical().put("column type not supported [type=").put(ColumnType.nameOf(columnType)).put(']');
             }
         }
     }
