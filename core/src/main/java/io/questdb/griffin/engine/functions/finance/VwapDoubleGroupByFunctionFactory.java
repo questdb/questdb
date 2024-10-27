@@ -35,7 +35,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.QuinaryFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -63,7 +63,7 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "vwap(NDDDD)";
+        return "vwap(NDD)";
     }
 
     @Override
@@ -73,25 +73,21 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new VwapDoubleGroupByFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2), args.getQuick(3), args.getQuick(4));
+        return new VwapDoubleGroupByFunction(args.getQuick(0), args.getQuick(1), args.getQuick(2));
     }
 
-    private static class VwapDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, QuinaryFunction {
-        private final Function closePriceFunc; // close price of time period
-        private final Function maxPriceFunc; // low price of time period
-        private final Function minPriceFunc; // high price of time period
+    private static class VwapDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, TernaryFunction {
         private final Function timestampFunc; // timestamp
+        private final Function typicalPriceFunc; // high price of time period
         private final Function volumeFunc; // trading volume in time period
         private long nextDay = 0;
         private int valueIndex;
         private double volume = Double.NaN;
         private double vwap = Double.NaN;
 
-        public VwapDoubleGroupByFunction(@NotNull Function timestampFunc, @NotNull Function minPriceFunc, @NotNull Function maxPriceFunc, @NotNull Function closePriceFunc, @NotNull Function volumeFunc) {
+        public VwapDoubleGroupByFunction(@NotNull Function timestampFunc, @NotNull Function typicalPriceFunc, @NotNull Function volumeFunc) {
             this.timestampFunc = timestampFunc;
-            this.minPriceFunc = minPriceFunc;
-            this.maxPriceFunc = maxPriceFunc;
-            this.closePriceFunc = closePriceFunc;
+            this.typicalPriceFunc = typicalPriceFunc;
             this.volumeFunc = volumeFunc;
         }
 
@@ -105,9 +101,7 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeFirst(MapValue mapValue, Record record, long rowId) {
             final long timestamp = timestampFunc.getTimestamp(record);
-            final double min = minPriceFunc.getDouble(record);
-            final double max = maxPriceFunc.getDouble(record);
-            final double close = closePriceFunc.getDouble(record);
+            final double typicalPrice = typicalPriceFunc.getDouble(record);
             final double volume = volumeFunc.getDouble(record);
             long day = Timestamps.floorDD(timestamp);
 
@@ -118,13 +112,13 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
                 this.nextDay = Timestamps.addDays(day, 1);
             }
 
-            if (Numbers.isFinite(min) && Numbers.isFinite(max) && Numbers.isFinite(close) && Numbers.isFinite(volume) && volume > 0.0d) {
+            if (Numbers.isFinite(typicalPrice) && Numbers.isFinite(volume) && volume > 0.0d) {
                 if (!Numbers.isFinite(this.volume) && !Numbers.isFinite(this.vwap)) {
-                    this.vwap = ((min + max + close) / 3.0);
+                    this.vwap = typicalPrice;
                     this.volume = volume;
                 } else {
                     double cumulativePrice = this.vwap * this.volume;
-                    cumulativePrice += (((min + max + close) / 3.0) * volume);
+                    cumulativePrice += typicalPrice * volume;
                     this.volume += volume;
                     this.vwap = cumulativePrice / this.volume;
                 }
@@ -141,38 +135,28 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getCenter() {
+            return typicalPriceFunc;
+        }
+
+        @Override
         public double getDouble(Record rec) {
             return rec.getDouble(valueIndex);
         }
 
         @Override
-        public Function getFunc0() {
+        public Function getLeft() {
             return timestampFunc;
-        }
-
-        @Override
-        public Function getFunc1() {
-            return minPriceFunc;
-        }
-
-        @Override
-        public Function getFunc2() {
-            return maxPriceFunc;
-        }
-
-        @Override
-        public Function getFunc3() {
-            return closePriceFunc;
-        }
-
-        @Override
-        public Function getFunc4() {
-            return volumeFunc;
         }
 
         @Override
         public String getName() {
             return "vwap";
+        }
+
+        @Override
+        public Function getRight() {
+            return volumeFunc;
         }
 
         @Override
@@ -199,7 +183,7 @@ public class VwapDoubleGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isThreadSafe() {
-            return QuinaryFunction.super.isThreadSafe();
+            return TernaryFunction.super.isThreadSafe();
         }
 
         @Override

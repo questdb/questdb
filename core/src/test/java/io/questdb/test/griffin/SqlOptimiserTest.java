@@ -2574,26 +2574,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testRewriteVwapModelsAreEquivalent() throws Exception {
+    public void testRewriteVwapModel() throws Exception {
         assertMemoryLeak(() -> {
             ddl(tradesDdl);
-            String model = "select-group-by timestamp, symbol, vwap(timestamp,min_price,max_price,closing_price,volume) vwap from (select-group-by [timestamp_floor('5m',timestamp) timestamp, symbol, last(price) closing_price, max(price) max_price, min(price) min_price, sum(amount) volume] timestamp_floor('5m',timestamp) timestamp, symbol, min(price) min_price, max(price) max_price, last(price) closing_price, sum(amount) volume from (select [timestamp, symbol, price, amount] from trades timestamp (timestamp) where symbol = 'ETH-USD' stride 5m) order by timestamp) order by timestamp";
-            String target = "select timestamp, symbol, vwap(timestamp,min_price, max_price, closing_price, volume)\n" +
-                    "from (\n" +
-                    "    select timestamp, symbol, min(price) min_price, max(price) max_price, last(price) closing_price, sum(amount) volume\n" +
-                    "    from trades\n" +
-                    "    where symbol = 'ETH-USD'\n" +
-                    "    sample by 5m\n" +
-                    ")\n" +
-                    "group by timestamp, symbol\n" +
-                    "order by timestamp asc;";
+            String model = "select-group-by timestamp, symbol, vwap(timestamp,typical_price,volume) vwap from (select-virtual [timestamp, symbol, min + max + last / 3 typical_price, volume] timestamp, symbol, min + max + last / 3 typical_price, volume from (select-group-by [timestamp_floor('5m',timestamp) timestamp, symbol, min(price) min, last(price) last, max(price) max, sum(amount) volume] timestamp_floor('5m',timestamp) timestamp, symbol, min(price) min, last(price) last, max(price) max, sum(amount) volume from (select [timestamp, symbol, price, amount] from trades timestamp (timestamp) where symbol = 'ETH-USD' stride 5m)) order by timestamp) order by timestamp";
             String source = "select timestamp, symbol, vwap(price,amount) vwap from\n" +
                     "trades \n" +
                     "where symbol = 'ETH-USD'\n" +
                     "sample by 5m\n" +
                     "group by timestamp, symbol\n" +
                     "order by timestamp asc";
-            assertModel(model, target, ExecutionModel.QUERY);
             assertModel(model, source, ExecutionModel.QUERY);
         });
     }
@@ -2602,9 +2592,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testRewriteVwapModelsAssertPlanExplicitGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             ddl(tradesDdl);
-            assertPlanNoLeakCheck("select timestamp, symbol, vwap(timestamp,min_price, max_price, closing_price, volume)\n" +
+            assertPlanNoLeakCheck("select timestamp, symbol, vwap(timestamp, typical_price, volume)\n" +
                     "from (\n" +
-                    "    select timestamp, symbol, min(price) min_price, max(price) max_price, last(price) closing_price, sum(amount) volume\n" +
+                    "    select timestamp, symbol, ((min(price) + max(price) + last(price)) / 3) typical_price, sum(amount) volume\n" +
                     "    from trades\n" +
                     "    where symbol = 'ETH-USD'\n" +
                     "    sample by 5m\n" +
@@ -2614,16 +2604,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "  keys: [timestamp]\n" +
                     "    GroupBy vectorized: false\n" +
                     "      keys: [timestamp,symbol]\n" +
-                    "      values: [vwap(timestamp,min_price,max_price,closing_price,volume)]\n" +
+                    "      values: [vwap(timestamp,typical_price,volume)]\n" +
                     "        Radix sort light\n" +
                     "          keys: [timestamp]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [timestamp,symbol]\n" +
-                    "              values: [last(price),max(price),min(price),sum(amount)]\n" +
-                    "              filter: symbol='ETH-USD'\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: trades\n");
+                    "            VirtualRecord\n" +
+                    "              functions: [timestamp,symbol,min+max+last/3,volume]\n" +
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [timestamp,symbol]\n" +
+                    "                  values: [last(price),max(price),min(price),sum(amount)]\n" +
+                    "                  filter: symbol='ETH-USD'\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: trades\n");
 
 
 //            assertPlanNoLeakCheck("select timestamp, symbol, vwap(price,amount) vwap from\n" +
@@ -2667,16 +2659,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "  keys: [timestamp]\n" +
                     "    GroupBy vectorized: false\n" +
                     "      keys: [timestamp,symbol]\n" +
-                    "      values: [vwap(timestamp,min_price,max_price,closing_price,volume)]\n" +
+                    "      values: [vwap(timestamp,typical_price,volume)]\n" +
                     "        Radix sort light\n" +
                     "          keys: [timestamp]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [timestamp,symbol]\n" +
-                    "              values: [last(price),max(price),min(price),sum(amount)]\n" +
-                    "              filter: symbol='ETH-USD'\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: trades\n");
+                    "            VirtualRecord\n" +
+                    "              functions: [timestamp,symbol,min+max+last/3,volume]\n" +
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [timestamp,symbol]\n" +
+                    "                  values: [min(price),last(price),max(price),sum(amount)]\n" +
+                    "                  filter: symbol='ETH-USD'\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: trades\n");
         });
     }
 
@@ -2698,16 +2692,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "  keys: [timestamp]\n" +
                     "    GroupBy vectorized: false\n" +
                     "      keys: [timestamp,symbol]\n" +
-                    "      values: [vwap(timestamp,min_price,max_price,closing_price,volume)]\n" +
+                    "      values: [vwap(timestamp,typical_price,volume)]\n" +
                     "        Radix sort light\n" +
                     "          keys: [timestamp]\n" +
-                    "            Async Group By workers: 1\n" +
-                    "              keys: [timestamp,symbol]\n" +
-                    "              values: [last(price),max(price),min(price),sum(amount)]\n" +
-                    "              filter: null\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: trades\n");
+                    "            VirtualRecord\n" +
+                    "              functions: [timestamp,symbol,min+max+last/3,volume]\n" +
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [timestamp,symbol]\n" +
+                    "                  values: [min(price),last(price),max(price),sum(amount)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: trades\n");
         });
     }
 
@@ -2719,14 +2715,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "trades \n" +
                     "sample by 5m\n", "GroupBy vectorized: false\n" +
                     "  keys: [timestamp,symbol]\n" +
-                    "  values: [vwap(timestamp,min_price,max_price,closing_price,volume)]\n" +
-                    "    Async Group By workers: 1\n" +
-                    "      keys: [timestamp,symbol]\n" +
-                    "      values: [last(price),max(price),min(price),sum(amount)]\n" +
-                    "      filter: null\n" +
-                    "        PageFrame\n" +
-                    "            Row forward scan\n" +
-                    "            Frame forward scan on: trades\n");
+                    "  values: [vwap(timestamp,typical_price,volume)]\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [timestamp,symbol,min+max+last/3,volume]\n" +
+                    "        Async Group By workers: 1\n" +
+                    "          keys: [timestamp,symbol]\n" +
+                    "          values: [min(price),last(price),max(price),sum(amount)]\n" +
+                    "          filter: null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: trades\n");
         });
     }
 

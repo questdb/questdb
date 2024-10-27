@@ -330,14 +330,12 @@ public class SqlOptimiser implements Mutable {
                         ast.position
                 );
 
-                vwapExpr.paramCount = 5;
+                vwapExpr.paramCount = 3;
 
                 // reverse ordering
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "volume", Integer.MIN_VALUE, 99999));
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "closing_price", Integer.MIN_VALUE, 99998));
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "max_price", Integer.MIN_VALUE, 99997));
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "min_price", Integer.MIN_VALUE, 99996));
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, timestamp.token, Integer.MIN_VALUE, 99995));
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "volume", Integer.MIN_VALUE, 0));
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "typical_price", Integer.MIN_VALUE, 0));
+                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, timestamp.token, Integer.MIN_VALUE, 0));
 
                 outerSelectChoose.addBottomUpColumn(queryColumnPool.next().of(column.getAlias(), vwapExpr));
             } else {
@@ -348,20 +346,15 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-
         nextInnerSelectNone.setSelectModelType(QueryModel.SELECT_MODEL_NONE);
         ObjList<CharSequence> columnAliases = nextInnerSelectNone.getBottomUpColumnAliases();
         for (int i = 0, n = originalSelectChoose.getBottomUpColumnAliases().size(); i < n; i++) {
             CharSequence cs = originalSelectChoose.getBottomUpColumnAliases().getQuick(i);
-            if (Chars.equalsIgnoreCase(cs, "vwap")) {
-                continue;
-            } else {
+            if (!Chars.equalsIgnoreCase(cs, "vwap")) {
                 columnAliases.add(cs);
             }
         }
-        columnAliases.add("min_price");
-        columnAliases.add("max_price");
-        columnAliases.add("closing_price");
+        columnAliases.add("typical_price");
         columnAliases.add("volume");
 
         nextInnerSelectNone.moveGroupByFrom(originalSelectNone);
@@ -377,59 +370,56 @@ public class SqlOptimiser implements Mutable {
         originalSelectNone.getOrderBy().clear();
         originalSelectNone.getOrderByDirection().clear();
 
-
         for (int i = 0, n = originalSelectChoose.getBottomUpColumns().size(); i < n; i++) {
             QueryColumn col = originalSelectChoose.getBottomUpColumns().getQuick(i);
-            if (isSingleShotVwap(col.getAst())) {
-                continue;
-            } else {
+            if (!isSingleShotVwap(col.getAst())) {
                 nextInnerSelectChoose.addBottomUpColumn(col);
             }
         }
 
         assert priceColName != null && volumeColName != null;
 
+        // build ((min(price) + max(price) + closing(price) / 3) as typical_price
 
         ExpressionNode minPriceExpr = expressionNodePool.next().of(FUNCTION, "min", Integer.MIN_VALUE, 0);
         minPriceExpr.paramCount = 1;
         minPriceExpr.rhs = priceColName;
-        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("min_price", minPriceExpr));
 
         ExpressionNode maxPriceExpr = expressionNodePool.next().of(FUNCTION, "max", Integer.MIN_VALUE, 0);
         maxPriceExpr.paramCount = 1;
         maxPriceExpr.rhs = priceColName;
-        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("max_price", maxPriceExpr));
 
         ExpressionNode closingPriceExpr = expressionNodePool.next().of(FUNCTION, "last", Integer.MIN_VALUE, 0);
         closingPriceExpr.paramCount = 1;
         closingPriceExpr.rhs = priceColName;
-        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("closing_price", closingPriceExpr));
 
         ExpressionNode volumeExpr = expressionNodePool.next().of(FUNCTION, "sum", Integer.MIN_VALUE, 0);
         volumeExpr.paramCount = 1;
         volumeExpr.rhs = volumeColName;
-        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("volume", volumeExpr));
-//
-//        ExpressionNode minPriceExpr = expressionNodePool.next().of(FUNCTION, "min", Integer.MIN_VALUE, 99994);
-//        minPriceExpr.paramCount = 1;
-//        minPriceExpr.rhs = priceColName;
-//        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("min_price", minPriceExpr));
-//
-//        ExpressionNode maxPriceExpr = expressionNodePool.next().of(FUNCTION, "max", Integer.MIN_VALUE, 99993);
-//        maxPriceExpr.paramCount = 1;
-//        maxPriceExpr.rhs = priceColName;
-//        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("max_price", maxPriceExpr));
-//
-//        ExpressionNode closingPriceExpr = expressionNodePool.next().of(FUNCTION, "last", Integer.MIN_VALUE, 99992);
-//        closingPriceExpr.paramCount = 1;
-//        closingPriceExpr.rhs = priceColName;
-//        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("closing_price", closingPriceExpr));
-//
-//        ExpressionNode volumeExpr = expressionNodePool.next().of(FUNCTION, "sum", Integer.MIN_VALUE, 99991);
-//        volumeExpr.paramCount = 1;
-//        volumeExpr.rhs = volumeColName;
-//        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("volume", volumeExpr));
 
+        ExpressionNode firstAddExpr = expressionNodePool.next().of(OPERATION, "+", Integer.MIN_VALUE, 0);
+        firstAddExpr.paramCount = 2;
+
+        ExpressionNode secondAddExpr = expressionNodePool.next().of(OPERATION, "+", Integer.MIN_VALUE, 0);
+        secondAddExpr.paramCount = 2;
+
+        firstAddExpr.lhs = minPriceExpr;
+        firstAddExpr.rhs = secondAddExpr;
+
+        secondAddExpr.lhs = maxPriceExpr;
+        secondAddExpr.rhs = closingPriceExpr;
+
+        ExpressionNode divideExpr = expressionNodePool.next().of(OPERATION, "/", Integer.MIN_VALUE, 0);
+        divideExpr.paramCount = 2;
+
+        ExpressionNode threeExpr = expressionNodePool.next().of(CONSTANT, "3", Integer.MIN_VALUE, 0);
+        threeExpr.paramCount = 0;
+
+        divideExpr.lhs = firstAddExpr;
+        divideExpr.rhs = threeExpr;
+
+        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("typical_price", divideExpr));
+        nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("volume", volumeExpr));
 
         outerSelectChoose.setNestedModel(nextInnerSelectNone);
         nextInnerSelectNone.setNestedModel(nextInnerSelectChoose);
