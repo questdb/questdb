@@ -28,15 +28,6 @@ jobs:
         with:
           use-public-rspm: true
 
-      - uses: questdb/r-actions/setup-r-dependencies@0e77d7c32d9cce8e8c21dbeaaac4a47ea97538c5
-        name: Install R dependencies
-        with:
-          extra-packages: |
-            any::rcmdcheck
-            any::RPostgres
-            any::DBI
-          needs: check
-
       - name: Run R Script
         run: Rscript compat/src/test/R/test_sequence.R
 

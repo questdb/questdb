@@ -1,3 +1,5 @@
+install.packages(c("RPostgres", "DBI", "testthat"), repos = "https://cloud.r-project.org")
+
 library(RPostgres)
 library(DBI)
 library(testthat)
