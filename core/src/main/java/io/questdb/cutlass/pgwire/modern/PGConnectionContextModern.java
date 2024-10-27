@@ -1048,6 +1048,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             if (pipelineCurrentEntry == null) {
                 pipelineCurrentEntry = new PGPipelineEntry(engine);
                 pipelineCurrentEntry.ofEmpty(activeSqlText);
+                pipelineCurrentEntry.setStateExec(true);
             }
         } catch (Throwable ex) {
             if (transactionState == IN_TRANSACTION) {
@@ -1229,6 +1230,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     // Send responses from the pipeline entries we have accumulated so far.
     private void syncPipeline() throws PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
         while (pipelineCurrentEntry != null || (pipelineCurrentEntry = pipeline.poll()) != null) {
+            // we need to store stateExec flag now
+            // because syncing the entry will clear the flag
+            boolean isExec = pipelineCurrentEntry.isStateExec();
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
             do {
                 try {
@@ -1255,9 +1259,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     }
                 }
             } while (true);
-            pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
-            freeIfAbandoned(pipelineCurrentEntry);
-            pipelineCurrentEntry = null;
+            PGPipelineEntry nextEntry = pipeline.poll();
+            if (nextEntry != null || isExec) {
+                pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
+                freeIfAbandoned(pipelineCurrentEntry);
+                pipelineCurrentEntry = nextEntry;
+            } else {
+                break;
+            }
         }
     }
 
