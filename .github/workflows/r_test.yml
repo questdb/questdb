@@ -1,0 +1,53 @@
+name: PGWire - R test
+
+on:
+  pull_request:
+    types: [ synchronize, opened, reopened, edited ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+      - name: Build distribution
+        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
+      - name: Unpack distribution
+        run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
+      - name: Start QuestDB
+        run: ./questdb-*bin/questdb.sh start
+
+        # e6be4b3706e0f39bc7a4cf4496a5f2c4cb840040 = v2.10.1
+      - uses: questdb/r-actions/setup-r@e6be4b3706e0f39bc7a4cf4496a5f2c4cb840040
+        name: Set up R
+        with:
+          use-public-rspm: true
+
+      - uses: questdb/r-actions/setup-r-dependencies@e6be4b3706e0f39bc7a4cf4496a5f2c4cb840040
+        name: Install R dependencies
+        with:
+          extra-packages: |
+            any::rcmdcheck
+            any::RPostgres
+            any::DBI
+          needs: check
+
+      - name: Run R Script
+        run: Rscript compat/src/test/R/test_sequence.R
+
+      - name: Stop QuestDB
+        run: ./questdb-*bin/questdb.sh stop
+
+      - name: Upload logs
+        if: failure() # Only upload logs if the job failed
+        uses: actions/upload-artifact@v4
+        with:
+          path: ~/.questdb/log/*
+          name: logs
+          retention-days: 5
