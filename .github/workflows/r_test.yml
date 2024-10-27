@@ -32,6 +32,8 @@ jobs:
       - uses: questdb/r-actions/setup-r-dependencies@e6be4b3706e0f39bc7a4cf4496a5f2c4cb840040
         name: Install R dependencies
         with:
+          install-pandoc: false
+          install-quarto: false
           extra-packages: |
             any::rcmdcheck
             any::RPostgres
