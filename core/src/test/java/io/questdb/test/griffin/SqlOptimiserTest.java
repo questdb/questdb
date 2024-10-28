@@ -2729,6 +2729,89 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteVwapWithJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            ddl(tradesDdl.replace("trades", "trades2"));
+            String query = "select trades.timestamp, trades.symbol, vwap(trades.price, trades.amount) from trades " +
+                    "join trades2 on trades.timestamp = trades2.timestamp " +
+                    "sample by 1d";
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [timestamp,symbol,min+max+last/3,volume]\n" +
+                    "        Sample By\n" +
+                    "          keys: [timestamp,symbol]\n" +
+                    "          values: [min(price),last(price),max(price),sum(amount)]\n" +
+                    "            SelectedRecord\n" +
+                    "                Hash Join Light\n" +
+                    "                  condition: trades2.timestamp=trades.timestamp\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: trades\n" +
+                    "                    Hash\n" +
+                    "                        PageFrame\n" +
+                    "                            Row forward scan\n" +
+                    "                            Frame forward scan on: trades2\n");
+        });
+    }
+
+    @Test
+    public void testRewriteVwapWithJoinVwapBothSides() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            ddl(tradesDdl.replace("trades", "trades2"));
+
+            String example = "select trades.timestamp, trades.symbol from trades\n" +
+                    "                    join (\n" +
+                    "                    select timestamp, symbol from trades2 sample by 1d\n" +
+                    "                    ) as trades2 on trades.timestamp = trades2.timestamp\n" +
+                    "                    sample by 1d";
+
+            assertPlanNoLeakCheck(example, "Sort\n" +
+                    "  keys: [timestamp]\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [timestamp_floor('day',timestamp),symbol]\n" +
+                    "        SelectedRecord\n" +
+                    "            Hash Join Light\n" +
+                    "              condition: trades2.timestamp=trades.timestamp\n" +
+                    "                PageFrame\n" +
+                    "                    Row forward scan\n" +
+                    "                    Frame forward scan on: trades\n" +
+                    "                Hash\n" +
+                    "                    Radix sort light\n" +
+                    "                      keys: [timestamp]\n" +
+                    "                        VirtualRecord\n" +
+                    "                          functions: [timestamp_floor('day',timestamp)]\n" +
+                    "                            PageFrame\n" +
+                    "                                Row forward scan\n" +
+                    "                                Frame forward scan on: trades2\n");
+
+
+            String query = "select trades.timestamp, trades.symbol, vwap(trades.price, trades.amount) from trades " +
+                    "join ( " +
+                    "select timestamp, symbol, vwap(price, amount) from trades2 sample by 1d " +
+                    ") as trades2 on trades.timestamp = trades2.timestamp " +
+                    "sample by 1d";
+            assertPlanNoLeakCheck(query, "SelectedRecord\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [timestamp,symbol,min+max+last/3,volume]\n" +
+                    "        Sample By\n" +
+                    "          keys: [timestamp,symbol]\n" +
+                    "          values: [min(price),last(price),max(price),sum(amount)]\n" +
+                    "            SelectedRecord\n" +
+                    "                Hash Join Light\n" +
+                    "                  condition: trades2.timestamp=trades.timestamp\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: trades\n" +
+                    "                    Hash\n" +
+                    "                        PageFrame\n" +
+                    "                            Row forward scan\n" +
+                    "                            Frame forward scan on: trades2\n");
+        });
+    }
+
+    @Test
     public void testSampleByFromToBasicWhereOptimisationBetween() throws Exception {
         assertMemoryLeak(() -> {
             ddl(SampleByTest.DDL_FROMTO);

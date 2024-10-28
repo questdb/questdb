@@ -299,7 +299,6 @@ public class SqlOptimiser implements Mutable {
         QueryModel originalSelectChoose = current;
         QueryModel originalSelectNone = current.getNestedModel();
 
-
         QueryModel outerSelectChoose = queryModelPool.next();
         outerSelectChoose.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
 
@@ -425,6 +424,23 @@ public class SqlOptimiser implements Mutable {
         nextInnerSelectNone.setNestedModel(nextInnerSelectChoose);
         nextInnerSelectChoose.setNestedModel(originalSelectNone);
 
+        // recurse nested models
+        outerSelectChoose.setNestedModel(rewriteVwap(nextInnerSelectNone.getNestedModel()));
+        originalSelectNone.setNestedModel(rewriteVwap(originalSelectNone.getNestedModel()));
+
+        // join models
+        for (int i = 1, n = outerSelectChoose.getJoinModels().size(); i < n; i++) {
+            QueryModel joinModel = outerSelectChoose.getJoinModels().getQuick(i);
+            joinModel.setNestedModel(rewriteVwap(joinModel.getNestedModel()));
+        }
+
+        for (int i = 1, n = originalSelectNone.getJoinModels().size(); i < n; i++) {
+            QueryModel joinModel = originalSelectNone.getJoinModels().getQuick(i);
+            joinModel.setNestedModel(rewriteVwap(joinModel.getNestedModel()));
+        }
+
+        outerSelectChoose.setUnionModel(rewriteVwap(outerSelectChoose.getUnionModel()));
+        originalSelectNone.setUnionModel(rewriteVwap(originalSelectNone.getUnionModel()));
 
         // other aliases
         return outerSelectChoose;
@@ -6120,6 +6136,8 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(position, "Invalid table name or alias");
             }
 
+            // todo: NW, this fails, no aliases, no columns on the model
+            // ((select-virtual timestamp, symbol, min + max + last / 3 typical_price, volume from (select-group-by timestamp, symbol, min(price) min, last(price) last, max(price) max, sum(amount) volume from (trades2 timestamp (timestamp)) sample by 1d align to calendar with offset '00:00'))) trades2
             if (joinModels.getQuick(index).getAliasToColumnMap().excludes(columnName, dot + 1, columnName.length())) {
                 throw SqlException.invalidColumn(position, columnName);
             }
