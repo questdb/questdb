@@ -171,6 +171,7 @@ public class PGJobContextTest extends BasePGTest {
     @Before
     public void setUp() {
         super.setUp();
+        selectCacheBlockCount = -1;
         sendBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
         forceSendFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, sendBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
 
@@ -189,6 +190,50 @@ public class PGJobContextTest extends BasePGTest {
     @After
     public void tearDown() throws Exception {
         super.tearDown();
+    }
+
+    @Test
+    public void testSimpleQueryLoopThenSchemaChangeThenExtendedQuery() throws Exception {
+        // This is a regression test. The bug scenario occurred as follows:
+        // 1. A client using a simple protocol poisoned a query cache. This was due to a bug where a simple query would
+        //    never poll() from the cache, but would populate it after completion. As a result, each query execution
+        //    added a new entry to the cache.
+        // 2. A schema change invalidated all cached queries. This is expected.
+        // 3. A client using extended protocol then attempted to execute the same query. Upon receiving the PARSE message,
+        //    it consulted the query cache and found a stale query plan. This triggered a retry, but subsequent retries
+        //    also failed because they consulted the cache and found other stale plans.
+
+        selectCacheBlockCount = 100; // large cache, must me larger than 'cairo.sql.max.recompile.attempts'
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(2);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                // first poison the cache using the SIMPLE protocol
+                try (
+                        final Connection connection = getConnection(server.getPort(), true, false);
+                        final Statement statement = connection.createStatement()
+                ) {
+                    statement.execute("create table tab(ts timestamp, value double)");
+                    for (int i = 0; i < selectCacheBlockCount; i++) {
+                        statement.execute("select * from tab"); // an attempt to populate cache
+                    }
+
+                    // change the schema. if the previous SELECT queries are cached then they are all stale by now
+                    statement.execute("alter table tab add column x int");
+                }
+
+                // now run a query with an extended protocol - this consults query cache
+                try (
+                        final Connection connection = getConnection(server.getPort(), false, false);
+                        final Statement statement = connection.createStatement()
+                ) {
+                    statement.execute("select * from tab;");
+                }
+            }
+        });
     }
 
     @Test

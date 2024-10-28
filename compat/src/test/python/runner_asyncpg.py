@@ -22,6 +22,8 @@
 
 
 import asyncio
+import os
+
 import asyncpg
 import re
 import sys
@@ -96,9 +98,11 @@ async def run_test(test, global_variables):
     variables = global_variables.copy()
     variables.update(test.get('variables', {}))
 
+    # port from env. variable of default to 8812
+    port = int(os.getenv('PGPORT', 8812))
     connection = await asyncpg.connect(
         host='localhost',
-        port=8812,
+        port=port,
         user='admin',
         password='quest',
         database='qdb'
@@ -142,6 +146,7 @@ async def main(yaml_file):
     for test in tests:
         iterations = test.get('iterations', 50)
         for _ in range(iterations):
+            print(f"Running test '{test['name']}' (iteration {_ + 1})")
             await run_test(test, global_variables)
 
 

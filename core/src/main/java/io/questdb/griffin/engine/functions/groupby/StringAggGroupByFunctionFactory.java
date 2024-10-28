@@ -51,6 +51,11 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new StringAggGroupByFunction(args.getQuick(0), args.getQuick(1).getChar(null));
+        return new StringAggGroupByFunction(
+                args.getQuick(0),
+                argPositions.getQuick(0),
+                args.getQuick(1).getChar(null),
+                configuration.getStrFunctionMaxBufferLength()
+        );
     }
 }
