@@ -378,8 +378,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                 if (response.resetToBookmark()) {
                     response.sendChunk(false);
                 } else {
-                    // what we have here is out unit of data, column value or query
-                    // is larger that response content buffer
+                    // out unit of data, column value or query is larger than response content buffer
                     state.logBufferTooSmall();
                     throw CairoException.nonCritical()
                             .put("response buffer is too small for the column value [columnName=").put(state.getCurrentColumnName())
