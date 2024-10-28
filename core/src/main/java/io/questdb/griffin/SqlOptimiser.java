@@ -380,42 +380,15 @@ public class SqlOptimiser implements Mutable {
 
         // build ((min(price) + max(price) + closing(price) / 3) as typical_price
 
-        ExpressionNode minPriceExpr = expressionNodePool.next().of(FUNCTION, "min", Integer.MIN_VALUE, 0);
-        minPriceExpr.paramCount = 1;
-        minPriceExpr.rhs = priceColName;
+        ExpressionNode minPriceExpr = expressionNodePool.next().of(FUNCTION, "min", Integer.MIN_VALUE, 0, priceColName);
+        ExpressionNode maxPriceExpr = expressionNodePool.next().of(FUNCTION, "max", Integer.MIN_VALUE, 0, priceColName);
+        ExpressionNode closingPriceExpr = expressionNodePool.next().of(FUNCTION, "last", Integer.MIN_VALUE, 0, priceColName);
+        ExpressionNode volumeExpr = expressionNodePool.next().of(FUNCTION, "sum", Integer.MIN_VALUE, 0, volumeColName);
 
-        ExpressionNode maxPriceExpr = expressionNodePool.next().of(FUNCTION, "max", Integer.MIN_VALUE, 0);
-        maxPriceExpr.paramCount = 1;
-        maxPriceExpr.rhs = priceColName;
-
-        ExpressionNode closingPriceExpr = expressionNodePool.next().of(FUNCTION, "last", Integer.MIN_VALUE, 0);
-        closingPriceExpr.paramCount = 1;
-        closingPriceExpr.rhs = priceColName;
-
-        ExpressionNode volumeExpr = expressionNodePool.next().of(FUNCTION, "sum", Integer.MIN_VALUE, 0);
-        volumeExpr.paramCount = 1;
-        volumeExpr.rhs = volumeColName;
-
-        ExpressionNode firstAddExpr = expressionNodePool.next().of(OPERATION, "+", Integer.MIN_VALUE, 0);
-        firstAddExpr.paramCount = 2;
-
-        ExpressionNode secondAddExpr = expressionNodePool.next().of(OPERATION, "+", Integer.MIN_VALUE, 0);
-        secondAddExpr.paramCount = 2;
-
-        firstAddExpr.lhs = minPriceExpr;
-        firstAddExpr.rhs = secondAddExpr;
-
-        secondAddExpr.lhs = maxPriceExpr;
-        secondAddExpr.rhs = closingPriceExpr;
-
-        ExpressionNode divideExpr = expressionNodePool.next().of(OPERATION, "/", Integer.MIN_VALUE, 0);
-        divideExpr.paramCount = 2;
-
+        ExpressionNode secondAddExpr = expressionNodePool.next().of(OPERATION, "+", Integer.MIN_VALUE, 0, maxPriceExpr, closingPriceExpr);
+        ExpressionNode firstAddExpr = expressionNodePool.next().of(OPERATION, "+", Integer.MIN_VALUE, 0, minPriceExpr, secondAddExpr);
         ExpressionNode threeExpr = expressionNodePool.next().of(CONSTANT, "3", Integer.MIN_VALUE, 0);
-        threeExpr.paramCount = 0;
-
-        divideExpr.lhs = firstAddExpr;
-        divideExpr.rhs = threeExpr;
+        ExpressionNode divideExpr = expressionNodePool.next().of(OPERATION, "/", Integer.MIN_VALUE, 0, firstAddExpr, threeExpr);
 
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("typical_price", divideExpr));
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("volume", volumeExpr));

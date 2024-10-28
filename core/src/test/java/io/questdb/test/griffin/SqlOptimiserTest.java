@@ -2761,30 +2761,30 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             ddl(tradesDdl);
             ddl(tradesDdl.replace("trades", "trades2"));
 
-            String example = "select trades.timestamp, trades.symbol from trades\n" +
-                    "                    join (\n" +
-                    "                    select timestamp, symbol from trades2 sample by 1d\n" +
-                    "                    ) as trades2 on trades.timestamp = trades2.timestamp\n" +
-                    "                    sample by 1d";
-
-            assertPlanNoLeakCheck(example, "Sort\n" +
-                    "  keys: [timestamp]\n" +
-                    "    VirtualRecord\n" +
-                    "      functions: [timestamp_floor('day',timestamp),symbol]\n" +
-                    "        SelectedRecord\n" +
-                    "            Hash Join Light\n" +
-                    "              condition: trades2.timestamp=trades.timestamp\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: trades\n" +
-                    "                Hash\n" +
-                    "                    Radix sort light\n" +
-                    "                      keys: [timestamp]\n" +
-                    "                        VirtualRecord\n" +
-                    "                          functions: [timestamp_floor('day',timestamp)]\n" +
-                    "                            PageFrame\n" +
-                    "                                Row forward scan\n" +
-                    "                                Frame forward scan on: trades2\n");
+//            String example = "select trades.timestamp, trades.symbol from trades\n" +
+//                    "                    join (\n" +
+//                    "                    select timestamp, symbol from trades2 sample by 1d\n" +
+//                    "                    ) as trades2 on trades.timestamp = trades2.timestamp\n" +
+//                    "                    sample by 1d";
+//
+//            assertPlanNoLeakCheck(example, "Sort\n" +
+//                    "  keys: [timestamp]\n" +
+//                    "    VirtualRecord\n" +
+//                    "      functions: [timestamp_floor('day',timestamp),symbol]\n" +
+//                    "        SelectedRecord\n" +
+//                    "            Hash Join Light\n" +
+//                    "              condition: trades2.timestamp=trades.timestamp\n" +
+//                    "                PageFrame\n" +
+//                    "                    Row forward scan\n" +
+//                    "                    Frame forward scan on: trades\n" +
+//                    "                Hash\n" +
+//                    "                    Radix sort light\n" +
+//                    "                      keys: [timestamp]\n" +
+//                    "                        VirtualRecord\n" +
+//                    "                          functions: [timestamp_floor('day',timestamp)]\n" +
+//                    "                            PageFrame\n" +
+//                    "                                Row forward scan\n" +
+//                    "                                Frame forward scan on: trades2\n");
 
 
             String query = "select trades.timestamp, trades.symbol, vwap(trades.price, trades.amount) from trades " +

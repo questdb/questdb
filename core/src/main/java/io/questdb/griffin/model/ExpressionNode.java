@@ -26,7 +26,11 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -191,6 +195,25 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.precedence = precedence;
         this.token = token;
         this.position = position;
+        return this;
+    }
+
+    public ExpressionNode of(int type, CharSequence token, int precedence, int position, ExpressionNode node) {
+        clear();
+        of(type, token, precedence, position);
+        this.paramCount = 1;
+        this.rhs = node;
+        return this;
+    }
+
+
+    public ExpressionNode of(int type, CharSequence token, int precedence, int position, ExpressionNode node, ExpressionNode node2) {
+        clear();
+        // though confusing, node2 is the correct arg here.
+        // with 1 param, we put it in rhs. with two, the second arg goes in rhs
+        of(type, token, precedence, position, node2);
+        this.paramCount = 2;
+        this.lhs = node;
         return this;
     }
 
