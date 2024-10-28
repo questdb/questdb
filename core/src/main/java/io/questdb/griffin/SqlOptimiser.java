@@ -398,8 +398,8 @@ public class SqlOptimiser implements Mutable {
         nextInnerSelectChoose.setNestedModel(originalSelectNone);
 
         // recurse nested models
-        outerSelectChoose.setNestedModel(rewriteVwap(nextInnerSelectNone.getNestedModel()));
-        originalSelectNone.setNestedModel(rewriteVwap(originalSelectNone.getNestedModel()));
+        outerSelectChoose.setNestedModel(rewriteVwap(nextInnerSelectNone));
+
 
         // join models
         for (int i = 1, n = outerSelectChoose.getJoinModels().size(); i < n; i++) {
