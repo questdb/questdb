@@ -2218,6 +2218,7 @@ public class PGPipelineEntry implements QuietCloseable {
     private void validateMetadataAfterRecompileSelect(RecordMetadata oldMeta) throws BadProtocolException {
         if (isPreparedStatement() && !TableUtils.equalColumnNamesAndTypes(oldMeta, factory.getMetadata())) {
             stalePlanError = true;
+            error = true;
             throw kaput().put("cached plan must not change result type");
         }
     }

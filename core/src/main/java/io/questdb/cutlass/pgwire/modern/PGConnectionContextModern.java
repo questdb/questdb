@@ -790,18 +790,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 throw msgKaput().put("invalid type for close message [type=").put(type).put(']');
         }
 
-        // if we already have the current pipeline entry, we will use that to produce the 'close'
-        // message to the client. Otherwise, our options are:
-        // - we can use the entry we looked up using the prepared statements' name
-        // - create a brand-new entry
-        if (pipelineCurrentEntry == null) {
-            if (lookedUpPipelineEntry != null) {
-                pipelineCurrentEntry = lookedUpPipelineEntry;
-            } else {
+        if (lookedUpPipelineEntry == null) {
+            if (pipelineCurrentEntry == null) {
                 pipelineCurrentEntry = new PGPipelineEntry(engine);
             }
         } else {
-            Misc.free(lookedUpPipelineEntry);
+            pipelineCurrentEntry = lookedUpPipelineEntry;
         }
 
         pipelineCurrentEntry.setStateClosed(true);
@@ -1233,6 +1227,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             // we need to store stateExec flag now
             // because syncing the entry will clear the flag
             boolean isExec = pipelineCurrentEntry.isStateExec();
+            boolean isError = pipelineCurrentEntry.isError();
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
             do {
                 try {
@@ -1260,11 +1255,18 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 }
             } while (true);
             PGPipelineEntry nextEntry = pipeline.poll();
-            if (nextEntry != null || isExec) {
+            if (nextEntry != null || isExec || isError) {
                 pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
                 freeIfAbandoned(pipelineCurrentEntry);
                 pipelineCurrentEntry = nextEntry;
             } else {
+                LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
+                        .$(", sql=").$(pipelineCurrentEntry.getSqlText())
+                        .$(", isExec=").$(isExec)
+                        .$(", isError=").$(isError)
+                        .$(", stmt=").$(pipelineCurrentEntry.getPreparedStatementName())
+                        .$(", portal=").$(pipelineCurrentEntry.getPortalName())
+                        .I$();
                 break;
             }
         }
