@@ -38,8 +38,8 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     private ConcurrentHashMap<TableToken> tableNameToTableTokenMap1 = new ConcurrentHashMap<>(false);
     private ConcurrentHashMap<TableToken> tableNameToTableTokenMap2 = new ConcurrentHashMap<>(false);
 
-    public TableNameRegistryRO(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
-        super(configuration, tableFlagResolver);
+    public TableNameRegistryRO(CairoEngine engine, CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
+        super(engine, configuration, tableFlagResolver);
         this.clockMs = configuration.getMillisecondClock();
         long timeout = configuration.getTableRegistryAutoReloadFrequency();
         this.autoReloadTimeout = timeout > 0 ? timeout : Long.MAX_VALUE;
