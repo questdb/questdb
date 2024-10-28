@@ -26,7 +26,11 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -56,18 +60,18 @@ import static io.questdb.test.tools.TestUtils.*;
 
 @RunWith(Parameterized.class)
 public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
-    private static final String EXPECTED = "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-            "0\tDAY\t2023-01-01\t2023-01-01T00:00:00.950399Z\t2023-01-01T23:59:59.822691Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-            "1\tDAY\t2023-01-02\t2023-01-02T00:00:00.773090Z\t2023-01-02T23:59:59.645382Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-            "2\tDAY\t2023-01-03\t2023-01-03T00:00:00.595781Z\t2023-01-03T23:59:59.468073Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-            "3\tDAY\t2023-01-04\t2023-01-04T00:00:00.418472Z\t2023-01-04T23:59:59.290764Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-            "4\tDAY\t2023-01-05\t2023-01-05T00:00:00.241163Z\t2023-01-05T23:59:59.113455Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-            "5\tDAY\t2023-01-06\t2023-01-06T00:00:00.063854Z\t2023-01-06T23:59:59.886545Z\t90910\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-            "6\tDAY\t2023-01-07\t2023-01-07T00:00:00.836944Z\t2023-01-07T23:59:59.709236Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-            "7\tDAY\t2023-01-08\t2023-01-08T00:00:00.659635Z\t2023-01-08T23:59:59.531927Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-            "8\tDAY\t2023-01-09\t2023-01-09T00:00:00.482326Z\t2023-01-09T23:59:59.354618Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-            "9\tDAY\t2023-01-10\t2023-01-10T00:00:00.305017Z\t2023-01-10T23:59:59.177309Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-            "10\tDAY\t2023-01-11\t2023-01-11T00:00:00.127708Z\t2023-01-11T23:59:59.000000Z\t90909\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n";
+    private static final String EXPECTED = "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+            "0\tDAY\t2023-01-01\t-1\t2023-01-01T00:00:00.950399Z\t2023-01-01T23:59:59.822691Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+            "1\tDAY\t2023-01-02\t-1\t2023-01-02T00:00:00.773090Z\t2023-01-02T23:59:59.645382Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+            "2\tDAY\t2023-01-03\t-1\t2023-01-03T00:00:00.595781Z\t2023-01-03T23:59:59.468073Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+            "3\tDAY\t2023-01-04\t-1\t2023-01-04T00:00:00.418472Z\t2023-01-04T23:59:59.290764Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+            "4\tDAY\t2023-01-05\t-1\t2023-01-05T00:00:00.241163Z\t2023-01-05T23:59:59.113455Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+            "5\tDAY\t2023-01-06\t-1\t2023-01-06T00:00:00.063854Z\t2023-01-06T23:59:59.886545Z\t90910\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+            "6\tDAY\t2023-01-07\t-1\t2023-01-07T00:00:00.836944Z\t2023-01-07T23:59:59.709236Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+            "7\tDAY\t2023-01-08\t-1\t2023-01-08T00:00:00.659635Z\t2023-01-08T23:59:59.531927Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+            "8\tDAY\t2023-01-09\t-1\t2023-01-09T00:00:00.482326Z\t2023-01-09T23:59:59.354618Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+            "9\tDAY\t2023-01-10\t-1\t2023-01-10T00:00:00.305017Z\t2023-01-10T23:59:59.177309Z\t90909\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+            "10\tDAY\t2023-01-11\t-1\t2023-01-11T00:00:00.127708Z\t2023-01-11T23:59:59.000000Z\t90909\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n";
 
     private static final String firstPartitionName = "2023-01-01";
     private static final int partitionCount = 11;

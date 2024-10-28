@@ -24,7 +24,19 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoKeywords;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -34,7 +46,13 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -87,21 +105,22 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     private enum Column {
-        PARTITION_INDEX(0, "index", ColumnType.INT),
+        PARTITION_INDEX(0, "partition_index", ColumnType.INT),
         PARTITION_BY(1, "partitionBy", ColumnType.STRING),
-        PARTITION_NAME(2, "name", ColumnType.STRING),
-        MIN_TIMESTAMP(3, "minTimestamp", ColumnType.TIMESTAMP),
-        MAX_TIMESTAMP(4, "maxTimestamp", ColumnType.TIMESTAMP),
-        NUM_ROWS(5, "numRows", ColumnType.LONG),
-        DISK_SIZE(6, "diskSize", ColumnType.LONG),
-        DISK_SIZE_HUMAN(7, "diskSizeHuman", ColumnType.STRING),
-        IS_READ_ONLY(8, "readOnly", ColumnType.BOOLEAN),
-        IS_ACTIVE(9, "active", ColumnType.BOOLEAN),
-        IS_ATTACHED(10, "attached", ColumnType.BOOLEAN),
-        IS_DETACHED(11, "detached", ColumnType.BOOLEAN),
-        IS_ATTACHABLE(12, "attachable", ColumnType.BOOLEAN),
-        IS_PARQUET(13, "isParquet", ColumnType.BOOLEAN),
-        PARQUET_FILE_SIZE(14, "parquetFileSize", ColumnType.LONG);
+        PARTITION_NAME(2, "partition_name", ColumnType.STRING),
+        PARTITION_NAME_TXN(3, "partition_name_txn", ColumnType.LONG),
+        MIN_TIMESTAMP(4, "minTimestamp", ColumnType.TIMESTAMP),
+        MAX_TIMESTAMP(5, "maxTimestamp", ColumnType.TIMESTAMP),
+        NUM_ROWS(6, "numRows", ColumnType.LONG),
+        DISK_SIZE(7, "diskSize", ColumnType.LONG),
+        DISK_SIZE_HUMAN(8, "diskSizeHuman", ColumnType.STRING),
+        IS_READ_ONLY(9, "readOnly", ColumnType.BOOLEAN),
+        IS_ACTIVE(10, "active", ColumnType.BOOLEAN),
+        IS_ATTACHED(11, "attached", ColumnType.BOOLEAN),
+        IS_DETACHED(12, "detached", ColumnType.BOOLEAN),
+        IS_ATTACHABLE(13, "attachable", ColumnType.BOOLEAN),
+        IS_PARQUET(14, "parquet", ColumnType.BOOLEAN),
+        PARQUET_FILE_SIZE(15, "parquetFileSize", ColumnType.LONG);
 
         private final int idx;
         private final TableColumnMetadata metadata;
@@ -142,6 +161,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private int partitionBy = -1;
         private int partitionIndex = -1;
         private long partitionSize = -1L;
+        private long nameTxn = -1;
         private int rootLen;
         private TableReader tableReader;
         private CharSequence tsColName;
@@ -232,8 +252,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 }
                 long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
+                nameTxn = tableTxReader.getPartitionNameTxn(partitionIndex);
                 PartitionBy.setSinkForPartition(partitionName, partitionBy, timestamp);
-                TableUtils.setPathForPartition(path, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
+                TableUtils.setPathForPartition(path, partitionBy, timestamp, nameTxn);
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
             } else {
                 // partition table is over, we will iterate over detached and attachable partitions
@@ -277,6 +298,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                                     int pIndex = detachedTxReader.getPartitionIndex(timestamp);
                                     // could set dynamicPartitionIndex to -pIndex
                                     numRows = detachedTxReader.getPartitionSize(pIndex);
+                                    nameTxn = detachedTxReader.getPartitionNameTxn(pIndex);
                                     if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
                                         int tsIndex = detachedMetaReader.getTimestampIndex();
                                         dynamicTsColName = detachedMetaReader.getColumnName(tsIndex);
@@ -364,17 +386,17 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             @Override
             public boolean getBool(int col) {
                 switch (col) {
-                    case 8: // isReadOnly
+                    case 9: // isReadOnly
                         return isReadOnly;
-                    case 9:
-                        return isActive;
                     case 10:
-                        return isReadOnly || !isDetached;
+                        return isActive;
                     case 11:
-                        return isDetached;
+                        return isReadOnly || !isDetached;
                     case 12:
-                        return isAttachable;
+                        return isDetached;
                     case 13:
+                        return isAttachable;
+                    case 14:
                         return isParquet;
                     default:
                         throw new UnsupportedOperationException();
@@ -393,14 +415,16 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             public long getLong(int col) {
                 switch (col) {
                     case 3:
-                        return minTimestamp;
+                        return nameTxn;
                     case 4:
-                        return maxTimestamp;
+                        return minTimestamp;
                     case 5:
-                        return numRows;
+                        return maxTimestamp;
                     case 6:
+                        return numRows;
+                    case 7:
                         return partitionSize;
-                    case 14:
+                    case 15:
                         return parquetFileSize;
                     default:
                         throw new UnsupportedOperationException();
@@ -414,7 +438,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         return PartitionBy.toString(partitionBy);
                     case 2:
                         return partitionName;
-                    case 7:
+                    case 8:
                         return partitionSizeSink;
                     default:
                         throw new UnsupportedOperationException();
@@ -435,9 +459,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             @Override
             public long getTimestamp(int col) {
                 switch (col) {
-                    case 3:
-                        return minTimestamp;
                     case 4:
+                        return minTimestamp;
+                    case 5:
                         return maxTimestamp;
                     default:
                         throw new UnsupportedOperationException();
@@ -451,6 +475,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadata.add(Column.PARTITION_INDEX.metadata());
         metadata.add(Column.PARTITION_BY.metadata());
         metadata.add(Column.PARTITION_NAME.metadata());
+        metadata.add(Column.PARTITION_NAME_TXN.metadata());
         metadata.add(Column.MIN_TIMESTAMP.metadata());
         metadata.add(Column.MAX_TIMESTAMP.metadata());
         metadata.add(Column.NUM_ROWS.metadata());

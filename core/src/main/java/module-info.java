@@ -857,7 +857,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.TablesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.KeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.WalTableListFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.WalTablesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpMemoryUsageFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory,

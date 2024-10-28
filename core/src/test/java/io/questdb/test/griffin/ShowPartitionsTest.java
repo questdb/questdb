@@ -128,10 +128,10 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 dstPath.of(configuration.getRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03").put(ATTACHABLE_DIR_MARKER);
                 Assert.assertEquals(0, Files.softLink(srcPath.$(), dstPath.$()));
                 assertShowPartitions(
-                        "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                                "0\tDAY\t2023-03-13\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                                "1\tDAY\t2023-03-14\t2023-03-14T04:47:59.400000Z\t2023-03-14T23:59:59.000000Z\t5\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                                "null\tDAY\t2023-03.attachable\t\t\t-1\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
+                        "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                                "0\tDAY\t2023-03-13\t-1\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\t114688\t112.0 KiB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                                "1\tDAY\t2023-03-14\t-1\t2023-03-14T04:47:59.400000Z\t2023-03-14T23:59:59.000000Z\t5\t114688\t112.0 KiB\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                                "null\tDAY\t2023-03.attachable\t-1\t\t\t-1\t163840\t160.0 KiB\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
                         tabName);
             }
         });
@@ -184,10 +184,10 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 dstPath.of(configuration.getRoot()).concat(engine.verifyTableName(tabName)).concat("2023-03-15").put(ATTACHABLE_DIR_MARKER);
                 Assert.assertEquals(0, Files.softLink(srcPath.$(), dstPath.$()));
                 assertShowPartitions(
-                        "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                                "0\tDAY\t2023-03-13\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                                "1\tDAY\t2023-03-14\t2023-03-14T04:47:59.400000Z\t2023-03-14T23:59:59.000000Z\t5\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                                "null\tDAY\t2023-03-15.attachable\t\t\t-1\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
+                        "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                                "0\tDAY\t2023-03-13\t-1\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\t114688\t112.0 KiB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                                "1\tDAY\t2023-03-14\t-1\t2023-03-14T04:47:59.400000Z\t2023-03-14T23:59:59.000000Z\t5\t114688\t112.0 KiB\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                                "null\tDAY\t2023-03-15.attachable\t-1\t\t\t-1\t163840\t160.0 KiB\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
                         tabName);
             }
         });
@@ -231,32 +231,32 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 }
             }
             assertShowPartitions(
-                    "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                            "0\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-01.detached\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-02.detached\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-03.detached\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-04.detached\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-05.detached\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-02.attachable\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-03.attachable\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-04.attachable\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
+                    "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                            "0\tMONTH\t2023-06\t-1\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-01.detached\t-1\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-02.detached\t-1\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-03.detached\t-1\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-04.detached\t-1\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-05.detached\t-1\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-02.attachable\t-1\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-03.attachable\t-1\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-04.attachable\t-1\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
                     tableName);
             ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2023-02', '2023-03'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
             assertShowPartitions(
-                    "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                            "0\tMONTH\t2023-02\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\ttrue\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "1\tMONTH\t2023-03\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\ttrue\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "2\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-01.detached\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-02.detached\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-03.detached\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-04.detached\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-05.detached\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-04.attachable\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
+                    "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                            "0\tMONTH\t2023-02\t6\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\ttrue\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "1\tMONTH\t2023-03\t7\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\ttrue\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "2\tMONTH\t2023-06\t-1\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-01.detached\t-1\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-02.detached\t-1\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-03.detached\t-1\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-04.detached\t-1\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-05.detached\t-1\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-04.attachable\t-1\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
                     tableName);
         });
     }
@@ -272,13 +272,13 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             }
             deleteFile(tableName, "2023-04" + TableUtils.DETACHED_DIR_MARKER, TableUtils.META_FILE_NAME);
             assertShowPartitions(
-                    "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                            "0\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-01.detached\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-02.detached\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-03.detached\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-04.detached\t\t\t-1\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-05.detached\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n",
+                    "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                            "0\tMONTH\t2023-06\t-1\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-01.detached\t-1\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-02.detached\t-1\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-03.detached\t-1\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-04.detached\t-1\t\t\t-1\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-05.detached\t-1\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n",
                     tableName);
         });
     }
@@ -294,13 +294,13 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             }
             deleteFile(tableName, "2023-04" + TableUtils.DETACHED_DIR_MARKER, "timestamp.d");
             assertShowPartitions(
-                    "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                            "0\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-01.detached\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-02.detached\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-03.detached\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-04.detached\t\t\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-05.detached\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n",
+                    "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                            "0\tMONTH\t2023-06\t-1\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-01.detached\t-1\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-02.detached\t-1\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-03.detached\t-1\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-04.detached\t-1\t\t\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-05.detached\t-1\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n",
                     tableName);
         });
     }
@@ -316,13 +316,13 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             }
             deleteFile(tableName, "2023-04" + TableUtils.DETACHED_DIR_MARKER, TableUtils.TXN_FILE_NAME);
             assertShowPartitions(
-                    "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                            "0\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-01.detached\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-02.detached\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-03.detached\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-04.detached\t\t\t-1\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-05.detached\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n",
+                    "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                            "0\tMONTH\t2023-06\t-1\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-01.detached\t-1\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-02.detached\t-1\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-03.detached\t-1\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-04.detached\t-1\t\t\t-1\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-05.detached\t-1\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n",
                     tableName);
         });
     }
@@ -338,12 +338,12 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 drainWalQueue();
             }
             assertShowPartitions(
-                    "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                            "null\tMONTH\t2023-01.detached\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-02.detached\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-03.detached\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-04.detached\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
-                            "null\tMONTH\t2023-05.detached\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n",
+                    "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                            "null\tMONTH\t2023-01.detached\t-1\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-02.detached\t-1\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-03.detached\t-1\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-04.detached\t-1\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n" +
+                            "null\tMONTH\t2023-05.detached\t-1\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\tfalse\tfalse\t-1\n",
                     tableName);
         });
     }
@@ -355,8 +355,8 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             createTable(tableName);
             assertQueryNoLeakCheck(
                     replaceSizeToMatchOS(
-                            "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                                    "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
+                            "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                                    "5\tMONTH\t2023-06\t-1\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
                             tableName, configuration, engine, sink),
                     "SELECT * FROM table_partitions('" + tableName + "') WHERE active = true;",
                     null,
@@ -373,8 +373,8 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             createTable(tableName, PartitionBy.WEEK);
             assertQueryNoLeakCheck(
                     replaceSizeToMatchOS(
-                            "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                                    "25\tWEEK\t2023-W25\t2023-06-19T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t25\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
+                            "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                                    "25\tWEEK\t2023-W25\t-1\t2023-06-19T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t25\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
                             tableName, configuration, engine, sink),
                     "SELECT * FROM table_partitions('" + tableName + "') WHERE active = true;",
                     null,
@@ -395,8 +395,8 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             }
             assertQueryNoLeakCheck(
                     replaceSizeToMatchOS(
-                            "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                                    "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
+                            "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                                    "5\tMONTH\t2023-06\t-1\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
                             tableName, configuration, engine, sink),
                     "SELECT * FROM partitions WHERE active = true;",
                     null,
@@ -420,13 +420,13 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(tableName);
             assertShowPartitions(
-                    "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                            "0\tMONTH\t2023-01\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "1\tMONTH\t2023-02\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "2\tMONTH\t2023-03\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "3\tMONTH\t2023-04\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "4\tMONTH\t2023-05\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                            "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
+                    "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                            "0\tMONTH\t2023-01\t-1\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "1\tMONTH\t2023-02\t-1\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "2\tMONTH\t2023-03\t-1\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "3\tMONTH\t2023-04\t-1\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "4\tMONTH\t2023-05\t-1\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                            "5\tMONTH\t2023-06\t-1\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
                     tableName);
         });
     }
@@ -438,13 +438,13 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         deleteFile(tableName, "2023-04", "timestamp.d");
 
         final String finallyExpected = replaceSizeToMatchOS(
-                "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
-                        "0\tMONTH\t2023-01\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                        "1\tMONTH\t2023-02\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                        "2\tMONTH\t2023-03\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                        "null\tMONTH\t2023-04\t\t\t120\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                        "4\tMONTH\t2023-05\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                        "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
+                "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
+                        "0\tMONTH\t2023-01\t-1\t2023-01-01T06:00:00.000000Z\t2023-01-31T18:00:00.000000Z\t123\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                        "1\tMONTH\t2023-02\t-1\t2023-02-01T00:00:00.000000Z\t2023-02-28T18:00:00.000000Z\t112\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                        "2\tMONTH\t2023-03\t-1\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                        "null\tMONTH\t2023-04\t-1\t\t\t120\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                        "4\tMONTH\t2023-05\t-1\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                        "5\tMONTH\t2023-06\t-1\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
                 tableName, configuration, engine, sink
         );
 
