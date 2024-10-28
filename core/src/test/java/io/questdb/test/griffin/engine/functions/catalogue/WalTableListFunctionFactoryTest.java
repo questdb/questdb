@@ -71,7 +71,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertNotNull(token);
 
             SeqTxnTracker txnTracker = tableSequencerAPI.getTxnTracker(token);
-            assertMemoryPressureLevel("A", 0);
+            assertMemoryPressureLevel(0);
 
             long now = 0;
             int parallelism = txnTracker.getMaxO3MergeParallelism();
@@ -80,7 +80,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             // Memory pressure level should be 1 after the first OOM event - it indicates that the table is under memory pressure
             // and reducing parallelism
-            assertMemoryPressureLevel("A", 1);
+            assertMemoryPressureLevel(1);
 
             do {
                 now += 1000;
@@ -91,7 +91,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             // eventually memory pressure level should be 2 after the second OOM event - it indicates that the table is under memory pressure
             // and is applying backoff
-            assertMemoryPressureLevel("A", 2);
+            assertMemoryPressureLevel(2);
 
 
             // now let's simulate reducing memory pressure
@@ -102,7 +102,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             // after a first successful O3 merge memory pressure level should be 1 - still reducing parallelism
             // but no longer applying backoff
-            assertMemoryPressureLevel("A", 1);
+            assertMemoryPressureLevel(1);
 
             do {
                 now += 1000;
@@ -112,7 +112,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             } while (txnTracker.getMemoryPressureLevel() == 1);
 
             // eventually the memory pressure should be 0 - no memory pressure at all
-            assertMemoryPressureLevel("A", 0);
+            assertMemoryPressureLevel(0);
         });
     }
 
@@ -208,10 +208,10 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         testWalTablesSuspendedWithError("alter table B suspend wal", NONE, "");
     }
 
-    private void assertMemoryPressureLevel(CharSequence tableName, int expectedMemoryPressureLevel) throws SqlException {
+    private void assertMemoryPressureLevel(int expectedMemoryPressureLevel) throws SqlException {
         assertQuery("memoryPressure\n" +
-                        +expectedMemoryPressureLevel + "\n",
-                "select memoryPressure from wal_tables() where table_name = '" + tableName + "'", false, false);
+                        expectedMemoryPressureLevel + "\n",
+                "select memoryPressure from wal_tables() where table_name = '" + "A" + "'", false, false);
     }
 
     private void createTable(final String tableName, boolean isWal) throws SqlException {
