@@ -237,7 +237,6 @@ public class MetadataCache implements QuietCloseable {
             root.$("could not hydrate metadata [table=").$(table.getTableToken()).I$();
         } finally {
             Misc.free(metaMem);
-            Misc.free(path);
         }
     }
 
