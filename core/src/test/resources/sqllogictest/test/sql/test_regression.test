@@ -1,0 +1,36 @@
+# name: test/sql/aggregate/aggregates/test_regression.test
+# description: Test Regression Functions
+# group: [aggregates]
+
+
+
+query I
+select regr_slope(NULL,NULL)
+----
+NULL
+
+query I
+select regr_slope(1,1)
+----
+NULL
+
+statement ok
+create  table aggr(k int, v double, v2 double);
+
+statement ok
+insert into aggr values(1, 10, null), (2, 10, 11), (2, 20, 22), (2, 25, null), (2, 30, 35);
+
+query II
+select k, regr_slope(v, v2) from aggr group by k ORDER BY k;
+----
+1	NULL
+2	0.831409
+
+
+query I
+select regr_slope(v, v2) from aggr ;
+----
+0.831409
+
+
+

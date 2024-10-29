@@ -66,7 +66,7 @@ public class GeoByteColumn extends GeoByteFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

@@ -22,30 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import org.jetbrains.annotations.NotNull;
+import org.junit.Test;
 
-public class CovarSampleGroupByFunction extends AbstractCovarGroupByFunction {
+import java.sql.PreparedStatement;
 
-    protected CovarSampleGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
-        super(arg0, arg1);
-    }
-
-    @Override
-    public double getDouble(Record rec) {
-        long count = rec.getLong(valueIndex + 3);
-        if (count - 1 > 0) {
-            double sumXY = rec.getDouble(valueIndex + 2);
-            return sumXY / (count - 1);
-        }
-        return Double.NaN;
-    }
-
-    @Override
-    public String getName() {
-        return "covar_samp";
+public class IntervalPGTest extends BasePGTest {
+    @Test
+    public void testIntervalSelect() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement ps = connection.prepareStatement("SELECT interval(100, 200)")) {
+                assertResultSet(
+                        "interval[VARCHAR]\n" +
+                                "('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')\n",
+                        sink,
+                        ps.executeQuery()
+                );
+            }
+        });
     }
 }

@@ -155,6 +155,11 @@ public class OrderByRadixSortTest extends AbstractCairoTest {
         assertQuery(
                 "a\n" +
                         "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
                         "0.0.0.1\n" +
                         "0.0.0.2\n" +
                         "0.0.0.3\n" +
@@ -164,11 +169,6 @@ public class OrderByRadixSortTest extends AbstractCairoTest {
                         "0.0.0.7\n" +
                         "0.0.0.8\n" +
                         "0.0.0.9\n" +
-                        "128.0.0.0\n" +
-                        "128.0.0.0\n" +
-                        "128.0.0.0\n" +
-                        "128.0.0.0\n" +
-                        "128.0.0.0\n" +
                         "255.255.255.246\n" +
                         "255.255.255.247\n" +
                         "255.255.255.248\n" +
@@ -209,11 +209,6 @@ public class OrderByRadixSortTest extends AbstractCairoTest {
                         "255.255.255.248\n" +
                         "255.255.255.247\n" +
                         "255.255.255.246\n" +
-                        "128.0.0.0\n" +
-                        "128.0.0.0\n" +
-                        "128.0.0.0\n" +
-                        "128.0.0.0\n" +
-                        "128.0.0.0\n" +
                         "0.0.0.9\n" +
                         "0.0.0.8\n" +
                         "0.0.0.7\n" +
@@ -223,6 +218,11 @@ public class OrderByRadixSortTest extends AbstractCairoTest {
                         "0.0.0.3\n" +
                         "0.0.0.2\n" +
                         "0.0.0.1\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
+                        "\n" +
                         "\n",
                 "select * from x order by a desc;",
                 "create table x as (" +

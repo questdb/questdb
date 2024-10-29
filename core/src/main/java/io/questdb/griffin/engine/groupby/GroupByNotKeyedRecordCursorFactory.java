@@ -40,8 +40,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
-
-    protected final RecordCursorFactory base;
+    private final RecordCursorFactory base;
     private final GroupByNotKeyedRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final SimpleMapValue simpleMapValue;
@@ -64,10 +63,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             this.virtualRecordA.of(simpleMapValue);
 
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            boolean earlyExitSupported = true;
-            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                earlyExitSupported &= groupByFunctions.getQuick(0).isEarlyExitSupported();
-            }
+            boolean earlyExitSupported = GroupByUtils.isEarlyExitSupported(groupByFunctions);
 
             if (earlyExitSupported) {
                 this.cursor = new EarlyExitGroupByNotKeyedRecordCursor(configuration, groupByFunctions, updater);
@@ -166,7 +162,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 GroupByFunctionsUpdater groupByFunctionsUpdater
         ) {
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.allocator = GroupByAllocatorFactory.createThreadUnsafeAllocator(configuration);
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
         }
 

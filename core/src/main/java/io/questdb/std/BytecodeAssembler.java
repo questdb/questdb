@@ -428,12 +428,10 @@ public class BytecodeAssembler {
         putByte(0x69);
     }
 
-    @SuppressWarnings("unchecked")
-    @Nullable
-    public <T> Class<T> loadClass(Class<?> host) {
-        byte[] b = new byte[position()];
-        System.arraycopy(buf.array(), 0, b, 0, b.length);
-        return (Class<T>) Unsafe.defineAnonymousClass(host, b);
+    public <T> Class<T> loadClass() {
+        Class<T> x = loadClass(host);
+        assert x != null;
+        return x;
     }
 
     public void lreturn() {
@@ -751,6 +749,14 @@ public class BytecodeAssembler {
         int pos = position();
         putShort(0);
         return pos;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Nullable
+    private <T> Class<T> loadClass(Class<?> host) {
+        byte[] b = new byte[position()];
+        System.arraycopy(buf.array(), 0, b, 0, b.length);
+        return (Class<T>) Unsafe.defineAnonymousClass(host, b);
     }
 
     private void optimisedIO(int code0, int code1, int code2, int code3, int code, int value) {

@@ -24,28 +24,38 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class VarPopGroupByFunction extends AbstractStdDevGroupByFunction {
+public class StringDistinctAggGroupByFunctionFactory implements FunctionFactory {
 
-    public VarPopGroupByFunction(@NotNull Function arg) {
-        super(arg);
+    @Override
+    public String getSignature() {
+        return "string_distinct_agg(Sa)";
     }
 
     @Override
-    public double getDouble(Record rec) {
-        long count = rec.getLong(valueIndex + 2);
-        if (count > 0) {
-            double sum = rec.getDouble(valueIndex + 1);
-            return sum / count;
-        }
-        return Double.NaN;
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
-    public String getName() {
-        return "var_pop";
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new StringDistinctAggGroupByFunction(
+                args.getQuick(0),
+                args.getQuick(1).getChar(null),
+                configuration.getCountDistinctCapacity(),
+                configuration.getCountDistinctLoadFactor()
+        );
     }
 }

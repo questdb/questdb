@@ -25,9 +25,18 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -41,11 +50,9 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
@@ -58,10 +65,12 @@ import org.junit.Test;
 
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
-import java.util.Date;
+import java.util.TimeZone;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import static io.questdb.test.tools.TestUtils.assertEquals;
 
 public class SampleByTest extends AbstractCairoTest {
     public static final String DDL_FROMTO = "create table fromto as (\n" +
@@ -4907,8 +4916,8 @@ public class SampleByTest extends AbstractCairoTest {
             String query = "select timestamp, count() from trades\n" +
                     "sample by 1m FROM date_trunc('day', now()) FILL (null) \n";
 
-            Date today = new Date();
-
+            SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd");
+            formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             assertPlanNoLeakCheck(query, "Sample By\n" +
                     "  fill: null\n" +
                     "  range: (timestamp_floor('day',now()),null)\n" +
@@ -4916,7 +4925,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"" + new SimpleDateFormat("yyyy-MM-dd").format(today) + "T00:00:00.000000Z\",\"MAX\")]\n");
+                    "          intervals: [(\"" + formatter.format(Os.currentTimeMicros() / 1000) + "T00:00:00.000000Z\",\"MAX\")]\n");
 
             assertSql("timestamp\tcount\n", query);
         });
@@ -5124,6 +5133,47 @@ public class SampleByTest extends AbstractCairoTest {
                 true,
                 false
         );
+    }
+
+    @Test
+    public void testSampleByWithFullDoesNotReferenceMutableCharSequence() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+
+            String expected = "ts\tavg\n" +
+                    "2000-01-01T00:00:00.000000Z\tnull\n" +
+                    "2004-01-01T00:00:00.000000Z\tnull\n" +
+                    "2008-01-01T00:00:00.000000Z\tnull\n" +
+                    "2012-01-01T00:00:00.000000Z\tnull\n" +
+                    "2016-01-01T00:00:00.000000Z\t240.5\n" +
+                    "2020-01-01T00:00:00.000000Z\tnull\n" +
+                    "2024-01-01T00:00:00.000000Z\tnull\n" +
+                    "2028-01-01T00:00:00.000000Z\tnull\n" +
+                    "2032-01-01T00:00:00.000000Z\tnull\n" +
+                    "2036-01-01T00:00:00.000000Z\tnull\n" +
+                    "2040-01-01T00:00:00.000000Z\tnull\n" +
+                    "2044-01-01T00:00:00.000000Z\tnull\n" +
+                    "2048-01-01T00:00:00.000000Z\tnull\n";
+            StringSink sql = new StringSink();
+            sql.put("select ts, avg(x) from fromto sample by 4y from '2000-01-01' to '2050-01-01' fill(null)");
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                sql.clear();
+                sql.put("just random rubbish to make sure the sql string sink overwrites its previous content");
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    RecordMetadata metadata = factory.getMetadata();
+                    sink.clear();
+                    CursorPrinter.println(metadata, sink);
+
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        TestUtils.println(record, metadata, sink);
+                    }
+                }
+                assertEquals(expected, sink);
+            }
+        });
     }
 
     @Test
@@ -11152,7 +11202,7 @@ public class SampleByTest extends AbstractCairoTest {
                 ddl("truncate table x");
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
-                    TestUtils.assertEquals("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n", sink);
+                    assertEquals("b\tsum\tsum1\tsum2\tsum3\tsum4\tsum5\tk\n", sink);
                 }
             }
         });

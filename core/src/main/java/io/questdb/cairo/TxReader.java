@@ -109,6 +109,10 @@ public class TxReader implements Closeable, Mutable {
         clear();
     }
 
+    public void dumpRawTxPartitionInfo(LongList container) {
+        container.add(attachedPartitions);
+    }
+
     public void dumpTo(MemoryW mem) {
         mem.putLong(TX_BASE_OFFSET_VERSION_64, version);
         boolean isA = (version & 1L) == 0L;
@@ -274,7 +278,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionNameTxnByRawIndex(int index) {
-        return attachedPartitions.getQuick(index + PARTITION_NAME_TX_OFFSET);
+        return getPartitionNameTxnByRawIndex(attachedPartitions, index);
     }
 
     public long getPartitionParquetFileSize(int partitionIndex) {
@@ -294,7 +298,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public long getPartitionSizeByRawIndex(int index) {
-        return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
+        return getPartitionSizeByRawIndex(attachedPartitions, index);
     }
 
     public long getPartitionTableVersion() {
@@ -364,6 +368,10 @@ public class TxReader implements Closeable, Mutable {
         return isPartitionParquetByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
+    public boolean isPartitionParquetByRawIndex(int indexRaw) {
+        return checkPartitionOptionBit(indexRaw, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
+    }
+
     public boolean isPartitionReadOnly(int i) {
         return isPartitionReadOnlyByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
@@ -374,6 +382,10 @@ public class TxReader implements Closeable, Mutable {
             return isPartitionReadOnlyByRawIndex(indexRaw);
         }
         return false;
+    }
+
+    public boolean isPartitionReadOnlyByRawIndex(int indexRaw) {
+        return checkPartitionOptionBit(indexRaw, PARTITION_MASK_READ_ONLY_BIT_OFFSET);
     }
 
     public TxReader ofRO(@Transient LPSZ path, int partitionBy) {
@@ -526,14 +538,6 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.getQuick(partitionRawIndex + PARTITION_PARQUET_FILE_SIZE_OFFSET);
     }
 
-    public boolean isPartitionParquetByRawIndex(int indexRaw) {
-        return checkPartitionOptionBit(indexRaw, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
-    }
-
-    public boolean isPartitionReadOnlyByRawIndex(int indexRaw) {
-        return checkPartitionOptionBit(indexRaw, PARTITION_MASK_READ_ONLY_BIT_OFFSET);
-    }
-
     private void openTxnFile(FilesFacade ff, LPSZ path) {
         if (ff.exists(path)) {
             if (roTxMemBase == null) {
@@ -592,6 +596,18 @@ public class TxReader implements Closeable, Mutable {
         for (int i = 0; i < symbolMapCount; i++) {
             symbolCountSnapshot.add(getInt(TableUtils.getSymbolWriterIndexOffset(i)));
         }
+    }
+
+    static int findPartitionRawIndex(LongList attachedPartitions, long partitionTimestamp) {
+        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, partitionTimestamp, BinarySearch.SCAN_UP);
+    }
+
+    static long getPartitionNameTxnByRawIndex(LongList attachedPartitions, int index) {
+        return attachedPartitions.getQuick(index + PARTITION_NAME_TX_OFFSET);
+    }
+
+    static long getPartitionSizeByRawIndex(LongList attachedPartitions, int index) {
+        return attachedPartitions.getQuick(index + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
     }
 
     protected int findAttachedPartitionRawIndex(long ts) {

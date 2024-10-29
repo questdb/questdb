@@ -145,7 +145,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 

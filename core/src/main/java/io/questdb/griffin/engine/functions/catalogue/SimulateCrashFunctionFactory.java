@@ -86,7 +86,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
 
@@ -111,7 +111,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
 

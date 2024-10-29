@@ -35,11 +35,33 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.*;
-import io.questdb.cairo.wal.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCMOR;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryMAT;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.vm.api.NullMemory;
+import io.questdb.cairo.wal.MetadataService;
+import io.questdb.cairo.wal.O3JobParallelismRegulator;
+import io.questdb.cairo.wal.SymbolMapDiff;
+import io.questdb.cairo.wal.SymbolMapDiffCursor;
+import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.WalTxnDetails;
+import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.*;
+import io.questdb.griffin.ConvertOperatorImpl;
+import io.questdb.griffin.DropIndexOperator;
+import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -50,13 +72,54 @@ import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.PagedDirectLongList;
+import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Uuid;
+import io.questdb.std.Vect;
+import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.*;
-import io.questdb.tasks.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.ColumnTask;
+import io.questdb.tasks.O3CopyTask;
+import io.questdb.tasks.O3OpenColumnTask;
+import io.questdb.tasks.O3PartitionTask;
+import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -585,7 +648,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
 
-        engine.metadataCacheHydrateTable(metadata, true, true);
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
     }
 
     @Override
@@ -628,7 +693,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        engine.metadataCacheHydrateTable(metadata, true, true);
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
     }
 
@@ -835,7 +902,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnMetadata.setSymbolCached(cache);
             updateMetaStructureVersion();
             txWriter.bumpTruncateVersion();
-            engine.metadataCacheHydrateTable(metadata, true, true);
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
         }
     }
 
@@ -945,7 +1014,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // commit transaction to _txn file
                 bumpMetadataAndColumnStructureVersion();
 
-                engine.metadataCacheHydrateTable(metadata, true, true);
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.hydrateTable(metadata);
+                }
             } finally {
                 // clear temp resources
                 convertOperator.finishColumnConversion();
@@ -1490,7 +1561,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
         updateMetadataWithDeduplicationUpsertKeys(false, null);
-        engine.metadataCacheHydrateTable(metadata, true, true);
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
     }
 
     @Override
@@ -1544,7 +1617,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishColumnPurge();
             LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).$();
 
-            engine.metadataCacheHydrateTable(metadata, true, true);
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
 
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
                     .$(", table=").utf8(tableToken.getTableName())
@@ -1588,7 +1663,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             logRec.I$();
         }
         updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
-        engine.metadataCacheHydrateTable(metadata, true, true);
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
     }
 
     public long getAppliedSeqTxn() {
@@ -2349,7 +2426,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         finishColumnPurge();
 
-        engine.metadataCacheHydrateTable(metadata, true, true);
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
         LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
     }
 
@@ -2438,7 +2517,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnRenamed(securityContext, tableToken, currentName, newName);
         }
 
-        engine.metadataCacheHydrateTable(metadata, true, true);
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$substr(pathRootSize, path).$();
     }
@@ -2456,7 +2537,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
         bumpColumnStructureVersion();
 
-        engine.metadataCacheHydrateTable(metadata, true, true);
+//        try (MetadataCacheWriter metadataRW = engine.getCairoMetadata().write()) {
+//            metadataRW.dropTable(fromTableName);
+//            metadataRW.hydrateTable(metadata, true);
+//        }
     }
 
     @Override
@@ -2515,7 +2599,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             finishMetaSwapUpdate();
             metadata.setMaxUncommittedRows(maxUncommittedRows);
-            engine.metadataCacheHydrateTable(metadata, true, true);
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
 
         } finally {
             ddlMem.close();
@@ -2538,7 +2625,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             finishMetaSwapUpdate();
             metadata.setO3MaxLag(o3MaxLagUs);
-            engine.metadataCacheHydrateTable(metadata, true, true);
+
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(metadata);
+            }
         } finally {
             ddlMem.close();
         }
@@ -3842,6 +3932,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (!force && ff.exists(path.$())) {
                 return;
+            } else {
+                ff.removeQuiet(path.$());
             }
 
             // reuse memory column object to create index and close it at the end
@@ -4608,16 +4700,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                                 long lagAuxOffset = driver.getAuxVectorOffset(roLo);
                                 long lagAuxSize = driver.getAuxVectorSize(lagRows);
-                                long lagAuxKeyAddr = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxSize, false);
+                                long lagAuxKeyAddrRaw = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxSize, false);
+                                long lagAuxKeyAddr = Math.abs(lagAuxKeyAddrRaw);
 
                                 long lagVarDataOffset = driver.getDataVectorOffset(lagAuxKeyAddr, 0);
                                 long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, 0, lagRows - 1);
-                                long lagVarDataAddr = mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false);
+                                long lagVarDataAddrRaw = mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false);
+                                long lagVarDataAddr = Math.abs(lagVarDataAddrRaw);
                                 // Aux points into the var buffer as if it's mapped from 0 row.
                                 // Compensate the mapped with offset address of var buffer by subtracting lagVarDataOffset
-                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, Math.abs(lagAuxKeyAddr), Math.abs(lagVarDataAddr) - lagVarDataOffset, lagVarDataSize + lagVarDataOffset);
-                                DedupColumnCommitAddresses.setReservedValuesSet1(addr, lagAuxKeyAddr, lagAuxOffset, lagAuxSize);
-                                DedupColumnCommitAddresses.setReservedValuesSet2(addr, lagVarDataAddr, lagVarDataOffset);
+                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, lagAuxKeyAddr, lagVarDataAddr - lagVarDataOffset, lagVarDataSize + lagVarDataOffset);
+                                DedupColumnCommitAddresses.setReservedValuesSet1(addr, lagAuxKeyAddrRaw, lagAuxOffset, lagAuxSize);
+                                DedupColumnCommitAddresses.setReservedValuesSet2(addr, lagVarDataAddrRaw, lagVarDataOffset);
                             } else {
                                 DedupColumnCommitAddresses.setO3DataAddressValues(addr, DedupColumnCommitAddresses.NULL, DedupColumnCommitAddresses.NULL, 0);
                             }
@@ -6574,6 +6668,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txn
                     );
                     other.$();
+                    engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestamp, txn, 0);
                     if (!ff.unlinkOrRemove(other, LOG)) {
                         LOG.info()
                                 .$("could not purge partition version, async purge will be scheduled [path=").$substr(pathRootSize, other)
@@ -7617,120 +7712,134 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
+        if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
+            // Nothing to do
+            return;
+        }
+
         if (checkpointStatus.isInProgress()) {
             LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], checkpoint in progress").$();
             return;
         }
 
         assert partitionIndexHi >= 0 && partitionIndexHi <= txWriter.getPartitionCount() && partitionIndexLo >= 0;
+
+        long targetPartition = Long.MIN_VALUE;
+        boolean copyTargetFrame = false;
+
+        // Move targetPartitionIndex to the first unlocked partition in the range
         int targetPartitionIndex = partitionIndexLo;
-
-        if (partitionIndexHi > partitionIndexLo + 1) {
-            long targetPartition = Long.MIN_VALUE;
-            boolean copyTargetFrame = false;
-
-            // Move partitionIndexLo to the first unlocked partition in the range
-            for (; targetPartitionIndex + 1 < partitionIndexHi; targetPartitionIndex++) {
-                boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
-                if (canOverwrite || force) {
-                    targetPartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo);
-                    copyTargetFrame = !canOverwrite;
-                    break;
-                }
-            }
-            if (targetPartition == Long.MIN_VALUE) {
-                return;
-            }
-
-            boolean lastPartitionSquashed = false;
-            int squashCount = partitionIndexHi - partitionIndexLo - optimalPartitionCount;
-
-            if (squashCount > 0) {
-                long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
-                TableUtils.setPathForPartition(path, partitionBy, targetPartition, targetPartitionNameTxn);
-                final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
-
-                boolean rw = !copyTargetFrame;
-                Frame targetFrame = null;
-                Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
-                try {
-                    if (copyTargetFrame) {
-                        try {
-                            TableUtils.setPathForPartition(other, partitionBy, targetPartition, txWriter.txn);
-                            TableUtils.createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
-                            LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
-
-                            targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
-                            FrameAlgebra.append(targetFrame, firstPartitionFrame, configuration.getCommitMode());
-                            addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
-                            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexLo * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
-                            partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
-                        } finally {
-                            Misc.free(firstPartitionFrame);
-                        }
-                    } else {
-                        targetFrame = firstPartitionFrame;
-                    }
-
-                    for (int i = 0; i < squashCount; i++) {
-                        long sourcePartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo + 1);
-
-                        other.trimTo(pathSize);
-                        long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
-                        TableUtils.setPathForPartition(other, partitionBy, sourcePartition, sourceNameTxn);
-                        long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(sourcePartition);
-                        lastPartitionSquashed = partitionIndexLo + 2 == txWriter.getPartitionCount();
-                        if (lastPartitionSquashed) {
-                            closeActivePartition(false);
-                            partitionRowCount = txWriter.getTransientRowCount() + txWriter.getLagRowCount();
-                        }
-
-                        assert partitionRowCount > 0;
-
-                        LOG.info().$("squashing partitions [table=").$(tableToken)
-                                .$(", target=").$(formatPartitionForTimestamp(targetPartition, targetPartitionNameTxn))
-                                .$(", targetSize=").$(targetFrame.getRowCount())
-                                .$(", source=").$(formatPartitionForTimestamp(sourcePartition, sourceNameTxn))
-                                .$(", sourceSize=").$(partitionRowCount)
-                                .I$();
-
-                        try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount)) {
-                            FrameAlgebra.append(targetFrame, sourceFrame, configuration.getCommitMode());
-                            addPhysicallyWrittenRows(sourceFrame.getRowCount());
-                        } catch (Throwable th) {
-                            LOG.critical().$("partition squashing failed [table=").$(tableToken).$(", error=").$(th).I$();
-                            throw th;
-                        }
-
-                        txWriter.removeAttachedPartitions(sourcePartition);
-                        columnVersionWriter.removePartition(sourcePartition);
-                        partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
-                        if (sourcePartition == minSplitPartitionTimestamp) {
-                            minSplitPartitionTimestamp = getPartitionTimestampOrMax(partitionIndexLo + 1);
-                        }
-                    }
-
-                    txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
-                    if (lastPartitionSquashed) {
-                        // last partition is squashed, adjust fixed/transient row sizes
-                        long newTransientRowCount = targetFrame.getRowCount() - txWriter.getLagRowCount();
-                        assert newTransientRowCount >= 0;
-                        txWriter.fixedRowCount += txWriter.getTransientRowCount() - newTransientRowCount;
-                        assert txWriter.fixedRowCount >= 0;
-                        txWriter.transientRowCount = newTransientRowCount;
-                    }
-                } finally {
-                    Misc.free(targetFrame);
-                    path.trimTo(pathSize);
-                    other.trimTo(pathSize);
-                }
-
-                columnVersionWriter.commit();
-                txWriter.setColumnVersion(columnVersionWriter.getVersion());
-                txWriter.commit(denseSymbolMapWriters);
-                processPartitionRemoveCandidates();
+        for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
+            boolean canOverwrite = canSquashOverwritePartitionTail(targetPartitionIndex);
+            if (canOverwrite || force) {
+                targetPartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex);
+                copyTargetFrame = !canOverwrite;
+                break;
             }
         }
+        if (targetPartition == Long.MIN_VALUE) {
+            return;
+        }
+
+        boolean lastPartitionSquashed = false;
+        int squashCount = Math.min(partitionIndexHi - targetPartitionIndex - 1, partitionIndexHi - partitionIndexLo - optimalPartitionCount);
+
+        if (squashCount <= 0) {
+            // There are fewer partitions we can squash than optimalPartitionCount
+            return;
+        }
+
+        long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
+        TableUtils.setPathForPartition(path, partitionBy, targetPartition, targetPartitionNameTxn);
+        final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
+
+        boolean rw = !copyTargetFrame;
+        Frame targetFrame = null;
+        Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
+        try {
+            if (copyTargetFrame) {
+                try {
+                    TableUtils.setPathForPartition(other, partitionBy, targetPartition, txWriter.txn);
+                    TableUtils.createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+                    LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
+
+                    targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
+                    FrameAlgebra.append(targetFrame, firstPartitionFrame, configuration.getCommitMode());
+                    addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
+                    txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+                    partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
+                    targetPartitionNameTxn = txWriter.txn;
+                } finally {
+                    Misc.free(firstPartitionFrame);
+                }
+            } else {
+                targetFrame = firstPartitionFrame;
+            }
+
+            engine.getPartitionOverwriteControl().notifyPartitionMutates(
+                    tableToken,
+                    targetPartition,
+                    targetPartitionNameTxn,
+                    targetFrame.getRowCount()
+            );
+            for (int i = 0; i < squashCount; i++) {
+                long sourcePartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex + 1);
+
+                other.trimTo(pathSize);
+                long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
+                TableUtils.setPathForPartition(other, partitionBy, sourcePartition, sourceNameTxn);
+                long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(sourcePartition);
+                lastPartitionSquashed = targetPartitionIndex + 2 == txWriter.getPartitionCount();
+                if (lastPartitionSquashed) {
+                    closeActivePartition(false);
+                    partitionRowCount = txWriter.getTransientRowCount() + txWriter.getLagRowCount();
+                }
+
+                assert partitionRowCount > 0;
+
+                LOG.info().$("squashing partitions [table=").$(tableToken)
+                        .$(", target=").$(formatPartitionForTimestamp(targetPartition, targetPartitionNameTxn))
+                        .$(", targetSize=").$(targetFrame.getRowCount())
+                        .$(", source=").$(formatPartitionForTimestamp(sourcePartition, sourceNameTxn))
+                        .$(", sourceSize=").$(partitionRowCount)
+                        .I$();
+
+                try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount)) {
+                    FrameAlgebra.append(targetFrame, sourceFrame, configuration.getCommitMode());
+                    addPhysicallyWrittenRows(sourceFrame.getRowCount());
+                } catch (Throwable th) {
+                    LOG.critical().$("partition squashing failed [table=").$(tableToken).$(", error=").$(th).I$();
+                    throw th;
+                }
+
+                txWriter.removeAttachedPartitions(sourcePartition);
+                columnVersionWriter.removePartition(sourcePartition);
+                partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
+                if (sourcePartition == minSplitPartitionTimestamp) {
+                    minSplitPartitionTimestamp = getPartitionTimestampOrMax(targetPartitionIndex + 1);
+                }
+            }
+
+            txWriter.updatePartitionSizeByTimestamp(targetPartition, targetFrame.getRowCount());
+            if (lastPartitionSquashed) {
+                // last partition is squashed, adjust fixed/transient row sizes
+                long newTransientRowCount = targetFrame.getRowCount() - txWriter.getLagRowCount();
+                assert newTransientRowCount >= 0;
+                txWriter.fixedRowCount += txWriter.getTransientRowCount() - newTransientRowCount;
+                assert txWriter.fixedRowCount >= 0;
+                txWriter.transientRowCount = newTransientRowCount;
+            }
+        } finally {
+            Misc.free(targetFrame);
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        // Commit the new transaction with the partitions squashed
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.commit(denseSymbolMapWriters);
+        processPartitionRemoveCandidates();
     }
 
     private void swapMetaFile(CharSequence columnName) {
@@ -7866,7 +7975,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
 
-        engine.metadataCacheHydrateTable(metadata, true, true);
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(metadata);
+        }
     }
 
     private void truncateColumns() {

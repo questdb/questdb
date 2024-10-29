@@ -42,7 +42,7 @@ public class TimestampFunctionTest {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
     };
@@ -160,7 +160,7 @@ public class TimestampFunctionTest {
             }
 
             @Override
-            public boolean isReadThreadSafe() {
+            public boolean isThreadSafe() {
                 return true;
             }
         };

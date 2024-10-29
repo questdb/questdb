@@ -33,9 +33,70 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
+
     @Before
     public void setUp3() {
         SharedRandom.RANDOM.set(new Rnd());
+    }
+
+    @Test
+    public void testCoalesceIPv4InvalidStringLiteral() throws Exception {
+        assertException(
+                "select coalesce('192.168.1.1'::ipv4, 'foobar')",
+                37,
+                "invalid IPv4 constant"
+        );
+    }
+
+    @Test
+    public void testCoalesceIPv4InvalidVarcharLiteral() throws Exception {
+        assertException(
+                "select coalesce('192.168.1.1'::ipv4, 'foobar'::varchar)",
+                45,
+                "invalid IPv4 constant"
+        );
+    }
+
+    @Test
+    public void testCoalesceIPv4StringLiteral() throws Exception {
+        assertQuery(
+                "c1\tc2\tx\n" +
+                        "127.0.0.1\t127.0.0.1\t\n" +
+                        "1.1.96.238\t127.0.0.1\t1.1.96.238\n" +
+                        "127.0.0.1\t127.0.0.1\t\n" +
+                        "127.0.0.1\t127.0.0.1\t\n" +
+                        "127.0.0.1\t127.0.0.1\t\n",
+                "select coalesce(x, '127.0.0.1') as c1, coalesce('127.0.0.1', x) as c2, x \n" +
+                        "from t",
+                "create table t as (" +
+                        "select CASE WHEN x % 2 = 0 THEN rnd_ipv4('1.1.1.1/16', 2) ELSE NULL END as x " +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCoalesceIPv4VarcharLiteral() throws Exception {
+        assertQuery(
+                "c1\tc2\tx\n" +
+                        "127.0.0.1\t127.0.0.1\t\n" +
+                        "1.1.96.238\t127.0.0.1\t1.1.96.238\n" +
+                        "127.0.0.1\t127.0.0.1\t\n" +
+                        "127.0.0.1\t127.0.0.1\t\n" +
+                        "127.0.0.1\t127.0.0.1\t\n",
+                "select coalesce(x, '127.0.0.1'::varchar) as c1, coalesce('127.0.0.1'::varchar, x) as c2, x \n" +
+                        "from t",
+                "create table t as (" +
+                        "select CASE WHEN x % 2 = 0 THEN rnd_ipv4('1.1.1.1/16', 2) ELSE NULL END as x " +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
     }
 
     @Test
@@ -62,7 +123,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCoalesceUUID() throws Exception {
+    public void testCoalesceUuid() throws Exception {
         assertQuery(
                 "c1\tc2\ta\tb\tx\n" +
                         "0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\t\t0010cde8-12ce-40ee-8010-a928bb8b9650\t\n" +
@@ -73,9 +134,90 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                 "select coalesce(a, b, x) as c1, coalesce(a, b) c2, a, b, x \n" +
                         "from t",
                 "create table t as (" +
-                        "select CASE WHEN x % 2 = 0 THEN rnd_uuid4() ELSE CAST(NULL as UUID) END as x," +
-                        " CASE WHEN x % 4 = 0 THEN rnd_uuid4() ELSE CAST(NULL as UUID) END as a," +
-                        " CASE WHEN x % 4 = 1 THEN rnd_uuid4() ELSE CAST(NULL as UUID) END as b" +
+                        "select CASE WHEN x % 2 = 0 THEN rnd_uuid4() ELSE NULL END as x," +
+                        " CASE WHEN x % 4 = 0 THEN rnd_uuid4() ELSE NULL END as a," +
+                        " CASE WHEN x % 4 = 1 THEN rnd_uuid4() ELSE NULL END as b" +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCoalesceUuidInvalidStringLiteral() throws Exception {
+        assertException(
+                "select coalesce('00000000-0000-0000-0000-000000000000'::uuid, 'foobar')",
+                62,
+                "invalid UUID constant"
+        );
+    }
+
+    @Test
+    public void testCoalesceUuidInvalidVarcharLiteral() throws Exception {
+        assertException(
+                "select coalesce('00000000-0000-0000-0000-000000000000'::uuid, 'foobar'::varchar)",
+                70,
+                "invalid UUID constant"
+        );
+    }
+
+    @Test
+    public void testCoalesceUuidNull() throws Exception {
+        assertQuery(
+                "c1\tc2\tx\n" +
+                        "\t\t\n" +
+                        "0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "\t\t\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "\t\t\n",
+                "select coalesce(x, null) as c1, coalesce(null, x) c2, x \n" +
+                        "from t",
+                "create table t as (" +
+                        "select CASE WHEN x % 2 = 0 THEN rnd_uuid4() ELSE NULL END as x " +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCoalesceUuidStringLiteral() throws Exception {
+        assertQuery(
+                "c1\tc2\tx\n" +
+                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n" +
+                        "0010cde8-12ce-40ee-8010-a928bb8b9650\t00000000-0000-0000-0000-000000000000\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\t00000000-0000-0000-0000-000000000000\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n",
+                "select coalesce(x, '00000000-0000-0000-0000-000000000000') as c1, coalesce('00000000-0000-0000-0000-000000000000', x) as c2, x \n" +
+                        "from t",
+                "create table t as (" +
+                        "select CASE WHEN x % 2 = 0 THEN rnd_uuid4() ELSE NULL END as x " +
+                        " from long_sequence(5)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testCoalesceUuidVarcharLiteral() throws Exception {
+        assertQuery(
+                "c1\tc2\tx\n" +
+                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n" +
+                        "0010cde8-12ce-40ee-8010-a928bb8b9650\t00000000-0000-0000-0000-000000000000\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
+                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n" +
+                        "9f9b2131-d49f-4d1d-ab81-39815c50d341\t00000000-0000-0000-0000-000000000000\t9f9b2131-d49f-4d1d-ab81-39815c50d341\n" +
+                        "00000000-0000-0000-0000-000000000000\t00000000-0000-0000-0000-000000000000\t\n",
+                "select coalesce(x, '00000000-0000-0000-0000-000000000000'::varchar) as c1, coalesce('00000000-0000-0000-0000-000000000000'::varchar, x) as c2, x \n" +
+                        "from t",
+                "create table t as (" +
+                        "select CASE WHEN x % 2 = 0 THEN rnd_uuid4() ELSE NULL END as x " +
                         " from long_sequence(5)" +
                         ")",
                 null,

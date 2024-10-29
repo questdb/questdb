@@ -120,7 +120,7 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

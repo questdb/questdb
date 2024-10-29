@@ -162,6 +162,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnTypeInterval() throws Exception {
+        ddl("create table x (a varchar)");
+        assertException(
+                "alter table x add column b interval",
+                27,
+                "non-persisted type: interval"
+        );
+    }
+
+    @Test
+    public void testAlterColumnTypeToInterval() throws Exception {
+        ddl("create table x (a varchar)");
+        assertException(
+                "alter table x alter column a type interval",
+                34,
+                "non-persisted type: interval"
+        );
+    }
+
+    @Test
     public void testCannotCreateTable() throws Exception {
         assertException(
                 new TestFilesFacadeImpl() {
@@ -3466,6 +3486,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableWithInterval() throws Exception {
+        assertException(
+                "create table x (a varchar, b interval)",
+                29,
+                "non-persisted type: interval"
+        );
+    }
+
+    @Test
     public void testCreateTableWithO3() throws Exception {
         assertMemoryLeak(() -> {
             ddl(
@@ -3491,6 +3520,52 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.assertEquals(250000, tableMetadata.getO3MaxLag());
             }
         });
+    }
+
+    @Test
+    public void testCursorFunctionCannotBeUsedAsColumn() throws Exception {
+        assertExceptionNoLeakCheck(
+                "select query_activity() from long_sequence(100L);",
+                7,
+                "cursor function cannot be used as a column [column=query_activity]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select 1 from long_sequence(1)\n" +
+                        "UNION ALL\n" +
+                        "select query_activity() from long_sequence(100L);",
+                48,
+                "cursor function cannot be used as a column [column=query_activity]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1 as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select a, n from q;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1L as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select q.a from long_sequence(10) ls \n" +
+                        "inner join q on ls.x = q.n;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1L as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select q.* from long_sequence(10) ls \n" +
+                        "inner join q on ls.x = q.n;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
     }
 
     @Test

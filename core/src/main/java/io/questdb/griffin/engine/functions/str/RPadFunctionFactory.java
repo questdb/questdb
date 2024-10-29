@@ -111,7 +111,7 @@ public class RPadFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 

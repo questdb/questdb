@@ -109,6 +109,7 @@ public final class ColumnType {
     private static final int TYPE_FLAG_DESIGNATED_TIMESTAMP = (1 << 17);
     private static final int TYPE_FLAG_GEO_HASH = (1 << 16);
     private static final LowerCaseAsciiCharSequenceIntHashMap nameTypeMap = new LowerCaseAsciiCharSequenceIntHashMap();
+    private static final IntHashSet nonPersistedTypes = new IntHashSet();
     private static final IntObjHashMap<String> typeNameMap = new IntObjHashMap<>();
 
     private ColumnType() {
@@ -235,6 +236,10 @@ public final class ColumnType {
 
     public static boolean isNull(int columnType) {
         return columnType == NULL;
+    }
+
+    public static boolean isPersisted(int columnType) {
+        return nonPersistedTypes.excludes(columnType);
     }
 
     public static boolean isString(int columnType) {
@@ -438,7 +443,7 @@ public final class ColumnType {
                 /* 9  FLOAT     */, {FLOAT, DOUBLE}
                 /* 10 DOUBLE    */, {DOUBLE}
                 /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR, TIMESTAMP}
+                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
                 /* 13 LONG256   */, {LONG256}
                 /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
@@ -452,7 +457,7 @@ public final class ColumnType {
                 /* 23 unused    */, {}
                 /* 24 LONG128   */, {LONG128}
                 /* 25 IPv4      */, {IPv4}
-                /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP}
+                /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
                 /* 27 unused    */, {}
                 /* 28 unused    */, {}
                 /* 29 unused    */, {}
@@ -615,5 +620,16 @@ public final class ColumnType {
         TYPE_SIZE[NULL] = 0;
         TYPE_SIZE[LONG128] = 2 * Long.BYTES;
         TYPE_SIZE[INTERVAL] = 2 * Long.BYTES;
+
+        nonPersistedTypes.add(UNDEFINED);
+        nonPersistedTypes.add(INTERVAL);
+        nonPersistedTypes.add(PARAMETER);
+        nonPersistedTypes.add(CURSOR);
+        nonPersistedTypes.add(VAR_ARG);
+        nonPersistedTypes.add(RECORD);
+        nonPersistedTypes.add(NULL);
+        nonPersistedTypes.add(REGCLASS);
+        nonPersistedTypes.add(REGPROCEDURE);
+        nonPersistedTypes.add(ARRAY_STRING);
     }
 }

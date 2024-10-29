@@ -82,7 +82,7 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

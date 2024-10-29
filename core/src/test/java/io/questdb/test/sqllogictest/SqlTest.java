@@ -22,31 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.test.sqllogictest;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import org.jetbrains.annotations.NotNull;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
-public class StdDevSampleGroupByFunction extends AbstractStdDevGroupByFunction {
+import java.util.Collection;
 
-    public StdDevSampleGroupByFunction(@NotNull Function arg) {
-        super(arg);
+@RunWith(Parameterized.class)
+public class SqlTest extends AbstractSqllogicTestRunner {
+    public SqlTest(String testFile) {
+        super(testFile);
     }
 
-    @Override
-    public double getDouble(Record rec) {
-        long count = rec.getLong(valueIndex + 2);
-        if (count - 1 > 0) {
-            double sum = rec.getDouble(valueIndex + 1);
-            double variance = sum / (count - 1);
-            return Math.sqrt(variance);
-        }
-        return Double.NaN;
-    }
-
-    @Override
-    public String getName() {
-        return "stddev_samp";
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> files() {
+        return files("sql");
     }
 }

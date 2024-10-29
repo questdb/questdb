@@ -190,9 +190,8 @@ public class Services {
         }
 
         // The pool is:
-        // - DEDICATED when PropertyKey.HTTP_WORKER_COUNT is > 0
-        // - DEDICATED (1 worker) when ^ ^ is not set and host has > 16 cpus
-        // - SHARED otherwise
+        // - SHARED if PropertyKey.HTTP_MIN_WORKER_COUNT (http.min.worker.count) <= 0
+        // - DEDICATED (1 worker) otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
                 metrics,

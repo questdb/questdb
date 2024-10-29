@@ -26,12 +26,16 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.ex.BytecodeException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class RecordSinkFactory {
     private static final int FIELD_POOL_OFFSET = 3;
+    private static final Log LOG = LogFactory.getLog(RecordSinkFactory.class);
 
     public static RecordSink getInstance(
             BytecodeAssembler asm,
@@ -92,6 +96,96 @@ public class RecordSinkFactory {
     }
 
     public static RecordSink getInstance(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Transient @Nullable IntList skewIndex,
+            @Nullable BitSet writeSymbolAsString,
+            @Nullable BitSet writeStringAsVarchar
+    ) {
+        final Class<RecordSink> clazz = getInstanceClass(
+                asm,
+                columnTypes,
+                columnFilter,
+                keyFunctions,
+                skewIndex,
+                writeSymbolAsString,
+                writeStringAsVarchar
+        );
+        return getInstance(clazz, keyFunctions);
+    }
+
+    /**
+     * Creates an instance of a record sink class previously generated via the
+     * {@link #getInstanceClass(BytecodeAssembler, ColumnTypes, ColumnFilter, ObjList, BitSet)} method.
+     */
+    public static RecordSink getInstance(Class<RecordSink> clazz, @Nullable ObjList<Function> keyFunctions) {
+        try {
+            final RecordSink sink = clazz.getDeclaredConstructor().newInstance();
+            if (keyFunctions != null) {
+                sink.setFunctions(keyFunctions);
+            }
+            return sink;
+        } catch (Exception e) {
+            LOG.critical().$("could not create an instance of RecordSink, cause: ").$(e).$();
+            throw BytecodeException.INSTANCE;
+        }
+    }
+
+    /**
+     * Same as the getInstance() methods, but returns the generated class instead of its instance.
+     * An instance can be later created via the {@link #getInstance(Class, ObjList)} method.
+     * <p>
+     * Used when creating per-worker sinks for parallel GROUP BY.
+     */
+    public static Class<RecordSink> getInstanceClass(
+            BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Nullable ObjList<Function> keyFunctions,
+            @Nullable BitSet writeSymbolAsString
+    ) {
+        return getInstanceClass(asm, columnTypes, columnFilter, keyFunctions, null, writeSymbolAsString, null);
+    }
+
+    /**
+     * Sets function keys to the respective fields.
+     * Generates bytecode equivalent of the following Java code:
+     * <pre>
+     *  public void setFunctions(ObjList<Function> keyFunctions) {
+     *      this.f1 = keyFunctions.get(0);
+     *      this.f2 = keyFunctions.get(1);
+     *      // ...
+     *  }
+     * </pre>
+     */
+    private static void generateSetFunctions(
+            BytecodeAssembler asm,
+            int functionSize,
+            int firstFieldIndex,
+            int setFunctionsIndex,
+            int setFunctionsSigIndex,
+            int getIndex
+    ) {
+        asm.startMethod(setFunctionsIndex, setFunctionsSigIndex, 3, 3);
+        for (int i = 0; i < functionSize; i++) {
+            asm.aload(0);
+            asm.aload(1);
+            asm.iconst(i);
+            asm.invokeVirtual(getIndex);
+            asm.putfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
+        }
+        asm.return_();
+        asm.endMethodCode();
+        // exceptions
+        asm.putShort(0);
+        // attributes
+        asm.putShort(0);
+        asm.endMethod();
+    }
+
+    private static Class<RecordSink> getInstanceClass(
             BytecodeAssembler asm,
             ColumnTypes columnTypes,
             @Transient @NotNull ColumnFilter columnFilter,
@@ -665,47 +759,7 @@ public class RecordSinkFactory {
         // class attribute count
         asm.putShort(0);
 
-        RecordSink sink = asm.newInstance();
-        if (keyFunctions != null) {
-            sink.setFunctions(keyFunctions);
-        }
-        return sink;
-    }
-
-    /**
-     * Sets function keys to the respective fields.
-     * Generates bytecode equivalent of the following Java code:
-     * <pre>
-     *  public void setFunctions(ObjList<Function> keyFunctions) {
-     *      this.f1 = keyFunctions.get(0);
-     *      this.f2 = keyFunctions.get(1);
-     *      // ...
-     *  }
-     * </pre>
-     */
-    private static void generateSetFunctions(
-            BytecodeAssembler asm,
-            int functionSize,
-            int firstFieldIndex,
-            int setFunctionsIndex,
-            int setFunctionsSigIndex,
-            int getIndex
-    ) {
-        asm.startMethod(setFunctionsIndex, setFunctionsSigIndex, 3, 3);
-        for (int i = 0; i < functionSize; i++) {
-            asm.aload(0);
-            asm.aload(1);
-            asm.iconst(i);
-            asm.invokeVirtual(getIndex);
-            asm.putfield(firstFieldIndex + (i * FIELD_POOL_OFFSET));
-        }
-        asm.return_();
-        asm.endMethodCode();
-        // exceptions
-        asm.putShort(0);
-        // attributes
-        asm.putShort(0);
-        asm.endMethod();
+        return asm.loadClass();
     }
 
     private static int getSkewedIndex(int src, @Transient @Nullable IntList skewIndex) {

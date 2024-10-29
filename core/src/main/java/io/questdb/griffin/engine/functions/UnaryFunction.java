@@ -60,8 +60,8 @@ public interface UnaryFunction extends Function {
     }
 
     @Override
-    default boolean isReadThreadSafe() {
-        return getArg().isReadThreadSafe();
+    default boolean isThreadSafe() {
+        return getArg().isThreadSafe();
     }
 
     @Override

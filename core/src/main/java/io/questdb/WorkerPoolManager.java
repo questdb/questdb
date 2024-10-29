@@ -72,6 +72,7 @@ public abstract class WorkerPoolManager implements Scrapable {
         LOG.info().$("new DEDICATED pool [name=").$(poolName)
                 .$(", requester=").$(requester)
                 .$(", workers=").$(pool.getWorkerCount())
+                .$(", priority=").$(config.workerPoolPriority())
                 .I$();
         return pool;
     }

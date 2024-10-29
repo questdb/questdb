@@ -62,4 +62,8 @@ public interface WorkerPoolConfiguration {
     default boolean isEnabled() {
         return true;
     }
+
+    default int workerPoolPriority() {
+        return Thread.NORM_PRIORITY;
+    }
 }

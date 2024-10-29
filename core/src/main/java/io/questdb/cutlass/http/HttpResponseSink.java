@@ -304,6 +304,10 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
+    void open() {
+        this.buffer.reopen();
+    }
+
     private class ChunkUtf8Sink implements Utf8Sink, Closeable, Mutable, Reopenable {
         private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
         private static final int MAX_CHUNK_HEADER_SIZE = 12;

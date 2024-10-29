@@ -92,6 +92,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected int forceSendFragmentationChunkSize = 1024 * 1024;
     protected int recvBufferSize = 1024 * 1024;
     protected int sendBufferSize = 1024 * 1024;
+    protected int selectCacheBlockCount = -1;
 
     public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
         assertResultSet(null, expected, sink, rs);
@@ -459,6 +460,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
         };
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration(connectionLimit) {
+
+            @Override
+            public int getSelectCacheBlockCount() {
+                return selectCacheBlockCount == -1 ? super.getSelectCacheBlockCount() : selectCacheBlockCount;
+            }
 
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {

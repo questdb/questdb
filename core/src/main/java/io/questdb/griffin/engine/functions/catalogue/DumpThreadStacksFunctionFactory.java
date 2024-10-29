@@ -102,7 +102,7 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
 

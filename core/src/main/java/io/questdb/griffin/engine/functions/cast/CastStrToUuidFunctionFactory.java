@@ -65,6 +65,7 @@ public final class CastStrToUuidFunctionFactory implements FunctionFactory {
     }
 
     public static class Func extends AbstractCastToUuidFunction {
+
         public Func(Function arg) {
             super(arg);
         }

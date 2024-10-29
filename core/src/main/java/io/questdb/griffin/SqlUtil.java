@@ -534,7 +534,7 @@ public class SqlUtil {
             try {
                 return Numbers.parseIPv4(value);
             } catch (NumericException exception) {
-                throw ImplicitCastException.instance().put("invalid ipv4 format: ").put(value);
+                throw ImplicitCastException.instance().put("invalid IPv4 format: ").put(value);
             }
         }
         return Numbers.IPv4_NULL;
@@ -545,7 +545,7 @@ public class SqlUtil {
             try {
                 return Numbers.parseIPv4(value);
             } catch (NumericException exception) {
-                throw ImplicitCastException.instance().put("invalid ipv4 format: ").put(value);
+                throw ImplicitCastException.instance().put("invalid IPv4 format: ").put(value);
             }
         }
         return Numbers.IPv4_NULL;
@@ -774,6 +774,18 @@ public class SqlUtil {
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(tupleIndex, value, sourceColumnType, targetColumnType);
         }
+    }
+
+    public static short toPersistedTypeTag(CharSequence tok, int tokPosition) throws SqlException {
+        final short typeTag = ColumnType.tagOf(tok);
+        if (typeTag == -1) {
+            throw SqlException.$(tokPosition, "unsupported column type: ").put(tok);
+        }
+        if (ColumnType.isPersisted(typeTag)) {
+            return typeTag;
+        }
+        throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
+
     }
 
     private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {

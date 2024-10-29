@@ -56,6 +56,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final boolean dumpNetworkTraffic;
     private final int forceFragmentationReceiveChunkSize;
     private final HttpHeaderParser headerParser;
+    private final boolean preAllocateBuffers;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final Metrics metrics;
     private final HttpHeaderParser multipartContentHeaderParser;
@@ -124,6 +125,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.responseSink = new HttpResponseSink(contextConfiguration);
         this.recvBufferSize = contextConfiguration.getRecvBufferSize();
+        this.preAllocateBuffers = configuration.preAllocateBuffers();
+        if (preAllocateBuffers) {
+            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.responseSink.open();
+        }
         this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
         // This is default behaviour until the security context is overridden with correct principal.
@@ -144,7 +150,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             LOG.error().$("reused context with retry pending").$();
         }
         this.pendingRetry = false;
-        this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        if (!preAllocateBuffers) {
+            this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.responseSink.close();
+        }
         this.localValueMap.disconnect();
     }
 
@@ -246,6 +255,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public long getTotalBytesSent() {
         return totalBytesSent;
+    }
+
+    public long getTotalReceived() {
+        return totalReceived;
     }
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
