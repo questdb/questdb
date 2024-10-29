@@ -37,7 +37,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     protected final TableFlagResolver tableFlagResolver;
     protected ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap;
     protected ConcurrentHashMap<TableToken> tableNameToTableTokenMap;
-    protected CairoEngine engine;
+    protected CairoEngine engine
 
     public AbstractTableNameRegistry(CairoEngine engine, CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
         this.engine = engine;
