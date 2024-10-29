@@ -21,13 +21,22 @@ jobs:
           includeTests: "**/cairo/**"
           javadoc_step: ""
           javadoc_profile: ""
+        linux-cutlass:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.11"
+          testset: "coverage-cairo"
+          includeTests: "**/cutlass/**"
+          javadoc_step: ""
+          javadoc_profile: ""
         linux-other:
           imageName: "ubuntu-latest"
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.11"
           testset: "coverage-other"
-          excludeTests: "**/griffin/**,**/cairo/**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/cutlass/**"
           javadoc_step: ""
           javadoc_profile: ""
     pool:
