@@ -525,7 +525,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertTrue(matViewDefinition.getMatViewToken().isMatView());
         assertTrue(matViewDefinition.getMatViewToken().isWal());
         assertEquals(query, matViewDefinition.getMatViewSql());
-        assertEquals(baseTableName, matViewDefinition.getBaseTableToken().getTableName());
+        assertEquals(baseTableName, matViewDefinition.getBaseTableName());
         assertEquals(samplingInterval, matViewDefinition.getSamplingInterval());
         assertEquals(samplingIntervalUnit, matViewDefinition.getSamplingIntervalUnit());
         assertEquals(fromMicros, matViewDefinition.getFromMicros());
@@ -548,7 +548,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final TableToken matViewToken = engine.getTableTokenIfExists(name);
-        final TableToken baseTableToken = engine.getTableTokenIfExists(baseTableName);
 
         long fd = -1;
         try (MemoryCMR mem = Vm.getCMRInstance();
@@ -571,9 +570,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 fd = mapRO(ff, path, mem, TableUtils.MAT_VIEW_FILE_NAME);
                 long offset = TableUtils.MV_HEADER_SIZE;
 
-                final int baseTableIdMeta = mem.getInt(offset);
-                offset += Integer.BYTES;
-                assertEquals(baseTableIdMeta, baseTableToken.getTableId());
+                final CharSequence baseTableNameMeta = mem.getStrA(offset);
+                offset += Vm.getStorageLength(baseTableNameMeta);
+                assertEquals(baseTableNameMeta, baseTableName);
 
                 final long fromMicrosMeta = mem.getLong(offset);
                 offset += Long.BYTES;

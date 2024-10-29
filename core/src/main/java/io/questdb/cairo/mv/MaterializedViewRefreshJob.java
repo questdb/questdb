@@ -270,19 +270,18 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
 
     private boolean refreshDependentViews(TableToken baseToken, MatViewGraph viewGraph) {
         childViewSink.clear();
-        CharSequence baseName = baseToken.getTableName();
         boolean refreshed = false;
 
         if (!baseToken.isWal()) {
             LOG.error().$("Found materialized views dependent on non-WAL table that will not be refreshed [parent=")
-                    .$(baseName).I$();
+                    .$(baseToken.getTableName()).I$();
         }
 
         viewGraph.getAffectedViews(baseToken, childViewSink);
         SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
         long minRefreshToTxn = baseSeqTracker.getWriterTxn();
 
-        for (int v = 0, vsize = childViewSink.size(); v < vsize; v++) {
+        for (int v = 0, n = childViewSink.size(); v < n; v++) {
             TableToken viewToken = childViewSink.get(v);
             SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
             long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
@@ -290,6 +289,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
 
             if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
                 MatViewRefreshState state = viewGraph.getViewRefreshState(viewToken);
+                assert state != null;
                 if (!state.tryLock()) {
                     LOG.info().$("skipping mat view refresh, locked by another refresh run [viewToken=")
                             .$(viewToken)
@@ -304,7 +304,6 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
                 } finally {
                     state.unlock();
                 }
-
             }
         }
         mvRefreshTask.baseTable = baseToken;
@@ -348,9 +347,9 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
         }
 
         try {
-            TableToken baseTableToken = state.getViewDefinition().getBaseTableToken();
+            final TableToken baseTableToken;
             try {
-                engine.verifyTableName(baseTableToken.getTableName());
+                baseTableToken = engine.verifyTableName(state.getViewDefinition().getBaseTableName());
             } catch (CairoException th) {
                 LOG.error().$("error refreshing materialized view, cannot resolve base table [view=").$(viewToken)
                         .$(", error=").$(th.getFlyweightMessage()).I$();
@@ -364,12 +363,9 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
             }
 
             SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
-            long minRefreshToTxn = baseSeqTracker.getWriterTxn();
-
+            long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
             SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
             long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
-            long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
-
             if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
                 return refreshView(viewGraph, state, baseTableToken, viewSeqTracker, viewToken, appliedToParentTxn, lastBaseQueryableTxn);
             }

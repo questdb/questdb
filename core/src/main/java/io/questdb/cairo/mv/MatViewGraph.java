@@ -57,9 +57,8 @@ public class MatViewGraph implements QuietCloseable {
         refreshStateByTableDirName.clear();
     }
 
-    public void createView(MaterializedViewDefinition viewDefinition) {
+    public void createView(TableToken baseTableToken, MaterializedViewDefinition viewDefinition) {
         TableToken matViewToken = viewDefinition.getMatViewToken();
-        TableToken baseTableToken = viewDefinition.getBaseTableToken();
         MatViewRefreshState viewRefreshState = refreshStateByTableDirName.get(matViewToken.getDirName());
         if (viewRefreshState != null && !viewRefreshState.isDropped()) {
             if (viewRefreshState.getViewDefinition() != viewDefinition) {
@@ -70,16 +69,16 @@ public class MatViewGraph implements QuietCloseable {
             viewRefreshState = new MatViewRefreshState(viewDefinition);
             refreshStateByTableDirName.putIfAbsent(matViewToken.getDirName(), viewRefreshState);
 
-            MatViewRefreshList list = getDependencyList(baseTableToken);
+            MatViewRefreshList list = getDependencyList(baseTableToken.getTableName());
             try {
-                list.writeLock();
-                for (int i = 0, n = list.matViews.size(); i < n; i++) {
-                    TableToken existingViewToken = list.matViews.getQuick(0);
+                ObjList<TableToken> matViews = list.writeLock();
+                for (int i = 0, n = matViews.size(); i < n; i++) {
+                    TableToken existingViewToken = matViews.getQuick(0);
                     if (existingViewToken.equals(matViewToken)) {
                         break;
                     }
                 }
-                list.matViews.add(matViewToken);
+                matViews.add(matViewToken);
             } finally {
                 list.unlockWrite();
             }
@@ -91,7 +90,6 @@ public class MatViewGraph implements QuietCloseable {
     public void dropViewIfExists(TableToken viewToken) {
         MatViewRefreshState refreshState = refreshStateByTableDirName.remove(viewToken.getDirName());
         if (refreshState != null) {
-            CharSequence baseTableName = refreshState.getViewDefinition().getBaseTableToken().getTableName();
             if (refreshState.tryLock()) {
                 refreshStateByTableDirName.remove(viewToken.getDirName());
                 Misc.free(refreshState);
@@ -99,14 +97,15 @@ public class MatViewGraph implements QuietCloseable {
                 refreshState.markAsDropped();
             }
 
+            CharSequence baseTableName = refreshState.getViewDefinition().getBaseTableName();
             MatViewRefreshList state = dependantViewsByTableName.get(baseTableName);
             if (state != null) {
                 try {
-                    state.writeLock();
-                    for (int i = 0, size = state.matViews.size(); i < size; i++) {
-                        TableToken view = state.matViews.get(i);
+                    ObjList<TableToken> matViews = state.writeLock();
+                    for (int i = 0, n = matViews.size(); i < n; i++) {
+                        TableToken view = matViews.get(i);
                         if (view.equals(viewToken)) {
-                            state.matViews.remove(i);
+                            matViews.remove(i);
                             return;
                         }
                     }
@@ -118,10 +117,10 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     public void getAffectedViews(TableToken table, ObjList<TableToken> sink) {
-        MatViewRefreshList list = getDependencyList(table);
+        MatViewRefreshList list = getDependencyList(table.getTableName());
         try {
-            list.readLock();
-            sink.addAll(list.matViews);
+            ObjList<TableToken> matViews = list.readLock();
+            sink.addAll(matViews);
         } finally {
             list.unlockRead();
         }
@@ -147,7 +146,7 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     public MatViewRefreshState getViewRefreshState(TableToken tableToken) {
-        return getRefreshState(tableToken.getDirName());
+        return refreshStateByTableDirName.get(tableToken.getDirName());
     }
 
     public void getViews(ObjList<TableToken> bucket) {
@@ -199,11 +198,6 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     @NotNull
-    private MatViewRefreshList getDependencyList(TableToken tableToken) {
-        return getDependencyList(tableToken.getTableName());
-    }
-
-    @NotNull
     private MatViewRefreshList getDependencyList(CharSequence tableName) {
         MatViewRefreshList state = dependantViewsByTableName.get(tableName);
         if (state == null) {
@@ -212,10 +206,5 @@ public class MatViewGraph implements QuietCloseable {
             return existingState != null ? existingState : state;
         }
         return state;
-    }
-
-    @Nullable
-    private MatViewRefreshState getRefreshState(CharSequence tableDirName) {
-        return refreshStateByTableDirName.get(tableDirName);
     }
 }

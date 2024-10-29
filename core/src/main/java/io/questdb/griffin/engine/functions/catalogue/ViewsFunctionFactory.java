@@ -181,7 +181,7 @@ public class ViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_NAME:
                             return viewDefinition.getMatViewToken().getTableName();
                         case COLUMN_BASE_TABLE_NAME:
-                            return viewDefinition.getBaseTableToken().getTableName();
+                            return viewDefinition.getBaseTableName();
                         case COLUMN_VIEW_SQL:
                             return viewDefinition.getMatViewSql();
                         case COLUMN_TABLE_DIR_NAME:

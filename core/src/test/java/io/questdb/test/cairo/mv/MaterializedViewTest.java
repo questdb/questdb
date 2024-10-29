@@ -56,9 +56,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-
-            TableToken baseToken = engine.verifyTableName("base_price");
-            createMatView(baseToken, "select sym, last(price) as price, ts from base_price sample by 1h");
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
 
             insert("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
@@ -112,15 +110,14 @@ public class MaterializedViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreteDropCreate() throws Exception {
+    public void testCreateDropCreate() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table base_price (" +
                     "sym varchar, price double, ts timestamp" +
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            TableToken baseToken = engine.verifyTableName("base_price");
-            createMatView(baseToken, "select sym, last(price) as price, ts from base_price sample by 1h");
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
             TableToken matViewToken1 = engine.verifyTableName("price_1h");
 
             insert("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
@@ -135,7 +132,8 @@ public class MaterializedViewTest extends AbstractCairoTest {
             refreshJob.run(0);
             drainWalQueue();
 
-            assertSql("sym\tprice\tts\n" +
+            assertSql(
+                    "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
@@ -145,12 +143,13 @@ public class MaterializedViewTest extends AbstractCairoTest {
             dropMatView("price_1h");
             refreshJob.run(0);
 
-            createMatView(baseToken, "select sym, last(price) as price, ts from base_price sample by 1h");
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
             TableToken matViewToken2 = engine.verifyTableName("price_1h");
             refreshJob.run(0);
             drainWalQueue();
 
-            assertSql("sym\tprice\tts\n" +
+            assertSql(
+                    "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
@@ -189,8 +188,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            TableToken baseToken = engine.verifyTableName("base_price");
-            createMatView(baseToken, "select sym, last(price) as price, ts from base_price sample by 1h");
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
 
             insert("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
@@ -203,7 +201,8 @@ public class MaterializedViewTest extends AbstractCairoTest {
             refreshJob.run(0);
             drainWalQueue();
 
-            assertSql("sym\tprice\tts\n" +
+            assertSql(
+                    "sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
                             "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
                             "gbpusd\t1.321\t2024-09-10T13:00:00.000000Z\n",
@@ -240,7 +239,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
         }
     }
 
-    private static void createMatView(TableToken baseToken, String viewSql) throws SqlException {
+    private static void createMatView(String viewSql) throws SqlException {
         ddl("create materialized view price_1h as (" + viewSql + ") partition by DAY");
     }
 
@@ -256,8 +255,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            TableToken baseToken = engine.verifyTableName("base_price");
-            createMatView(baseToken, viewSql);
+            createMatView(viewSql);
             insert("insert into base_price " +
                     "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
                     "from long_sequence(24 * 20 * 5)"
@@ -267,7 +265,8 @@ public class MaterializedViewTest extends AbstractCairoTest {
             MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(engine);
             refreshJob.run(0);
 
-            assertSql("sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
+            assertSql(
+                    "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
                             "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n",
                     "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
             );
@@ -280,16 +279,12 @@ public class MaterializedViewTest extends AbstractCairoTest {
             refreshJob.run(0);
             drainWalQueue();
 
-            assertSql("sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
+            assertSql(
+                    "sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
                             "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n" +
                             "2\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
                     "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
             );
-
-            String expected = "sym\tprice\tts\n" +
-                    "gbpusd\t1.319\t2024-09-10T12:00:00.000000Z\n" +
-                    "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +
-                    "gbpusd\t1.325\t2024-09-10T13:00:00.000000Z\n";
 
             assertViewMatchesSqlOverBaseTable(viewSql);
         });

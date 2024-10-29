@@ -34,7 +34,7 @@ import java.util.concurrent.locks.ReadWriteLock;
 public class MatViewRefreshList {
     private final AtomicLong lastCommittedBaseTableTxn = new AtomicLong(0);
     private final ReadWriteLock lock = new SimpleReadWriteLock();
-    ObjList<TableToken> matViews = new ObjList<>();
+    private final ObjList<TableToken> matViews = new ObjList<>();
 
     public boolean notifyOnBaseTableCommitNoLock(long seqTxn) {
         boolean retry;
@@ -53,8 +53,9 @@ public class MatViewRefreshList {
         return lastCommittedBaseTableTxn.get() != -seqTxn;
     }
 
-    void readLock() {
+    ObjList<TableToken> readLock() {
         lock.readLock().lock();
+        return matViews;
     }
 
     void unlockRead() {
@@ -65,7 +66,8 @@ public class MatViewRefreshList {
         lock.writeLock().unlock();
     }
 
-    void writeLock() {
+    ObjList<TableToken> writeLock() {
         lock.writeLock().lock();
+        return matViews;
     }
 }

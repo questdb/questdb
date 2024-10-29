@@ -122,23 +122,22 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
             }
         }
         for (Map.Entry<CharSequence, ReverseTableMapItem> e : dirNameToTableTokenMap.entrySet()) {
-            ReverseTableMapItem rtmi = e.getValue();
-            TableToken dirToNameToken = rtmi.getToken();
-            if (rtmi.isDropped()) {
-                TableToken tokenByName = tableNameToTableTokenMap.get(dirToNameToken.getTableName());
+            ReverseTableMapItem item = e.getValue();
+            TableToken dirToNameToken = item.getToken();
+            TableToken tokenByName = tableNameToTableTokenMap.get(dirToNameToken.getTableName());
+            if (item.isDropped()) {
                 if (tokenByName != null && tokenByName.equals(dirToNameToken)) {
                     throw new IllegalStateException("table " + tokenByName.getTableName()
                             + " is dropped but still present in table name registry");
                 }
             } else {
-                TableToken tokenByName = tableNameToTableTokenMap.get(dirToNameToken.getTableName());
                 if (tokenByName == null) {
-                    throw new IllegalStateException("table " + tokenByName.getTableName()
+                    throw new IllegalStateException("table " + dirToNameToken.getTableName()
                             + " is not dropped but name is not present in table name registry");
                 }
 
                 if (!dirToNameToken.equals(tokenByName)) {
-                    throw new IllegalStateException("table " + tokenByName.getTableName() + " tokens mismatch");
+                    throw new IllegalStateException("table " + dirToNameToken.getTableName() + " tokens mismatch");
                 }
             }
         }

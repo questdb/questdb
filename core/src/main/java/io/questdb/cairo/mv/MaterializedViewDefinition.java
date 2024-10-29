@@ -27,9 +27,9 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.TableToken;
 
 public class MaterializedViewDefinition {
-    private final TableToken baseTableToken;
+    private final String baseTableName;
     private final long fromMicros;
-    private final CharSequence matViewSql;
+    private final String matViewSql;
     private final TableToken matViewToken;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
@@ -40,7 +40,7 @@ public class MaterializedViewDefinition {
     public MaterializedViewDefinition(
             TableToken matViewToken,
             String matViewSql,
-            TableToken baseTableToken,
+            String baseTableName,
             long samplingInterval,
             char samplingIntervalUnit,
             long fromMicros,
@@ -50,7 +50,7 @@ public class MaterializedViewDefinition {
     ) {
         this.matViewToken = matViewToken;
         this.matViewSql = matViewSql;
-        this.baseTableToken = baseTableToken;
+        this.baseTableName = baseTableName;
         this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.fromMicros = fromMicros;
@@ -59,15 +59,15 @@ public class MaterializedViewDefinition {
         this.timeZoneOffset = timeZoneOffset;
     }
 
-    public TableToken getBaseTableToken() {
-        return baseTableToken;
+    public String getBaseTableName() {
+        return baseTableName;
     }
 
     public long getFromMicros() {
         return fromMicros;
     }
 
-    public CharSequence getMatViewSql() {
+    public String getMatViewSql() {
         return matViewSql;
     }
 

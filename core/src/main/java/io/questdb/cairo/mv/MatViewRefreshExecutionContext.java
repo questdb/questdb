@@ -24,7 +24,11 @@
 
 package io.questdb.cairo.mv;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -33,7 +37,6 @@ import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.model.IntrinsicModel;
 
 public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
-    private final CairoEngine engine;
     private TableReader baseTableReader;
     private TableToken viewTableToken;
 
@@ -48,11 +51,10 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
                  }
              }, new BindVariableServiceImpl(engine.getConfiguration())
         );
-        this.engine = engine;
     }
 
     public void clean() {
-        this.engine.attachReader(baseTableReader);
+        getCairoEngine().attachReader(baseTableReader);
     }
 
     @Override
@@ -69,7 +71,7 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
         this.baseTableReader = baseTableReader;
 
         // Operate sql on a fixed reader that has known max transactions visible
-        this.engine.detachReader(baseTableReader);
+        getCairoEngine().detachReader(baseTableReader);
     }
 
     @Override

@@ -25,13 +25,14 @@
 package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MaterializedViewRefreshJob;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.griffin.wal.AbstractFuzzTest;
@@ -55,27 +56,14 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
             String tableName = testName.getMethodName();
             String mvName = testName.getMethodName() + "_mv";
             String mv2Name = testName.getMethodName() + "_mv2";
-            TableToken baseToken = fuzzer.createInitialTable(tableName, true);
+            fuzzer.createInitialTable(tableName, true);
             Rnd rnd = fuzzer.generateRandom(LOG);
 
             String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by 1h";
-            createMatView(
-                    baseToken,
-                    viewSql,
-                    mvName,
-                    "ts",
-                    Timestamps.HOUR_MICROS
-            );
+            createMatView(viewSql, mvName);
 
-            TableToken mvToken = engine.verifyTableName(mvName);
             String view2Sql = "select min(min), max(max), ts from  " + mvName + " sample by 2h";
-            createMatView(
-                    mvToken,
-                    view2Sql,
-                    mv2Name,
-                    "ts",
-                    2 * Timestamps.HOUR_MICROS
-            );
+            createMatView(view2Sql, mv2Name);
 
             AtomicBoolean stop = new AtomicBoolean();
             Thread refreshJob = startRefreshJob(stop, rnd);
@@ -142,17 +130,12 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             String mvName = testName.getMethodName() + "_mv";
-            TableToken baseToken = fuzzer.createInitialTable(tableName, true);
+            fuzzer.createInitialTable(tableName, true);
             Rnd rnd = fuzzer.generateRandom(LOG);
 
             int mins = 1 + rnd.nextInt(300);
             String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m";
-            createMatView(
-                    baseToken,
-                    viewSql,
-                    mvName, "ts",
-                    mins * Timestamps.MINUTE_MICROS
-            );
+            createMatView(viewSql, mvName);
 
             AtomicBoolean stop = new AtomicBoolean();
             Thread refreshJob = startRefreshJob(stop, rnd);
@@ -186,7 +169,7 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
         });
     }
 
-    private static void createMatView(TableToken baseToken, String viewSql, String mvName, String upsertKeys, long sampleByPeriod) throws SqlException {
+    private static void createMatView(String viewSql, String mvName) throws SqlException {
         ddl("create materialized view " + mvName + " as ("
                 + viewSql
                 + ") partition by DAY"
@@ -197,14 +180,7 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
         String tableNameMv = tableNameBase + "_mv";
 
         fuzzer.createInitialTable(tableNameBase, true);
-        TableToken baseToken = engine.verifyTableName(tableNameBase);
-        createMatView(
-                baseToken,
-                viewSql,
-                tableNameMv,
-                "ts",
-                Timestamps.HOUR_MICROS
-        );
+        createMatView(viewSql, tableNameMv);
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd);
 

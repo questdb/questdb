@@ -346,7 +346,7 @@ public final class TableUtils {
     public static void createMatViewDefinitionFile(MemoryMARW mem, MaterializedViewDefinition matViewDefinition) {
         mem.extend(MV_HEADER_SIZE);
         mem.jumpTo(MV_HEADER_SIZE);
-        mem.putInt(matViewDefinition.getBaseTableToken().getTableId());
+        mem.putStr(matViewDefinition.getBaseTableName());
         mem.putLong(matViewDefinition.getFromMicros());
         mem.putLong(matViewDefinition.getToMicros());
         mem.putLong(matViewDefinition.getSamplingInterval());

@@ -36,7 +36,7 @@ import org.jetbrains.annotations.NotNull;
 public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     public static final ObjectFactory<CreateMatViewModel> FACTORY = CreateMatViewModel::new;
     private final CreateTableModel tableModel;
-    private TableToken baseTableToken;
+    private String baseTableName;
     private long fromMicros = -1;
     private long samplingInterval = -1;
     private char samplingIntervalUnit;
@@ -53,7 +53,7 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     public void clear() {
         tableModel.clear();
         viewSql = null;
-        baseTableToken = null;
+        baseTableName = null;
         samplingInterval = -1;
         samplingIntervalUnit = '\0';
         fromMicros = -1;
@@ -63,7 +63,7 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     }
 
     public MaterializedViewDefinition generateDefinition(@NotNull TableToken matViewToken) {
-        return new MaterializedViewDefinition(matViewToken, viewSql, baseTableToken, samplingInterval, samplingIntervalUnit,
+        return new MaterializedViewDefinition(matViewToken, viewSql, baseTableName, samplingInterval, samplingIntervalUnit,
                 fromMicros, toMicros, timeZone, timeZoneOffset
         );
     }
@@ -91,8 +91,8 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         return tableModel.getTableNameExpr();
     }
 
-    public void setBaseTableToken(TableToken baseTableToken) {
-        this.baseTableToken = baseTableToken;
+    public void setBaseTableName(String baseTableName) {
+        this.baseTableName = baseTableName;
     }
 
     public void setFromMicros(long fromMicros) {
@@ -128,7 +128,7 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         sink.putAscii("create materialized view ");
         sink.put(tableModel.getName().token);
         sink.putAscii(" with base ");
-        sink.put(baseTableToken.getTableName());
+        sink.put(baseTableName);
         sink.putAscii(" as (");
         sink.put(viewSql);
         sink.putAscii(')');

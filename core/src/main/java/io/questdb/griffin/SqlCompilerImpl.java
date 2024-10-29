@@ -2152,7 +2152,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             assert matViewModel.getQueryModel() != null;
 
             final MaterializedViewDefinition matViewDefinition = createMatViewFromCursorExecutor(matViewModel, executionContext);
-            engine.getMaterializedViewGraph().createView(matViewDefinition);
+            final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+            engine.getMaterializedViewGraph().createView(baseTableToken, matViewDefinition);
             compiledQuery.ofCreateMatView(matViewDefinition.getMatViewToken());
         }
     }
