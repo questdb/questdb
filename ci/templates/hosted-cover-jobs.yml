@@ -26,7 +26,7 @@ jobs:
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.11"
-          testset: "coverage-cairo"
+          testset: "coverage-cutlass"
           includeTests: "**/cutlass/**"
           javadoc_step: ""
           javadoc_profile: ""
