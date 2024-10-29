@@ -137,7 +137,7 @@ public class WalWriter implements TableWriterAPI {
         this.pathSize = path.size();
         this.metrics = metrics;
         this.open = true;
-        this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
+        this.symbolMapMem = Vm.getMARInstance(configuration);
 
         try {
             lockWal();
@@ -890,7 +890,7 @@ public class WalWriter implements TableWriterAPI {
     private void configureColumn(int columnIndex, int columnType) {
         final int dataColumnOffset = getDataColumnOffset(columnIndex);
         if (columnType > 0) {
-            final MemoryMA dataMem = Vm.getMAInstance(configuration.getCommitMode());
+            final MemoryMA dataMem = Vm.getMAInstance(configuration);
             final MemoryMA auxMem = createAuxColumnMem(columnType);
             columns.extendAndSet(dataColumnOffset, dataMem);
             columns.extendAndSet(dataColumnOffset + 1, auxMem);
@@ -1083,7 +1083,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private MemoryMA createAuxColumnMem(int columnType) {
-        return ColumnType.isVarSize(columnType) ? Vm.getMAInstance(configuration.getCommitMode()) : null;
+        return ColumnType.isVarSize(columnType) ? Vm.getMAInstance(configuration) : null;
     }
 
     private SegmentColumnRollSink createSegmentColumnRollSink() {
