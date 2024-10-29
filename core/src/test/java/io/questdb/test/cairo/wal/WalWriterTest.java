@@ -931,7 +931,7 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcurrentAddRemoveColumn_DifferentColNamePerThread() throws Exception {
+    public void testConcurrentAddRemoveColumnDifferentColNamePerThread() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             TableToken tableToken = createTable(testName.getMethodName());

@@ -298,6 +298,10 @@ public class TableSequencerImpl implements TableSequencer {
         return tableTransactionLog.lastTxn();
     }
 
+    public boolean metadataMatches(long structureVersion) {
+        return metadata.getMetadataVersion() == structureVersion;
+    }
+
     @Override
     public long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
@@ -399,11 +403,8 @@ public class TableSequencerImpl implements TableSequencer {
             return null;
         }
 
-        try (
-                TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
-                        metadata.getMetadataVersion(),
-                        alterCommandWalFormatter
-                )
+        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
+                metadata.getMetadataVersion(), alterCommandWalFormatter)
         ) {
             boolean updated = false;
             while (metaChangeCursor.hasNext()) {
@@ -484,8 +485,15 @@ public class TableSequencerImpl implements TableSequencer {
             long txnRowCount
     ) {
         return tableTransactionLog.addEntry(
-                getStructureVersion(), walId, segmentId, segmentTxn, timestamp,
-                txnMinTimestamp, txnMaxTimestamp, txnRowCount);
+                getStructureVersion(),
+                walId,
+                segmentId,
+                segmentTxn,
+                timestamp,
+                txnMinTimestamp,
+                txnMaxTimestamp,
+                txnRowCount
+        );
     }
 
     private void notifyTxnCommitted(long txn) {

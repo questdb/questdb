@@ -26,6 +26,7 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -136,7 +137,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         Unsafe.getUnsafe().storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
         txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
-        txnMem.sync(false);
+        sync0();
         // Transactions are 1 based here
         return maxTxn;
     }
@@ -268,7 +269,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(partTransactionCount);
-        txnMem.sync(false);
+        sync0();
     }
 
     private void openTxnMem(Path path) {
@@ -305,6 +306,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     private void setAppendPosition() {
         txnPartMem.jumpTo((this.maxTxn.get() % partTransactionCount) * RECORD_SIZE);
+    }
+
+    private void sync0() {
+        int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            txnMem.sync(commitMode == CommitMode.ASYNC);
+        }
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {

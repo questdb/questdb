@@ -24,7 +24,14 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.PoolClosedException;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
@@ -184,14 +191,16 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public @NotNull TableMetadataChangeLog getMetadataChangeLog(final TableToken tableToken, long structureVersionLo) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            TableMetadataChangeLog metadataChangeLog;
+        try (TableSequencerImpl tableSequencer = getOrOpenSequencer(tableToken, this.openSequencerInstanceLambda)) {
+            if (tableSequencer.metadataMatches(structureVersionLo)) {
+                return EmptyOperationCursor.INSTANCE;
+            }
+            tableSequencer.readLock();
             try {
-                metadataChangeLog = tableSequencer.getMetadataChangeLog(structureVersionLo);
+                return tableSequencer.getMetadataChangeLog(structureVersionLo);
             } finally {
                 tableSequencer.unlockRead();
             }
-            return metadataChangeLog;
         }
     }
 
@@ -280,11 +289,28 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public long nextTxn(final TableToken tableToken, int walId, long expectedSchemaVersion, int segmentId, int segmentTxn, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
+    public long nextTxn(
+            final TableToken tableToken,
+            int walId,
+            long expectedSchemaVersion,
+            int segmentId,
+            int segmentTxn,
+            long txnMinTimestamp,
+            long txnMaxTimestamp,
+            long txnRowCount
+    ) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             long txn;
             try {
-                txn = tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
+                txn = tableSequencer.nextTxn(
+                        expectedSchemaVersion,
+                        walId,
+                        segmentId,
+                        segmentTxn,
+                        txnMinTimestamp,
+                        txnMaxTimestamp,
+                        txnRowCount
+                );
             } finally {
                 tableSequencer.unlockWrite();
             }
@@ -443,6 +469,34 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    private @NotNull TableSequencerImpl getOrOpenSequencer(
+            TableToken tableToken,
+            BiFunction<CharSequence, Object, TableSequencerImpl> lambda
+    ) {
+        TableSequencerImpl result = null;
+        boolean finished = false;
+        TableSequencerImpl entry;
+        int attempt = 0;
+        while (attempt < recreateDistressedSequencerAttempts) {
+            throwIfClosed();
+            entry = seqRegistry.computeIfAbsent(tableToken.getDirName(), tableToken, lambda);
+            boolean isDistressed = entry.isDistressed();
+            if (!isDistressed && !entry.isClosed()) {
+                result = entry;
+                finished = true;
+                break;
+            }
+            if (isDistressed) {
+                attempt++;
+            }
+        }
+
+        if (!finished) {
+            throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getDirName()).put(']');
+        }
+        return result;
+    }
+
     private SeqTxnTracker getSeqTxnTracker(TableToken tt) {
         return seqTxnTrackers.computeIfAbsent(tt.getDirName(), createTxnTracker);
     }
@@ -451,31 +505,18 @@ public class TableSequencerAPI implements QuietCloseable {
     private TableSequencerImpl getTableSequencerEntry(
             TableToken tableToken,
             SequencerLockType lock,
-            BiFunction<CharSequence, Object, TableSequencerImpl> getSequencerLambda
+            BiFunction<CharSequence, Object, TableSequencerImpl> lambda
     ) {
-        TableSequencerImpl entry;
-        int attempt = 0;
-        while (attempt < recreateDistressedSequencerAttempts) {
-            throwIfClosed();
-            entry = seqRegistry.computeIfAbsent(tableToken.getDirName(), tableToken, getSequencerLambda);
-            if (lock == SequencerLockType.READ) {
-                entry.readLock();
-            } else if (lock == SequencerLockType.WRITE) {
+        TableSequencerImpl entry = getOrOpenSequencer(tableToken, lambda);
+        switch (lock) {
+            case WRITE:
                 entry.writeLock();
-            }
-            boolean isDistressed = entry.isDistressed();
-            if (!isDistressed && !entry.isClosed()) {
-                return entry;
-            } else if (lock == SequencerLockType.READ) {
-                entry.unlockRead();
-            } else if (lock == SequencerLockType.WRITE) {
-                entry.unlockWrite();
-            }
-            if (isDistressed) {
-                attempt++;
-            }
+                break;
+            case READ:
+                entry.readLock();
+                break;
         }
-        throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getDirName()).put(']');
+        return entry;
     }
 
     private TableSequencerImpl openSequencerInstance(CharSequence tableDir, Object tableToken) {
