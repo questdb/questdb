@@ -91,11 +91,7 @@ public class TableSequencerImpl implements TableSequencer {
             metadata = new SequencerMetadata(ff);
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
-            tableTransactionLog = new TableTransactionLog(
-                    ff,
-                    configuration.getMkDirMode(),
-                    configuration.getDefaultSeqPartTxnCount()
-            );
+            tableTransactionLog = new TableTransactionLog(configuration);
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
                 schemaLock.writeLock().lock();
@@ -329,7 +325,7 @@ public class TableSequencerImpl implements TableSequencer {
                             .put(", newVersion: ").put(metadata.getMetadataVersion())
                             .put(']');
                 }
-                metadata.syncToDisk();
+                metadata.sync();
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
@@ -403,8 +399,11 @@ public class TableSequencerImpl implements TableSequencer {
             return null;
         }
 
-        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
-                metadata.getMetadataVersion(), alterCommandWalFormatter)
+        try (
+                TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
+                        metadata.getMetadataVersion(),
+                        alterCommandWalFormatter
+                )
         ) {
             boolean updated = false;
             while (metaChangeCursor.hasNext()) {
