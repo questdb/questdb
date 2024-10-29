@@ -28,7 +28,7 @@ jobs:
           jdk: "1.11"
           testset: "coverage-cutlass"
           includeTests: "**/cutlass/**"
-          excludeTests: "**/*.json"
+          excludeTests: "**/*.json,**/*.gz,**/*.bin,**/*.conf"
           javadoc_step: ""
           javadoc_profile: ""
         linux-other:
