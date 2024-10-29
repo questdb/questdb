@@ -129,9 +129,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 Assert.assertEquals(0, Files.softLink(srcPath.$(), dstPath.$()));
                 assertShowPartitions(
                         "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
-                                "0\tDAY\t2023-03-13\t-1\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\t114688\t112.0 KiB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                                "1\tDAY\t2023-03-14\t-1\t2023-03-14T04:47:59.400000Z\t2023-03-14T23:59:59.000000Z\t5\t114688\t112.0 KiB\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                                "null\tDAY\t2023-03.attachable\t-1\t\t\t-1\t163840\t160.0 KiB\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
+                                "0\tDAY\t2023-03-13\t-1\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                                "1\tDAY\t2023-03-14\t-1\t2023-03-14T04:47:59.400000Z\t2023-03-14T23:59:59.000000Z\t5\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                                "null\tDAY\t2023-03.attachable\t-1\t\t\t-1\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
                         tabName);
             }
         });
@@ -185,9 +185,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 Assert.assertEquals(0, Files.softLink(srcPath.$(), dstPath.$()));
                 assertShowPartitions(
                         "partition_index\tpartitionBy\tpartition_name\tpartition_name_txn\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tparquet\tparquetFileSize\n" +
-                                "0\tDAY\t2023-03-13\t-1\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\t114688\t112.0 KiB\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                                "1\tDAY\t2023-03-14\t-1\t2023-03-14T04:47:59.400000Z\t2023-03-14T23:59:59.000000Z\t5\t114688\t112.0 KiB\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
-                                "null\tDAY\t2023-03-15.attachable\t-1\t\t\t-1\t163840\t160.0 KiB\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
+                                "0\tDAY\t2023-03-13\t-1\t2023-03-13T04:47:59.900000Z\t2023-03-13T23:59:59.500000Z\t5\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                                "1\tDAY\t2023-03-14\t-1\t2023-03-14T04:47:59.400000Z\t2023-03-14T23:59:59.000000Z\t5\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n" +
+                                "null\tDAY\t2023-03-15.attachable\t-1\t\t\t-1\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
                         tabName);
             }
         });
