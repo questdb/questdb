@@ -107,7 +107,8 @@ public class PGWireInsertSelectBenchmark {
                         "Per-thread performance:\n" +
                         "%,d inserts per second, %,d selects per second\n\n",
                 nInserters, useIlp ? "ILP" : "JDBC", nSelectors, insertsPerSecond, selectsPerSecond,
-                insertsPerSecond / nInserters, selectsPerSecond / nSelectors);
+                nInserters != 0 ? insertsPerSecond / nInserters : 0,
+                nSelectors != 0 ? selectsPerSecond / nSelectors : 0);
     }
 
     static void runBenchmark() {
