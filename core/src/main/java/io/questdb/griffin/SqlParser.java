@@ -750,7 +750,7 @@ public class SqlParser {
         if (!baseTableToken.isWal()) {
             throw SqlException.$(lexer.lastTokenPosition(), "The base table has to be WAL enabled");
         }
-        matViewModel.setBaseTableName(baseTableName.toString());
+        matViewModel.setBaseTableToken(baseTableToken);
 
         // find sampling interval
         CharSequence intervalExpr = null;

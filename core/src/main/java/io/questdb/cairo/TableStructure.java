@@ -24,9 +24,15 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.mv.MaterializedViewDefinition;
+
 public interface TableStructure extends TableDescriptor {
 
     int getIndexBlockCapacity(int columnIndex);
+
+    default MaterializedViewDefinition getMatViewDefinition() {
+        return null;
+    }
 
     int getMaxUncommittedRows();
 
@@ -40,11 +46,16 @@ public interface TableStructure extends TableDescriptor {
 
     CharSequence getTableName();
 
+    default void init(TableToken tableToken) {
+    }
+
     boolean isDedupKey(int columnIndex);
 
     boolean isIndexed(int columnIndex);
 
-    boolean isMatView();
+    default boolean isMatView() {
+        return false;
+    }
 
     boolean isSequential(int columnIndex);
 

@@ -390,7 +390,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
-        this.tableToken = cairoEngine.lockTableName(tableName, false, false);
+        this.tableToken = cairoEngine.lockTableName(tableName);
         if (tableToken == null) {
             tableToken = cairoEngine.verifyTableName(tableName);
         }
@@ -840,7 +840,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
             TypeManager typeManager,
-            SecurityContext securityContext) throws TextException {
+            SecurityContext securityContext
+    ) throws TextException {
         final TableWriter writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
         final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
 
@@ -1088,11 +1089,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void phasePartitionImport() throws TextImportException {
         if (partitions.size() == 0) {
             if (linesIndexed > 0) {
-                throw TextImportException.instance(CopyTask.PHASE_PARTITION_IMPORT,
-                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).");
+                throw TextImportException.instance(
+                        CopyTask.PHASE_PARTITION_IMPORT,
+                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k)."
+                );
             } else {
-                throw TextImportException.instance(CopyTask.PHASE_PARTITION_IMPORT,
-                        "No rows in input file to import.");
+                throw TextImportException.instance(
+                        CopyTask.PHASE_PARTITION_IMPORT,
+                        "No rows in input file to import."
+                );
             }
         }
 
@@ -1392,11 +1397,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    void prepareTable(ObjList<CharSequence> names,
-                      ObjList<TypeAdapter> types,
-                      Path path,
-                      TypeManager typeManager,
-                      SecurityContext securityContext)
+    void prepareTable(
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            Path path,
+            TypeManager typeManager,
+            SecurityContext securityContext
+    )
             throws TextException {
         if (types.size() == 0) {
             throw CairoException.nonCritical().put("cannot determine text structure");
@@ -1659,11 +1666,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public boolean isIndexed(int columnIndex) {
             return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
-        }
-
-        @Override
-        public boolean isMatView() {
-            return false;
         }
 
         @Override

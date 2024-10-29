@@ -112,11 +112,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public boolean isMatView() {
-        return tableToken.isMatView();
-    }
-
-    @Override
     public boolean isSequential(int columnIndex) {
         return ((WriterTableColumnMetadata) getColumnMetadata(columnIndex)).sequential;
     }

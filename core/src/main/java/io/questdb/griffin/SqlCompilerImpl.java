@@ -28,25 +28,90 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
-import io.questdb.cairo.*;
+import io.questdb.cairo.AlterTableUtils;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexBuilder;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.MapWriter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableNameRegistryStore;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.griffin.engine.QueryProgress;
-import io.questdb.griffin.engine.ops.*;
-import io.questdb.griffin.model.*;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.CopyCancelFactory;
+import io.questdb.griffin.engine.ops.CopyFactory;
+import io.questdb.griffin.engine.ops.InsertOperationImpl;
+import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.model.ColumnCastModel;
+import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.CreateMatViewModel;
+import io.questdb.griffin.model.CreateTableModel;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExplainModel;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
+import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -99,6 +164,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final MatViewStructureAdapter matViewStructureAdapter = new MatViewStructureAdapter();
     private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getMARWInstance();
+    private final ExecutableMethod createMatViewMethod = this::createMatView;
     private final MessageBus messageBus;
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
@@ -117,7 +183,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
-    private final ExecutableMethod createMatViewMethod = this::createMatView;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
@@ -2084,44 +2149,38 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(name.position, "view already exists");
             }
         } else {
-            final TableToken matViewToken;
-            this.insertCount = -1;
             assert matViewModel.getQueryModel() != null;
-            matViewToken = createMatViewFromCursorExecutor(viewTableModel, executionContext);
-            matViewModel.setTableToken(matViewToken);
 
-            final MaterializedViewDefinition matViewDefinition = matViewModel.generateDefinition();
-            final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
-            TableUtils.createViewMetaFiles(ff, mem, path, configuration.getRoot(), matViewToken.getDirName(), matViewDefinition, baseTableToken);
-
-            engine.getMaterializedViewGraph().createView(baseTableToken, matViewDefinition);
-            compiledQuery.ofCreateMatView(matViewToken);
+            final MaterializedViewDefinition matViewDefinition = createMatViewFromCursorExecutor(matViewModel, executionContext);
+            engine.getMaterializedViewGraph().createView(matViewDefinition);
+            compiledQuery.ofCreateMatView(matViewDefinition.getMatViewToken());
         }
     }
 
-    private TableToken createMatViewFromCursorExecutor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
+    private MaterializedViewDefinition createMatViewFromCursorExecutor(CreateMatViewModel matViewModel, SqlExecutionContext executionContext) throws SqlException {
+        final CreateTableModel viewTableModel = matViewModel.getTableModel();
         try (
-                final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
+                final RecordCursorFactory factory = generate(viewTableModel.getQueryModel(), executionContext);
                 final RecordCursor cursor = factory.getCursor(executionContext)
         ) {
             final RecordMetadata metadata = factory.getMetadata();
-            validateMatViewModel(model, metadata);
+            validateMatViewModel(viewTableModel, metadata);
 
             // Now we should know the designated timestamp index
             // Enable dedup
-            model.setDedupKeyFlag(model.getTimestampIndex());
+            viewTableModel.setDedupKeyFlag(viewTableModel.getTimestampIndex());
 
             // at the time of view creation we do not insert any data, just validate that the query works
             cursor.hasNext();
 
-            return engine.createTable(
+            return engine.createMatView(
                     executionContext.getSecurityContext(),
                     mem,
                     path,
                     false,
-                    matViewStructureAdapter.of(model, metadata),
+                    matViewStructureAdapter.of(matViewModel, metadata),
                     false,
-                    model.getVolumeAlias() != null
+                    viewTableModel.getVolumeAlias() != null
             );
         }
     }
@@ -3337,18 +3396,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private static class MatViewStructureAdapter implements TableStructure {
+        private MaterializedViewDefinition matViewDefinition;
+        private CreateMatViewModel matViewModel;
         private RecordMetadata metadata;
-        private CreateTableModel model;
         private int timestampIndex;
+        private CreateTableModel viewTableModel;
 
         @Override
         public int getColumnCount() {
-            return model.getColumnCount();
+            return viewTableModel.getColumnCount();
         }
 
         @Override
         public CharSequence getColumnName(int columnIndex) {
-            return model.getColumnName(columnIndex);
+            return viewTableModel.getColumnName(columnIndex);
         }
 
         @Override
@@ -3358,37 +3419,42 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         @Override
         public int getIndexBlockCapacity(int columnIndex) {
-            return model.getIndexBlockCapacity(columnIndex);
+            return viewTableModel.getIndexBlockCapacity(columnIndex);
+        }
+
+        @Override
+        public MaterializedViewDefinition getMatViewDefinition() {
+            return matViewDefinition;
         }
 
         @Override
         public int getMaxUncommittedRows() {
-            return model.getMaxUncommittedRows();
+            return viewTableModel.getMaxUncommittedRows();
         }
 
         @Override
         public long getO3MaxLag() {
-            return model.getO3MaxLag();
+            return viewTableModel.getO3MaxLag();
         }
 
         @Override
         public int getPartitionBy() {
-            return model.getPartitionBy();
+            return viewTableModel.getPartitionBy();
         }
 
         @Override
         public boolean getSymbolCacheFlag(int columnIndex) {
-            return model.getSymbolCacheFlag(columnIndex);
+            return viewTableModel.getSymbolCacheFlag(columnIndex);
         }
 
         @Override
         public int getSymbolCapacity(int columnIndex) {
-            return model.getSymbolCapacity(columnIndex);
+            return viewTableModel.getSymbolCapacity(columnIndex);
         }
 
         @Override
         public CharSequence getTableName() {
-            return model.getTableName();
+            return viewTableModel.getTableName();
         }
 
         @Override
@@ -3397,13 +3463,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         @Override
+        public void init(TableToken tableToken) {
+            matViewDefinition = matViewModel.generateDefinition(tableToken);
+        }
+
+        @Override
         public boolean isDedupKey(int columnIndex) {
-            return model.isDedupKey(columnIndex);
+            return viewTableModel.isDedupKey(columnIndex);
         }
 
         @Override
         public boolean isIndexed(int columnIndex) {
-            return model.isIndexed(columnIndex);
+            return viewTableModel.isIndexed(columnIndex);
         }
 
         @Override
@@ -3413,21 +3484,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         @Override
         public boolean isSequential(int columnIndex) {
-            return model.isSequential(columnIndex);
+            return viewTableModel.isSequential(columnIndex);
         }
 
         @Override
         public boolean isWalEnabled() {
-            return model.isWalEnabled();
+            return viewTableModel.isWalEnabled();
         }
 
-        MatViewStructureAdapter of(CreateTableModel model, RecordMetadata metadata) {
-            if (model.getTimestampIndex() != -1) {
-                timestampIndex = model.getTimestampIndex();
+        MatViewStructureAdapter of(CreateMatViewModel matViewModel, RecordMetadata metadata) {
+            this.viewTableModel = matViewModel.getTableModel();
+            if (viewTableModel.getTimestampIndex() != -1) {
+                timestampIndex = viewTableModel.getTimestampIndex();
             } else {
                 timestampIndex = metadata.getTimestampIndex();
             }
-            this.model = model;
+            this.matViewModel = matViewModel;
             this.metadata = metadata;
             return this;
         }
@@ -3522,11 +3594,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         @Override
         public boolean isIndexed(int columnIndex) {
             return model.isIndexed(columnIndex);
-        }
-
-        @Override
-        public boolean isMatView() {
-            return false;
         }
 
         @Override

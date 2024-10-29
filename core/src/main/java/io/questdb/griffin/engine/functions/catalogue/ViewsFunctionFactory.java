@@ -179,13 +179,13 @@ public class ViewsFunctionFactory implements FunctionFactory {
                 public CharSequence getStrA(int col) {
                     switch (col) {
                         case COLUMN_NAME:
-                            return viewDefinition.getTableToken().getTableName();
+                            return viewDefinition.getMatViewToken().getTableName();
                         case COLUMN_BASE_TABLE_NAME:
-                            return viewDefinition.getBaseTableName();
+                            return viewDefinition.getBaseTableToken().getTableName();
                         case COLUMN_VIEW_SQL:
-                            return viewDefinition.getViewSql();
+                            return viewDefinition.getMatViewSql();
                         case COLUMN_TABLE_DIR_NAME:
-                            return viewDefinition.getTableToken().getDirName();
+                            return viewDefinition.getMatViewToken().getDirName();
                         case COLUMN_LAST_ERROR:
                             return lastError != null && lastError.length() != 0 ? lastError : null;
                         default:

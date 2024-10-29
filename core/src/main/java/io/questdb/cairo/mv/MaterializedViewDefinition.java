@@ -27,20 +27,20 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.TableToken;
 
 public class MaterializedViewDefinition {
-    private final CharSequence baseTableName;
+    private final TableToken baseTableToken;
     private final long fromMicros;
+    private final CharSequence matViewSql;
+    private final TableToken matViewToken;
     private final long samplingInterval;
     private final char samplingIntervalUnit;
-    private final TableToken tableToken;
     private final String timeZone;
     private final String timeZoneOffset;
     private final long toMicros;
-    private final CharSequence viewSql;
 
     public MaterializedViewDefinition(
             TableToken matViewToken,
-            String viewSql,
-            String baseTableName,
+            String matViewSql,
+            TableToken baseTableToken,
             long samplingInterval,
             char samplingIntervalUnit,
             long fromMicros,
@@ -48,9 +48,9 @@ public class MaterializedViewDefinition {
             String timeZone,
             String timeZoneOffset
     ) {
-        this.tableToken = matViewToken;
-        this.viewSql = viewSql;
-        this.baseTableName = baseTableName;
+        this.matViewToken = matViewToken;
+        this.matViewSql = matViewSql;
+        this.baseTableToken = baseTableToken;
         this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.fromMicros = fromMicros;
@@ -59,16 +59,20 @@ public class MaterializedViewDefinition {
         this.timeZoneOffset = timeZoneOffset;
     }
 
-    public CharSequence getBaseTableName() {
-        return baseTableName;
+    public TableToken getBaseTableToken() {
+        return baseTableToken;
     }
 
     public long getFromMicros() {
         return fromMicros;
     }
 
+    public CharSequence getMatViewSql() {
+        return matViewSql;
+    }
+
     public TableToken getMatViewToken() {
-        return tableToken;
+        return matViewToken;
     }
 
     public long getSamplingInterval() {
@@ -77,10 +81,6 @@ public class MaterializedViewDefinition {
 
     public char getSamplingIntervalUnit() {
         return samplingIntervalUnit;
-    }
-
-    public TableToken getTableToken() {
-        return tableToken;
     }
 
     public String getTimeZone() {
@@ -93,9 +93,5 @@ public class MaterializedViewDefinition {
 
     public long getToMicros() {
         return toMicros;
-    }
-
-    public CharSequence getViewSql() {
-        return viewSql;
     }
 }

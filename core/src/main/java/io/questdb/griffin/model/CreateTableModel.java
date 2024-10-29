@@ -28,7 +28,14 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -226,11 +233,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     @Override
     public boolean isIndexed(int index) {
         return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
-    }
-
-    @Override
-    public boolean isMatView() {
-        return false;
     }
 
     @Override

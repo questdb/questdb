@@ -24,7 +24,15 @@
 
 package io.questdb.cutlass.line.udp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
@@ -32,7 +40,13 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.line.LineTimestampAdapter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -627,11 +641,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
 
         @Override
         public boolean isIndexed(int columnIndex) {
-            return false;
-        }
-
-        @Override
-        public boolean isMatView() {
             return false;
         }
 

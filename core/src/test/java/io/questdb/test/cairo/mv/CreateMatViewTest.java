@@ -524,8 +524,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertNotNull(matViewDefinition);
         assertTrue(matViewDefinition.getMatViewToken().isMatView());
         assertTrue(matViewDefinition.getMatViewToken().isWal());
-        assertEquals(query, matViewDefinition.getViewSql());
-        assertEquals(baseTableName, matViewDefinition.getBaseTableName());
+        assertEquals(query, matViewDefinition.getMatViewSql());
+        assertEquals(baseTableName, matViewDefinition.getBaseTableToken().getTableName());
         assertEquals(samplingInterval, matViewDefinition.getSamplingInterval());
         assertEquals(samplingIntervalUnit, matViewDefinition.getSamplingIntervalUnit());
         assertEquals(fromMicros, matViewDefinition.getFromMicros());

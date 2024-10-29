@@ -343,10 +343,10 @@ public final class TableUtils {
         return function;
     }
 
-    public static void createMatViewDefinitionFile(MemoryMARW mem, MaterializedViewDefinition matViewDefinition, TableToken baseTableToken) {
+    public static void createMatViewDefinitionFile(MemoryMARW mem, MaterializedViewDefinition matViewDefinition) {
         mem.extend(MV_HEADER_SIZE);
         mem.jumpTo(MV_HEADER_SIZE);
-        mem.putInt(baseTableToken.getTableId());
+        mem.putInt(matViewDefinition.getBaseTableToken().getTableId());
         mem.putLong(matViewDefinition.getFromMicros());
         mem.putLong(matViewDefinition.getToMicros());
         mem.putLong(matViewDefinition.getSamplingInterval());
@@ -356,7 +356,7 @@ public final class TableUtils {
     }
 
     public static void createMatViewQueryFile(MemoryMARW mem, MaterializedViewDefinition matViewDefinition) {
-        mem.putStr(matViewDefinition.getViewSql());
+        mem.putStr(matViewDefinition.getMatViewSql());
     }
 
     public static void createTable(
@@ -515,6 +515,10 @@ public final class TableUtils {
             mem.smallFile(ff, path.trimTo(rootLen).concat(TABLE_NAME_FILE).$(), MemoryTag.MMAP_DEFAULT);
             createTableNameFile(mem, getTableNameFromDirName(tableDir));
 
+            if (structure.isMatView()) {
+                createViewMetaFiles(ff, mem, path, rootLen, structure.getMatViewDefinition());
+            }
+
             // Create TXN file last, it's used to determine if table exists
             mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
             createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
@@ -605,16 +609,11 @@ public final class TableUtils {
             FilesFacade ff,
             MemoryMARW mem,
             Path path,
-            CharSequence root,
-            CharSequence tableDir,
-            MaterializedViewDefinition matViewDefinition,
-            TableToken baseTableToken
+            int rootLen,
+            MaterializedViewDefinition matViewDefinition
     ) {
-        path.of(root).concat(tableDir).$();
-        final int rootLen = path.size();
-
-        mem.smallFile(ff, path.concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-        createMatViewDefinitionFile(mem, matViewDefinition, baseTableToken);
+        mem.smallFile(ff, path.trimTo(rootLen).concat(MAT_VIEW_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+        createMatViewDefinitionFile(mem, matViewDefinition);
         mem.sync(false);
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
 

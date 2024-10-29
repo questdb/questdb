@@ -36,9 +36,8 @@ import org.jetbrains.annotations.NotNull;
 public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     public static final ObjectFactory<CreateMatViewModel> FACTORY = CreateMatViewModel::new;
     private final CreateTableModel tableModel;
-    private String baseTableName;
+    private TableToken baseTableToken;
     private long fromMicros = -1;
-    private TableToken matViewToken;
     private long samplingInterval = -1;
     private char samplingIntervalUnit;
     private String timeZone;
@@ -53,9 +52,8 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     @Override
     public void clear() {
         tableModel.clear();
-        matViewToken = null;
         viewSql = null;
-        baseTableName = null;
+        baseTableToken = null;
         samplingInterval = -1;
         samplingIntervalUnit = '\0';
         fromMicros = -1;
@@ -64,9 +62,8 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         timeZoneOffset = null;
     }
 
-    public MaterializedViewDefinition generateDefinition() {
-        assert matViewToken != null;
-        return new MaterializedViewDefinition(matViewToken, viewSql, baseTableName, samplingInterval, samplingIntervalUnit,
+    public MaterializedViewDefinition generateDefinition(@NotNull TableToken matViewToken) {
+        return new MaterializedViewDefinition(matViewToken, viewSql, baseTableToken, samplingInterval, samplingIntervalUnit,
                 fromMicros, toMicros, timeZone, timeZoneOffset
         );
     }
@@ -94,8 +91,8 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         return tableModel.getTableNameExpr();
     }
 
-    public void setBaseTableName(String baseTableName) {
-        this.baseTableName = baseTableName;
+    public void setBaseTableToken(TableToken baseTableToken) {
+        this.baseTableToken = baseTableToken;
     }
 
     public void setFromMicros(long fromMicros) {
@@ -108,10 +105,6 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
 
     public void setSamplingIntervalUnit(char samplingIntervalUnit) {
         this.samplingIntervalUnit = samplingIntervalUnit;
-    }
-
-    public void setTableToken(TableToken matViewToken) {
-        this.matViewToken = matViewToken;
     }
 
     public void setTimeZone(String timeZone) {
@@ -135,7 +128,7 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         sink.putAscii("create materialized view ");
         sink.put(tableModel.getName().token);
         sink.putAscii(" with base ");
-        sink.put(baseTableName);
+        sink.put(baseTableToken.getTableName());
         sink.putAscii(" as (");
         sink.put(viewSql);
         sink.putAscii(')');

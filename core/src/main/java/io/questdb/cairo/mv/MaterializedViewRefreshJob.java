@@ -111,7 +111,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
 
                 executionContext.setRanges(minTs, maxTs - 1);
 
-                LOG.info().$("refreshing materialized view [view=").$(viewDefinition.getTableToken())
+                LOG.info().$("refreshing materialized view [view=").$(viewDefinition.getMatViewToken())
                         .$(", base=").$(baseTableReader.getTableToken())
                         .$(", fromTxn=").$(lastRefreshTxn)
                         .$(", toTxn=").$(lastTxn)
@@ -124,7 +124,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
         } else {
             executionContext.setRanges(Long.MIN_VALUE + 1, Long.MAX_VALUE);
 
-            LOG.info().$("refreshing materialized view, full refresh [view=").$(viewDefinition.getTableToken())
+            LOG.info().$("refreshing materialized view, full refresh [view=").$(viewDefinition.getMatViewToken())
                     .$(", base=").$(baseTableReader.getTableToken())
                     .$(", toTxn=").$(lastTxn)
                     .I$();
@@ -183,8 +183,8 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
                 try {
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            LOG.info().$("compiling view [view=").$(viewDef.getTableToken()).$(", attempt=").$(i).I$();
-                            CompiledQuery compiledQuery = compiler.compile(viewDef.getViewSql(), matViewRefreshExecutionContext);
+                            LOG.info().$("compiling view [view=").$(viewDef.getMatViewToken()).$(", attempt=").$(i).I$();
+                            CompiledQuery compiledQuery = compiler.compile(viewDef.getMatViewSql(), matViewRefreshExecutionContext);
                             if (compiledQuery.getType() != CompiledQuery.SELECT) {
                                 throw SqlException.$(0, "materialized view query must be a SELECT statement");
                             }
@@ -195,7 +195,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
                             }
                         } catch (SqlException e) {
                             Misc.free(factory);
-                            LOG.error().$("error refreshing materialized view, compilation error [view=").$(viewDef.getTableToken()).$(", error=").$(e.getFlyweightMessage()).I$();
+                            LOG.error().$("error refreshing materialized view, compilation error [view=").$(viewDef.getMatViewToken()).$(", error=").$(e.getFlyweightMessage()).I$();
                             state.compilationFail(e, refreshTimestamp);
                             return false;
                         }
@@ -224,7 +224,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
                     factory = Misc.free(factory);
                     if (i == maxRecompileAttempts - 1) {
                         LOG.error().$("error refreshing materialized view, base table is under heavy DDL changes [view=")
-                                .$(viewDef.getTableToken()).$(", recompileAttempts=").$(maxRecompileAttempts).I$();
+                                .$(viewDef.getMatViewToken()).$(", recompileAttempts=").$(maxRecompileAttempts).I$();
                         state.refreshFail(e, refreshTimestamp);
                         return false;
                     }
@@ -239,7 +239,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
             tableWriter.commit();
             state.refreshSuccess(factory, copier, tableWriter.getMetadata().getMetadataVersion(), rowCount, refreshTimestamp);
         } catch (Throwable th) {
-            LOG.error().$("error refreshing materialized view [view=").$(viewDef.getTableToken()).$(", error=").$(th).I$();
+            LOG.error().$("error refreshing materialized view [view=").$(viewDef.getMatViewToken()).$(", error=").$(th).I$();
             state.refreshFail(th, refreshTimestamp);
             throw th;
         }
@@ -348,10 +348,9 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
         }
 
         try {
-            CharSequence baseName = state.getViewDefinition().getBaseTableName();
-            TableToken baseToken;
+            TableToken baseTableToken = state.getViewDefinition().getBaseTableToken();
             try {
-                baseToken = engine.verifyTableName(baseName);
+                engine.verifyTableName(baseTableToken.getTableName());
             } catch (CairoException th) {
                 LOG.error().$("error refreshing materialized view, cannot resolve base table [view=").$(viewToken)
                         .$(", error=").$(th.getFlyweightMessage()).I$();
@@ -359,12 +358,12 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
                 return false;
             }
 
-            if (!baseToken.isWal()) {
+            if (!baseTableToken.isWal()) {
                 state.refreshFail("Base table is not WAL table", microsecondClock.getTicks());
                 return false;
             }
 
-            SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
+            SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
             long minRefreshToTxn = baseSeqTracker.getWriterTxn();
 
             SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
@@ -372,7 +371,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob implements Quiet
             long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
 
             if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
-                return refreshView(viewGraph, state, baseToken, viewSeqTracker, viewToken, appliedToParentTxn, lastBaseQueryableTxn);
+                return refreshView(viewGraph, state, baseTableToken, viewSeqTracker, viewToken, appliedToParentTxn, lastBaseQueryableTxn);
             }
             return false;
         } catch (Throwable th) {

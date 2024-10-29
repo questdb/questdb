@@ -91,6 +91,8 @@ public interface SecurityContext extends Mutable {
 
     void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
 
+    // todo: add create/drop/refresh mat view checks
+
     void authorizeTableCreate();
 
     void authorizeTableDrop(TableToken tableToken);

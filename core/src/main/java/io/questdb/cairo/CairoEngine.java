@@ -30,6 +30,7 @@ import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.mv.MvRefreshTask;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
@@ -336,10 +337,6 @@ public class CairoEngine implements Closeable, WriterSource {
         checkpointAgent.checkpointCreate(executionContext, false);
     }
 
-    public void snapshotCreate(SqlExecutionContext executionContext) throws SqlException {
-        checkpointAgent.checkpointCreate(executionContext, true);
-    }
-
     /**
      * Recovers database from checkpoint after restoring data from a snapshot.
      */
@@ -399,6 +396,26 @@ public class CairoEngine implements Closeable, WriterSource {
         compile(sql, rootExecutionContext);
     }
 
+    public @NotNull MaterializedViewDefinition createMatView(
+            SecurityContext securityContext,
+            MemoryMARW mem,
+            Path path,
+            boolean ifNotExists,
+            TableStructure structure,
+            boolean keepLock,
+            boolean inVolume
+    ) {
+        // todo: add securityContext.authorizeMatViewCreate();
+        securityContext.authorizeTableCreate();
+
+        final TableToken tableToken = doCreateTable(mem, path, ifNotExists, structure, keepLock, inVolume);
+
+        // todo: add getDdlListener(tableToken).onMatViewCreated(securityContext, tableToken);
+        getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
+
+        return structure.getMatViewDefinition();
+    }
+
     public @NotNull TableToken createTable(
             SecurityContext securityContext,
             MemoryMARW mem,
@@ -420,75 +437,9 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume
     ) {
         securityContext.authorizeTableCreate();
-
-        assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
-        final CharSequence tableName = struct.getTableName();
-        validNameOrThrow(tableName);
-
-        final int tableId = (int) tableIdGenerator.getNextId();
-
-        while (true) {
-            TableToken tableToken = lockTableName(tableName, tableId, struct.isMatView(), struct.isWalEnabled());
-            if (tableToken == null) {
-                if (ifNotExists) {
-                    tableToken = getTableTokenIfExists(tableName);
-                    if (tableToken != null) {
-                        return tableToken;
-                    }
-                    Os.pause();
-                    continue;
-                }
-                throw EntryUnavailableException.instance("table exists");
-            }
-            while (!lockTableCreate(tableToken)) {
-                Os.pause();
-            }
-            try {
-                String lockedReason = lockAll(tableToken, "createTable", true);
-                if (lockedReason == null) {
-                    boolean tableCreated = false;
-                    try {
-                        if (inVolume) {
-                            createTableInVolumeUnsafe(mem, path, struct, tableToken);
-                        } else {
-                            createTableUnsafe(mem, path, struct, tableToken);
-                        }
-
-                        if (struct.isWalEnabled()) {
-                            tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
-                        }
-                        tableCreated = true;
-                    } finally {
-                        if (!keepLock) {
-                            unlockTableUnsafe(tableToken, null, tableCreated);
-                            LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
-                        }
-                    }
-                    tableNameRegistry.registerName(tableToken);
-                } else {
-                    if (!ifNotExists) {
-                        throw EntryUnavailableException.instance(lockedReason);
-                    }
-                }
-            } catch (Throwable th) {
-                if (struct.isWalEnabled()) {
-                    // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
-                    tableSequencerAPI.dropTable(tableToken, true);
-                }
-                throw th;
-            } finally {
-                tableNameRegistry.unlockTableName(tableToken);
-                unlockTableCreate(tableToken);
-            }
-
-            getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
-
-            try (MetadataCacheWriter metadataRW = getMetadataCache().writeLock()) {
-                metadataRW.hydrateTable(tableToken);
-            }
-
-            return tableToken;
-        }
+        final TableToken tableToken = doCreateTable(mem, path, ifNotExists, struct, keepLock, inVolume);
+        getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
+        return tableToken;
     }
 
     public void ddl(CharSequence ddl, SqlExecutionContext executionContext) throws SqlException {
@@ -1039,9 +990,9 @@ public class CairoEngine implements Closeable, WriterSource {
         return createTableLock.putIfAbsent(tableToken.getTableName(), tableToken) == null;
     }
 
-    public TableToken lockTableName(CharSequence tableName, boolean isMatView, boolean isWal) {
+    public TableToken lockTableName(CharSequence tableName) {
         final int tableId = (int) getTableIdGenerator().getNextId();
-        return lockTableName(tableName, tableId, isMatView, isWal);
+        return lockTableName(tableName, tableId, false, false);
     }
 
     @Nullable
@@ -1328,6 +1279,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.checkpointAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
     }
 
+    public void snapshotCreate(SqlExecutionContext executionContext) throws SqlException {
+        checkpointAgent.checkpointCreate(executionContext, true);
+    }
+
     public void unlock(
             @SuppressWarnings("unused") SecurityContext securityContext,
             TableToken tableToken,
@@ -1432,7 +1387,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
-    private void createTableInVolumeUnsafe(MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
+    private void createTableInVolumeUnsafe(MemoryMARW mem, Path path, TableStructure structure, TableToken tableToken) {
         if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.existsInVolume(configuration.getFilesFacade(), path, tableToken.getDirName())) {
             throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
         }
@@ -1445,14 +1400,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 mem,
                 path,
                 tableToken.getDirName(),
-                struct,
+                structure,
                 ColumnType.VERSION,
                 tableToken.getTableId()
         );
     }
 
     // caller has to acquire the lock before this method is called and release the lock after the call
-    private void createTableUnsafe(MemoryMARW mem, Path path, TableStructure struct, TableToken tableToken) {
+    private void createTableUnsafe(MemoryMARW mem, Path path, TableStructure structure, TableToken tableToken) {
         if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.exists(configuration.getFilesFacade(), path, configuration.getRoot(), tableToken.getDirName())) {
             throw CairoException.nonCritical().put("name is reserved [table=").put(tableToken.getTableName()).put(']');
         }
@@ -1465,10 +1420,88 @@ public class CairoEngine implements Closeable, WriterSource {
                 mem,
                 path,
                 tableToken.getDirName(),
-                struct,
+                structure,
                 ColumnType.VERSION,
                 tableToken.getTableId()
         );
+    }
+
+    private @NotNull TableToken doCreateTable(
+            MemoryMARW mem,
+            Path path,
+            boolean ifNotExists,
+            TableStructure structure,
+            boolean keepLock,
+            boolean inVolume
+    ) {
+        assert !structure.isWalEnabled() || PartitionBy.isPartitioned(structure.getPartitionBy()) : "WAL is only supported for partitioned tables";
+        final CharSequence tableName = structure.getTableName();
+        validNameOrThrow(tableName);
+
+        final int tableId = (int) tableIdGenerator.getNextId();
+
+        while (true) {
+            TableToken tableToken = lockTableName(tableName, tableId, structure.isMatView(), structure.isWalEnabled());
+            if (tableToken == null) {
+                if (ifNotExists) {
+                    tableToken = getTableTokenIfExists(tableName);
+                    if (tableToken != null) {
+                        structure.init(tableToken);
+                        return tableToken;
+                    }
+                    Os.pause();
+                    continue;
+                }
+                throw EntryUnavailableException.instance("table exists");
+            }
+            structure.init(tableToken);
+            while (!lockTableCreate(tableToken)) {
+                Os.pause();
+            }
+            try {
+                String lockedReason = lockAll(tableToken, "createTable", true);
+                if (lockedReason == null) {
+                    boolean tableCreated = false;
+                    try {
+                        if (inVolume) {
+                            createTableInVolumeUnsafe(mem, path, structure, tableToken);
+                        } else {
+                            createTableUnsafe(mem, path, structure, tableToken);
+                        }
+
+                        if (structure.isWalEnabled()) {
+                            tableSequencerAPI.registerTable(tableToken.getTableId(), structure, tableToken);
+                        }
+                        tableCreated = true;
+                    } finally {
+                        if (!keepLock) {
+                            unlockTableUnsafe(tableToken, null, tableCreated);
+                            LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
+                        }
+                    }
+                    tableNameRegistry.registerName(tableToken);
+                } else {
+                    if (!ifNotExists) {
+                        throw EntryUnavailableException.instance(lockedReason);
+                    }
+                }
+            } catch (Throwable th) {
+                if (structure.isWalEnabled()) {
+                    // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
+                    tableSequencerAPI.dropTable(tableToken, true);
+                }
+                throw th;
+            } finally {
+                tableNameRegistry.unlockTableName(tableToken);
+                unlockTableCreate(tableToken);
+            }
+
+            try (MetadataCacheWriter metadataRW = getMetadataCache().writeLock()) {
+                metadataRW.hydrateTable(tableToken);
+            }
+
+            return tableToken;
+        }
     }
 
     private TableToken rename0(Path fromPath, TableToken fromTableToken, Path toPath, CharSequence toTableName) {
