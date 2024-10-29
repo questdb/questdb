@@ -103,10 +103,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         Unsafe.getUnsafe().storeFence();
         long maxTxn = this.maxTxn.incrementAndGet();
         txnMem.putLong(MAX_TXN_OFFSET_64, maxTxn);
-        int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
-            txnMem.sync(commitMode == CommitMode.ASYNC);
-        }
+        sync0();
         // Transactions are 1 based here
         return maxTxn;
     }
@@ -141,8 +138,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         txnMem.putLong(0L);
         txnMem.putLong(tableCreateTimestamp);
         txnMem.putInt(0);
-        txnMem.sync(false);
-
+        sync0();
         txnMem.jumpTo(HEADER_SIZE);
     }
 
@@ -202,6 +198,13 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
         txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
         return maxStructureVersion;
+    }
+
+    private void sync0() {
+        int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            txnMem.sync(commitMode == CommitMode.ASYNC);
+        }
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
