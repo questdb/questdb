@@ -524,4 +524,45 @@ public class ParquetTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testDedup() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (x int, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts) ;");
+
+            insert("insert into x(x,ts) values (1, '2020-01-01T00:00:00.000Z');");
+            insert("insert into x(x,ts) values (2, '2020-01-02T00:00:00.000Z');");
+            insert("insert into x(x,ts) values (3, '2020-01-03T00:00:00.000Z');");
+
+            drainWalQueue();
+
+            assertSql("x\tts\n" +
+                    "1\t2020-01-01T00:00:00.000000Z\n" +
+                    "2\t2020-01-02T00:00:00.000000Z\n" +
+                    "3\t2020-01-03T00:00:00.000000Z\n", "x");
+
+            drainWalQueue();
+
+            ddl("alter table x convert partition to parquet list '2020-01-01', '2020-01-02';");
+            assertSql("x\tts\n" +
+                    "1\t2020-01-01T00:00:00.000000Z\n" +
+                    "2\t2020-01-02T00:00:00.000000Z\n" +
+                    "3\t2020-01-03T00:00:00.000000Z\n", "x");
+
+            drainWalQueue();
+
+            insert("insert into x(x,ts) values (11, '2020-01-01T00:00:00.000Z');");
+            insert("insert into x(x,ts) values (22, '2020-01-02T00:00:00.000Z');");
+            insert("insert into x(x,ts) values (33, '2020-01-03T00:00:00.000Z');");
+
+            drainWalQueue();
+
+            //            need to release readers for non wal mode
+            //            engine.releaseAllReaders();
+            assertSql("x\tts\n" +
+                    "11\t2020-01-01T00:00:00.000000Z\n" +
+                    "22\t2020-01-02T00:00:00.000000Z\n" +
+                    "33\t2020-01-03T00:00:00.000000Z\n", "x");
+        });
+    }
 }

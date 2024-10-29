@@ -90,7 +90,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
         final long parquetSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
-
+        long duplicateCount = 0;
         long parquetAddr = 0;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
@@ -211,7 +211,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     continue;
                 }
 
-                mergeRowGroup(
+                duplicateCount += mergeRowGroup(
                         partitionDescriptor,
                         partitionUpdater,
                         columnIdsAndTypes,
@@ -234,7 +234,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (mergeRangeLo <= srcOooHi) {
                 // merge the tail [mergeRangeLo, srcOooHi] into the last row group
                 // this also handles the case where there is only a single row group
-                mergeRowGroup(
+                duplicateCount += mergeRowGroup(
                         partitionDescriptor,
                         partitionUpdater,
                         columnIdsAndTypes,
@@ -269,7 +269,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final long fileSize = Files.length(path.$());
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize);
+            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize - duplicateCount);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, 1); // partitionMutates
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
@@ -1220,7 +1220,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
     }
 
-    private static void mergeRowGroup(
+    // returns number of duplicate rows
+    private static long mergeRowGroup(
             PartitionDescriptor partitionDescriptor,
             PartitionUpdater partitionUpdater,
             DirectIntList columnsIdsAndTypes,
@@ -1247,6 +1248,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         long mergeBatchRowCount = mergeRangeHi - mergeRangeLo + 1;
         long mergeRowCount = mergeBatchRowCount + rowGroupSize;
+        long duplicateCount = 0;
 
         long timestampMergeIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
         long timestampMergeIndexAddr;
@@ -1275,8 +1277,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 long oldIndexSize = timestampMergeIndexSize;
                 timestampMergeIndexSize = dedupRows * TIMESTAMP_MERGE_ENTRY_BYTES;
                 timestampMergeIndexAddr = Unsafe.realloc(timestampMergeIndexAddr, oldIndexSize, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                final long duplicateCount = mergeRowCount - dedupRows;
-                System.err.println("Deduplication enabled, removed " + duplicateCount + " duplicates");
+                duplicateCount = mergeRowCount - dedupRows;
                 mergeRowCount = dedupRows;
         }
 
@@ -1416,6 +1417,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         } finally {
             Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
         }
+
+        return duplicateCount;
     }
 
     private static void publishOpenColumnTaskContended(
