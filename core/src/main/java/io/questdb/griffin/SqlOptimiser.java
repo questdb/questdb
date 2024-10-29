@@ -4953,19 +4953,23 @@ public class SqlOptimiser implements Mutable {
                 nested.setSampleByOffset(null);
                 nested.setSampleByFromTo(null, null);
 
-                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
-                    model = wrapWithSelectModel(model, tempList, insetColumnAliases, timestampAlias);
-                }
-
-                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP) != 0) {
-                    // we added artificial timestamp, which has to be removed
-                    // in the outer query. Single query consists of two
-                    // nested QueryModel instances. The outer of the two is
-                    // SELECT model and the inner of the two is the model providing
-                    // all available columns.
-
-                    // copy columns from the "sample by" SELECT model
+                if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0 && (wrapAction & SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP) != 0) {
                     model = wrapWithSelectModel(model, model.getBottomUpColumns().size() - 1);
+                    addColumnToSelectModel(model, tempList, insetColumnAliases, timestampAlias);
+                } else {
+                    if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
+                        model = wrapWithSelectModel(model, tempList, insetColumnAliases, timestampAlias);
+                    }
+                    if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP) != 0) {
+                        // we added artificial timestamp, which has to be removed
+                        // in the outer query. Single query consists of two
+                        // nested QueryModel instances. The outer of the two is
+                        // SELECT model and the inner of the two is the model providing
+                        // all available columns.
+
+                        // copy columns from the "sample by" SELECT model
+                        model = wrapWithSelectModel(model, model.getBottomUpColumns().size() - 1);
+                    }
                 }
             }
 
@@ -6235,6 +6239,33 @@ public class SqlOptimiser implements Mutable {
         }
 
         return _model;
+    }
+
+    private void addColumnToSelectModel(QueryModel model, IntList insetColumnIndexes, ObjList<QueryColumn> insertColumnAliases, CharSequence timestampAlias) {
+        ObjList<QueryColumn> origins = new ObjList<>(model.getBottomUpColumns());
+        model.clearColumnMapStructs();
+
+        // These are merged columns, the assumption is that the insetColumnIndexes are ordered.
+        // This loop will fail miserably in indexes are unordered.
+        int src1ColumnCount = origins.size();
+        int src2ColumnCount = insetColumnIndexes.size();
+        for (int i = 0, k = 0, m = 0; i < src1ColumnCount || k < src2ColumnCount; m++) {
+            if (k < src2ColumnCount && insetColumnIndexes.getQuick(k) == m) {
+                QueryColumn column = insertColumnAliases.get(k);
+                // insert column at this position, this column must reference our timestamp, that
+                // comes out of the group-by result set, but with user-provided aliases.
+                if (column.getAst().type == LITERAL) {
+                    model.addBottomUpColumnIfNotExists(nextColumn(column.getAlias(), timestampAlias));
+                } else {
+                    model.addBottomUpColumnIfNotExists(column);
+                }
+                k++;
+            } else {
+                QueryColumn qcFrom = origins.getQuick(i);
+                model.addBottomUpColumnIfNotExists(nextColumn(qcFrom.getAlias()));
+                i++;
+            }
+        }
     }
 
     @SuppressWarnings("unused")
