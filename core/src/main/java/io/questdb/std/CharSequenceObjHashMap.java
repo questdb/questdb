@@ -59,6 +59,10 @@ public class CharSequenceObjHashMap<V> extends AbstractCharSequenceHashSet {
         return valueAt(keyIndex(key));
     }
 
+    public V getAt(int index) {
+        return get(list.getQuick(index));
+    }
+
     public ObjList<CharSequence> keys() {
         return list;
     }

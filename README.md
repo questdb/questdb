@@ -7,9 +7,6 @@
   <a href="#contribute">
     <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
-  <a href="https://search.maven.org/search?q=g:org.questdb">
-    <img src="https://img.shields.io/maven-central/v/org.questdb/questdb" alt="QuestDB on Apache Maven"/>
-  </a>
 </p>
 
 <p align="center">
@@ -106,14 +103,15 @@ Use example queries or write your own!
 _The public demo queries over 1.6BN rows and uses a `r6a.12xlarge` 48 vCPU and 348GB RAM instance._
 
 | Query                                                                         | Execution time                                                                                                                                                                                      |
-| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `SELECT sum(double) FROM trips`                                               | [0.15 secs](<https://demo.questdb.io/?query=SELECT%20sum(trip_distance)%20FROM%20trips;&executeQuery=true>)                                                                                         |
 | `SELECT sum(double), avg(double) FROM trips`                                  | [0.5 secs](<https://demo.questdb.io/?query=SELECT%20sum(fare_amount),%20avg(fare_amount)%20FROM%20trips;&executeQuery=true>)                                                                        |
 | `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
 | `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
 | `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
 
-We also have some public, real-time demo dashboards using our [Grafana-native](https://questdb.io/docs/third-party-tools/grafana/) plugin:
+We also have some public, real-time demo dashboards using
+our [Grafana-native](https://questdb.io/docs/third-party-tools/grafana/) plugin:
 
 - [Real-time crypto trades:](https://questdb.io/dashboards/crypto/) executed
   trades on OKX from more than 20 assets in real time
@@ -133,8 +131,7 @@ For deep dives into internals and performance, see the following blog posts:
 As always, we encourage you to run your own benchmarks.
 
 <div align="center">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
-  </a>
+  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
 </div>
 
 ## Get started

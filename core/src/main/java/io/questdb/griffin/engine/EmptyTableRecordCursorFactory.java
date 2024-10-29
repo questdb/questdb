@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
+
     public EmptyTableRecordCursorFactory(RecordMetadata metadata) {
         super(metadata);
     }

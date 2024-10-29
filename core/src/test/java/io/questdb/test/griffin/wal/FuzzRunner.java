@@ -457,11 +457,13 @@ public class FuzzRunner {
 
     private static void reloadReader(Rnd reloadRnd, TableReader rdr1, CharSequence rdrId) {
         if (reloadRnd.nextBoolean()) {
-            reloadPartitions(rdr1);
-            LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
-            rdr1.goPassive();
+            if (rdr1.isActive()) {
+                reloadPartitions(rdr1);
+                LOG.info().$("releasing reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
+                rdr1.goPassive();
+            }
 
-            if (reloadRnd.nextBoolean()) {
+            if (reloadRnd.nextBoolean() && rdr1.isActive()) {
                 rdr1.goActive();
                 LOG.info().$("acquired reader txn [rdr=").$(rdrId).$(", table=").$(rdr1.getTableToken()).$(", txn=").$(rdr1.getTxn()).I$();
             }

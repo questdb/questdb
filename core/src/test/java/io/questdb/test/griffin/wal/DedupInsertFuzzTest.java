@@ -24,15 +24,32 @@
 
 package io.questdb.test.griffin.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.LogRecordSinkAdapter;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjIntHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
@@ -366,10 +383,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         runFuzzWithRepeatDedup(rnd);
     }
 
-    private static boolean dedupSupported(int columnType) {
-        return true;
-    }
-
     private void assertAllSymbolsSet(
             boolean[] foundSymbols,
             String[] symbols,
@@ -440,9 +453,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             int start = rnd.nextInt(metadata.getColumnCount());
             for (int c = 0; c < metadata.getColumnCount(); c++) {
                 int col = (c + start) % metadata.getColumnCount();
-                int columnType = metadata.getColumnType(col);
-
-                if (!upsertKeyIndexes.contains(col) && dedupSupported(columnType)) {
+                if (!upsertKeyIndexes.contains(col)) {
                     upsertKeyIndexes.add(col);
                     break;
                 }
@@ -561,6 +572,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         if (rnd.nextBoolean()) {
             shuffle(transaction.operationList, rnd);
         }
+    }
+
+    private Rnd generateRandomAndProps(Log log, long seed1, long seed2) {
+        Rnd rnd = fuzzer.generateRandom(log, seed1, seed2);
+        setFuzzProperties(rnd);
+        setRandomAppendPageSize(rnd);
+        return rnd;
     }
 
     private Rnd generateRandomAndProps(Log log) {
@@ -798,7 +816,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         int initialDuplicates = 1 + rnd.nextInt(1);
         long startTimestamp = parseFloorPartialTimestamp("2020-02-24T04:30");
-        int startCount = rnd.nextInt(100_000);
+        int startCount = rnd.nextInt(24 * 60 / 15 * 10);
         generateInsertsTransactions(
                 transactions,
                 1,
@@ -832,7 +850,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 ? symbols
                 : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
 
-        long fromTops = startTimestamp + rnd.nextLong(startCount) * initialDelta;
+        long fromTops = startTimestamp + (startCount > 0 ? rnd.nextLong(startCount) : 0) * initialDelta;
         generateInsertsTransactions(
                 transactions,
                 1,
@@ -852,7 +870,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         applyWal(transactions, tableName, 1, rnd);
 
         transactions.clear();
-        long shift = rnd.nextLong(startCount) * Timestamps.MINUTE_MICROS * 15 +
+        long shift = (startCount > 0 ? rnd.nextLong(startCount) : 0) * Timestamps.MINUTE_MICROS * 15 +
                 rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
         long from = startTimestamp + shift;
         long delta = Timestamps.MINUTE_MICROS;
@@ -885,7 +903,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         StringSink sink = new StringSink();
         for (int i = 0; i < upsertKeys.size(); i++) {
             int columnType = metadata.getColumnType(upsertKeys.get(i));
-            if (columnType > 0 && dedupSupported(columnType)) {
+            if (columnType > 0) {
                 if (i > 0) {
                     sink.put(',');
                 }
@@ -899,7 +917,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         StringSink sink = new StringSink();
         for (int i = 0; i < upsertKeys.size(); i++) {
             int columnType = metadata.getColumnType(upsertKeys.get(i));
-            if (columnType > 0 && dedupSupported(columnType)) {
+            if (columnType > 0) {
                 if (i > 0) {
                     sink.put(',');
                 }
