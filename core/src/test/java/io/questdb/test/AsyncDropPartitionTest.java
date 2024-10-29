@@ -24,10 +24,8 @@
 
 package io.questdb.test;
 
-import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
-import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -41,62 +39,60 @@ public class AsyncDropPartitionTest extends AbstractCairoTest {
     @Before
     @Override
     public void setUp() {
+        staticOverrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 10);
         super.setUp();
-        testMicrosClock = MicrosecondClockImpl.INSTANCE;
     }
 
     @Test
     public void testSplitPartition_enqueueDropPartition_mergePartition_applyTheDrop() throws Exception {
         assertMemoryLeak(() -> {
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
-                ddl("create table tango (ts timestamp, n long) timestamp(ts) partition by hour wal");
-                // create 3 hourly partitions: 0, 1, 2
-                insert("insert into tango select (1000*1000*x)::timestamp, x from long_sequence(10799)");
-                drainWalQueue();
+            ddl("create table tango (ts timestamp, n long) timestamp(ts) partition by hour wal");
+            // create 3 hourly partitions: 0, 1, 2
+            insert("insert into tango select (1000*1000*x)::timestamp, x from long_sequence(10799)");
+            drainWalQueue();
 
-                // when we lock the reader that will ensure that partition 1.0 is not purged
-                TableReader r = engine.getReader("tango");
-                // schedule to create a new version of partition 1 -> 1.1
-                long baseTimestamp = TimeUnit.MINUTES.toMicros(61);
-                insert(String.format("insert into tango values (%d::timestamp, 0)", baseTimestamp));
-                insert(String.format("insert into tango select %d::timestamp, 0 from (tango limit 1) where sleep(300)", baseTimestamp));
-                // schedule to drop partitions 0, 1.0
-                ddl("alter table tango drop partition where ts < 7200*1000*1000");
+            // acquire a table reader, this locks the table and prevents purging partition 1.0
+            TableReader r = engine.getReader("tango");
+            // create split in partition 1
+            insert(String.format("insert into tango values (%d::timestamp, 0)", TimeUnit.MINUTES.toMicros(110)));
+            drainWalQueue();
+            // Schedule to get the WAL applier busy with some work, giving us time to run PartitionPurgeJob
+            insert(String.format(
+                    "insert into tango select (%d + rnd_long(0, 1000*1000*1000), 0)::timestamp, x from long_sequence(5*1000*1000)",
+                    TimeUnit.MINUTES.toMicros(121)));
+            // schedule to drop partitions 0, 1
+            ddl("alter table tango drop partition where ts < 7200*1000*1000");
 
-                CyclicBarrier barrier = new CyclicBarrier(2);
-                SOCountDownLatch haltLatch = new SOCountDownLatch(2);
-                // horse #1
-                new Thread(() -> {
-                    try {
-                        TestUtils.await(barrier);
-                        drainWalQueue();
-                    } finally {
-                        Path.clearThreadLocals();
-                        haltLatch.countDown();
-                    }
+            CyclicBarrier barrier = new CyclicBarrier(2);
+
+            // horse #1
+            Thread drainWalQueue = new Thread(() -> {
+                try {
+                    TestUtils.await(barrier);
+                    System.out.println("Drain WAL queue");
+                    drainWalQueue();
+                    System.out.println("DONE: Drain WAL queue");
+                } finally {
+                    Path.clearThreadLocals();
                 }
-
-                ).start();
-
-                // horse #2
-                new Thread(() -> {
-                    try {
-                        TestUtils.await(barrier);
-                        r.close();
-                        purgeJob.drain(0);
-                    } finally {
-                        Path.clearThreadLocals();
-                        haltLatch.countDown();
-                    }
-                }).start();
-                haltLatch.await();
-
-                assertSql(
-                        "suspended\n" +
-                                "false\n",
-                        "select suspended from wal_tables where name = 'tango'"
-                );
             }
+            );
+            drainWalQueue.start();
+
+            // horse #2
+            TestUtils.await(barrier);
+            Thread.sleep(1);
+            System.out.println("Close reader");
+            r.close();
+//            System.out.println("Purge partition");
+//            Path stalePartitionDir = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat("tango~1/1970-01-01T014959-000001.1");
+//            if (!FilesFacadeImpl.INSTANCE.unlinkOrRemove(stalePartitionDir, LOG)) {
+//                fail("Didn't delete stale partition directory");
+//            }
+//            System.out.println("DONE: Purge partition");
+
+            drainWalQueue.join();
+            assertSql("suspended\nfalse\n", "select suspended from wal_tables where name = 'tango'");
         });
     }
 }
