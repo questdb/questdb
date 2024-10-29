@@ -129,7 +129,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                 for (int i = 0; i < 5; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         println(factory, cursor);
-                        TestUtils.assertEquals("table_name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                        TestUtils.assertEquals("table_name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                                 "B\tfalse\t0\t0\t0\t\t\t0\n" +
                                 "C\tfalse\t0\t0\t0\t\t\t0\n", sink);
                     }
@@ -176,7 +176,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("C")));
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("D")));
 
-            assertSql("table_name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+            assertSql("table_name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                     "B\ttrue\t1\t0\t3\t\tcould not open read-write [file=" + root + SEPARATOR + "B~2" + SEPARATOR + "2022-12-05" + SEPARATOR + "x.d.1]\t0\n" +
                     "C\tfalse\t2\t0\t2\t\t\t0\n" +
                     "D\tfalse\t1\t0\t1\t\t\t0\n", "wal_tables() order by table_name");
@@ -241,7 +241,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
 
-            assertSql("table_name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+            assertSql("table_name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                     "B\ttrue\t2\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n", "wal_tables()");
 
             compile("alter table B resume wal");
@@ -250,7 +250,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
 
-            assertSql("table_name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+            assertSql("table_name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                     "B\tfalse\t2\t0\t2\t\t\t0\n", "wal_tables()");
 
             dropTable("A");
