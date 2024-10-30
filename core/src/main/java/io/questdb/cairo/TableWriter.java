@@ -267,6 +267,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private DropIndexOperator dropIndexOperator;
     private int indexCount;
     private int lastErrno;
+    private long lastWalCommitTimestampMicros = Long.MIN_VALUE;
     private boolean lastOpenPartitionIsReadOnly;
     private long lastOpenPartitionTs = Long.MIN_VALUE;
     private long lastPartitionTimestamp;
@@ -1153,6 +1154,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             syncColumns();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(denseSymbolMapWriters);
+            lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
 
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.maxTimestamp, configuration.getO3LastPartitionMaxSplits());
 
@@ -2084,7 +2086,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Can commit without O3 and LAG has just enough rows
                         || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
                         // Too many uncommitted transactions in LAG
-                        || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount());
+                        || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount())
+                        || (configuration.getMicrosecondClock().getTicks() - configuration.getCommitLatencyMicros() > lastWalCommitTimestampMicros);
 
                 boolean canFastCommit = indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
                 boolean lagOrderedNew = !isDeduplicationEnabled() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
