@@ -32,6 +32,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
@@ -124,6 +125,16 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000_000),
                 rnd.nextInt(1500), 20, 10, 200, 0, 1
         );
+        runFuzz(rnd);
+    }
+
+    @Test
+    @Ignore("drop partition operation must be fixed")
+    public void testWalAddDropPartitionO3() throws Exception {
+        Rnd rnd = generateRandom(LOG, 676104031438666L, 1730310427350L);
+        setFuzzProbabilities(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 1.0, 0.0, 0.01, 0.0, 0.0);
+        setFuzzCounts(true, 100_000, 500, 20, 10, 20, 100_000, 5);
+        setFuzzProperties(rnd);
         runFuzz(rnd);
     }
 
