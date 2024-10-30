@@ -76,7 +76,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final String httpVersion;
     private final NetworkFacade nf;
     private final HttpRawSocketImpl rawSocket = new HttpRawSocketImpl();
-    private final SimpleResponseImpl simple = new SimpleResponseImpl();
+    private final SimpleResponseImpl simpleResponse = new SimpleResponseImpl();
     private final ResponseSinkImpl sink = new ResponseSinkImpl();
     private boolean chunkedRequestDone;
     private boolean compressedHeaderDone;
@@ -113,7 +113,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         totalBytesSent = 0;
         headersSent = false;
         chunkedRequestDone = false;
-        simple.clear();
+        simpleResponse.clear();
         resetZip();
     }
 
@@ -134,10 +134,6 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     public int getCode() {
         return headerImpl.getCode();
-    }
-
-    public SimpleResponseImpl getSimple() {
-        return simple;
     }
 
     public void resumeSend() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -169,6 +165,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             zStreamPtr = Zip.deflateInit();
             compressOutBuffer.reopen();
         }
+    }
+
+    public SimpleResponseImpl simpleResponse() {
+        return simpleResponse;
     }
 
     private void deflate() {
@@ -695,6 +695,31 @@ public class HttpResponseSink implements Closeable, Mutable {
             headerSent = false;
         }
 
+        @SuppressWarnings("unused")
+        public void sendStatusJsonContent(
+                int code
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusJsonContent(code, null, null, null, null);
+        }
+
+        @SuppressWarnings("unused")
+        public void sendStatusJsonContent(
+                int code,
+                @Nullable CharSequence message
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusJsonContent(code, message, null, null, null);
+        }
+
+        public void sendStatusJsonContent(
+                int code,
+                @Nullable CharSequence message,
+                @Nullable CharSequence header,
+                @Nullable CharSequence cookieName,
+                @Nullable CharSequence cookieValue
+        ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+            sendStatusWithContent(CONTENT_TYPE_JSON, code, message, header, cookieName, cookieValue, message != null ? message.length() : -1);
+        }
+
         public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (!headerSent) {
                 buffer.clearAndPrepareToWriteToBuffer();
@@ -731,7 +756,7 @@ public class HttpResponseSink implements Closeable, Mutable {
                 @Nullable CharSequence cookieName,
                 @Nullable CharSequence cookieValue
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendStatusWithContent(code, message, header, cookieName, cookieValue);
+            sendStatusWithContent(CONTENT_TYPE_TEXT, code, message, header, cookieName, cookieValue, -1);
         }
 
         public void sendStatusTextContent(
@@ -755,15 +780,17 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
 
         private void sendStatusWithContent(
+                String contentType,
                 int code,
                 @Nullable CharSequence message,
                 @Nullable CharSequence header,
                 @Nullable CharSequence cookieName,
-                @Nullable CharSequence cookieValue
+                @Nullable CharSequence cookieValue,
+                long contentLength
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (!headerSent) {
                 buffer.clearAndPrepareToWriteToBuffer();
-                headerImpl.status(httpVersion, code, CONTENT_TYPE_TEXT, -1);
+                headerImpl.status(httpVersion, code, contentType, contentLength);
                 if (header != null) {
                     headerImpl.put(header).put(Misc.EOL);
                 }

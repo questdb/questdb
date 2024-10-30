@@ -181,7 +181,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     public void execute0(
             JsonQueryProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         OperationFuture fut = state.getOperationFuture();
         final HttpConnectionContext context = state.getHttpConnectionContext();
         circuitBreaker.resetTimer();
@@ -241,9 +241,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     context.getMetrics()
             );
             readyForNextRequest(context);
-            if (e.isEntityDisabled()) {
-                throw ServerDisconnectException.INSTANCE;
-            }
         } catch (PeerIsSlowToReadException | PeerDisconnectedException | QueryPausedException e) {
             // re-throw the exception
             throw e;
