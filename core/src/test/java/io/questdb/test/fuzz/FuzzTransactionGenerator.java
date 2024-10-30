@@ -138,7 +138,7 @@ public class FuzzTransactionGenerator {
             } else if (wantToTruncateTable) {
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
             } else if (wantToDropPartition) {
-                // generate drop partition
+                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++);
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
@@ -238,10 +238,10 @@ public class FuzzTransactionGenerator {
 
     private static void generateDropPartition(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion) {
         FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new FuzzDropPartitionOperation());
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
-        transaction.operationList.add(new FuzzDropPartitionOperation());
         transactionList.add(transaction);
     }
 
