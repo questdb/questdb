@@ -210,12 +210,36 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         });
     }
 
-    protected void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
-        fuzzer.setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount);
+    protected void setFuzzCounts(
+            boolean isO3,
+            int fuzzRowCount,
+            int transactionCount,
+            int strLen,
+            int symbolStrLenMax,
+            int symbolCountMax,
+            int initialRowCount,
+            int partitionCount
+    ) {
+        fuzzer.setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen,
+                symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount);
     }
 
-    protected void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb, double colTypeChangeProb) {
-        fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb, collAddProb, collRemoveProb, colRenameProb, dataAddProb, truncateProb, equalTsRowsProb, tableDropProb, colTypeChangeProb);
+    protected void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double dataAddProb,
+            double truncateProb,
+            double equalTsRowsProb,
+            double tableDropProb,
+            double colTypeChangeProb
+    ) {
+        fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb, colAddProb, colRemoveProb,
+                colRenameProb, colTypeChangeProb, dataAddProb, truncateProb, tableDropProb, equalTsRowsProb);
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount) {
@@ -224,7 +248,13 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, o3PartitionSplitMaxCount);
     }
 
-    protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount, long walMaxLagSize, int maxWalFdCache) {
+    protected void setFuzzProperties(
+            long maxApplyTimePerTable,
+            long splitPartitionThreshold,
+            int o3PartitionSplitMaxCount,
+            long walMaxLagSize,
+            int maxWalFdCache
+    ) {
         node1.setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, maxApplyTimePerTable);
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, splitPartitionThreshold);
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, o3PartitionSplitMaxCount);

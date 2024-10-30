@@ -81,10 +81,10 @@ public class FuzzRunner {
     protected int initialRowCount;
     protected int partitionCount;
     private double cancelRowsProb;
+    private double colAddProb;
+    private double colRemoveProb;
     private double colRenameProb;
     private double colTypeChangeProb;
-    private double collAddProb;
-    private double collRemoveProb;
     private double dataAddProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
@@ -393,8 +393,8 @@ public class FuzzRunner {
                 notSetProb,
                 nullSetProb,
                 rollbackProb,
-                collAddProb,
-                collRemoveProb,
+                colAddProb,
+                colRemoveProb,
                 colRenameProb,
                 colTypeChangeProb,
                 dataAddProb,
@@ -442,19 +442,32 @@ public class FuzzRunner {
         this.parallelWalCount = parallelWalCount;
     }
 
-    public void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb, double colTypeChangeProb) {
+    public void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double truncateProb,
+            double tableDropProb,
+            double equalTsRowsProb
+    ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
         this.rollbackProb = rollbackProb;
-        this.collAddProb = collAddProb;
-        this.collRemoveProb = collRemoveProb;
+        this.colAddProb = colAddProb;
+        this.colRemoveProb = colRemoveProb;
         this.colRenameProb = colRenameProb;
         this.colTypeChangeProb = colTypeChangeProb;
         this.dataAddProb = dataAddProb;
         this.truncateProb = truncateProb;
-        this.equalTsRowsProb = equalTsRowsProb;
         this.tableDropProb = tableDropProb;
+        this.equalTsRowsProb = equalTsRowsProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -915,4 +928,3 @@ public class FuzzRunner {
         }
     }
 }
-
