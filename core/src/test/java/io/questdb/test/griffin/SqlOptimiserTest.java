@@ -3689,7 +3689,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testSampleByFromToParallelInduceTimeStampColumn() throws Exception {
+    public void testSampleByFromToParallelDeduceTimeStampColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE 't' (\n" +
                     "  name SYMBOL capacity 256 CACHE,\n" +
