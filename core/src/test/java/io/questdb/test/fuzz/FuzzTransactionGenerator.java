@@ -313,7 +313,7 @@ public class FuzzTransactionGenerator {
         transactionList.add(transaction);
         transaction.structureVersion = metadataVersion;
         transaction.waitBarrierVersion = waitBarrierVersion;
-        transaction.forceWait();
+        transaction.waitAllDone = true;
     }
 
     private static int getNonDeletedColumnCount(RecordMetadata tableMetadata) {
