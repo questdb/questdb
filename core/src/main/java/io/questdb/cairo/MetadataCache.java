@@ -31,15 +31,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjHashSet;
-import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
@@ -237,14 +229,12 @@ public class MetadataCache implements QuietCloseable {
             }
 
             tableMap.put(table.getTableName(), table);
-            LOG.info().$("hydrated metadata [table=").$(token).I$();
         } catch (Throwable e) {
             // get rid of stale metadata
             tableMap.remove(token.getTableName());
             // if can't hydrate and table is not dropped, it's a critical error
             LogRecord root = engine.isTableDropped(token) ? LOG.info() : LOG.critical();
-            root.$("could not hydrate metadata, exception:  ").$(e.getMessage()).$(" [table=").$(table.getTableToken()).I$();
-
+            root.$("could not hydrate metadata [table=").$(table.getTableToken()).I$();
         } finally {
             Misc.free(metaMem);
         }
@@ -419,7 +409,7 @@ public class MetadataCache implements QuietCloseable {
                 try {
                     hydrateTable(tableToken);
                 } catch (CairoException ex) {
-                    LOG.error().$("could not hydrate metadata, exception:  ").$(ex.getFlyweightMessage()).$(" [table=").$(tableToken).I$();
+                    LOG.error().$("could not hydrate metadata, exception:  ").$(ex.getFlyweightMessage()).$(" [table=").$(tableToken.getTableName()).I$();
                     throw ex;
                 }
             }
@@ -527,7 +517,7 @@ public class MetadataCache implements QuietCloseable {
         public void hydrateTable(@NotNull TableToken token) throws CairoException {
             LOG.info().$("hydrating metadata [table=").$(token).I$();
             hydrateTable0(token);
-
+            LOG.info().$("hydrated metadata [table=").$(token).I$();
         }
 
         @Override
