@@ -67,7 +67,12 @@ public class FuzzTransactionGenerator {
 
         long lastTimestamp = minTimestamp;
 
-        double sumOfProbabilities = probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRemovingColumn + probabilityOfDataInsert + probabilityOfTruncate + probabilityOfColumnTypeChange;
+        double sumOfProbabilities = probabilityOfAddingNewColumn
+                + probabilityOfRemovingColumn
+                + probabilityOfRemovingColumn
+                + probabilityOfDataInsert
+                + probabilityOfTruncate
+                + probabilityOfColumnTypeChange;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
@@ -95,8 +100,21 @@ public class FuzzTransactionGenerator {
                 continue;
             }
 
-            double transactionType = rnd.nextDouble();
-            if (transactionType < probabilityOfRemovingColumn) {
+            // Only the first eligible "want" will be satisfied in this iteration
+            double rndDouble = rnd.nextDouble();
+            double aggregateProbability = 0.0;
+            aggregateProbability += probabilityOfRemovingColumn;
+            boolean wantToRemoveColumn = rndDouble < aggregateProbability;
+            aggregateProbability += probabilityOfRenamingColumn;
+            boolean wantToRenameColumn = rndDouble < aggregateProbability;
+            aggregateProbability += probabilityOfTruncate;
+            boolean wantToTruncateTable = rndDouble < aggregateProbability;
+            aggregateProbability += probabilityOfAddingNewColumn;
+            boolean wantToAddNewColumn = rndDouble < aggregateProbability;
+            aggregateProbability += probabilityOfColumnTypeChange;
+            boolean wantToChangeColumnType = rndDouble < aggregateProbability;
+
+            if (wantToRemoveColumn) {
                 // generate column remove
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {
@@ -105,7 +123,7 @@ public class FuzzTransactionGenerator {
                     waitBarrierVersion++;
                     meta = newTableMetadata;
                 }
-            } else if (transactionType < probabilityOfRemovingColumn + probabilityOfRenamingColumn) {
+            } else if (wantToRenameColumn) {
                 // generate column rename
                 RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {
@@ -114,13 +132,13 @@ public class FuzzTransactionGenerator {
                     waitBarrierVersion++;
                     meta = newTableMetadata;
                 }
-            } else if (transactionType < probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate) {
+            } else if (wantToTruncateTable) {
                 // generate truncate table
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
-            } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
+            } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 // generate column add
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
-            } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate + probabilityOfColumnTypeChange && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
+            } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
                 // generate column change type
                 meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedToalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else {
