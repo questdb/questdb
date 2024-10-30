@@ -65,6 +65,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         public void lock() {
             while (nReaders.incrementAndGet() >= MAX_READERS) {
                 nReaders.decrementAndGet();
+                Thread.yield();
             }
         }
 
@@ -98,7 +99,7 @@ public class SimpleReadWriteLock implements ReadWriteLock {
         @Override
         public void lock() {
             while (!lock.compareAndSet(false, true)) {
-                Os.pause();
+                Thread.yield();
             }
             int n = nReaders.addAndGet(MAX_READERS);
             while (n != MAX_READERS) {
@@ -140,6 +141,5 @@ public class SimpleReadWriteLock implements ReadWriteLock {
             nReaders.addAndGet(-MAX_READERS);
             lock.set(false);
         }
-
     }
 }
