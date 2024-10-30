@@ -53,8 +53,9 @@ public class FuzzTransactionGenerator {
             double probabilityOfRemovingColumn,
             double probabilityOfRenamingColumn,
             double probabilityOfColumnTypeChange,
-            double probabilityOfDataInsert,
             double probabilityOfTruncate,
+            double probabilityOfDropPartition,
+            double probabilityOfDataInsert,
             double probabilityOfSameTimestamp,
             int maxStrLenForStrColumns,
             String[] symbols,
@@ -69,15 +70,19 @@ public class FuzzTransactionGenerator {
 
         double sumOfProbabilities = probabilityOfAddingNewColumn
                 + probabilityOfRemovingColumn
-                + probabilityOfRemovingColumn
-                + probabilityOfDataInsert
+                + probabilityOfRenamingColumn
+                + probabilityOfColumnTypeChange
                 + probabilityOfTruncate
-                + probabilityOfColumnTypeChange;
+                + probabilityOfDropPartition
+                + probabilityOfDataInsert;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
         probabilityOfColumnTypeChange = probabilityOfColumnTypeChange / sumOfProbabilities;
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
+        probabilityOfDropPartition = probabilityOfDropPartition / sumOfProbabilities;
+        // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
+//        probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
 
         // To prevent long loops of cancelling rows, limit max probability of cancelling rows
         probabilityOfCancelRow = Math.min(probabilityOfCancelRow, 0.3);
@@ -100,22 +105,21 @@ public class FuzzTransactionGenerator {
                 continue;
             }
 
-            // Only the first eligible "want" will be satisfied in this iteration
             double rndDouble = rnd.nextDouble();
-            double aggregateProbability = 0.0;
-            aggregateProbability += probabilityOfRemovingColumn;
-            boolean wantToRemoveColumn = rndDouble < aggregateProbability;
-            aggregateProbability += probabilityOfRenamingColumn;
-            boolean wantToRenameColumn = rndDouble < aggregateProbability;
-            aggregateProbability += probabilityOfTruncate;
-            boolean wantToTruncateTable = rndDouble < aggregateProbability;
-            aggregateProbability += probabilityOfAddingNewColumn;
+            double aggregateProbability = probabilityOfAddingNewColumn;
             boolean wantToAddNewColumn = rndDouble < aggregateProbability;
+            aggregateProbability += probabilityOfRemovingColumn;
+            boolean wantToRemoveColumn = !wantToAddNewColumn && rndDouble < aggregateProbability;
+            aggregateProbability += probabilityOfRenamingColumn;
+            boolean wantToRenameColumn = !wantToRemoveColumn && rndDouble < aggregateProbability;
             aggregateProbability += probabilityOfColumnTypeChange;
-            boolean wantToChangeColumnType = rndDouble < aggregateProbability;
+            boolean wantToChangeColumnType = !wantToRenameColumn && rndDouble < aggregateProbability;
+            aggregateProbability += probabilityOfTruncate;
+            boolean wantToTruncateTable = !wantToChangeColumnType && rndDouble < aggregateProbability;
+            aggregateProbability += probabilityOfDropPartition;
+            boolean wantToDropPartition = !wantToTruncateTable && rndDouble < aggregateProbability;
 
             if (wantToRemoveColumn) {
-                // generate column remove
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {
                     // Sometimes there can be nothing to remove
@@ -124,7 +128,6 @@ public class FuzzTransactionGenerator {
                     meta = newTableMetadata;
                 }
             } else if (wantToRenameColumn) {
-                // generate column rename
                 RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {
                     // Sometimes there can be nothing to rename
@@ -133,13 +136,12 @@ public class FuzzTransactionGenerator {
                     meta = newTableMetadata;
                 }
             } else if (wantToTruncateTable) {
-                // generate truncate table
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
+            } else if (wantToDropPartition) {
+                // generate drop partition
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
-                // generate column add
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
-                // generate column change type
                 meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedToalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else {
                 // generate row set
@@ -232,6 +234,15 @@ public class FuzzTransactionGenerator {
             return metadata;
         }
         return null;
+    }
+
+    private static void generateDropPartition(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion) {
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transaction.operationList.add(new FuzzDropPartitionOperation());
+        transactionList.add(transaction);
     }
 
     private static int generateNewColumnType(Rnd rnd) {

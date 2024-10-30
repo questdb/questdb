@@ -29,7 +29,11 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.griffin.wal.AbstractFuzzTest;
@@ -56,8 +60,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0.1 * rnd.nextDouble(),
                 0.01,
                 0.0,
-                rnd.nextDouble()
-        );
+                rnd.nextDouble(),
+                0.0);
 
         partitionCount = 5 + rnd.nextInt(10);
         setFuzzCounts(
@@ -91,8 +95,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
                 0.1 * rnd.nextDouble(),
                 0.01,
                 0.0,
-                0.0
-        );
+                0.0,
+                0.0);
 
         partitionCount = 5 + rnd.nextInt(10);
         setFuzzCounts(

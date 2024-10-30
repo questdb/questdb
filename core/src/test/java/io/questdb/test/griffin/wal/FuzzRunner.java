@@ -93,6 +93,7 @@ public class FuzzRunner {
     private double notSetProb;
     private double nullSetProb;
     private int parallelWalCount;
+    private double partitionDropProb;
     private double rollbackProb;
     private long s0;
     private long s1;
@@ -397,8 +398,9 @@ public class FuzzRunner {
                 colRemoveProb,
                 colRenameProb,
                 colTypeChangeProb,
-                dataAddProb,
                 truncateProb,
+                0.0,
+                dataAddProb,
                 equalTsRowsProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
@@ -452,6 +454,7 @@ public class FuzzRunner {
             double colRenameProb,
             double colTypeChangeProb,
             double dataAddProb,
+            double partitionDropProb,
             double truncateProb,
             double tableDropProb,
             double equalTsRowsProb
@@ -465,6 +468,7 @@ public class FuzzRunner {
         this.colRenameProb = colRenameProb;
         this.colTypeChangeProb = colTypeChangeProb;
         this.dataAddProb = dataAddProb;
+        this.partitionDropProb = partitionDropProb;
         this.truncateProb = truncateProb;
         this.tableDropProb = tableDropProb;
         this.equalTsRowsProb = equalTsRowsProb;
@@ -889,9 +893,11 @@ public class FuzzRunner {
                         rnd.nextDouble(),
                         rnd.nextDouble(),
                         rnd.nextDouble(),
-                        0.1 * rnd.nextDouble(), 0.01,
                         rnd.nextDouble(),
-                        rnd.nextDouble()
+                        0.0,
+                        0.1 * rnd.nextDouble(),
+                        rnd.nextDouble(),
+                        0.01
                 );
             }
             if (randomiseCounts) {

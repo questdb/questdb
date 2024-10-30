@@ -144,10 +144,11 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     rnd.nextDouble(),
                     rnd.nextDouble(),
                     rnd.nextDouble(),
-                    rnd.nextDouble(),
                     // do not generate truncate on windows because it cannot be executed
                     // successfully due to readers being open
                     Os.type == Os.WINDOWS ? 0 : 0.2, // insert only
+                    0.0,
+                    rnd.nextDouble(),
                     0,
                     5,
                     new String[]{"ABC", "CDE", "XYZ"},
