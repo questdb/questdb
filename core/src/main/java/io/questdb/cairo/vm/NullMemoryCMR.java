@@ -47,6 +47,10 @@ public class NullMemoryCMR implements MemoryCMR {
     }
 
     @Override
+    public void changeSize(long dataSize) {
+    }
+
+    @Override
     public void close() {
     }
 

@@ -702,6 +702,44 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByCorrelation() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(corr(adouble, along), 14) FROM tab", "round\n" +
+                "-0.01506463207666\n");
+    }
+
+    @Test
+    public void testParallelGroupByCovariance() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(covar_samp(adouble, along), 14) FROM tab", "round\n" +
+                        "-92233.72036854776\n",
+                "SELECT round(covar_pop(adouble, along), 13) FROM tab", "round\n" +
+                        "-922337.2036854776\n");
+    }
+
+    @Test
+    public void testParallelGroupByStdDev() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(stddev_samp(adouble), 14) FROM tab", "round\n" +
+                        "0.2851973374189\n",
+                "SELECT round(stddev(adouble), 14) FROM tab", "round\n" +
+                        "0.2851973374189\n",
+                "SELECT round(stddev_pop(adouble), 13) FROM tab", "round\n" +
+                        "0.28515456316480003\n");
+    }
+
+    @Test
+    public void testParallelGroupByVariance() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(var_samp(adouble), 14) FROM tab", "round\n" +
+                        "0.08133752127083\n",
+                "SELECT round(variance(adouble), 14) FROM tab", "round\n" +
+                        "0.08133752127083\n",
+                "SELECT round(var_pop(adouble), 13) FROM tab", "round\n" +
+                        "0.0813131248937\n");
+    }
+
+    @Test
     public void testParallelJsonKeyGroupBy() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -1557,6 +1595,42 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "false\tnull\n" +
                         "true\t8202000.0\n"
         );
+    }
+
+    @Test
+    public void testParallelRegressionSlope() throws Exception {
+        Assume.assumeTrue(enableJitCompiler);
+
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        ddl(
+                                compiler,
+                                "create table tbl1 as (select rnd_double() x, rnd_double() y, rnd_symbol('a', 'b', 'c') sym from long_sequence(100000))",
+                                sqlExecutionContext
+                        );
+
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "select round(regr_slope(x, y), 5), sym from tbl1 WHERE x > 0.5 ORDER BY sym",
+                                sink,
+                                "round\tsym\n" +
+                                        "-0.00317\ta\n" +
+                                        "-0.00402\tb\n" +
+                                        "0.00476\tc\n"
+                        );
+                    },
+                    configuration,
+
+                    LOG
+            );
+        });
+
     }
 
     @Test

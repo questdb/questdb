@@ -69,7 +69,7 @@ public final class Files {
     private static final AtomicInteger fdCounter = new AtomicInteger();
     private static final LongHashSet openFds = new LongHashSet();
     // To be set in tests to check every call for using OPEN file descriptor
-    public static boolean PARANOIA_FD_MODE = true;
+    public static boolean PARANOIA_FD_MODE = false;
     public static boolean VIRTIO_FS_DETECTED = false;
 
     private Files() {

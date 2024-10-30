@@ -25,6 +25,7 @@ struct TestCase {
     prepare: Option<Vec<Step>>,
     steps: Vec<Step>,
     teardown: Option<Vec<Step>>,
+    iterations: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,8 +88,10 @@ async fn main() -> TestResult<()> {
     let yaml_content = fs::read_to_string(&yaml_file).map_err(|e| TestError::InputError(e.to_string()))?;
     let test_file: TestFile = serde_yaml::from_str(&yaml_content).map_err(|e| TestError::InputError(e.to_string()))?;
 
+    let port = env::var("PGPORT").unwrap_or_else(|_| "8812".to_string());
+    let connection_string = format!("host=localhost port={} user=admin password=quest dbname=qdb", port);
     let (client, connection) = tokio_postgres::connect(
-        "host=localhost port=8812 user=admin password=quest dbname=qdb",
+        &connection_string,
         NoTls,
     )
         .await?;
@@ -111,8 +114,12 @@ async fn main() -> TestResult<()> {
 async fn run_tests(client: &Client, test_file: &TestFile) -> TestResult<bool> {
     let mut all_tests_passed = true;
     for test in &test_file.tests {
-        if !run_test(client, &test_file.variables, test).await? {
-            all_tests_passed = false;
+        let iterations = test.iterations.unwrap_or(50);
+        for i in 0..iterations {
+            println!("Running test '{}' (iteration {})", test.name, i);
+            if !run_test(client, &test_file.variables, test).await? {
+                all_tests_passed = false;
+            }
         }
     }
     Ok(all_tests_passed)
