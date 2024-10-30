@@ -2812,6 +2812,36 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteVwapWithUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            String query = "(select timestamp, symbol, vwap(price, amount) from trades sample by 1d) " +
+                    "union" +
+                    "(select timestamp, symbol, 5.2 as vwap from trades)";
+            assertPlanNoLeakCheck(query, "Union\n" +
+                    "    GroupBy vectorized: false\n" +
+                    "      keys: [timestamp,symbol]\n" +
+                    "      values: [vwap(timestamp,typical_price,volume)]\n" +
+                    "        Radix sort light\n" +
+                    "          keys: [timestamp]\n" +
+                    "            VirtualRecord\n" +
+                    "              functions: [timestamp,symbol,min+max+last/3,volume]\n" +
+                    "                Async Group By workers: 1\n" +
+                    "                  keys: [timestamp,symbol]\n" +
+                    "                  values: [min(price),last(price),max(price),sum(amount)]\n" +
+                    "                  filter: null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: trades\n" +
+                    "    VirtualRecord\n" +
+                    "      functions: [timestamp,symbol,5.2]\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: trades\n");
+        });
+    }
+
+    @Test
     public void testSampleByFromToBasicWhereOptimisationBetween() throws Exception {
         assertMemoryLeak(() -> {
             ddl(SampleByTest.DDL_FROMTO);

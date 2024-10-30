@@ -264,40 +264,37 @@ public class SqlOptimiser implements Mutable {
     // select-choose timestamp, symbol, vwap(price,amount) vwap from
     // (trades timestamp (timestamp) sample by 8h align to calendar with offset '00:00')
     public QueryModel rewriteVwap(QueryModel model) throws SqlException {
-        QueryModel current = model;
         boolean validModel = false;
 
-        while (current != null && !validModel) {
-            if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
-                for (int i = 0, n = current.getColumns().size(); i < n; i++) {
-                    final QueryColumn column = current.getColumns().getQuick(i);
-                    final ExpressionNode ast = column.getAst();
-
-                    // if it matches vwap(price, amount)
-                    if (isSingleShotVwap(ast)) {
-                        QueryModel nested = current.getNestedModel();
-
-                        if (nested != null && nested.getSampleBy() != null) {
-                            // todo: might need more conditions before this.
-                            validModel = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if (validModel) {
-                break;
-            }
-            current = current.getNestedModel();
-        }
-
-        if (current == null) {
+        if (model == null) {
             return model;
         }
 
-        QueryModel originalSelectChoose = current;
-        QueryModel originalSelectNone = current.getNestedModel();
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
+            for (int i = 0, n = model.getColumns().size(); i < n; i++) {
+                final QueryColumn column = model.getColumns().getQuick(i);
+                final ExpressionNode ast = column.getAst();
+
+                // if it matches vwap(price, amount)
+                if (isSingleShotVwap(ast)) {
+                    QueryModel nested = model.getNestedModel();
+
+                    if (nested != null && nested.getSampleBy() != null) {
+                        // todo: might need more conditions before this.
+                        validModel = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!validModel) {
+            model.setNestedModel(rewriteVwap(model.getNestedModel()));
+            return model;
+        }
+
+        QueryModel originalSelectChoose = model;
+        QueryModel originalSelectNone = model.getNestedModel();
 
         QueryModel outerSelectChoose = queryModelPool.next();
         outerSelectChoose.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
