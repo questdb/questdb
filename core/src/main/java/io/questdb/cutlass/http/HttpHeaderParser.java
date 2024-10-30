@@ -24,19 +24,31 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHeader {
     private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
-    // in theory, it is possible to send multiple cookies on separate lines in the header
-    // if we used more cookies, the below map would need to hold a list of CharSequences
     private final LowerCaseUtf8SequenceObjHashMap<DirectUtf8String> headers = new LowerCaseUtf8SequenceObjHashMap<>();
     private final long hi;
     private final ObjectPool<DirectUtf8String> pool;
     private final DirectUtf8String temp = new DirectUtf8String();
+    private final ObjList<DirectUtf8String> unparsedCookies = new ObjList<>();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
     protected boolean incomplete;
     protected Utf8Sequence url;
@@ -102,6 +114,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.isStatusText = true;
         this.needProtocol = true;
         this.contentLength = -1;
+        this.unparsedCookies.clear();
         // do not clear the pool
         // this.pool.clear();
     }
@@ -187,6 +200,10 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         return statusText;
     }
 
+    public ObjList<DirectUtf8String> getUnparsedCookies() {
+        return unparsedCookies;
+    }
+
     @Override
     public Utf8Sequence getUrl() {
         return url;
@@ -257,8 +274,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     }
                     v = pool.next().of(_lo, _wptr - 1);
                     _lo = _wptr;
-                    boolean added = headers.put(headerName, v);
-                    assert added : "duplicate header [" + headerName + "]";
+                    if (Utf8s.equalsAscii("Set-Cookie", headerName)) {
+                        unparsedCookies.add(v);
+                    } else {
+                        headers.put(headerName, v);
+                    }
                     headerName = null;
                     break;
                 default:

@@ -460,6 +460,37 @@ public class HttpHeaderParserTest {
     }
 
     @Test
+    public void testMultipleCookies() {
+        String v = "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>; Domain=<domain-value>\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>; Expires=<date>\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>; HttpOnly\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>; Max-Age=<number>\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>; Partitioned\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>; Path=<path-value>\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>; Secure\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>; SameSite=Strict\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>; SameSite=Lax\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>; SameSite=None; Secure\r\n" +
+                "Set-Cookie: <cookie-name>=<cookie-value>; Domain=<domain-value>; Secure; HttpOnly\r\n" +
+                "\r\n";
+        long p = TestUtils.toMemory(v);
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            hp.parse(p, p + v.length(), true, false);
+            TestUtils.assertEquals("a", hp.getUrlParam(new Utf8String("x")));
+            TestUtils.assertEquals("b c", hp.getUrlParam(new Utf8String("y")));
+            TestUtils.assertEquals("123", hp.getUrlParam(new Utf8String("z")));
+            TestUtils.assertEquals(
+                    "[<cookie-name>=<cookie-value>,<cookie-name>=<cookie-value>; Domain=<domain-value>,<cookie-name>=<cookie-value>; Expires=<date>,<cookie-name>=<cookie-value>; HttpOnly,<cookie-name>=<cookie-value>; Max-Age=<number>,<cookie-name>=<cookie-value>; Partitioned,<cookie-name>=<cookie-value>; Path=<path-value>,<cookie-name>=<cookie-value>; Secure,<cookie-name>=<cookie-value>; SameSite=Strict,<cookie-name>=<cookie-value>; SameSite=Lax,<cookie-name>=<cookie-value>; SameSite=None; Secure,<cookie-name>=<cookie-value>; Domain=<domain-value>; Secure; HttpOnly]",
+                    hp.getUnparsedCookies().toString()
+            );
+        } finally {
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testUrlParamsDecodeTrailingSpace() {
         String v = "GET /xyz?x=a&y=b+c HTTP/1.1";
         long p = TestUtils.toMemory(v);
