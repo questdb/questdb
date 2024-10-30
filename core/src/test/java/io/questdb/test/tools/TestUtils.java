@@ -677,17 +677,65 @@ public final class TestUtils {
         assertSqlCursors(compiler, sqlExecutionContext, expected, actual, log, false);
     }
 
-    public static void assertSqlCursors(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence expected, CharSequence actual, Log log, boolean genericStringMatch) throws SqlException {
-        try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory()) {
-            try (RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()) {
-                try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext)) {
-                    try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
+    public static void assertSqlCursors(
+            SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
+            CharSequence expected, CharSequence actual, Log log, boolean genericStringMatch
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(expected, sqlExecutionContext).getRecordCursorFactory();
+             RecordCursorFactory factory2 = compiler.compile(actual, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
+                 RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)
+            ) {
+                assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), genericStringMatch);
+            } catch (AssertionError e) {
+                log.error().$(e).$();
+                try (RecordCursor expectedCursor = factory.getCursor(sqlExecutionContext);
+                     RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)
+                ) {
+                    log.xDebugW().$();
+
+                    LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
+                    LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
+                    CursorPrinter.printHeader(factory.getMetadata(), recordSinkAdapter.of(record));
+                    record.$();
+                    CursorPrinter.println(expectedCursor, factory.getMetadata(), false, log);
+
+                    record = log.xDebugW().$("> but was:<");
+                    CursorPrinter.printHeader(factory2.getMetadata(), recordSinkAdapter.of(record));
+                    record.$();
+
+                    CursorPrinter.println(actualCursor, factory2.getMetadata(), false, log);
+                    log.xDebugW().$(">").$();
+                }
+                throw e;
+            }
+        }
+    }
+
+    public static void assertSqlCursors(
+            QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual,
+            Log log, boolean genericStringMatch
+    ) throws SqlException {
+        try (SqlCompiler compiler = node.getEngine().getSqlCompiler();
+             RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext())
+                     .getRecordCursorFactory()
+        ) {
+            for (int i = 0, n = nodes.size(); i < n; i++) {
+                final QuestDBTestNode dbNode = nodes.get(i);
+                try (SqlCompiler compiler2 = dbNode.getEngine().getSqlCompiler();
+                     RecordCursorFactory factory2 = compiler2.compile(actual, dbNode.getSqlExecutionContext())
+                             .getRecordCursorFactory()
+                ) {
+                    try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext());
+                         RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())
+                    ) {
                         assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), genericStringMatch);
-                    }
-                } catch (AssertionError e) {
-                    log.error().$(e).$();
-                    try (RecordCursor expectedCursor = factory.getCursor(sqlExecutionContext)) {
-                        try (RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)) {
+                    } catch (AssertionError e) {
+                        log.error().$(e).$();
+                        try (RecordCursor expectedCursor = factory.getCursor(node.getSqlExecutionContext());
+                             RecordCursor actualCursor = factory2.getCursor(dbNode.getSqlExecutionContext())
+                        ) {
                             log.xDebugW().$();
 
                             LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
@@ -702,42 +750,6 @@ public final class TestUtils {
 
                             CursorPrinter.println(actualCursor, factory2.getMetadata(), false, log);
                             log.xDebugW().$(">").$();
-                        }
-                    }
-                    throw e;
-                }
-            }
-        }
-    }
-
-    public static void assertSqlCursors(QuestDBTestNode node, ObjList<QuestDBTestNode> nodes, String expected, String actual, Log log, boolean genericStringMatch) throws SqlException {
-        try (SqlCompiler compiler = node.getEngine().getSqlCompiler(); RecordCursorFactory factory = compiler.compile(expected, node.getSqlExecutionContext()).getRecordCursorFactory()) {
-            for (int i = 0, n = nodes.size(); i < n; i++) {
-                final QuestDBTestNode dbNode = nodes.get(i);
-                try (SqlCompiler compiler2 = dbNode.getEngine().getSqlCompiler(); RecordCursorFactory factory2 = compiler2.compile(actual, dbNode.getSqlExecutionContext()).getRecordCursorFactory()) {
-                    try (RecordCursor cursor1 = factory.getCursor(node.getSqlExecutionContext())) {
-                        try (RecordCursor cursor2 = factory2.getCursor(dbNode.getSqlExecutionContext())) {
-                            assertEquals(cursor1, factory.getMetadata(), cursor2, factory2.getMetadata(), genericStringMatch);
-                        }
-                    } catch (AssertionError e) {
-                        log.error().$(e).$();
-                        try (RecordCursor expectedCursor = factory.getCursor(node.getSqlExecutionContext())) {
-                            try (RecordCursor actualCursor = factory2.getCursor(dbNode.getSqlExecutionContext())) {
-                                log.xDebugW().$();
-
-                                LogRecordSinkAdapter recordSinkAdapter = new LogRecordSinkAdapter();
-                                LogRecord record = log.xDebugW().$("java.lang.AssertionError: expected:<");
-                                CursorPrinter.printHeader(factory.getMetadata(), recordSinkAdapter.of(record));
-                                record.$();
-                                CursorPrinter.println(expectedCursor, factory.getMetadata(), false, log);
-
-                                record = log.xDebugW().$("> but was:<");
-                                CursorPrinter.printHeader(factory2.getMetadata(), recordSinkAdapter.of(record));
-                                record.$();
-
-                                CursorPrinter.println(actualCursor, factory2.getMetadata(), false, log);
-                                log.xDebugW().$(">").$();
-                            }
                         }
                         throw e;
                     }
