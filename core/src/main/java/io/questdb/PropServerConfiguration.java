@@ -145,7 +145,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final BuildInformation buildInformation;
     private final boolean cairoAttachPartitionCopy;
     private final String cairoAttachPartitionSuffix;
-    private final long cairoCommitLatencyMicros;
+    private final long cairoCommitLatency;
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final int cairoGroupByMergeShardQueueCapacity;
     private final boolean cairoGroupByPresizeEnabled;
@@ -741,7 +741,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
-        this.cairoCommitLatencyMicros = getMicros(properties, env, PropertyKey.CAIRO_COMMIT_LATENCY_MICROS, 30_000_000);
+        this.cairoCommitLatency = getMicros(properties, env, PropertyKey.CAIRO_COMMIT_LATENCY, 30_000_000);
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "");
         this.checkpointRecoveryEnabled = getBoolean(
@@ -2286,8 +2286,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getCommitLatencyMicros() {
-            return cairoCommitLatencyMicros;
+        public long getCommitLatency() {
+            return cairoCommitLatency;
         }
 
         @Override
