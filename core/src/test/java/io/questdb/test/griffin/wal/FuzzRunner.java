@@ -399,7 +399,7 @@ public class FuzzRunner {
                 colRenameProb,
                 colTypeChangeProb,
                 truncateProb,
-                0.0,
+                partitionDropProb,
                 dataAddProb,
                 equalTsRowsProb,
                 strLen,
