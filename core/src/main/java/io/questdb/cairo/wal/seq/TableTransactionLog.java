@@ -51,20 +51,18 @@ public class TableTransactionLog implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
     private static final ThreadLocal<AlterOperation> tlAlterOperation = new ThreadLocal<>();
     private static final ThreadLocal<TableMetadataChangeLogImpl> tlStructChangeCursor = new ThreadLocal<>();
-    private final int defaultSeqPartTxnCount;
     private final FilesFacade ff;
     private final AtomicLong maxMetadataVersion = new AtomicLong();
-    private final int mkDirMode;
     private final Utf8StringSink rootPath = new Utf8StringSink();
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
     private TableTransactionLogFile txnLogFile;
     private volatile long lastTxn = -1;
+    private final CairoConfiguration configuration;
 
-    TableTransactionLog(FilesFacade ff, int mkDirMode, int defaultSeqPartTxnCount) {
-        this.ff = ff;
-        this.defaultSeqPartTxnCount = defaultSeqPartTxnCount;
-        this.mkDirMode = mkDirMode;
+    TableTransactionLog(CairoConfiguration configuration) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
     }
 
     @Override
@@ -81,10 +79,10 @@ public class TableTransactionLog implements Closeable {
         return true;
     }
 
-    public void sync() {
+    public void fullSync() {
         txnMetaMemIndex.sync(false);
         txnMetaMem.sync(false);
-        txnLogFile.sync();
+        txnLogFile.fullSync();
     }
 
     public static long readMaxStructureVersion(FilesFacade ff, Path path) {
@@ -127,22 +125,16 @@ public class TableTransactionLog implements Closeable {
     }
 
     private static long openFileRO(final FilesFacade ff, final Path path, final String fileName) {
-        final int rootLen = path.size();
-        path.concat(fileName);
-        try {
-            return TableUtils.openRO(ff, path.$(), LOG);
-        } finally {
-            path.trimTo(rootLen);
-        }
+        return TableUtils.openRO(ff, path, fileName, LOG);
     }
 
-    private static TableTransactionLogFile openTxnFile(Path path, FilesFacade ff, int mkDirMode) {
-        int formatVersion = getFormatVersion(path, ff);
+    private static TableTransactionLogFile openTxnFile(Path path, CairoConfiguration configuration) {
+        int formatVersion = getFormatVersion(path, configuration.getFilesFacade());
         switch (formatVersion) {
             case WAL_SEQUENCER_FORMAT_VERSION_V1:
-                return new TableTransactionLogV1(ff);
+                return new TableTransactionLogV1(configuration);
             case WAL_SEQUENCER_FORMAT_VERSION_V2:
-                return new TableTransactionLogV2(ff, -1, mkDirMode);
+                return new TableTransactionLogV2(configuration, -1);
             default:
                 throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
         }
@@ -150,10 +142,10 @@ public class TableTransactionLog implements Closeable {
 
     private void createTxnLogFileInstance() {
         if (txnLogFile == null) {
-            if (defaultSeqPartTxnCount > 0) {
-                txnLogFile = new TableTransactionLogV2(ff, defaultSeqPartTxnCount, mkDirMode);
+            if (configuration.getDefaultSeqPartTxnCount() > 0) {
+                txnLogFile = new TableTransactionLogV2(configuration, configuration.getDefaultSeqPartTxnCount());
             } else {
-                txnLogFile = new TableTransactionLogV1(ff);
+                txnLogFile = new TableTransactionLogV1(configuration);
             }
         } else {
             throw new IllegalStateException("transaction log file already opened");
@@ -202,10 +194,8 @@ public class TableTransactionLog implements Closeable {
     }
 
     long endMetadataChangeEntry() {
-        sync();
-
+        fullSync();
         Unsafe.getUnsafe().storeFence();
-
         long txn = lastTxn = txnLogFile.endMetadataChangeEntry();
         maxMetadataVersion.incrementAndGet();
         return txn;
@@ -235,7 +225,7 @@ public class TableTransactionLog implements Closeable {
             assert txnLogFile == null;
             this.rootPath.put(path);
 
-            txnLogFile = openTxnFile(path, ff, mkDirMode);
+            txnLogFile = openTxnFile(path, configuration);
             long maxStructureVersion = txnLogFile.open(path);
 
             openFiles(path);
