@@ -657,4 +657,62 @@ public class ParquetTest extends AbstractCairoTest {
                     "33\t2020-01-03T00:00:00.000000Z\n", "x");
         });
     }
+
+    @Test
+    public void testDedupKeysPGTest() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (x int, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts);");
+
+            insert("insert into x(x, ts)\n" +
+                    "values\n" +
+                    "(1, '2020-01-01T00:00:00.000Z'),\n" +
+                    "(-1, '2020-01-01T00:00:00.000Z'),\n" +
+                    "(10, '2020-01-03T00:00:00.000Z'),\n" +
+                    "(2, '2020-01-01T00:00:00.000Z'),\n" +
+                    "(1, '2020-01-02T00:00:00.000Z'),\n" +
+                    "(-1, '2020-01-02T00:00:00.000Z'),\n" +
+                    "(3, '2020-01-01T00:00:00.000Z'),\n" +
+                    "(20, '2020-01-03T00:00:00.000Z');");
+
+            drainWalQueue();
+
+            assertSql("x\tts\n" +
+                    "3\t2020-01-01T00:00:00.000000Z\n" +
+                    "-1\t2020-01-02T00:00:00.000000Z\n" +
+                    "20\t2020-01-03T00:00:00.000000Z\n", "x");
+
+            drainWalQueue();
+
+            ddl("alter table x convert partition to parquet list '2020-01-02';");
+            assertSql("x\tts\n" +
+                    "3\t2020-01-01T00:00:00.000000Z\n" +
+                    "-1\t2020-01-02T00:00:00.000000Z\n" +
+                    "20\t2020-01-03T00:00:00.000000Z\n", "x");
+
+            drainWalQueue();
+
+            insert("insert into x(x, ts)\n" +
+                    "values\n" +
+                    "(1, '2020-01-01T00:00:00.000Z'),\n" +
+                    "(-1, '2020-01-01T00:00:00.000Z'),\n" +
+                    "(10, '2020-01-03T00:00:00.000Z'),\n" +
+                    "(2, '2020-01-01T00:00:00.000Z'),\n" +
+                    "(1, '2020-01-02T00:00:00.000Z'),\n" +
+                    "(-1, '2020-01-02T00:00:00.000Z'),\n" +
+                    "(0, '2020-01-02T00:00:00.000Z'),\n" +
+                    "(3, '2020-01-01T00:00:00.000Z'),\n" +
+                    "(4, '2020-01-01T00:00:00.000Z'),\n" +
+                    "(20, '2020-01-03T00:00:00.000Z'),\n" +
+                    "(21, '2020-01-03T00:00:00.000Z');");
+
+            drainWalQueue();
+
+            //            need to release readers for non wal mode
+            //            engine.releaseAllReaders();
+            assertSql("x\tts\n" +
+                    "4\t2020-01-01T00:00:00.000000Z\n" +
+                    "0\t2020-01-02T00:00:00.000000Z\n" +
+                    "21\t2020-01-03T00:00:00.000000Z\n", "x");
+        });
+    }
 }
