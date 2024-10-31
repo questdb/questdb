@@ -30,7 +30,7 @@ import io.questdb.std.str.DirectUtf8String;
 public class HttpCookie implements Mutable {
     public DirectUtf8String cookieName;
     public DirectUtf8String domain;
-    public long expires;
+    public long expires = -1L;
     public boolean httpOnly;
     public long maxAge;
     public boolean partitioned;
@@ -42,14 +42,18 @@ public class HttpCookie implements Mutable {
     @Override
     public void clear() {
         this.domain = null;
-        this.expires = 0;
+        this.expires = -1L;
         this.httpOnly = false;
-        this.maxAge = 0;
+        this.maxAge = 0L;
         this.partitioned = false;
         this.path = null;
         this.sameSite = null;
         this.secure = false;
         this.value = null;
         this.cookieName = null;
+    }
+
+    public boolean isDeleted() {
+        return expires == 0L;
     }
 }
