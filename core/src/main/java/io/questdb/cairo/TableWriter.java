@@ -2088,6 +2088,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
                         // Too many uncommitted transactions in LAG
                         || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount())
+                        // when the time between commits is too long we need to commit regardless of the row count or volume filled
+                        // this is to bring the latency of data visibility inline with user expectations
                         || (configuration.getMicrosecondClock().getTicks() - lastWalCommitTimestampMicros > configuration.getCommitLatency());
 
                 boolean canFastCommit = indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
