@@ -70,6 +70,7 @@ import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
@@ -92,9 +93,8 @@ import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
-public class PGPipelineEntry implements QuietCloseable {
-    final boolean isCopy;
-    private final CompiledQueryImpl compiledQuery;
+public class PGPipelineEntry implements QuietCloseable, Mutable {
+    private final CompiledQueryImpl compiledQueryCopy;
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
     private final int maxRecompileAttempts;
@@ -109,7 +109,9 @@ public class PGPipelineEntry implements QuietCloseable {
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final ObjList<CharSequence> portalNames = new ObjList<>();
+    boolean isCopy;
     private boolean cacheHit = false;    // extended protocol cursor resume callback
+    private CompiledQueryImpl compiledQuery;
     private RecordCursor cursor;
     private boolean empty;
     private boolean error = false;
@@ -165,25 +167,11 @@ public class PGPipelineEntry implements QuietCloseable {
         this.isCopy = false;
         this.engine = engine;
         this.compiledQuery = new CompiledQueryImpl(engine);
+        this.compiledQueryCopy = compiledQuery;
         this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.msgParseParameterTypeOIDs = new IntList();
         this.outParameterTypeDescriptionTypeOIDs = new IntList();
         this.pgResultSetColumnTypes = new IntList();
-    }
-
-    private PGPipelineEntry(
-            CairoEngine engine,
-            CompiledQueryImpl compiledQuery,
-            IntList msgParseParameterTypeOIDs,
-            IntList outParameterTypeDescriptionTypeOIDs,
-            IntList pgResultSetColumnTypes) {
-        this.isCopy = true;
-        this.engine = engine;
-        this.compiledQuery = compiledQuery;
-        this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
-        this.msgParseParameterTypeOIDs = msgParseParameterTypeOIDs;
-        this.outParameterTypeDescriptionTypeOIDs = outParameterTypeDescriptionTypeOIDs;
-        this.pgResultSetColumnTypes = pgResultSetColumnTypes;
     }
 
     public static void freePendingWriters(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters, boolean commit) {
@@ -213,7 +201,8 @@ public class PGPipelineEntry implements QuietCloseable {
         }
 
         if (tas != null) {
-            tasCache.put(Chars.toString(sqlText), tas);
+            // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
+            tasCache.put(sqlText, tas);
             tas = null;
             // close cursor in case it is open
             cursor = Misc.free(cursor);
@@ -227,15 +216,30 @@ public class PGPipelineEntry implements QuietCloseable {
     }
 
     @Override
+    public void clear() {
+        clearForPooling();
+    }
+
+    @Override
     public void close() {
         cursor = Misc.free(cursor);
         factory = Misc.free(factory);
-        insertOp = Misc.free(insertOp);
-        Misc.free(compiledQuery.getUpdateOperation());
         if (parameterValueArenaPtr != 0) {
             Unsafe.free(parameterValueArenaPtr, parameterValueArenaHi - parameterValueArenaPtr, MemoryTag.NATIVE_PGW_PIPELINE);
             parameterValueArenaPtr = 0;
         }
+        if (!isCopy) {
+            insertOp = Misc.free(insertOp);
+            Misc.free(compiledQuery.getUpdateOperation());
+            // hack: remove me!
+        }
+        outParameterTypeDescriptionTypeOIDs.clear();
+        msgParseParameterTypeOIDs.clear();
+        pgResultSetColumnTypes.clear();
+        portalNames.clear();
+        errorMessageSink.clear();
+        tai = null;
+        tas = null;
     }
 
     public void compileNewSQL(
@@ -272,30 +276,13 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    public @NotNull PGPipelineEntry copyIfExecuted() {
+    public @NotNull PGPipelineEntry copyIfExecuted(ObjectPool<PGPipelineEntry> entryPool) {
         if (!stateExec) {
             return this;
         }
-        PGPipelineEntry newEntry = new PGPipelineEntry(
-                engine,
-                compiledQuery,
-                msgParseParameterTypeOIDs,
-                outParameterTypeDescriptionTypeOIDs,
-                pgResultSetColumnTypes
-        );
-        // copy only the fields set at the PARSE time
-        newEntry.cacheHit = cacheHit;
-        newEntry.empty = empty;
-        newEntry.insertOp = insertOp;
-        newEntry.parentPreparedStatementPipelineEntry = parentPreparedStatementPipelineEntry;
-        newEntry.preparedStatement = preparedStatement;
-        newEntry.preparedStatementName = preparedStatementName;
-        newEntry.sqlTag = sqlTag;
-        newEntry.sqlText = sqlText;
-        newEntry.sqlType = sqlType;
-        newEntry.sqlTextHasSecret = sqlTextHasSecret;
-        newEntry.tai = tai;
-        newEntry.tas = tas;
+
+        PGPipelineEntry newEntry = entryPool.next();
+        newEntry.copyOf(this);
         return newEntry;
     }
 
@@ -356,6 +343,10 @@ public class PGPipelineEntry implements QuietCloseable {
 
     public boolean isPreparedStatement() {
         return preparedStatement;
+    }
+
+    public boolean isStateClosed() {
+        return stateClosed;
     }
 
     public boolean isStateExec() {
@@ -826,10 +817,12 @@ public class PGPipelineEntry implements QuietCloseable {
         this.stateBind = stateBind;
     }
 
-    public void setStateClosed(boolean stateClosed) {
+    public void setStateClosed(boolean stateClosed, boolean isStatementClose) {
         this.stateClosed = stateClosed;
         this.portal = false;
-        this.preparedStatement = false;
+        if (isStatementClose) {
+            this.preparedStatement = false;
+        }
     }
 
     public void setStateDesc(int stateDesc) {
@@ -938,6 +931,31 @@ public class PGPipelineEntry implements QuietCloseable {
                 bindVariableService.define(j, ColumnType.STRING, 0);
                 break;
         }
+    }
+
+    private void copyOf(PGPipelineEntry blueprint) {
+        this.msgParseParameterTypeOIDs.clear();
+        this.msgParseParameterTypeOIDs.addAll(blueprint.msgParseParameterTypeOIDs);
+
+        this.outParameterTypeDescriptionTypeOIDs.clear();
+        this.outParameterTypeDescriptionTypeOIDs.addAll(blueprint.outParameterTypeDescriptionTypeOIDs);
+
+        this.compiledQuery = blueprint.compiledQuery;
+
+        // copy only the fields set at the PARSE time
+        this.isCopy = true;
+        this.cacheHit = blueprint.cacheHit;
+        this.empty = blueprint.empty;
+        this.insertOp = blueprint.insertOp;
+        this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
+        this.preparedStatement = blueprint.preparedStatement;
+        this.preparedStatementName = blueprint.preparedStatementName;
+        this.sqlTag = blueprint.sqlTag;
+        this.sqlText = blueprint.sqlText;
+        this.sqlType = blueprint.sqlType;
+        this.sqlTextHasSecret = blueprint.sqlTextHasSecret;
+        this.tai = blueprint.tai;
+        this.tas = blueprint.tas;
     }
 
     private void copyParameterValuesToBindVariableService(
@@ -2221,6 +2239,21 @@ public class PGPipelineEntry implements QuietCloseable {
             error = true;
             throw kaput().put("cached plan must not change result type");
         }
+    }
+
+    void clearForPooling() {
+        clearState();
+        sqlReturnRowCountLimit = 0;
+        sqlReturnRowCountToBeSent = 0;
+        parameterValueArenaHi = parameterValueArenaPtr;
+        compiledQuery = compiledQueryCopy;
+        isCopy = false;
+        preparedStatement = false;
+        preparedStatementName = null;
+        portal = false;
+        portalName = null;
+        sqlType = 0;
+        sqlTag = null;
     }
 
     void clearState() {

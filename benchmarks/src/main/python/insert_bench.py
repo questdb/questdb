@@ -31,7 +31,7 @@ async def create_table(pool):
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS user_data (
                 name SYMBOL,
-                email SYMBOL,
+                email VARCHAR,
                 age LONG,
                 created_at TIMESTAMP
             ) timestamp(created_at) partition by hour;

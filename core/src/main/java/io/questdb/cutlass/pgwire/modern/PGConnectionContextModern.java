@@ -151,6 +151,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
+    private final ObjectPool<PGPipelineEntry> entryPool;
     private final int forceRecvFragmentationChunkSize;
     private final int forceSendFragmentationChunkSize;
     private final int maxBlobSize;
@@ -224,6 +225,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
             this.metrics = engine.getMetrics();
             this.tasCache = tasCache;
+            this.entryPool = new ObjectPool<>(() -> new PGPipelineEntry(engine), 4);
             final boolean enableInsertCache = configuration.isInsertCacheEnabled();
             final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
             final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
@@ -284,16 +286,25 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     public void clear() {
         super.clear();
 
+        do {
+            if (pipelineCurrentEntry != null) {
+                // do not return named portals and statements, since they are returned later
+                if (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal()) {
+                    Misc.free(pipelineCurrentEntry);
+                    pipelineCurrentEntry.clearForPooling();
+                    entryPool.release(pipelineCurrentEntry);
+                }
+            }
+        } while ((pipelineCurrentEntry = pipeline.poll()) != null);
+
         // clear named statements and named portals
-        freePipelineEntriesFrom(namedStatements);
-        freePipelineEntriesFrom(namedPortals);
+        freePipelineEntriesFrom(namedStatements, true);
+        freePipelineEntriesFrom(namedPortals, false);
 
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
         responseUtf8Sink.bookmarkPtr = sendBufferPtr;
-        do {
-            pipelineCurrentEntry = Misc.free(pipelineCurrentEntry);
-        } while ((pipelineCurrentEntry = pipeline.poll()) != null);
+
         prepareForNewQuery();
         clearRecvBuffer();
         clearWriters();
@@ -313,6 +324,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         tlsSessionStarting = false;
         totalReceived = 0;
         transactionState = IMPLICIT_TRANSACTION;
+        entryPool.clear();
     }
 
     @Override
@@ -337,6 +349,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         authenticator = Misc.free(authenticator);
         tasCache = Misc.free(tasCache);
         taiCache = Misc.free(taiCache);
+
+        // assert is intentionally commented out. uncomment if you suspect a PGPipelieEntry leak and run all tests
+        // do not forget to remove entryPool.clear() from clear()
+        // assert entryPool.getPos() == 0 : "possible resource leak detected, not all entries were returned to pool [pos=" + entryPool.getPos() + ']';
     }
 
     @Override
@@ -516,12 +532,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    private void freePipelineEntriesFrom(CharSequenceObjHashMap<PGPipelineEntry> cache) {
+    private void freePipelineEntriesFrom(CharSequenceObjHashMap<PGPipelineEntry> cache, boolean isStatementClose) {
         ObjList<CharSequence> names = cache.keys();
         for (int i = 0, n = names.size(); i < n; i++) {
             PGPipelineEntry pe = cache.get(names.getQuick(i));
-            pe.setStateClosed(true);
+            pe.setStateClosed(true, isStatementClose);
             Misc.free(pe);
+            entryPool.release(pe);
         }
         cache.clear();
     }
@@ -701,7 +718,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 if (pipelineCurrentEntry.isPreparedStatement()) {
                     // the pipeline is named, and we must not attempt to reuse it
                     // as the portal, so we are making a new entry
-                    PGPipelineEntry pe = new PGPipelineEntry(engine);
+                    PGPipelineEntry pe = entryPool.next();
                     pe.compileNewSQL(
                             pipelineCurrentEntry.getSqlText(),
                             engine,
@@ -771,6 +788,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // - close the named entity, portal or statement
         final byte type = Unsafe.getUnsafe().getByte(lo);
         PGPipelineEntry lookedUpPipelineEntry;
+        boolean isStatementClose = false;
         switch (type) {
             case 'S':
                 // invalid statement names are allowed (as noop)
@@ -780,6 +798,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 lo = lo + 1;
                 final long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length", pipelineCurrentEntry);
                 lookedUpPipelineEntry = uncacheNamedStatement(getUtf16Str(lo, hi, "invalid UTF8 bytes in statement name (close)"));
+                isStatementClose = true;
                 break;
             case 'P':
                 lo = lo + 1;
@@ -792,23 +811,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
         if (lookedUpPipelineEntry == null) {
             if (pipelineCurrentEntry == null) {
-                pipelineCurrentEntry = new PGPipelineEntry(engine);
+                pipelineCurrentEntry = entryPool.next();
             }
         } else {
+            releaseToPoolIfAbandoned(pipelineCurrentEntry);
             pipelineCurrentEntry = lookedUpPipelineEntry;
         }
 
-        pipelineCurrentEntry.setStateClosed(true);
-
-        // It is possible that the intent to close current pipeline entry was mis-labelled
-        // for example, Rust driver creates named statement and then closes "null" 'portal'
-        if (lookedUpPipelineEntry == null) {
-            if (pipelineCurrentEntry.isPreparedStatement()) {
-                uncacheNamedStatement(pipelineCurrentEntry.getPreparedStatementName());
-            } else if (pipelineCurrentEntry.isPortal()) {
-                uncacheNamedPortal(pipelineCurrentEntry.getPortalName());
-            }
-        }
+        pipelineCurrentEntry.setStateClosed(true, isStatementClose);
     }
 
     private void msgDescribe(long lo, long msgLimit) throws BadProtocolException {
@@ -898,7 +908,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // To do that, we store message on the pipeline entry, if it exists and
         // make sure this entry is added to the pipeline (eventually)
         if (pipelineCurrentEntry == null) {
-            pipelineCurrentEntry = new PGPipelineEntry(engine);
+            pipelineCurrentEntry = entryPool.next();
         }
         return BadProtocolException.instance(pipelineCurrentEntry);
     }
@@ -913,7 +923,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // we have to add it to the pipeline
         addPipelineEntry();
 
-        pipelineCurrentEntry = new PGPipelineEntry(engine);
+        pipelineCurrentEntry = entryPool.next();
 
         // when processing the "parse" message we use BindVariableService to exchange bind variable types
         // between SQL compiler and the PG "parse" message processing logic. BindVariableService must not
@@ -1040,7 +1050,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
             if (pipelineCurrentEntry == null) {
-                pipelineCurrentEntry = new PGPipelineEntry(engine);
+                pipelineCurrentEntry = entryPool.next();
                 pipelineCurrentEntry.ofEmpty(activeSqlText);
                 pipelineCurrentEntry.setStateExec(true);
             }
@@ -1198,10 +1208,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
         // Alright, the client wants to use the named statement. What if they just
         // send "parse" message and want to abandon it?
-        freeIfAbandoned(pipelineCurrentEntry);
+        releaseToPoolIfAbandoned(pipelineCurrentEntry);
         // it is safe to overwrite the pipeline entry,
         // named entries will be held in the hash map
-        pipelineCurrentEntry = nextEntry.copyIfExecuted();
+        pipelineCurrentEntry = nextEntry.copyIfExecuted(entryPool);
     }
 
     private void rollbackAndClosePendingWriters() {
@@ -1228,6 +1238,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             // because syncing the entry will clear the flag
             boolean isExec = pipelineCurrentEntry.isStateExec();
             boolean isError = pipelineCurrentEntry.isError();
+            boolean isClosed = pipelineCurrentEntry.isStateClosed();
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
             do {
                 try {
@@ -1255,9 +1266,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 }
             } while (true);
             PGPipelineEntry nextEntry = pipeline.poll();
-            if (nextEntry != null || isExec || isError) {
+            if (nextEntry != null || isExec || isError || isClosed) {
                 pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
-                freeIfAbandoned(pipelineCurrentEntry);
+                releaseToPoolIfAbandoned(pipelineCurrentEntry);
                 pipelineCurrentEntry = nextEntry;
             } else {
                 LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
@@ -1300,12 +1311,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 // also remove entries for the matching portal names
                 ObjList<CharSequence> portalNames = pe.getPortalNames();
                 for (int i = 0, n = portalNames.size(); i < n; i++) {
-                    int portalKeyIndex = this.namedPortals.keyIndex(portalNames.getQuick(i));
+                    int portalKeyIndex = namedPortals.keyIndex(portalNames.getQuick(i));
                     if (portalKeyIndex < 0) {
                         // release the entry, it must not be referenced from anywhere other than
                         // this list (we enforce portal name uniqueness)
-                        Misc.free(this.namedPortals.valueAt(portalKeyIndex));
-                        this.namedPortals.removeAt(portalKeyIndex);
+                        Misc.free(namedPortals.valueAt(portalKeyIndex));
+                        namedPortals.removeAt(portalKeyIndex);
                     } else {
                         // else: do not make a fuss if portal name does not exist
                         LOG.debug()
@@ -1324,16 +1335,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         if (dumpNetworkTraffic && len > 0) {
             StdoutSink.INSTANCE.put(direction);
             Net.dump(buffer, len);
-        }
-    }
-
-    static void freeIfAbandoned(PGPipelineEntry pe) {
-        if (pe != null) {
-            if (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal())) {
-                Misc.free(pe);
-            } else {
-                pe.clearState();
-            }
         }
     }
 
@@ -1369,6 +1370,18 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
 
         recvBufferWriteOffset += n;
+    }
+
+    void releaseToPoolIfAbandoned(PGPipelineEntry pe) {
+        if (pe != null) {
+            if (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal())) {
+                Misc.free(pe);
+                pe.clearForPooling();
+                entryPool.release(pe);
+            } else {
+                pe.clearState();
+            }
+        }
     }
 
     void sendBuffer(int offset, int size) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1427,7 +1440,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         @Override
         public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
             addPipelineEntry();
-            pipelineCurrentEntry = new PGPipelineEntry(engine);
+            pipelineCurrentEntry = entryPool.next();
 
             final TypesAndSelectModern tas = tasCache.poll(sqlText);
             if (tas == null) {
