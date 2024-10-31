@@ -24,7 +24,11 @@
 
 package io.questdb.test.std;
 
-import io.questdb.std.*;
+import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.StringSink;
@@ -1298,6 +1302,40 @@ public class NumbersTest {
     @Test(expected = NumericException.class)
     public void testParseLongWrongChars() throws Exception {
         Numbers.parseLong("123ab");
+    }
+
+    @Test
+    public void testParseMicros() throws NumericException {
+        Assert.assertEquals(25_000, Numbers.parseMicros("25ms"));
+        Assert.assertEquals(25_000, Numbers.parseMicros("25MS"));
+        Assert.assertEquals(14_400_000_000L, Numbers.parseMicros("4h"));
+        Assert.assertEquals(10_800_000_000L, Numbers.parseMicros("3H"));
+        Assert.assertEquals(90_000_000L, Numbers.parseMicros("90s"));
+        Assert.assertEquals(560L, Numbers.parseMicros("560us"));
+
+        try {
+            Numbers.parseMicros("60uk");
+            Assert.fail();
+        } catch (NumericException ignore) {
+        }
+
+        try {
+            Numbers.parseMicros("us");
+            Assert.fail();
+        } catch (NumericException ignore) {
+        }
+
+        try {
+            Numbers.parseMicros("aus");
+            Assert.fail();
+        } catch (NumericException ignore) {
+        }
+
+        try {
+            Numbers.parseMicros("h");
+            Assert.fail();
+        } catch (NumericException ignore) {
+        }
     }
 
     @Test

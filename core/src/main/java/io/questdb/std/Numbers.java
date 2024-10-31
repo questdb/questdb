@@ -34,11 +34,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -1443,6 +1439,91 @@ public final class Numbers {
                 throw NumericException.INSTANCE;
             }
             val = r;
+        }
+
+        if (val == Long.MIN_VALUE && !negative) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
+    }
+
+    public static long parseMicros(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        int lim = sequence.length();
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+
+        int i = 0;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        OUT:
+        for (; i < lim; i++) {
+            char c = sequence.charAt(i);
+            switch (c | 32) {
+                case 'm':
+                    // must be 'ms' (millisecond) or 'm' (minute)
+                    if (i == 0) {
+                        // not at the start of the string
+                        throw NumericException.INSTANCE;
+                    }
+                    if (i + 1 < lim) {
+                        // could be 'ms' or an error
+                        if ((sequence.charAt(i + 1) | 32) == 's' && i + 2 == lim) {
+                            // 'ms' at the end of the string
+                            val *= Timestamps.MILLI_MICROS;
+                        } else {
+                            throw NumericException.INSTANCE;
+                        }
+                    } else {
+                        // 'm' at the end of the string
+                        val *= Timestamps.MINUTE_MICROS;
+                    }
+                    break OUT;
+                case 's':
+                    // second
+                    if (i + 1 == lim) {
+                        val *= Timestamps.SECOND_MICROS;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'u':
+                    // microsecond
+                    if (i == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'h':
+                    if (i + 1 == lim) {
+                        val *= Timestamps.HOUR_MICROS;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                default:
+                    if (c < '0' || c > '9') {
+                        throw NumericException.INSTANCE;
+                    }
+                    // val * 10 + (c - '0')
+                    long r = (val << 3) + (val << 1) - (c - '0');
+                    if (r > val) {
+                        throw NumericException.INSTANCE;
+                    }
+                    val = r;
+                    break;
+            }
         }
 
         if (val == Long.MIN_VALUE && !negative) {
