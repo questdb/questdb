@@ -91,6 +91,11 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
         }
 
         @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+            return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
+        }
+
+        @Override
         public int getMaxUncommittedRows() {
             throw new UnsupportedOperationException();
         }
@@ -103,16 +108,6 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
         @Override
         public int getPartitionBy() {
             throw new UnsupportedOperationException();
-        }
-
-        public void goodbye() {
-            entry = null;
-            pool = null;
-        }
-
-        @Override
-        public int getIndexBlockCapacity(int columnIndex) {
-            return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
         }
 
         @Override
@@ -130,17 +125,19 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
             return tableToken.getTableName();
         }
 
-        @Override
-        public boolean isIndexed(int columnIndex) {
-            return getColumnMetadata(columnIndex).isSymbolIndexFlag();
-        }
-
-        @Override
+        public void goodbye() {
+            entry = null;
+            pool = null;
         }
 
         @Override
         public boolean isDedupKey(int columnIndex) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            return getColumnMetadata(columnIndex).isSymbolIndexFlag();
         }
 
         @Override

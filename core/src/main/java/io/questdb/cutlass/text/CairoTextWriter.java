@@ -51,6 +51,7 @@ public class CairoTextWriter implements Closeable, Mutable {
     private final IntList remapIndex = new IntList();
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private int atomicity;
+    private boolean create = true;
     private CharSequence designatedTimestampColumnName;
     private int designatedTimestampIndex;
     private CharSequence importedTimestampColumnName;
@@ -58,7 +59,6 @@ public class CairoTextWriter implements Closeable, Mutable {
     private RecordMetadata metadata;
     private long o3MaxLag = -1;
     private boolean overwrite;
-    private boolean create = true;
     private int partitionBy;
     private CharSequence tableName;
     private TimestampAdapter timestampAdapter;
@@ -115,6 +115,10 @@ public class CairoTextWriter implements Closeable, Mutable {
         return columnErrorCounts;
     }
 
+    public boolean getCreate() {
+        return create;
+    }
+
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -129,10 +133,6 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public int getPartitionBy() {
         return partitionBy;
-    }
-
-    public boolean getCreate() {
-        return create;
     }
 
     public CharSequence getTableName() {
@@ -206,16 +206,16 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
     }
 
+    public void setCreate(boolean create) {
+        this.create = create;
+    }
+
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
     }
 
     public void setO3MaxLag(long o3MaxLag) {
         this.o3MaxLag = o3MaxLag;
-    }
-
-    public void setCreate(boolean create) {
-        this.create = create;
     }
 
     private void checkUncommittedRowCount() {

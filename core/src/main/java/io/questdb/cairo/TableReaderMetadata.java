@@ -70,31 +70,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
-    @Override
-    public int getIndexBlockCapacity(int columnIndex) {
-        return columnMetadata.getQuick(columnIndex).getIndexValueBlockCapacity();
-    }
-
-    @Override
-    public boolean getSymbolCacheFlag(int columnIndex) {
-        return columnMetadata.getQuick(columnIndex).isSymbolIndexFlag();
-    }
-
-    @Override
-    public int getSymbolCapacity(int columnIndex) {
-        return 0;
-    }
-
-    @Override
-    public CharSequence getTableName() {
-        return null;
-    }
-
-    @Override
-    public boolean isIndexed(int columnIndex) {
-        return false;
-    }
-
     // constructor used to read random metadata files
     public TableReaderMetadata(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -267,6 +242,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getIndexBlockCapacity(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -287,13 +267,33 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public boolean getSymbolCacheFlag(int columnIndex) {
+        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
+    }
+
+    @Override
+    public int getSymbolCapacity(int columnIndex) {
+        return getColumnMetadata(columnIndex).getSymbolCapacity();
+    }
+
+    @Override
     public int getTableId() {
         return tableId;
     }
 
     @Override
+    public CharSequence getTableName() {
+        return tableToken.getTableName();
+    }
+
+    @Override
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    @Override
+    public boolean isIndexed(int columnIndex) {
+        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
     }
 
     public boolean isSoftLink() {

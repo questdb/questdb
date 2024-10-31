@@ -1024,6 +1024,15 @@ public final class TableUtils {
         return address;
     }
 
+    public static long mapRO(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
+        final long fd = openRO(ff, path, log);
+        try {
+            return mapRO(ff, fd, size, memoryTag);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     public static long mapRW(FilesFacade ff, long fd, long size, int memoryTag) {
         return mapRW(ff, fd, size, 0, memoryTag);
     }
@@ -1162,15 +1171,6 @@ public final class TableUtils {
             throw CairoException.critical(errno).put("could not open, file does not exist: ").put(path).put(']');
         }
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
-    }
-
-    public static long mapRO(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
-        final long fd = openRO(ff, path, log);
-        try {
-            return mapRO(ff, fd, size, memoryTag);
-        } finally {
-            ff.close(fd);
-        }
     }
 
     public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
@@ -1522,6 +1522,16 @@ public final class TableUtils {
         }
     }
 
+    public static void setParquetPartitionPath(
+            Path path,
+            int partitionBy,
+            long partitionTimestamp,
+            long nameTxn
+    ) {
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn);
+        path.concat("data.parquet");
+    }
+
     /**
      * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
@@ -1755,16 +1765,6 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
         }
         return metaMem.getStrA(offset);
-    }
-
-    public static void setParquetPartitionPath(
-            Path path,
-            int partitionBy,
-            long partitionTimestamp,
-            long nameTxn
-    ) {
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn);
-        path.concat("data.parquet");
     }
 
     // Utility method for debugging. This method is not used in production.
