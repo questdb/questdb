@@ -493,6 +493,10 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                         LOG.error().$("cookie name is missing").$();
                         return;
                     }
+                    if (!attributeArea) {
+                        break;
+                    }
+
                     // Expires=<date>
                     // 0x69727078 = "irpx" from Expires
                     if (
