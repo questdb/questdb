@@ -75,9 +75,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     private CharSequence volumeAlias;
     private boolean walEnabled;
 
-    public CreateTableOperationBuilder() {
-    }
-
     public void addColumn(int columnPosition, CharSequence columnName, int columnType, int symbolCapacity) throws SqlException {
         if (!columnNameIndexMap.put(columnName, columnNames.size())) {
             throw SqlException.duplicateColumn(columnPosition, columnName);
@@ -97,52 +94,51 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     public CreateTableOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (queryModel != null) {
-            setFactory(
-                    compiler.generateSelectWithRetries(
-                            queryModel,
-                            sqlExecutionContext,
-                            false
-                    )
+            setFactory(compiler.generateSelectWithRetries(queryModel, sqlExecutionContext, false));
+            return new CreateTableOperation(
+                    Chars.toString(tableNameExpr.token),
+                    tableNameExpr.position,
+                    Chars.toString(volumeAlias),
+                    ignoreIfExists,
+                    batchSize,
+                    batchO3MaxLag,
+                    recordCursorFactory,
+                    columnCastModels,
+                    createAsSelectIndexColumnNamePositions,
+                    createAsSelectIndexFlags,
+                    createAsSelectIndexCapacities
             );
         }
 
         // create table "like" and "as select" are mutually exclusive
         // todo: write a test for the above to ensure correctness of the diagnostic message
-        final String likeTableName;
-        final int likeTableNamePos;
         if (this.likeTableName != null) {
             TableToken likeTableNameToken = compiler.getEngine().getTableTokenIfExists(this.likeTableName.token);
             if (likeTableNameToken == null) {
                 throw SqlException.tableDoesNotExist(this.likeTableName.position, this.likeTableName.token);
             }
-            likeTableName = likeTableNameToken.getTableName();
-            likeTableNamePos = this.likeTableName.position;
-        } else {
-            likeTableName = null;
-            likeTableNamePos = -1;
+            return new CreateTableOperation(
+                    Chars.toString(tableNameExpr.token),
+                    tableNameExpr.position,
+                    Chars.toString(volumeAlias),
+                    likeTableNameToken.getTableName(),
+                    likeTableName.position,
+                    ignoreIfExists
+            );
         }
 
         return new CreateTableOperation(
                 Chars.toString(tableNameExpr.token),
                 tableNameExpr.position,
+                Chars.toString(volumeAlias),
+                ignoreIfExists,
                 columnNames,
                 columnBits,
                 getTimestampIndex(),
                 getPartitionBy(),
-                ignoreIfExists,
-                likeTableName,
-                likeTableNamePos,
-                recordCursorFactory,
-                batchSize,
-                batchO3MaxLag,
                 o3MaxLag,
                 maxUncommittedRows,
-                Chars.toString(volumeAlias),
-                walEnabled,
-                columnCastModels,
-                createAsSelectIndexColumnNamePositions,
-                createAsSelectIndexFlags,
-                createAsSelectIndexCapacities
+                walEnabled
         );
     }
 

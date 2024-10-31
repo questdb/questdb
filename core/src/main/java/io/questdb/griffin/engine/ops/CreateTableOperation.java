@@ -7,6 +7,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -16,17 +17,18 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.COLUMN_FLAG_CACHED;
+import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.COLUMN_FLAG_INDEXED;
 
 public class CreateTableOperation implements TableStructure, QuietCloseable {
     // two cast maps, one for symbol cache flag and the other for symbol capacity
     // those values come from "cast models", the extra syntax to augment
     // "create as select" semantic. These maps are keyed on column names
     //
-    // One thing to note about these maps is that they are unused for non-create-as-select,
+    // One thing to note about these maps is that they are only used for create-as-select,
     // this is because column types, capacities and flags can be specified without
-    // extra syntax. At the same time, "columnBits" are unused for create-as-select.
-    // For create-as-select we should move the information from these maps onto
-    // columnBit after column indexes are known. E.g. after "select" part is executed.
+    // extra syntax. On the other hand, create-as-select does not use columnBits.
+    // For create-as-select, we move the information from these maps into columnBits after
+    // column indexes are known. E.g. after "select" part is executed.
     // Note that we must not hardcode "cast" parameters to the column indexes. These indexes
     // are liable to change every time "select" is recompiled, for example in case of wildcard
     // usage, e.g. create x as select * from y. When "y" changes, such as via drop column,
@@ -37,120 +39,148 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
-    private final boolean ignoreIfExists;
     private final String likeTableName;
+    // position of the "like" table name in the SQL text, for error reporting
     private final int likeTableNamePosition;
-    private final int maxUncommittedRows;
-    private final long o3MaxLag;
-    private final int partitionBy;
     private final String tableName;
     private final int tableNamePosition;
-    private final int timestampIndex;
     private final String volumeAlias;
-    private final boolean walEnabled;
+    private boolean ignoreIfExists;
+    private int maxUncommittedRows;
+    private long o3MaxLag;
+    private int partitionBy;
     private RecordCursorFactory recordCursorFactory;
+    private int timestampIndex;
+    private boolean walEnabled;
 
     public CreateTableOperation(
             String tableName,
             int tableNamePosition,
+            String volumeAlias,
+            String likeTableName,
+            int likeTableNamePosition,
+            boolean ignoreIfExists
+    ) {
+        this.tableName = tableName;
+        this.tableNamePosition = tableNamePosition;
+        this.volumeAlias = volumeAlias;
+        this.likeTableName = likeTableName;
+        this.likeTableNamePosition = likeTableNamePosition;
+
+        this.batchSize = 0;
+        this.batchO3MaxLag = 0;
+    }
+
+    public CreateTableOperation(
+            String tableName,
+            int tableNamePosition,
+            String volumeAlias,
+            boolean ignoreIfExists,
             ObjList<String> columnNames,
             LongList columnBits,
             int timestampIndex,
             int partitionBy,
-            boolean ignoreIfExists,
-            String likeTableName,
-            int likeTableNamePosition,
-            RecordCursorFactory recordCursorFactory,
-            long batchSize,
-            long batchO3MaxLag,
             long o3MaxLag,
             int maxUncommittedRows,
+            boolean walEnabled
+    ) {
+        this.tableName = tableName;
+        this.tableNamePosition = tableNamePosition;
+        this.volumeAlias = volumeAlias;
+        this.ignoreIfExists = ignoreIfExists;
+        this.maxUncommittedRows = maxUncommittedRows;
+        this.o3MaxLag = o3MaxLag;
+        this.partitionBy = partitionBy;
+        this.timestampIndex = timestampIndex;
+        this.walEnabled = walEnabled;
+        this.columnNames.addAll(columnNames);
+        this.columnBits.add(columnBits);
+
+        this.batchSize = 0;
+        this.batchO3MaxLag = 0;
+        this.recordCursorFactory = null;
+        this.likeTableName = null;
+        this.likeTableNamePosition = -1;
+    }
+
+    public CreateTableOperation(
+            String tableName,
+            int tableNamePosition,
             String volumeAlias,
-            boolean walEnabled,
+            boolean ignoreIfExists,
+            long batchSize,
+            long batchO3MaxLag,
+            RecordCursorFactory recordCursorFactory,
             @Transient CharSequenceObjHashMap<ColumnCastModel> columnCastModeMap,
             @Transient CharSequenceIntHashMap createAsSelectIndexColumnNamePositions,
             @Transient CharSequenceBoolHashMap createAsSelectIndexFlags,
             @Transient CharSequenceIntHashMap createAsSelectIndexCapacities
     ) throws SqlException {
-
-        if (recordCursorFactory != null) {
-            // column names and bits are populated from "create table" column list
-            this.columnNames.addAll(columnNames);
-            this.columnBits.add(columnBits);
-        } else {
-            // we have "create as select" SQL, column names will be scraped from the
-            // record cursor during executions time. We might have column
-            // augmentation data from the following sources:
-            // - cast models, provides column types
-            // - (symbol) column index data, e.g. index flag and index capacity
-            // - (symbol) column cache flag
-            ObjList<CharSequence> castColumnNames = columnCastModeMap.keys();
-            for (int i = 0, n = castColumnNames.size(); i < n; i++) {
-                CharSequence columnName = castColumnNames.get(i);
-                ColumnCastModel ccm = columnCastModeMap.get(columnName);
-                int index = createAsSelectIndexFlags.keyIndex(columnName);
-                if (index < 0) {
-                    boolean augIndexFlag = createAsSelectIndexFlags.get(columnName);
-                    int augIndexPos = createAsSelectIndexColumnNamePositions.get(columnName);
-                    int augIndexValueBlockCapacity = createAsSelectIndexCapacities.get(columnName);
-                    // perform some basic validation
-                    if (ccm.getColumnType() != ColumnType.SYMBOL && augIndexFlag) {
-                        throw SqlException.$(augIndexPos, "index flag cannot be applied to ").put(ColumnType.nameOf(ccm.getColumnType()));
-                    }
-
-                    String columnNameStr = Chars.toString(columnName);
-                    TableColumnMetadata tcm = new TableColumnMetadata(
-                            columnNameStr,
-                            ccm.getColumnType(),
-                            augIndexFlag,
-                            augIndexValueBlockCapacity,
-                            true,
-                            null,
-                            -1, // writer index is irrelevant here
-                            false,// dedup flag cannot be set on "create as select", not yet
-                            -1, // irrelvant
-                            ccm.getSymbolCacheFlag(),
-                            ccm.getSymbolCapacity()
-                    );
-                    augmentedColumnMetadata.put(columnNameStr, tcm);
-                } else {
-                    // "index" clause is not used concurrently with the "cast" clause
-                    String columnNameStr = Chars.toString(columnName);
-                    TableColumnMetadata tcm = new TableColumnMetadata(
-                            columnNameStr,
-                            ccm.getColumnType(),
-                            ccm.isIndexed(),
-                            ccm.getIndexValueBlockSize(),
-                            true,
-                            null,
-                            -1, // writer index is irrelevant here
-                            false, // dedup flag cannot be set on "create as select", not yet
-                            -1,
-                            ccm.getSymbolCacheFlag(),
-                            ccm.getSymbolCapacity()
-                    );
-                    augmentedColumnMetadata.put(columnNameStr, tcm);
-                }
-            }
-            // column bits must be unset at the compile time
-            // we wil be using this bitset at the runtime
-            assert columnBits.size() == 0;
-        }
-
-        this.likeTableName = likeTableName;
-        this.likeTableNamePosition = likeTableNamePosition;
-        this.maxUncommittedRows = maxUncommittedRows;
-        this.o3MaxLag = o3MaxLag;
-        this.batchSize = batchSize;
-        this.batchO3MaxLag = batchO3MaxLag;
-        this.partitionBy = partitionBy;
-        this.ignoreIfExists = ignoreIfExists;
-        this.recordCursorFactory = recordCursorFactory;
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
-        this.timestampIndex = timestampIndex;
         this.volumeAlias = volumeAlias;
-        this.walEnabled = walEnabled;
+        this.recordCursorFactory = recordCursorFactory;
+        this.batchSize = batchSize;
+        this.batchO3MaxLag = batchO3MaxLag;
+
+        this.likeTableName = null;
+        this.likeTableNamePosition = -1;
+
+        // This constructor is for a "create as select", column names will be scraped from the record
+        // cursor at runtime. Column augmentation data comes from the following sources in the SQL:
+        // - cast models, provides column types
+        // - (symbol) column index data, e.g. index flag and index capacity
+        // - (symbol) column cache flag
+        assert columnNames.size() == 0;
+        assert columnBits.size() == 0;
+        ObjList<CharSequence> castColumnNames = columnCastModeMap.keys();
+        for (int i = 0, n = castColumnNames.size(); i < n; i++) {
+            CharSequence columnName = castColumnNames.get(i);
+            ColumnCastModel castModel = columnCastModeMap.get(columnName);
+            int index = createAsSelectIndexFlags.keyIndex(columnName);
+            if (index < 0) {
+                boolean augIndexFlag = createAsSelectIndexFlags.get(columnName);
+                int augIndexPos = createAsSelectIndexColumnNamePositions.get(columnName);
+                int augIndexValueBlockCapacity = createAsSelectIndexCapacities.get(columnName);
+                // perform some basic validation
+                if (augIndexFlag && castModel.getColumnType() != ColumnType.SYMBOL) {
+                    throw SqlException.$(augIndexPos, "index flag cannot be applied to ")
+                            .put(ColumnType.nameOf(castModel.getColumnType()));
+                }
+                String columnNameStr = Chars.toString(columnName);
+                TableColumnMetadata tcm = new TableColumnMetadata(
+                        columnNameStr,
+                        castModel.getColumnType(),
+                        augIndexFlag,
+                        augIndexValueBlockCapacity,
+                        true,
+                        null,
+                        -1, // writer index is irrelevant here
+                        false,// dedup flag cannot be set on "create as select", not yet
+                        -1, // irrelvant
+                        castModel.getSymbolCacheFlag(),
+                        castModel.getSymbolCapacity()
+                );
+                augmentedColumnMetadata.put(columnNameStr, tcm);
+            } else {
+                // "index" clause is not used together with the "cast" clause
+                String columnNameStr = Chars.toString(columnName);
+                TableColumnMetadata tcm = new TableColumnMetadata(
+                        columnNameStr,
+                        castModel.getColumnType(),
+                        castModel.isIndexed(),
+                        castModel.getIndexValueBlockSize(),
+                        true,
+                        null,
+                        -1, // writer index is irrelevant here
+                        false, // dedup flag cannot be set on "create as select", not yet
+                        -1,
+                        castModel.getSymbolCacheFlag(),
+                        castModel.getSymbolCapacity()
+                );
+                augmentedColumnMetadata.put(columnNameStr, tcm);
+            }
+        }
     }
 
     @Override
@@ -278,14 +308,31 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     }
 
     @Override
-    public boolean isSequential(int columnIndex) {
-        // todo: expose this flag on CREATE TABLE statement
-        return false;
-    }
-
-    @Override
     public boolean isWalEnabled() {
         return walEnabled;
+    }
+
+    public void updateFromLikeTableMetadata(TableMetadata likeTableMetadata) {
+        this.maxUncommittedRows = likeTableMetadata.getMaxUncommittedRows();
+        this.o3MaxLag = likeTableMetadata.getO3MaxLag();
+        this.partitionBy = likeTableMetadata.getPartitionBy();
+        this.timestampIndex = likeTableMetadata.getTimestampIndex();
+        this.walEnabled = likeTableMetadata.isWalEnabled();
+        columnNames.clear();
+        columnBits.clear();
+        for (int i = 0; i < likeTableMetadata.getColumnCount(); i++) {
+            TableColumnMetadata colMeta = likeTableMetadata.getColumnMetadata(i);
+            int columnType = colMeta.getColumnType();
+            boolean isIndexed = colMeta.isSymbolIndexFlag();
+            boolean isCached = colMeta.isSymbolCacheFlag();
+            int symbolCapacity = colMeta.getSymbolCapacity();
+            int flags = (isCached ? COLUMN_FLAG_CACHED : 0) | (isIndexed ? COLUMN_FLAG_INDEXED : 0);
+            columnNames.add(colMeta.getColumnName());
+            columnBits.add(
+                    Numbers.encodeLowHighInts(columnType, symbolCapacity),
+                    Numbers.encodeLowHighInts(flags, 0)
+            );
+        }
     }
 
     /**
@@ -307,39 +354,46 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         future.tableToken = tableToken;
     }
 
-    public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata) {
+    public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata) throws SqlException {
         // This method must only be called in case of "create-as-select".
-        // Here we remap data keyed on  column names (from cast maps) to
+        // Here we remap data keyed on column names (from cast maps) to
         // data keyed on column index. We assume that "columnBits" are free to use
         // in case of "create-as-select" because they don't capture any useful data
         // at SQL parse time.
         columnBits.clear();
 
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            TableColumnMetadata augMeta = augmentedColumnMetadata.get(metadata.getColumnName(i));
-            int columnType;
-            boolean symbolIndexed;
+            String columnName = metadata.getColumnName(i);
+            TableColumnMetadata augMeta = augmentedColumnMetadata.get(columnName);
 
+            int columnType;
+            int symbolCapacity;
+            boolean symbolCacheFlag;
+            boolean symbolIndexed;
             if (augMeta != null) {
                 columnType = augMeta.getColumnType();
+                symbolCapacity = augMeta.getSymbolCapacity();
+                symbolCacheFlag = augMeta.isSymbolCacheFlag();
                 symbolIndexed = augMeta.isSymbolIndexFlag();
             } else {
                 columnType = metadata.getColumnType(i);
-                symbolIndexed = false;
+                TableColumnMetadata colMeta = metadata.getColumnMetadata(i);
+                symbolCapacity = colMeta.getSymbolCapacity();
+                symbolCacheFlag = colMeta.isSymbolCacheFlag();
+                symbolIndexed = colMeta.isSymbolIndexFlag();
             }
 
-            // todo:
-            if (!ColumnType.isSymbol(metadata.getColumnType(i)) && model.isIndexed(i)) {
+            if (ColumnType.isNull(columnType)) {
+                throw SqlException.$(0, "cannot create NULL-type column, please use type cast, e.g. ").put(columnName).put("::").put("type");
+            }
+            if (!ColumnType.isSymbol(metadata.getColumnType(i)) && symbolIndexed) {
                 throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
             }
 
-            if (ColumnType.isNull(metadata.getColumnType(index))) {
-                throw SqlException.$(0, "cannot create NULL-type column, please use type cast, e.g. ").put(columnName).put("::").put("type");
-            }
-
+            int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0) | (symbolIndexed ? COLUMN_FLAG_INDEXED : 0);
             columnBits.add(
                     Numbers.encodeLowHighInts(columnType, symbolCapacity),
-                    Numbers.encodeLowHighInts(symbolCacheFlag, 0)
+                    Numbers.encodeLowHighInts(flags, 0)
             );
         }
     }
