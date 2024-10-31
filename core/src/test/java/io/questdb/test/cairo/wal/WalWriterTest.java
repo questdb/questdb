@@ -1473,7 +1473,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 try {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
-                    if (errorCounter.incrementAndGet() == 2) {
+                    if (errorCounter.incrementAndGet() == 3) {
                         return -1;
                     }
                 }
