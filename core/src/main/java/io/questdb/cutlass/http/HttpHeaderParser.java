@@ -39,6 +39,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
 
@@ -200,7 +201,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         return statusText;
     }
 
-    public ObjList<DirectUtf8String> getUnparsedCookies() {
+    public @NotNull ObjList<DirectUtf8String> getUnparsedCookies() {
         return unparsedCookies;
     }
 
@@ -274,7 +275,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     }
                     v = pool.next().of(_lo, _wptr - 1);
                     _lo = _wptr;
-                    if (Utf8s.equalsAscii("Set-Cookie", headerName)) {
+                    if (Utf8s.equals(HEADER_SET_COOKIE, headerName)) {
                         unparsedCookies.add(v);
                     } else {
                         headers.put(headerName, v);
