@@ -122,6 +122,7 @@ public class PageFrameAddressCache implements Mutable {
         frameFormats.clear();
         parquetAddresses.clear();
         parquetRowGroups.clear();
+        parquetFileSizes.clear();
         parquetRowGroupLos.clear();
         parquetRowGroupHis.clear();
         pageAddresses.clear();
