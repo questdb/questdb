@@ -991,7 +991,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             if (!errors.isEmpty()) {
                 for (Throwable th : errors.values()) {
-                    th.printStackTrace();
+                    th.printStackTrace(System.out);
                 }
                 Assert.fail("Write failed");
             }
@@ -1135,7 +1135,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             if (!errors.isEmpty()) {
                 for (Throwable th : errors.values()) {
-                    th.printStackTrace();
+                    th.printStackTrace(System.out);
                 }
                 Assert.fail("Write failed");
             }
@@ -1466,23 +1466,19 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testOverlappingStructureChangeFails() throws Exception {
-        AtomicInteger errorCounter = new AtomicInteger();
+        final AtomicInteger counter = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                try {
-                    throw new RuntimeException("Test failure");
-                } catch (Exception e) {
-                    if (errorCounter.incrementAndGet() == 3) {
-                        return -1;
-                    }
+                if (counter.incrementAndGet() == 3) {
+                    return -1;
                 }
                 return TestFilesFacadeImpl.INSTANCE.openRO(name);
             }
         };
 
         assertMemoryLeak(ff, () -> {
-            TableToken tableToken = createTable(testName.getMethodName());
+            final TableToken tableToken = createTable(testName.getMethodName());
 
             try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
                 try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
