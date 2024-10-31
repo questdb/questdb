@@ -2756,6 +2756,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
         o3MemMaxPages = 1;
+        cairoCommitLatency = Long.MAX_VALUE;
         compiler.compile(
                 "create atomic table x as (" +
                         "select" +
