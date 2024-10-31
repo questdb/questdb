@@ -123,7 +123,7 @@ public class MetadataCache implements QuietCloseable {
         return cacheWriter;
     }
 
-    private void hydrateTable0(@NotNull TableToken token)  {
+    private void hydrateTable0(@NotNull TableToken token) {
 
         Path path = Path.getThreadLocal(engine.getConfiguration().getRoot());
 
