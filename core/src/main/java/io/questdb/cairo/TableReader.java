@@ -189,7 +189,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         for (int partitionIndex = partitionCount - 1; partitionIndex > -1; partitionIndex--) {
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
             long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-            if (partitionSize > -1L) {
+            if (partitionSize > -1) {
                 ++openPartitionCount;
             }
         }
@@ -412,7 +412,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int partitionIndex = partitionCount - 1; partitionIndex > -1; partitionIndex--) {
                 final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
                 long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-                if (partitionSize > -1L && ++openCount > maxOpenPartitions) {
+                if (partitionSize > -1 && ++openCount > maxOpenPartitions) {
                     closePartition(partitionIndex);
                     if (openCount == originallyOpen) {
                         // ok, we've closed enough
@@ -432,7 +432,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean isOpen() {
-        return tempMem8b != 0L;
+        return tempMem8b != 0;
     }
 
     @Override
@@ -451,7 +451,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      */
     public long openPartition(int partitionIndex) {
         final long size = getPartitionRowCount(partitionIndex);
-        if (size != -1L) {
+        if (size != -1) {
             return size;
         }
         return openPartition0(partitionIndex);
@@ -831,7 +831,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
             try {
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-                if (partitionRowCount > -1L && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, fromBase)) > -1L) {
+                if (partitionRowCount > -1 && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, fromBase)) > -1) {
                     for (int i = 0; i < iterateCount; i++) {
                         if (transitionIndex.closeColumn(i)) {
                             closePartitionColumn(fromBase, i);
@@ -862,7 +862,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 sink,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
-                -1L
+                -1
         );
     }
 
@@ -904,7 +904,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void freeTempMem() {
-        if (tempMem8b != 0L) {
+        if (tempMem8b != 0) {
             tempMem8b = Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_TABLE_READER);
         }
     }
@@ -990,7 +990,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 Path path = pathGenParquetPartition(partitionIndex, partitionNameTxn);
                 if (ff.exists(path.$())) {
                     final long partitionSize = txFile.getPartitionSize(partitionIndex);
-                    if (partitionSize > -1L) {
+                    if (partitionSize > -1) {
                         LOG.info()
                                 .$("open partition [path=").$substr(dbRootSize, path)
                                 .$(", rowCount=").$(partitionSize)
@@ -1023,7 +1023,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 Path path = pathGenNativePartition(partitionIndex, partitionNameTxn);
                 if (ff.exists(path.$())) {
                     final long partitionSize = txFile.getPartitionSize(partitionIndex);
-                    if (partitionSize > -1L) {
+                    if (partitionSize > -1) {
                         LOG.debug()
                                 .$("open partition [path=").$substr(dbRootSize, path)
                                 .$(", rowCount=").$(partitionSize)
@@ -1237,9 +1237,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
             int writerIndex = metadata.getWriterIndex(columnIndex);
             final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
-            final long columnTop = versionRecordIndex > -1 ? columnVersionReader.getColumnTopByIndex(versionRecordIndex) : 0L;
-            long columnTxn = versionRecordIndex > -1 ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex) : -1L;
-            if (columnTxn == -1L) {
+            final long columnTop = versionRecordIndex > -1 ? columnVersionReader.getColumnTopByIndex(versionRecordIndex) : 0;
+            long columnTxn = versionRecordIndex > -1 ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex) : -1;
+            if (columnTxn == -1) {
                 // When column is added, column version will have txn number for the partition
                 // where it's added. It will also have the txn number in the [default] partition
                 columnTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
@@ -1442,7 +1442,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             int base = getColumnBase(partitionIndex);
             try {
                 long partitionRowCount = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE);
-                if (partitionRowCount > -1L && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, base)) > -1L) {
+                if (partitionRowCount > -1 && (partitionRowCount = closeRewrittenPartitionFiles(partitionIndex, base)) > -1) {
                     for (int i = 0; i < iterateCount; i++) {
                         final int copyFrom = transitionIndex.getCopyFromIndex(i);
 
