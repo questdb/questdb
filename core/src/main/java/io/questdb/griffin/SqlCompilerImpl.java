@@ -378,10 +378,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
                 if (volumePath != null) {
                     if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                        throw CairoException.critical(0).put("not a valid path for volume [alias=").put(volumeAlias).put(", path=").put(path).put(']');
+                        throw CairoException.critical(0).put("not a valid path for volume [alias=")
+                                .put(volumeAlias).put(", path=").put(path).put(']');
                     }
                 } else {
-                    throw SqlException.position(0).put("volume alias is not allowed [alias=").put(volumeAlias).put(']');
+                    throw SqlException.position(0).put("volume alias is not allowed [alias=")
+                            .put(volumeAlias).put(']');
                 }
             }
 
@@ -442,16 +444,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (createTableOp.getLikeTableName() != null) {
                         TableToken likeTableToken = executionContext.getTableTokenIfExists(createTableOp.getLikeTableName());
                         if (likeTableToken == null) {
-                            throw SqlException.$(createTableOp.getLikeTableNamePosition(), "table does not exist [table=").put(createTableOp.getLikeTableName()).put(']');
+                            throw SqlException
+                                    .$(createTableOp.getLikeTableNamePosition(), "table does not exist [table=")
+                                    .put(createTableOp.getLikeTableName()).put(']');
                         }
 
                         try (TableMetadata likeTableMetadata = executionContext.getMetadataForRead(likeTableToken)) {
+                            createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
                             tableToken = engine.createTable(
                                     executionContext.getSecurityContext(),
                                     mem,
                                     path,
                                     createTableOp.ignoreIfExists(),
-                                    likeTableMetadata,
+                                    createTableOp,
                                     false,
                                     volumeAlias != null
                             );
@@ -480,7 +485,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (e.isInterruption()) {
                         throw e;
                     }
-                    throw SqlException.$(createTableOp.getTableNamePosition(), "Could not create table, ").put(e.getFlyweightMessage());
+                    throw SqlException.$(createTableOp.getTableNamePosition(), "Could not create table, ")
+                            .put(e.getFlyweightMessage());
                 }
             }
         }
@@ -2073,12 +2079,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileUsingModel(SqlExecutionContext executionContext, long beginNanos) throws SqlException {
-        // This method will not populate sql cache directly;
-        // factories are assumed to be non-reentrant and once
-        // factory is out of this method the caller assumes
-        // full ownership over it. In that however caller may
-        // choose to return factory back to this or any other
-        // instance of compiler for safekeeping
+        // This method will not populate sql cache directly; factories are assumed to be non-reentrant, and once
+        // factory is out of this method, the caller assumes full ownership over it. However, the caller may
+        // choose to return the factory back to this or any other instance of compiler for safekeeping
+
         // lexer would have parsed first token to determine direction of execution flow
         lexer.unparseLast();
         codeGenerator.clear();
