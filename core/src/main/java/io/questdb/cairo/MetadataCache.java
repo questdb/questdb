@@ -440,7 +440,7 @@ public class MetadataCache implements QuietCloseable {
         @Override
         public void hydrateTable(@NotNull TableWriterMetadata tableMetadata) {
             final TableToken tableToken = tableMetadata.getTableToken();
-            CairoTable table = new CairoTable(tableToken);
+            final CairoTable table = new CairoTable(tableToken);
             final long metadataVersion = tableMetadata.getMetadataVersion();
             table.setMetadataVersion(metadataVersion);
 
