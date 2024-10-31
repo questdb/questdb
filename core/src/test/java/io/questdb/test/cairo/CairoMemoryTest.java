@@ -26,7 +26,6 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.vm.MemoryCMORImpl;
 import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.vm.MemoryPMARImpl;
@@ -35,7 +34,12 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -74,7 +78,7 @@ public class CairoMemoryTest extends AbstractTest {
         int failureCount = 0;
         try (Path path = new Path()) {
             path.of(temp.newFile().getAbsolutePath());
-            try (MemoryMA mem = Vm.getMAInstance(CommitMode.NOSYNC)) {
+            try (MemoryMA mem = Vm.getMAInstance(null)) {
                 mem.of(ff, path.$(), ff.getPageSize() * 2, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                 int i = 0;
                 while (i < N) {
@@ -155,7 +159,7 @@ public class CairoMemoryTest extends AbstractTest {
         try (Path path = new Path()) {
             path.of(temp.getRoot().getAbsolutePath());
             int prefixLen = path.size();
-            try (MemoryMA mem = Vm.getMAInstance(CommitMode.NOSYNC)) {
+            try (MemoryMA mem = Vm.getMAInstance(null)) {
                 Rnd rnd = new Rnd();
                 for (int k = 0; k < 10; k++) {
                     path.trimTo(prefixLen).concat(rnd.nextString(10));

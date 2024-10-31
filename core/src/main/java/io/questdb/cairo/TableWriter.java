@@ -360,7 +360,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (todo == TODO_RESTORE_META) {
                 repairMetaRename((int) todoMem.getLong(48));
             }
-            this.ddlMem = Vm.getMARInstance(configuration.getCommitMode());
+            this.ddlMem = Vm.getMARInstance(configuration);
             this.metaMem = Vm.getCMRInstance();
             openMetaFile(ff, path, pathSize, metaMem);
             this.metadata = new TableWriterMetadata(this.tableToken, metaMem);
@@ -3734,12 +3734,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final MemoryCARW o3AuxMem2;
 
         if (type > 0) {
-            dataMem = Vm.getMAInstance(configuration.getCommitMode());
+            dataMem = Vm.getMAInstance(configuration);
             o3DataMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             o3DataMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
 
             if (ColumnType.isVarSize(type)) {
-                auxMem = Vm.getMAInstance(configuration.getCommitMode());
+                auxMem = Vm.getMAInstance(configuration);
                 o3AuxMem1 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
                 o3AuxMem2 = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
             } else {
