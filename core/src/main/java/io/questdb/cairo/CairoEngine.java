@@ -181,8 +181,8 @@ public class CairoEngine implements Closeable, WriterSource {
             // Migrate database files.
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
             tableNameRegistry = configuration.isReadOnlyInstance()
-                    ? new TableNameRegistryRO(this, configuration, tableFlagResolver)
-                    : new TableNameRegistryRW(this, configuration, tableFlagResolver);
+                    ? new TableNameRegistryRO(this, tableFlagResolver)
+                    : new TableNameRegistryRW(this, tableFlagResolver);
             tableNameRegistry.reload();
 
             this.sqlCompilerPool = new SqlCompilerPool(this);

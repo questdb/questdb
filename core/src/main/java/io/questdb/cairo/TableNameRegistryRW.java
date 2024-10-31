@@ -24,7 +24,6 @@
 
 package io.questdb.cairo;
 
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
@@ -32,11 +31,11 @@ import org.jetbrains.annotations.Nullable;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
-    public TableNameRegistryRW(CairoEngine engine, CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
-        super(engine, configuration, tableFlagResolver);
+    public TableNameRegistryRW(CairoEngine engine, TableFlagResolver tableFlagResolver) {
+        super(engine, tableFlagResolver);
         if (!nameStore.lock()) {
-            if (!configuration.getAllowTableRegistrySharedWrite()) {
-                throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
+            if (!engine.getConfiguration().getAllowTableRegistrySharedWrite()) {
+                throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(engine.getConfiguration().getRoot()).put(']');
             }
         }
         this.tableNameToTableTokenMap = new ConcurrentHashMap<>(false);

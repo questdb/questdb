@@ -31,18 +31,16 @@ import io.questdb.std.ObjHashSet;
 import java.util.Map;
 
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
-    protected final CairoConfiguration configuration;
+    protected final CairoEngine engine;
     // drop marker must contain special symbols to avoid a table created by the same name
     protected final TableNameRegistryStore nameStore;
     protected final TableFlagResolver tableFlagResolver;
     protected ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap;
     protected ConcurrentHashMap<TableToken> tableNameToTableTokenMap;
-    protected CairoEngine engine;
 
-    public AbstractTableNameRegistry(CairoEngine engine, CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
+    public AbstractTableNameRegistry(CairoEngine engine, TableFlagResolver tableFlagResolver) {
         this.engine = engine;
-        this.configuration = configuration;
-        this.nameStore = new TableNameRegistryStore(configuration, tableFlagResolver);
+        this.nameStore = new TableNameRegistryStore(engine.configuration, tableFlagResolver);
         this.tableFlagResolver = tableFlagResolver;
     }
 
@@ -126,16 +124,15 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
         for (Map.Entry<CharSequence, ReverseTableMapItem> e : dirNameToTableTokenMap.entrySet()) {
             ReverseTableMapItem rtmi = e.getValue();
             TableToken dirToNameToken = rtmi.getToken();
+            TableToken tokenByName = tableNameToTableTokenMap.get(dirToNameToken.getTableName());
             if (rtmi.isDropped()) {
-                TableToken tokenByName = tableNameToTableTokenMap.get(dirToNameToken.getTableName());
                 if (tokenByName != null && tokenByName.equals(dirToNameToken)) {
                     throw new IllegalStateException("table " + tokenByName.getTableName()
                             + " is dropped but still present in table name registry");
                 }
             } else {
-                TableToken tokenByName = tableNameToTableTokenMap.get(dirToNameToken.getTableName());
                 if (tokenByName == null) {
-                    throw new IllegalStateException("table " + tokenByName.getTableName()
+                    throw new IllegalStateException("table " + dirToNameToken.getTableName()
                             + " is not dropped but name is not present in table name registry");
                 }
 
