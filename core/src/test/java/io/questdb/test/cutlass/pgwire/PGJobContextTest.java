@@ -39,7 +39,6 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
@@ -77,7 +76,6 @@ import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -121,6 +119,7 @@ import java.util.UUID;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -8639,7 +8638,7 @@ nodejs code:
                 final SOCountDownLatch latch = new SOCountDownLatch(1);
                 engine.setPoolListener(createWriterReleaseListener("xyz", latch));
                 connection.close();
-                latch.await(5_000_000);
+                latch.await(TimeUnit.SECONDS.toNanos(10));
             } finally {
                 engine.setPoolListener(null);
             }
