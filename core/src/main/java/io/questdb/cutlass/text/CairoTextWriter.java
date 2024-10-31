@@ -497,11 +497,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
-        }
-
-        @Override
         public boolean isWalEnabled() {
             return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }

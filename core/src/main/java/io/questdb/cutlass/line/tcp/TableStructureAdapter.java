@@ -138,11 +138,6 @@ public class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public boolean isSequential(int columnIndex) {
-        return false;
-    }
-
-    @Override
     public boolean isWalEnabled() {
         return walEnabledDefault && PartitionBy.isPartitioned(getPartitionBy());
     }

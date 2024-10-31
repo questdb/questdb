@@ -112,11 +112,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public boolean isSequential(int columnIndex) {
-        return ((WriterTableColumnMetadata) getColumnMetadata(columnIndex)).sequential;
-    }
-
-    @Override
     public boolean isSoftLink() {
         return false;
     }
@@ -157,7 +152,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                             TableUtils.isSymbolCached(metaMem, i),
                             null,
                             i,
-                            TableUtils.isSequential(metaMem, i),
                             TableUtils.getSymbolCapacity(metaMem, i),
                             TableUtils.isColumnDedupKey(metaMem, i),
                             TableUtils.getReplacingColumnIndex(metaMem, i),
@@ -196,7 +190,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             boolean indexFlag,
             int indexValueBlockCapacity,
             int columnIndex,
-            boolean sequential,
             int symbolCapacity,
             boolean isDedupKey,
             boolean isSymbolCached
@@ -212,7 +205,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                         true,
                         null,
                         columnIndex,
-                        sequential,
                         symbolCapacity,
                         isDedupKey,
                         0,
@@ -231,7 +223,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             boolean indexFlag,
             int indexValueBlockCapacity,
             int columnIndex,
-            boolean sequential,
             int symbolCapacity,
             boolean isDedupKey,
             int replacingIndex,
@@ -248,7 +239,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                         true,
                         null,
                         columnIndex,
-                        sequential,
                         symbolCapacity,
                         isDedupKey,
                         replacingIndex,
@@ -284,7 +274,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     public static class WriterTableColumnMetadata extends TableColumnMetadata {
-        private final boolean sequential;
 
         // todo: remove this class
         public WriterTableColumnMetadata(
@@ -295,14 +284,12 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 boolean symbolTableStatic,
                 RecordMetadata parent,
                 int i,
-                boolean sequential,
                 int symbolCapacity,
                 boolean isDedupKey,
                 int replacingIndex,
                 boolean symbolCached
         ) {
             super(nameStr, type, columnIndexed, indexBlockCapacity, symbolTableStatic, parent, i, isDedupKey, replacingIndex, symbolCached, symbolCapacity);
-            this.sequential = sequential;
         }
     }
 }

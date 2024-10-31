@@ -95,11 +95,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return false;
     }
 
-    @Override
-    public boolean isSequential(int columnIndex) {
-        return false;
-    }
-
     // constructor used to read random metadata files
     public TableReaderMetadata(CairoConfiguration configuration) {
         this.configuration = configuration;

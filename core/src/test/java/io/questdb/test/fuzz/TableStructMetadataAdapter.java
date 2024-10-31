@@ -122,11 +122,6 @@ public class TableStructMetadataAdapter implements TableStructure {
     }
 
     @Override
-    public boolean isSequential(int columnIndex) {
-        return true;
-    }
-
-    @Override
     public boolean isWalEnabled() {
         return isWalEnabled;
     }

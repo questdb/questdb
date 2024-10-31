@@ -44,7 +44,5 @@ public interface TableStructure extends TableDescriptor {
 
     boolean isIndexed(int columnIndex);
 
-    boolean isSequential(int columnIndex);
-
     boolean isWalEnabled();
 }

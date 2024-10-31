@@ -136,8 +136,6 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
         }
 
         @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
         }
 
         @Override

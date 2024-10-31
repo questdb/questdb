@@ -631,11 +631,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         }
 
         @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
-        }
-
-        @Override
         public boolean isWalEnabled() {
             return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(getPartitionBy());
         }

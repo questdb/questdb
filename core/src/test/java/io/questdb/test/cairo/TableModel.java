@@ -157,11 +157,6 @@ public class TableModel implements TableStructure {
     }
 
     @Override
-    public boolean isSequential(int columnIndex) {
-        return false;
-    }
-
-    @Override
     public boolean isWalEnabled() {
         return walEnabled == -1
                 ? configuration.getWalEnabledDefault()

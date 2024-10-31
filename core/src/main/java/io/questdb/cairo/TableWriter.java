@@ -533,7 +533,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 symbolCacheFlag,
                 isIndexed,
                 indexValueBlockCapacity,
-                isSequential,
                 isDedupKey,
                 columnNameTxn,
                 -1
@@ -572,7 +571,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 isIndexed,
                 indexValueBlockCapacity,
                 columnIndex,
-                isSequential,
                 symbolCapacity,
                 isDedupKey,
                 symbolCacheFlag
@@ -909,7 +907,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         symbolCacheFlag,
                         isIndexed,
                         indexValueBlockCapacity,
-                        isSequential,
                         isDedupKey,
                         columnNameTxn,
                         existingColIndex
@@ -928,7 +925,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         newType, isIndexed,
                         indexValueBlockCapacity,
                         existingColIndex,
-                        isSequential,
                         symbolCapacity,
                         isDedupKey,
                         existingColIndex + 1,
@@ -2823,13 +2819,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolCacheFlag,
             boolean isIndexed,
             int indexValueBlockCapacity,
-            boolean isSequential,
             boolean isDedupKey,
             long columnNameTxn,
             int replaceColumnIndex
     ) {
         // create new _meta.swp
-        this.metaSwapIndex = addColumnToMeta0(columnName, columnType, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, replaceColumnIndex);
+        this.metaSwapIndex = addColumnToMeta0(columnName, columnType, isIndexed, indexValueBlockCapacity, isDedupKey, replaceColumnIndex);
 
         // close _meta so we can rename it
         metaMem.close();
@@ -2876,7 +2871,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int type,
             boolean indexFlag,
             int indexValueBlockCapacity,
-            boolean sequentialFlag,
             boolean dedupKeyFlag,
             int replaceColumnIndex
     ) {
@@ -2899,10 +2893,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long flags = 0;
             if (indexFlag) {
                 flags |= META_FLAG_BIT_INDEXED;
-            }
-
-            if (sequentialFlag) {
-                flags |= META_FLAG_BIT_SEQUENTIAL;
             }
 
             if (dedupKeyFlag) {
