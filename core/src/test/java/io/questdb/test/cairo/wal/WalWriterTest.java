@@ -1466,11 +1466,10 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testOverlappingStructureChangeFails() throws Exception {
-        final AtomicInteger counter = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (counter.incrementAndGet() == 3) {
+                if (Chars.endsWith(name.asAsciiCharSequence(), "_txnlog.meta.d")) {
                     return -1;
                 }
                 return TestFilesFacadeImpl.INSTANCE.openRO(name);
