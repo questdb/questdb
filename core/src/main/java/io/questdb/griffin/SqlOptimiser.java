@@ -337,7 +337,7 @@ public class SqlOptimiser implements Mutable {
             } else {
                 outerSelectChoose.addBottomUpColumn(
                         queryColumnPool.next().of(column.getAlias(),
-                                expressionNodePool.next().of(ast.type, ast.token, ast.precedence, ast.position)
+                                expressionNodePool.next().of(ast.type, column.getAlias(), ast.precedence, ast.position)
                         ));
             }
         }
@@ -394,20 +394,17 @@ public class SqlOptimiser implements Mutable {
         nextInnerSelectNone.setNestedModel(nextInnerSelectChoose);
         nextInnerSelectChoose.setNestedModel(originalSelectNone);
 
+
+        // join models
+        for (int j = 1, m = originalSelectNone.getJoinModels().size(); j < m; j++) {
+            QueryModel joinModel = originalSelectNone.getJoinModels().getQuick(j);
+            joinModel.setNestedModel(rewriteVwap(joinModel.getNestedModel()));
+        }
+
         // recurse nested models
         outerSelectChoose.setNestedModel(rewriteVwap(nextInnerSelectNone));
 
-
         // join models
-        for (int i = 1, n = outerSelectChoose.getJoinModels().size(); i < n; i++) {
-            QueryModel joinModel = outerSelectChoose.getJoinModels().getQuick(i);
-            joinModel.setNestedModel(rewriteVwap(joinModel.getNestedModel()));
-        }
-
-        for (int i = 1, n = originalSelectNone.getJoinModels().size(); i < n; i++) {
-            QueryModel joinModel = originalSelectNone.getJoinModels().getQuick(i);
-            joinModel.setNestedModel(rewriteVwap(joinModel.getNestedModel()));
-        }
 
         outerSelectChoose.setUnionModel(rewriteVwap(outerSelectChoose.getUnionModel()));
         originalSelectNone.setUnionModel(rewriteVwap(originalSelectNone.getUnionModel()));
