@@ -46,9 +46,10 @@ public class PGWireInsertSelectBenchmark {
     public static final int COOLDOWN_PERIOD_SECONDS = 30;
     private static final int INSERT_BATCH_SIZE = 500;
     private static final long RUNTIME_SECONDS = 10;
-    private static int N_INSERTERS = 2;
-    private static int N_SELECTORS = 2;
-    private static boolean USE_ILP = false;
+
+    private static int nInserters;
+    private static int nSelectors;
+    private static boolean useIlp;
 
     public static void main(String[] args) throws Exception {
         int[][] inserterSelectorCounts = {
@@ -57,12 +58,12 @@ public class PGWireInsertSelectBenchmark {
                 {4, 1}, {4, 2}, {4, 3}, {1, 4}, {2, 4}, {3, 4}, {4, 4}
         };
         for (int[] inserterSelectorCount : inserterSelectorCounts) {
-            N_INSERTERS = inserterSelectorCount[0];
-            N_SELECTORS = inserterSelectorCount[1];
-            USE_ILP = false;
+            nInserters = inserterSelectorCount[0];
+            nSelectors = inserterSelectorCount[1];
+            useIlp = false;
             runBenchmark();
             Thread.sleep(SECONDS.toMillis(COOLDOWN_PERIOD_SECONDS));
-            USE_ILP = true;
+            useIlp = true;
             runBenchmark();
             Thread.sleep(SECONDS.toMillis(COOLDOWN_PERIOD_SECONDS));
         }
@@ -75,7 +76,7 @@ public class PGWireInsertSelectBenchmark {
         properties.setProperty("password", "quest");
         properties.setProperty("sslmode", "disable");
         properties.setProperty("binaryTransfer", Boolean.toString(true));
-        // "simple", "extended", "extendedForPrepared", "extendedCacheEverything"
+        // choices: "simple", "extended", "extendedForPrepared", "extendedCacheEverything"
         properties.setProperty("preferQueryMode", "extended");
 //        properties.setProperty("prepareThreshold", String.valueOf(-1));
 
@@ -105,14 +106,15 @@ public class PGWireInsertSelectBenchmark {
                         "%,d inserts per second, %,d selects per second\n" +
                         "Per-thread performance:\n" +
                         "%,d inserts per second, %,d selects per second\n\n",
-                N_INSERTERS, USE_ILP ? "ILP" : "JDBC", N_SELECTORS, insertsPerSecond, selectsPerSecond,
-                insertsPerSecond / N_INSERTERS, selectsPerSecond / N_SELECTORS);
+                nInserters, useIlp ? "ILP" : "JDBC", nSelectors, insertsPerSecond, selectsPerSecond,
+                nInserters != 0 ? insertsPerSecond / nInserters : 0,
+                nSelectors != 0 ? selectsPerSecond / nSelectors : 0);
     }
 
     static void runBenchmark() {
-        AtomicLongArray inserterProgress = new AtomicLongArray(N_INSERTERS);
-        AtomicLongArray selectorProgress = new AtomicLongArray(N_SELECTORS);
-        ExecutorService pool = Executors.newFixedThreadPool(N_INSERTERS + N_SELECTORS);
+        AtomicLongArray inserterProgress = new AtomicLongArray(nInserters);
+        AtomicLongArray selectorProgress = new AtomicLongArray(nSelectors);
+        ExecutorService pool = Executors.newFixedThreadPool(nInserters + nSelectors);
         try {
             try (Connection connection = createConnection();
                  Statement ddlStatement = connection.createStatement()
@@ -122,10 +124,10 @@ public class PGWireInsertSelectBenchmark {
             }
             long start = System.nanoTime();
             long deadline = start + SECONDS.toNanos(RUNTIME_SECONDS);
-            for (int taskid = 0; taskid < N_INSERTERS; taskid++) {
+            for (int taskid = 0; taskid < nInserters; taskid++) {
                 final int taskId = taskid;
                 pool.submit(() -> {
-                    if (USE_ILP) {
+                    if (useIlp) {
                         try (Sender sender = Sender.fromConfig("http::addr=localhost:9000;auto_flush=off;")) {
                             for (long i = 1; ; i++) {
                                 sender.table("tango")
@@ -170,7 +172,7 @@ public class PGWireInsertSelectBenchmark {
                     }
                 });
             }
-            for (int taskid = 0; taskid < N_SELECTORS; taskid++) {
+            for (int taskid = 0; taskid < nSelectors; taskid++) {
                 final int taskId = taskid;
                 pool.submit(() -> {
                     try (Connection connection = createConnection();
