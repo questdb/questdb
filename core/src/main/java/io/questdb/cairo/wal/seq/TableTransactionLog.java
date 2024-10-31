@@ -34,14 +34,18 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
-import java.lang.ThreadLocal;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
@@ -51,20 +55,18 @@ public class TableTransactionLog implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
     private static final ThreadLocal<AlterOperation> tlAlterOperation = new ThreadLocal<>();
     private static final ThreadLocal<TableMetadataChangeLogImpl> tlStructChangeCursor = new ThreadLocal<>();
-    private final int defaultSeqPartTxnCount;
+    private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final AtomicLong maxMetadataVersion = new AtomicLong();
-    private final int mkDirMode;
     private final Utf8StringSink rootPath = new Utf8StringSink();
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
     private volatile long lastTxn = -1;
     private TableTransactionLogFile txnLogFile;
 
-    TableTransactionLog(FilesFacade ff, int mkDirMode, int defaultSeqPartTxnCount) {
-        this.ff = ff;
-        this.defaultSeqPartTxnCount = defaultSeqPartTxnCount;
-        this.mkDirMode = mkDirMode;
+    TableTransactionLog(CairoConfiguration configuration) {
+        this.configuration = configuration;
+        this.ff = configuration.getFilesFacade();
     }
 
     public static long readMaxStructureVersion(FilesFacade ff, Path path) {
@@ -98,12 +100,18 @@ public class TableTransactionLog implements Closeable {
         rootPath.clear();
     }
 
-    public void open(Path path) {
-        if (this.rootPath.size() == 0) {
-            assert txnLogFile == null;
-            this.rootPath.put(path);
+    public void fullSync() {
+        txnMetaMemIndex.sync(false);
+        txnMetaMem.sync(false);
+        txnLogFile.fullSync();
+    }
 
-            txnLogFile = openTxnFile(path, ff, mkDirMode);
+    public void open(Path path) {
+        if (rootPath.size() == 0) {
+            assert txnLogFile == null;
+            rootPath.put(path);
+
+            txnLogFile = openTxnFile(path, configuration);
             long maxStructureVersion = txnLogFile.open(path);
 
             openFiles(path);
@@ -113,7 +121,7 @@ public class TableTransactionLog implements Closeable {
             txnMetaMemIndex.jumpTo(structureAppendOffset + Long.BYTES);
             txnMetaMem.jumpTo(txnMetaMemSize);
         } else {
-            assert Utf8s.equals(path, this.rootPath);
+            assert Utf8s.equals(path, rootPath);
         }
         lastTxn = txnLogFile.lastTxn();
     }
@@ -122,12 +130,6 @@ public class TableTransactionLog implements Closeable {
         close();
         open(path);
         return true;
-    }
-
-    public void sync() {
-        txnMetaMemIndex.sync(false);
-        txnMetaMem.sync(false);
-        txnLogFile.sync();
     }
 
     private static int getFormatVersion(Path path, FilesFacade ff) {
@@ -147,22 +149,16 @@ public class TableTransactionLog implements Closeable {
     }
 
     private static long openFileRO(final FilesFacade ff, final Path path, final String fileName) {
-        final int rootLen = path.size();
-        path.concat(fileName);
-        try {
-            return TableUtils.openRO(ff, path.$(), LOG);
-        } finally {
-            path.trimTo(rootLen);
-        }
+        return TableUtils.openRO(ff, path, fileName, LOG);
     }
 
-    private static TableTransactionLogFile openTxnFile(Path path, FilesFacade ff, int mkDirMode) {
-        int formatVersion = getFormatVersion(path, ff);
+    private static TableTransactionLogFile openTxnFile(Path path, CairoConfiguration configuration) {
+        int formatVersion = getFormatVersion(path, configuration.getFilesFacade());
         switch (formatVersion) {
             case WAL_SEQUENCER_FORMAT_VERSION_V1:
-                return new TableTransactionLogV1(ff);
+                return new TableTransactionLogV1(configuration);
             case WAL_SEQUENCER_FORMAT_VERSION_V2:
-                return new TableTransactionLogV2(ff, -1, mkDirMode);
+                return new TableTransactionLogV2(configuration, -1);
             default:
                 throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
         }
@@ -170,10 +166,10 @@ public class TableTransactionLog implements Closeable {
 
     private void createTxnLogFileInstance() {
         if (txnLogFile == null) {
-            if (defaultSeqPartTxnCount > 0) {
-                txnLogFile = new TableTransactionLogV2(ff, defaultSeqPartTxnCount, mkDirMode);
+            if (configuration.getDefaultSeqPartTxnCount() > 0) {
+                txnLogFile = new TableTransactionLogV2(configuration, configuration.getDefaultSeqPartTxnCount());
             } else {
-                txnLogFile = new TableTransactionLogV1(ff);
+                txnLogFile = new TableTransactionLogV1(configuration);
             }
         } else {
             throw new IllegalStateException("transaction log file already opened");
@@ -222,10 +218,8 @@ public class TableTransactionLog implements Closeable {
     }
 
     long endMetadataChangeEntry() {
-        sync();
-
+        fullSync();
         Unsafe.getUnsafe().storeFence();
-
         long txn = lastTxn = txnLogFile.endMetadataChangeEntry();
         maxMetadataVersion.incrementAndGet();
         return txn;

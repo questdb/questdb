@@ -94,14 +94,6 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getMessageBus();
     }
 
-    default TableMetadata getMetadataForRead(TableToken tableToken) {
-        return getMetadataForRead(tableToken, TableUtils.ANY_TABLE_VERSION);
-    }
-
-    default TableMetadata getMetadataForRead(TableToken tableToken, long desiredVersion) {
-        return getCairoEngine().getTableMetadata(tableToken, desiredVersion);
-    }
-
     default TableMetadata getMetadataForWrite(TableToken tableToken, long desiredVersion) {
         return getCairoEngine().getLegacyMetadata(tableToken, desiredVersion);
     }

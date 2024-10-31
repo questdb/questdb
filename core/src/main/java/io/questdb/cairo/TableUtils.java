@@ -1578,11 +1578,6 @@ public final class TableUtils {
         path.concat(PARQUET_PARTITION_NAME);
     }
 
-    public static void setPathTable(@NotNull Path path, @NotNull CairoConfiguration configuration, @NotNull TableToken token) {
-        path.close();
-        path.of(configuration.getRoot()).concat(token.getDirName()).trimTo(path.size());
-    }
-
     /**
      * Sets the sink to the directory of a native partition taking into account the timestamp, the partitioning scheme
      * and the partition version.

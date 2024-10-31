@@ -280,6 +280,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_BUSY_RETRY_INITIAL_WAIT_QUEUE_SIZE("http.busy.retry.initialWaitQueueSize"),
     HTTP_BUSY_RETRY_MAX_PROCESSING_QUEUE_SIZE("http.busy.retry.maxProcessingQueueSize"),
     HTTP_MIN_WORKER_COUNT("http.min.worker.count"),
+    HTTP_MIN_WORKER_POOL_PRIORITY("http.min.worker.priority"),
     HTTP_MIN_NET_CONNECTION_LIMIT("http.min.net.connection.limit"),
     HTTP_NET_BIND_TO("http.net.bind.to"),
     HTTP_CONNECTION_POOL_INITIAL_CAPACITY("http.connection.pool.initial.capacity"),
@@ -501,8 +502,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT("http.min.multipart.idle.spin.count"),
     HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND("http.min.allow.deflate.before.send"),
     HTTP_MIN_SERVER_KEEP_ALIVE("http.min.server.keep.alive"),
-    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size"),
-    ;
+    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

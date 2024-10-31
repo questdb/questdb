@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.vm;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.vm.api.*;
 import io.questdb.log.Log;
 import io.questdb.std.Files;
@@ -98,12 +99,12 @@ public class Vm {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
     }
 
-    public static MemoryMA getMAInstance(int commitMode) {
-        return new MemoryPMARImpl(commitMode);
+    public static MemoryMA getMAInstance(CairoConfiguration configuration) {
+        return new MemoryPMARImpl(configuration);
     }
 
-    public static MemoryMAR getMARInstance(int commitMode) {
-        return new MemoryPMARImpl(commitMode);
+    public static MemoryMAR getMARInstance(CairoConfiguration configuration) {
+        return new MemoryPMARImpl(configuration);
     }
 
     public static MemoryMARW getMARWInstance() {
@@ -112,10 +113,6 @@ public class Vm {
 
     public static MemoryMARW getMARWInstance(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts) {
         return new MemoryCMARWImpl(ff, name, extendSegmentSize, size, memoryTag, opts);
-    }
-
-    public static MemoryMR getMRInstance() {
-        return new MemoryCMRImpl();
     }
 
     public static MemoryCMOR getMemoryCMOR() {

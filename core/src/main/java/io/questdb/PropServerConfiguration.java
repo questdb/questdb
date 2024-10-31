@@ -483,6 +483,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
     private long httpMinWorkerNapThreshold;
+    private int httpMinWorkerPoolPriority;
     private long httpMinWorkerSleepThreshold;
     private long httpMinWorkerSleepTimeout;
     private long httpMinWorkerYieldThreshold;
@@ -803,6 +804,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (httpMinServerEnabled) {
                 this.httpMinWorkerHaltOnError = getBoolean(properties, env, PropertyKey.HTTP_MIN_WORKER_HALT_ON_ERROR, false);
                 this.httpMinWorkerCount = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_COUNT, 1);
+
+                final int httpMinWorkerPoolPriority = getInt(properties, env, PropertyKey.HTTP_MIN_WORKER_POOL_PRIORITY, Thread.MAX_PRIORITY - 2);
+                this.httpMinWorkerPoolPriority = Math.min(Thread.MAX_PRIORITY, Math.max(Thread.MIN_PRIORITY, httpMinWorkerPoolPriority));
+
                 this.httpMinWorkerAffinity = getAffinity(properties, env, PropertyKey.HTTP_MIN_WORKER_AFFINITY, httpMinWorkerCount);
                 this.httpMinWorkerYieldThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_YIELD_THRESHOLD, 10);
                 this.httpMinWorkerNapThreshold = getLong(properties, env, PropertyKey.HTTP_MIN_WORKER_NAP_THRESHOLD, 100);
@@ -817,7 +822,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpMinBindPort = p;
                 });
 
-                this.httpMinNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_LIMIT, 4);
+                this.httpMinNetConnectionLimit = getInt(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_LIMIT, 64);
 
                 // deprecated
                 this.httpMinNetConnectionTimeout = getLong(properties, env, PropertyKey.HTTP_MIN_NET_IDLE_CONNECTION_TIMEOUT, 5 * 60 * 1000L);
@@ -3547,6 +3552,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean preAllocateBuffers() {
             return true;
+        }
+
+        @Override
+        public int workerPoolPriority() {
+            return httpMinWorkerPoolPriority;
         }
     }
 
