@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -294,8 +295,11 @@ class WalEventWriter implements Closeable {
     }
 
     void sync() {
-        eventMem.sync(false);
-        ff.fsync(indexFd);
+        int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            eventMem.sync(commitMode == CommitMode.ASYNC);
+            ff.fsync(indexFd);
+        }
     }
 
     int truncate() {
