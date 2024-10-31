@@ -281,15 +281,7 @@ public class HttpHeaderParserTest {
         );
 
         assertMalformedCookieIgnored(
-                "Set-Cookie: Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
                 "Set-Cookie: ; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
         );
 
         assertMalformedCookieIgnored(
@@ -366,10 +358,6 @@ public class HttpHeaderParserTest {
         );
 
         assertMalformedCookieIgnored(
-                "Set-Cookie: Max-Age=hello; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
                 "Set-Cookie: a=b; Same-Sitestrict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
         );
 
@@ -394,19 +382,26 @@ public class HttpHeaderParserTest {
         );
     }
 
-    private static void assertMalformedCookieIgnored(String malformedCookie) {
+    @Test
+    public void testCookiesNameHasKeywordSecure() {
         String v = "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
-                "Set-Cookie: a=123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n" +
-                malformedCookie +
-                "Set-Cookie: b=123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n" +
+                "Set-Cookie: Secure=123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n" +
                 "\r\n";
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
             hp.parse(p, p + v.length(), true, false);
-            Assert.assertEquals(2, hp.getCookieList().size());
-            Assert.assertNotNull(hp.getCookie(new Utf8String("a")));
-            Assert.assertNotNull(hp.getCookie(new Utf8String("b")));
-            Assert.assertEquals(1, hp.getIgnoredCookieCount());
+            HttpCookie cookie = hp.getCookie(new Utf8String("Secure"));
+            Assert.assertNotNull(cookie);
+            TestUtils.assertEquals("123", cookie.value);
+            TestUtils.assertEquals("hello.com", cookie.domain);
+            TestUtils.assertEquals("/", cookie.path);
+            Assert.assertTrue(cookie.secure);
+            Assert.assertTrue(cookie.partitioned);
+            Assert.assertTrue(cookie.httpOnly);
+            Assert.assertEquals(1234545, cookie.maxAge);
+            TestUtils.assertEquals("strict", cookie.sameSite);
+            Assert.assertEquals(1445412480000000L, cookie.expires);
+
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
@@ -752,6 +747,24 @@ public class HttpHeaderParserTest {
             TestUtils.assertEquals("strict", cookie.sameSite);
             Assert.assertEquals(1445412480000000L, cookie.expires);
 
+        } finally {
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void assertMalformedCookieIgnored(String malformedCookie) {
+        String v = "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                "Set-Cookie: a=123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n" +
+                malformedCookie +
+                "Set-Cookie: b=123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n" +
+                "\r\n";
+        long p = TestUtils.toMemory(v);
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            hp.parse(p, p + v.length(), true, false);
+            Assert.assertEquals(2, hp.getCookieList().size());
+            Assert.assertNotNull(hp.getCookie(new Utf8String("a")));
+            Assert.assertNotNull(hp.getCookie(new Utf8String("b")));
+            Assert.assertEquals(1, hp.getIgnoredCookieCount());
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
