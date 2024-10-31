@@ -24,6 +24,8 @@
 
 package io.questdb.cutlass.http;
 
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
@@ -34,6 +36,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8SequenceObjHashMap;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
@@ -41,15 +44,21 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.Comparator;
+
 import static io.questdb.cutlass.http.HttpConstants.*;
 
 public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHeader {
+    private static final Comparator<HttpCookie> COOKIE_COMPARATOR = HttpHeaderParser::cookieComparator;
+    private static final Log LOG = LogFactory.getLog(HttpHeaderParser.class);
     private final BoundaryAugmenter boundaryAugmenter = new BoundaryAugmenter();
+    private final ObjList<HttpCookie> cookieList = new ObjList<>();
+    private final ObjectPool<HttpCookie> cookiePool;
+    private final Utf8SequenceObjHashMap<HttpCookie> cookies = new Utf8SequenceObjHashMap<>();
+    private final ObjectPool<DirectUtf8String> csPool;
     private final LowerCaseUtf8SequenceObjHashMap<DirectUtf8String> headers = new LowerCaseUtf8SequenceObjHashMap<>();
     private final long hi;
-    private final ObjectPool<DirectUtf8String> pool;
     private final DirectUtf8String temp = new DirectUtf8String();
-    private final ObjList<DirectUtf8String> unparsedCookies = new ObjList<>();
     private final Utf8SequenceObjHashMap<DirectUtf8String> urlParams = new Utf8SequenceObjHashMap<>();
     protected boolean incomplete;
     protected Utf8Sequence url;
@@ -64,6 +73,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private DirectUtf8String contentType;
     private DirectUtf8String headerName;
     private long headerPtr;
+    private int ignoredCookieCount;
     private boolean isMethod = true;
     private boolean isProtocol = true;
     private boolean isQueryParams = false;
@@ -80,11 +90,12 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     private DirectUtf8String statusCode;
     private DirectUtf8String statusText;
 
-    public HttpHeaderParser(int bufferLen, ObjectPool<DirectUtf8String> pool) {
+    public HttpHeaderParser(int bufferLen, ObjectPool<DirectUtf8String> csPool) {
         int bufferSize = Numbers.ceilPow2(bufferLen);
         this.headerPtr = this._wptr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
         this.hi = headerPtr + bufferSize;
-        this.pool = pool;
+        this.csPool = csPool;
+        this.cookiePool = new ObjectPool<>(HttpCookie::new, 16);
         clear();
     }
 
@@ -115,7 +126,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         this.isStatusText = true;
         this.needProtocol = true;
         this.contentLength = -1;
-        this.unparsedCookies.clear();
+        this.cookieList.clear();
+        this.cookiePool.clear();
+        this.ignoredCookieCount = 0;
         // do not clear the pool
         // this.pool.clear();
     }
@@ -164,6 +177,14 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         return contentType;
     }
 
+    public HttpCookie getCookie(Utf8Sequence cookieName) {
+        return cookies.get(cookieName);
+    }
+
+    public @NotNull ObjList<HttpCookie> getCookieList() {
+        return cookieList;
+    }
+
     @Override
     public DirectUtf8Sequence getHeader(Utf8Sequence name) {
         return headers.get(name);
@@ -172,6 +193,10 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
     @Override
     public ObjList<? extends Utf8Sequence> getHeaderNames() {
         return headers.keys();
+    }
+
+    public int getIgnoredCookieCount() {
+        return ignoredCookieCount;
     }
 
     @Override
@@ -199,10 +224,6 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
     public DirectUtf8Sequence getStatusText() {
         return statusText;
-    }
-
-    public @NotNull ObjList<DirectUtf8String> getUnparsedCookies() {
-        return unparsedCookies;
     }
 
     @Override
@@ -245,8 +266,6 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             p = ptr;
         }
 
-        DirectUtf8String v;
-
         while (p < hi) {
             if (_wptr == this.hi) {
                 throw HttpException.instance("header is too large");
@@ -263,7 +282,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             switch (b) {
                 case ':':
                     if (headerName == null) {
-                        headerName = pool.next().of(_lo, _wptr - 1);
+                        headerName = csPool.next().of(_lo, _wptr - 1);
                         _lo = _wptr + 1;
                     }
                     break;
@@ -273,25 +292,37 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                         parseKnownHeaders();
                         return p;
                     }
-                    v = pool.next().of(_lo, _wptr - 1);
-                    _lo = _wptr;
                     if (Utf8s.equals(HEADER_SET_COOKIE, headerName)) {
-                        unparsedCookies.add(v);
+                        cookieParse(_lo, _wptr - 1);
                     } else {
-                        headers.put(headerName, v);
+                        headers.put(headerName, csPool.next().of(_lo, _wptr - 1));
                     }
                     headerName = null;
+                    _lo = _wptr;
                     break;
                 default:
                     break;
             }
         }
-
         return p;
     }
 
     public int size() {
         return headers.size();
+    }
+
+    private static int cookieComparator(HttpCookie o1, HttpCookie o2) {
+        int pathLen1 = o1.path == null ? 0 : o1.path.size();
+        int pathLen2 = o2.path == null ? 0 : o2.path.size();
+        int diff = pathLen2 - pathLen1;
+        return diff != 0 ? diff : Long.compare(o2.expires, o1.expires);
+    }
+
+    private static long cookieSkipBytes(long p, long hi) {
+        while (p < hi && Unsafe.getUnsafe().getByte(p) != ';') {
+            p++;
+        }
+        return p;
     }
 
     private static DirectUtf8String unquote(CharSequence key, DirectUtf8String that) {
@@ -308,6 +339,212 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             }
         } else {
             return that;
+        }
+    }
+
+    private void cookieLogUnknownAttributeError(long p, long hi) {
+        LOG.error().$("unknown cookie attribute [attribute=").$(csPool.next().of(p, cookieSkipBytes(p, hi))).I$();
+    }
+
+    private void cookieParse(long lo, long hi) {
+
+        // let's be pessimistic in case the switch exists early
+
+        ignoredCookieCount++;
+        HttpCookie cookie = null;
+        long p0 = lo;
+        for (long p = lo; p < hi; p++) {
+            char c = (char) Unsafe.getUnsafe().getByte(p);
+            switch (c) {
+                case '=':
+                    if (p0 == p) {
+                        LOG.error().$("cookie name is missing").$();
+                        return;
+                    }
+                    cookie = cookiePool.next();
+                    cookie.cookieName = csPool.next().of(p0, p);
+                    p0 = p + 1;
+                    break;
+                case ';':
+                    if (cookie == null) {
+                        LOG.error().$("cookie name is missing").$();
+                        return;
+                    }
+                    cookie.value = csPool.next().of(p0, p);
+                    p0 = p + 1;
+                    break;
+                case 'D':
+                    if (cookie == null) {
+                        LOG.error().$("cookie name is missing").$();
+                        return;
+                    }
+                    // Domain=<domain-value>
+                    // 0x69616d6f = "omai" from Domain
+                    if (
+                            p + 6 < hi
+                                    && Unsafe.getUnsafe().getInt(p + 1) == 0x69616d6f
+                                    && Unsafe.getUnsafe().getByte(p + 5) == 'n'
+                                    && Unsafe.getUnsafe().getByte(p + 6) == '='
+                    ) {
+                        p += 7;
+                        p0 = p;
+                        p = cookieSkipBytes(p, hi);
+                        cookie.domain = csPool.next().of(p0, p);
+                    } else {
+                        cookieLogUnknownAttributeError(p, hi);
+                        return;
+                    }
+                    break;
+                case 'P':
+                    if (cookie == null) {
+                        LOG.error().$("cookie name is missing").$();
+                        return;
+                    }
+                    // Path=<path-value>
+                    // 0x68746150 = "htap" from Path
+                    if (
+                            p + 4 < hi
+                                    && Unsafe.getUnsafe().getInt(p) == 0x68746150
+                                    && Unsafe.getUnsafe().getByte(p + 4) == '='
+                    ) {
+                        p += 5;
+                        p0 = p;
+                        p = cookieSkipBytes(p, hi);
+                        cookie.path = csPool.next().of(p0, p);
+                    } else if (
+                            p + 11 < hi
+                                    && Unsafe.getUnsafe().getLong(p + 1) == 0x6e6f697469747261L
+                                    && Unsafe.getUnsafe().getShort(p + 9) == 0x6465
+                    ) {
+                        // Partitioned, len = 11
+                        p += 11;
+                        p0 = p;
+                        p = cookieSkipBytes(p, hi);
+                        cookie.partitioned = true;
+                    } else {
+                        cookieLogUnknownAttributeError(p, hi);
+                        return;
+                    }
+                    break;
+                case 'S':
+                    if (cookie == null) {
+                        LOG.error().$("cookie name is missing").$();
+                        return;
+                    }
+                    // Secure, len = 6, 'S' + 0x72756365 + 'e'
+                    if (p + 6 < hi && Unsafe.getUnsafe().getInt(p + 1) == 0x72756365 && Unsafe.getUnsafe().getByte(p + 5) == 'e') {
+                        // Secure
+                        p += 6;
+                        p0 = p;
+                        p = cookieSkipBytes(p, hi);
+                        cookie.secure = true;
+                    } else if (
+                            p + 9 < hi
+                                    && Unsafe.getUnsafe().getLong(p) == 0x7469532d656d6153L
+                                    && Unsafe.getUnsafe().getByte(p + 9) == '='
+                    ) {
+                        // SameSite=<value>, len = 7, 'S' + 0x74656d61 + 'e' + 0x3d + 'S' + 0x74726963 + 't'
+                        p += 10;
+                        p0 = p;
+                        p = cookieSkipBytes(p, hi);
+                        cookie.sameSite = csPool.next().of(p0, p);
+                    } else {
+                        cookieLogUnknownAttributeError(p, hi);
+                        return;
+                    }
+                    break;
+                case 'H':
+                    if (cookie == null) {
+                        LOG.error().$("cookie name is missing").$();
+                        return;
+                    }
+                    // HttpOnly, len = 8, 'H' + 0x74746f6e + 'y'
+                    if (p + 8 < hi && Unsafe.getUnsafe().getLong(p) == 0x796c6e4f70747448L) {
+                        // HttpOnly
+                        p += 8;
+                        p0 = p;
+                        p = cookieSkipBytes(p, hi);
+                        cookie.httpOnly = true;
+                    } else {
+                        cookieLogUnknownAttributeError(p, hi);
+                        return;
+                    }
+                    break;
+                case 'M':
+                    if (cookie == null) {
+                        LOG.error().$("cookie name is missing").$();
+                        return;
+                    }
+                    // Max-Age=<number>
+                    // 0x7861654d = "xeM" from Max-Age
+                    if (
+                            p + 7 < hi
+                                    && Unsafe.getUnsafe().getInt(p + 1) == 0x412d7861
+                                    && Unsafe.getUnsafe().getShort(p + 5) == 0x6567
+                                    && Unsafe.getUnsafe().getByte(p + 7) == '='
+                    ) {
+                        p += 8;
+                        p0 = p;
+                        p = cookieSkipBytes(p, hi);
+                        Utf8Sequence v = csPool.next().of(p0, p);
+                        try {
+                            cookie.maxAge = Numbers.parseLong(v);
+                        } catch (NumericException e) {
+                            LOG.error().$("invalid cookie Max-Age value [value=").$(v).I$();
+                            return;
+                        }
+                    } else {
+                        cookieLogUnknownAttributeError(p, hi);
+                        return;
+                    }
+                    break;
+                case 'E':
+                    if (cookie == null) {
+                        LOG.error().$("cookie name is missing").$();
+                        return;
+                    }
+                    // Expires=<date>
+                    // 0x69727078 = "irpx" from Expires
+                    if (
+                            p + 7 < hi
+                                    && Unsafe.getUnsafe().getInt(p + 1) == 0x72697078
+                                    && Unsafe.getUnsafe().getByte(p + 6) == 's'
+                                    && Unsafe.getUnsafe().getByte(p + 7) == '='
+                    ) {
+                        p += 8;
+                        p0 = p;
+                        p = cookieSkipBytes(p, hi);
+                        Utf8Sequence v = csPool.next().of(p0, p);
+                        try {
+                            cookie.expires = TimestampFormatUtils.parseHTTP(v.asAsciiCharSequence());
+                        } catch (NumericException e) {
+                            LOG.error().$("invalid cookie Expires value [value=").$(v).I$();
+                            return;
+                        }
+                    } else {
+                        cookieLogUnknownAttributeError(p, hi);
+                        return;
+                    }
+                default:
+                    break;
+            }
+        }
+        if (cookie == null) {
+            LOG.error().$("malformed cookie [value=").$(csPool.next().of(lo, hi)).I$();
+            return;
+        }
+        ignoredCookieCount--;
+        cookieList.add(cookie);
+    }
+
+    private void cookieSortAndMap() {
+        cookieList.sort(COOKIE_COMPARATOR);
+        for (int i = 0, n = cookieList.size(); i < n; i++) {
+            HttpCookie cookie = cookieList.getQuick(i);
+            int index = cookies.keyIndex(cookie.cookieName);
+            if (index > -1) {
+                cookies.putAt(index, cookie.cookieName, cookie);
+            }
         }
     }
 
@@ -336,7 +573,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
             if (p > hi || b == ';') {
                 if (expectFormData) {
-                    this.contentDisposition = pool.next().of(_lo, p - 1);
+                    this.contentDisposition = csPool.next().of(_lo, p - 1);
                     _lo = p;
                     expectFormData = false;
                     continue;
@@ -347,7 +584,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 }
 
                 if (Utf8s.equalsAscii("name", name)) {
-                    this.contentDispositionName = unquote("name", pool.next().of(_lo, p - 1));
+                    this.contentDispositionName = unquote("name", csPool.next().of(_lo, p - 1));
                     swallowSpace = true;
                     _lo = p;
                     name = null;
@@ -355,7 +592,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 }
 
                 if (Utf8s.equalsAscii("filename", name)) {
-                    this.contentDispositionFilename = unquote("filename", pool.next().of(_lo, p - 1));
+                    this.contentDispositionFilename = unquote("filename", csPool.next().of(_lo, p - 1));
                     _lo = p;
                     name = null;
                     continue;
@@ -365,7 +602,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     break;
                 }
             } else if (b == '=') {
-                name = name == null ? pool.next().of(_lo, p - 1) : name.of(_lo, p - 1);
+                name = name == null ? csPool.next().of(_lo, p - 1) : name.of(_lo, p - 1);
                 _lo = p;
                 swallowSpace = false;
             }
@@ -410,7 +647,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
 
             if (p > hi || b == ';') {
                 if (contentType) {
-                    this.contentType = pool.next().of(_lo, p - 1);
+                    this.contentType = csPool.next().of(_lo, p - 1);
                     _lo = p;
                     contentType = false;
                     continue;
@@ -421,14 +658,14 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 }
 
                 if (Utf8s.equalsAscii("charset", name)) {
-                    this.charset = pool.next().of(_lo, p - 1);
+                    this.charset = csPool.next().of(_lo, p - 1);
                     name = null;
                     _lo = p;
                     continue;
                 }
 
                 if (Utf8s.equalsAscii("boundary", name)) {
-                    this.boundary = pool.next().of(_lo, p - 1);
+                    this.boundary = csPool.next().of(_lo, p - 1);
                     _lo = p;
                     name = null;
                     continue;
@@ -438,7 +675,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     break;
                 }
             } else if (b == '=') {
-                name = name == null ? pool.next().of(_lo, p - 1) : name.of(_lo, p - 1);
+                name = name == null ? csPool.next().of(_lo, p - 1) : name.of(_lo, p - 1);
                 _lo = p;
                 swallowSpace = false;
             }
@@ -450,6 +687,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         parseContentDisposition();
         parseStatementTimeout();
         parseContentLength();
+        cookieSortAndMap();
     }
 
     private int parseMethod(long lo, long hi) {
@@ -468,11 +706,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             switch (b) {
                 case ' ':
                     if (isMethod) {
-                        method = pool.next().of(_lo, _wptr);
+                        method = csPool.next().of(_lo, _wptr);
                         _lo = _wptr + 1;
                         isMethod = false;
                     } else if (isUrl) {
-                        url = pool.next().of(_lo, _wptr);
+                        url = csPool.next().of(_lo, _wptr);
                         isUrl = false;
                         _lo = _wptr + 1;
                     } else if (isQueryParams) {
@@ -483,7 +721,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     }
                     break;
                 case '?':
-                    url = pool.next().of(_lo, _wptr);
+                    url = csPool.next().of(_lo, _wptr);
                     isUrl = false;
                     isQueryParams = true;
                     _lo = _wptr + 1;
@@ -492,7 +730,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     if (method == null) {
                         throw HttpException.instance("bad method");
                     }
-                    methodLine = pool.next().of(method.lo(), _wptr);
+                    methodLine = csPool.next().of(method.lo(), _wptr);
                     needMethod = false;
                     this._lo = _wptr;
                     return (int) (p - lo);
@@ -520,24 +758,24 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             switch (b) {
                 case ' ':
                     if (isProtocol) {
-                        protocol = pool.next().of(_lo, _wptr);
+                        protocol = csPool.next().of(_lo, _wptr);
                         _lo = _wptr + 1;
                         isProtocol = false;
                     } else if (isStatusCode) {
-                        statusCode = pool.next().of(_lo, _wptr);
+                        statusCode = csPool.next().of(_lo, _wptr);
                         isStatusCode = false;
                         _lo = _wptr + 1;
                     }
                     break;
                 case '\n':
                     if (isStatusText) {
-                        statusText = pool.next().of(_lo, _wptr);
+                        statusText = csPool.next().of(_lo, _wptr);
                         isStatusText = false;
                     }
                     if (protocol == null) {
                         throw HttpException.instance("bad protocol");
                     }
-                    protocolLine = pool.next().of(protocol.lo(), _wptr);
+                    protocolLine = csPool.next().of(protocol.lo(), _wptr);
                     needProtocol = false;
                     this._lo = _wptr;
                     return (int) (p - lo);
@@ -575,13 +813,13 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
             switch (b) {
                 case '=':
                     if (_lo < wp) {
-                        name = pool.next().of(_lo, wp);
+                        name = csPool.next().of(_lo, wp);
                     }
                     _lo = rp - offset;
                     break;
                 case '&':
                     if (name != null) {
-                        map.put(name, pool.next().of(_lo, wp));
+                        map.put(name, csPool.next().of(_lo, wp));
                         name = null;
                     }
                     _lo = rp - offset;
@@ -607,7 +845,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         }
 
         if (_lo < wp && name != null) {
-            map.put(name, pool.next().of(_lo, wp));
+            map.put(name, csPool.next().of(_lo, wp));
         }
 
         return offset;
