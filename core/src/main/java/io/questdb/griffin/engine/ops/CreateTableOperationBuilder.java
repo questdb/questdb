@@ -146,17 +146,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         );
     }
 
-    public void updateSymbolCacheFlagOfCurrentLastColumn(boolean cached) {
-        int last = columnBits.size() - 1;
-        assert last > 0;
-        assert ColumnType.isSymbol(getLowAt(last - 1));
-        if (cached) {
-            columnBits.setQuick(last, Numbers.encodeLowHighInts(getLowAt(last) | COLUMN_FLAG_CACHED, getHighAt(last)));
-        } else {
-            columnBits.setQuick(last, Numbers.encodeLowHighInts(getLowAt(last) & ~COLUMN_FLAG_CACHED, getHighAt(last)));
-        }
-    }
-
     @Override
     public void clear() {
         typeCasts.clear();
@@ -239,18 +228,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     public void setBatchSize(long batchSize) {
         this.batchSize = batchSize;
-    }
-
-    public void updateIndexFlagOfCurrentLastColumn(boolean indexFlag, int indexValueBlockSize) {
-        int index = columnBits.size() - 1;
-        assert index > 0;
-        final int flags = getLowAt(index);
-        if (indexFlag) {
-            assert indexValueBlockSize > 1;
-            columnBits.setQuick(index, Numbers.encodeLowHighInts(flags | COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
-        } else {
-            columnBits.setQuick(index, Numbers.encodeLowHighInts(flags & ~COLUMN_FLAG_INDEXED, Numbers.ceilPow2(indexValueBlockSize)));
-        }
     }
 
     public void setCreateAsSelectIndexFlag(CharSequence columnName, int columnNamePosition, boolean indexFlag, int indexValueBlockSize) {
@@ -452,6 +429,32 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         if (volumeAlias != null) {
             sink.putAscii(" in volume '").put(volumeAlias).putAscii('\'');
         }
+    }
+
+    public void updateIndexFlagOfCurrentLastColumn(boolean indexFlag, int indexValueBlockSize) {
+        int index = columnBits.size() - 1;
+        assert index > 0;
+        int flags = getLowAt(index);
+        if (indexFlag) {
+            assert indexValueBlockSize > 1;
+            flags |= COLUMN_FLAG_INDEXED;
+        } else {
+            flags &= ~COLUMN_FLAG_INDEXED;
+        }
+        columnBits.setQuick(index, Numbers.encodeLowHighInts(flags, Numbers.ceilPow2(indexValueBlockSize)));
+    }
+
+    public void updateSymbolCacheFlagOfCurrentLastColumn(boolean cached) {
+        int last = columnBits.size() - 1;
+        assert last > 0;
+        assert ColumnType.isSymbol(getLowAt(last - 1));
+        int flags = getLowAt(last);
+        if (cached) {
+            flags |= COLUMN_FLAG_CACHED;
+        } else {
+            flags &= ~COLUMN_FLAG_CACHED;
+        }
+        columnBits.setQuick(last, Numbers.encodeLowHighInts(flags, getHighAt(last)));
     }
 
     private static boolean isCompatibleCase(int from, int to) {
