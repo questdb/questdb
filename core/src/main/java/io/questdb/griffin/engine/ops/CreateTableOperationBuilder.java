@@ -57,9 +57,9 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<String> columnNames = new ObjList<>();
     private final CharSequenceIntHashMap createAsSelectIndexCapacities = new CharSequenceIntHashMap();
+    private final CharSequenceIntHashMap createAsSelectIndexColumnNamePositions = new CharSequenceIntHashMap();
     // todo: perhaps consolidate both these maps into one str-to-long?
     private final CharSequenceBoolHashMap createAsSelectIndexFlags = new CharSequenceBoolHashMap();
-    private final CharSequenceIntHashMap createAsSelectIndexColumnNamePositions = new CharSequenceIntHashMap();
     private final IntIntHashMap typeCasts = new IntIntHashMap();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;

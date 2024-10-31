@@ -18,17 +18,6 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.COLUMN_FLAG_CACHED;
 
 public class CreateTableOperation implements TableStructure, QuietCloseable {
-    private final long batchO3MaxLag;
-    private final long batchSize;
-    private final LongList columnBits = new LongList();
-    private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private final CreateTableOperationFuture future = new CreateTableOperationFuture();
-    private final boolean ignoreIfExists;
-    private final String likeTableName;
-    private final int likeTableNamePosition;
-    private final int maxUncommittedRows;
-    private final long o3MaxLag;
-    private final int partitionBy;
     // two cast maps, one for symbol cache flag and the other for symbol capacity
     // those values come from "cast models", the extra syntax to augment
     // "create as select" semantic. These maps are keyed on column names
@@ -43,6 +32,17 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     // usage, e.g. create x as select * from y. When "y" changes, such as via drop column,
     // column indexes will shift.
     private final CharSequenceObjHashMap<TableColumnMetadata> augmentedColumnMetadata = new CharSequenceObjHashMap<>();
+    private final long batchO3MaxLag;
+    private final long batchSize;
+    private final LongList columnBits = new LongList();
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final CreateTableOperationFuture future = new CreateTableOperationFuture();
+    private final boolean ignoreIfExists;
+    private final String likeTableName;
+    private final int likeTableNamePosition;
+    private final int maxUncommittedRows;
+    private final long o3MaxLag;
+    private final int partitionBy;
     private final String tableName;
     private final int tableNamePosition;
     private final int timestampIndex;
@@ -288,42 +288,6 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         return walEnabled;
     }
 
-    public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata) {
-        // This method must only be called in case of "create-as-select".
-        // Here we remap data keyed on  column names (from cast maps) to
-        // data keyed on column index. We assume that "columnBits" are free to use
-        // in case of "create-as-select" because they don't capture any useful data
-        // at SQL parse time.
-        columnBits.clear();
-
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            TableColumnMetadata augMeta = augmentedColumnMetadata.get(metadata.getColumnName(i));
-            int columnType;
-            boolean symbolIndexed;
-
-            if (augMeta != null) {
-                columnType = augMeta.getColumnType();
-                symbolIndexed = augMeta.
-            } else {
-                columnType = metadata.getColumnType(i);
-            }
-
-            // todo:
-            if (!ColumnType.isSymbol(metadata.getColumnType(i)) && model.isIndexed(i)) {
-                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
-            }
-
-            if (ColumnType.isNull(metadata.getColumnType(index))) {
-                throw SqlException.$(0, "cannot create NULL-type column, please use type cast, e.g. ").put(columnName).put("::").put("type");
-            }
-
-            columnBits.add(
-                    Numbers.encodeLowHighInts(columnType, symbolCapacity),
-                    Numbers.encodeLowHighInts(symbolCacheFlag, 0)
-            );
-        }
-    }
-
     /**
      * SQLCompiler side API to set affected rows count after the operation has been executed.
      *
@@ -341,6 +305,43 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
      */
     public void updateOperationFutureTableToken(TableToken tableToken) {
         future.tableToken = tableToken;
+    }
+
+    public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata) {
+        // This method must only be called in case of "create-as-select".
+        // Here we remap data keyed on  column names (from cast maps) to
+        // data keyed on column index. We assume that "columnBits" are free to use
+        // in case of "create-as-select" because they don't capture any useful data
+        // at SQL parse time.
+        columnBits.clear();
+
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            TableColumnMetadata augMeta = augmentedColumnMetadata.get(metadata.getColumnName(i));
+            int columnType;
+            boolean symbolIndexed;
+
+            if (augMeta != null) {
+                columnType = augMeta.getColumnType();
+                symbolIndexed = augMeta.isSymbolIndexFlag();
+            } else {
+                columnType = metadata.getColumnType(i);
+                symbolIndexed = false;
+            }
+
+            // todo:
+            if (!ColumnType.isSymbol(metadata.getColumnType(i)) && model.isIndexed(i)) {
+                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
+            }
+
+            if (ColumnType.isNull(metadata.getColumnType(index))) {
+                throw SqlException.$(0, "cannot create NULL-type column, please use type cast, e.g. ").put(columnName).put("::").put("type");
+            }
+
+            columnBits.add(
+                    Numbers.encodeLowHighInts(columnType, symbolCapacity),
+                    Numbers.encodeLowHighInts(symbolCacheFlag, 0)
+            );
+        }
     }
 
     private int getHighAt(int index) {
