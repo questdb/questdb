@@ -931,7 +931,7 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcurrentAddRemoveColumn_DifferentColNamePerThread() throws Exception {
+    public void testConcurrentAddRemoveColumnDifferentColNamePerThread() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             TableToken tableToken = createTable(testName.getMethodName());
@@ -1466,14 +1466,14 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testOverlappingStructureChangeFails() throws Exception {
+        AtomicInteger errorCounter = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 try {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
-                    final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[2].getClassName().endsWith("TableTransactionLog") && stackTrace[2].getMethodName().equals("openFileRO")) {
+                    if (errorCounter.incrementAndGet() == 2) {
                         return -1;
                     }
                 }
