@@ -1317,7 +1317,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(columnIndex)).addressOf(0);
                             DedupColumnCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
                         } else {
-                            DedupColumnCommitAddresses.setColAddressValues(addr, rowGroupBuffers.getChunkAuxPtr(bufferIndex));
+                            DedupColumnCommitAddresses.setColAddressValues(
+                                    addr,
+                                    rowGroupBuffers.getChunkAuxPtr(bufferIndex),
+                                    rowGroupBuffers.getChunkDataPtr(bufferIndex),
+                                    rowGroupBuffers.getChunkDataSize(bufferIndex)
+                            );
                             MemoryCR oooVarCol = oooColumns.get(getPrimaryColumnIndex(columnIndex));
                             final long oooVarColAddress = oooVarCol.addressOf(0);
                             final long oooVarColSize = oooVarCol.addressHi() - oooVarColAddress;
