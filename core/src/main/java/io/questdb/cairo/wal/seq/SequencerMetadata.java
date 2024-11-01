@@ -24,13 +24,23 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordMetadata;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableDescriptor;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.WalUtils;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -42,13 +52,13 @@ import static io.questdb.cairo.wal.WalUtils.*;
 public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
+    private final IntList readColumnOrder = new IntList();
     private final boolean readonly;
     private final MemoryMR roMetaMem;
     private final AtomicLong structureVersion = new AtomicLong(-1);
     private volatile boolean suspended;
     private int tableId;
     private TableToken tableToken;
-    private final IntList readColumnOrder = new IntList();
 
     public SequencerMetadata(FilesFacade ff) {
         this(ff, false);
@@ -116,13 +126,13 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
-    public IntList getReadColumnOrder() {
-        return readColumnOrder;
-    }
-
     @Override
     public long getMetadataVersion() {
         return structureVersion.get();
+    }
+
+    public IntList getReadColumnOrder() {
+        return readColumnOrder;
     }
 
     public int getRealColumnCount() {
@@ -194,7 +204,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
-    public void syncToDisk() {
+    public void sync() {
         metaMem.sync(false);
     }
 

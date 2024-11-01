@@ -22,11 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.finance;
+package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
@@ -39,21 +37,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRegrSlopeNoValues() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int, y int)");
-            assertSql(
-                    "regr_slope\nnull\n", "select regr_slope(x, y) from tbl1"
-            );
-        });
-    }
-
-    @Test
     public void testRegrSlopeAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
             assertSql(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
+                    "regr_slope\nnull\n", "select regr_slope(x, y) from tbl1"
             );
         });
     }
@@ -62,18 +50,6 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
     public void testRegrSlopeDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
-            assertSql(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
-            );
-        });
-    }
-
-    @Test
-    public void testRegrSlopeWithNullValues() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tbl1(x double, y double)");
-            insert("insert into 'tbl1' VALUES (null, null)");
-            insert("insert into 'tbl1' select x, x as y from long_sequence(100)");
             assertSql(
                     "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
             );
@@ -101,6 +77,26 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRegrSlopeNoOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
+            assertSql(
+                    "regr_slope\nnull\n", "select regr_slope(x, y) from tbl1"
+            );
+        });
+    }
+
+    @Test
+    public void testRegrSlopeNoValues() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tbl1(x int, y int)");
+            assertSql(
+                    "regr_slope\nnull\n", "select regr_slope(x, y) from tbl1"
+            );
+        });
+    }
+
+    @Test
     public void testRegrSlopeOneColumnAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "regr_slope\nnull\n", "select regr_slope(x, y) from (select cast(null as double) x, x as y from long_sequence(100))"
@@ -119,9 +115,10 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRegrSlopeNoOverflow() throws Exception {
+    public void testRegrSlopeSomeNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
+            ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
+            insert("insert into 'tbl1' VALUES (null, null)");
             assertSql(
                     "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
             );
@@ -129,10 +126,11 @@ public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRegrSlopeSomeNull() throws Exception {
+    public void testRegrSlopeWithNullValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
+            ddl("create table tbl1(x double, y double)");
             insert("insert into 'tbl1' VALUES (null, null)");
+            insert("insert into 'tbl1' select x, x as y from long_sequence(100)");
             assertSql(
                     "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
             );

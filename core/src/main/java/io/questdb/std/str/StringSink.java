@@ -175,7 +175,7 @@ public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMuta
 
     private void checkCapacity(int extra) {
         int len = pos + extra;
-        if (buffer.length > len) {
+        if (buffer.length >= len) {
             return;
         }
         len = Math.max(pos * 2, len);

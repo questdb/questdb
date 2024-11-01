@@ -53,6 +53,7 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -4422,10 +4423,12 @@ public class TableWriterTest extends AbstractCairoTest {
 
     long populateTable(FilesFacade ff, int partitionBy) throws NumericException {
         int N = 10000;
+        Path.clearThreadLocals();
         long used = Unsafe.getMemUsed();
         long fileCount = ff.getOpenFileCount();
         create(ff, partitionBy, N);
         long ts = populateTable0(ff, N);
+        Path.clearThreadLocals();
         Assert.assertEquals(used, Unsafe.getMemUsed());
         Assert.assertEquals(fileCount, ff.getOpenFileCount());
         return ts;
