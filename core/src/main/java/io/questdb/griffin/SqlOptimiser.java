@@ -302,7 +302,6 @@ public class SqlOptimiser implements Mutable {
         ExpressionNode priceColName = null, volumeColName = null, timestamp = originalSelectNone.getTimestamp();
 
         // outerSelectChoose
-
         for (int i = 0, n = originalSelectChoose.getColumns().size(); i < n; i++) {
             QueryColumn column = originalSelectChoose.getColumns().getQuick(i);
             ExpressionNode ast = column.getAst();
