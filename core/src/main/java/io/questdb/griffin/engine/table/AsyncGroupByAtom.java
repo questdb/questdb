@@ -582,8 +582,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         final long statKeyCapacity = dest ? stats.mergedSize : stats.medianSize;
         // Per-worker limit is smaller than the owner one.
         final long statLimit = dest
-                ? configuration.getGroupByPresizeMaxSize()
-                : configuration.getGroupByPresizeMaxSize() / perWorkerFragments.size();
+                ? configuration.getGroupByPresizeMaxCapacity()
+                : configuration.getGroupByPresizeMaxCapacity() / perWorkerFragments.size();
         int keyCapacity = configuration.getSqlSmallMapKeyCapacity();
         if (statKeyCapacity <= statLimit) {
             keyCapacity = Math.max((int) statKeyCapacity, keyCapacity);
