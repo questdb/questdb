@@ -271,8 +271,9 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         long rowCount = 0;
         long rowGroupSize = 0;
         int rowGroupIndex = 0;
-        for (; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-            rowGroupSize = metadata.rowGroupSize(rowGroupIndex);
+        for (int i = 0; i < rowGroupCount; i++) {
+            rowGroupIndex = i;
+            rowGroupSize = metadata.rowGroupSize(i);
             if (partitionLo < rowCount + rowGroupSize) {
                 break;
             }
