@@ -327,10 +327,6 @@ public class CairoEngine implements Closeable, WriterSource {
         checkpointAgent.checkpointCreate(executionContext, false);
     }
 
-    public void snapshotCreate(SqlExecutionContext executionContext) throws SqlException {
-        checkpointAgent.checkpointCreate(executionContext, true);
-    }
-
     /**
      * Recovers database from checkpoint after restoring data from a snapshot.
      */
@@ -602,7 +598,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final int tableId = tableToken.getTableId();
         TableReader reader = readerPool.get(tableToken);
         if ((metadataVersion > -1 && reader.getMetadataVersion() != metadataVersion)
-                || tableId > -1 && reader.getMetadata().getTableId() != tableId) {
+                || (tableId > -1 && reader.getMetadata().getTableId() != tableId)) {
             TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
                     tableToken,
                     tableId,
@@ -1226,6 +1222,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
         this.checkpointAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
+    }
+
+    public void snapshotCreate(SqlExecutionContext executionContext) throws SqlException {
+        checkpointAgent.checkpointCreate(executionContext, true);
     }
 
     public void unlock(

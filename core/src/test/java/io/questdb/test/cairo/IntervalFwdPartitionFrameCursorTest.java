@@ -33,27 +33,53 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.model.RuntimeIntervalModel;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
+@RunWith(Parameterized.class)
 public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
-    private static final LongList intervals = new LongList();
+    private final boolean convertToParquet;
+    private final LongList intervals = new LongList();
+
+    public IntervalFwdPartitionFrameCursorTest(boolean convertToParquet) {
+        this.convertToParquet = convertToParquet;
+    }
+
+    @Parameterized.Parameters(name = "parquet={0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {true},
+                {false},
+        });
+    }
 
     @Test
     public void testAllIntervalsAfterTableByDay() throws Exception {
@@ -79,6 +105,8 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testAllIntervalsAfterTableByNone() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+
         // day partition
         // two hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
@@ -123,13 +151,15 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testAllIntervalsBeforeTableByNone() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+
         // day partition
         // two hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-01T00:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1979-01-06T00:00:00.000Z"));
@@ -145,6 +175,8 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testByNone() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+
         // day partition
         // two hour interval between timestamps
         long increment = 1000000L * 3600 * 2;
@@ -171,6 +203,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testClose() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
                     col("a", ColumnType.INT).
@@ -190,6 +223,8 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testDuplicateTimestamps() throws Exception {
+        Assume.assumeFalse(convertToParquet);
+
         int N = 10;
 
         intervals.clear();
@@ -254,6 +289,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalCursorNoTimestamp() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         TestUtils.assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.DAY).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
@@ -327,7 +363,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-02T01:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-02T16:00:00.000Z"));
@@ -416,7 +452,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 // assert that there is nothing to start with
                 record.of(cursor.getTableReader());
 
-                assertEquals("", record, cursor);
+                assertEqualTimestamps("", record, cursor);
 
                 try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
                     for (int i = 0; i < rowCount; i++) {
@@ -429,7 +465,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                     writer.commit();
 
                     Assert.assertTrue(cursor.reload());
-                    assertEquals(expected1, record, cursor);
+                    assertEqualTimestamps(expected1, record, cursor);
 
                     timestamp = Timestamps.addYears(timestamp, 3);
 
@@ -444,12 +480,16 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
                     Assert.assertTrue(cursor.reload());
                     if (expected2 != null) {
-                        assertEquals(expected2, record, cursor);
+                        assertEqualTimestamps(expected2, record, cursor);
                     } else {
-                        assertEquals(expected1, record, cursor);
+                        assertEqualTimestamps(expected1, record, cursor);
                     }
 
                     Assert.assertFalse(cursor.reload());
+                }
+
+                if (convertToParquet) {
+                    ddl("alter table x convert partition to parquet where timestamp >= 0;");
                 }
 
                 try (TableWriter writer = getWriter(x)) {
@@ -559,9 +599,16 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
         // partition frame here. Get its instance outside of partition frame loop.
         StaticSymbolTable symbolTable = record.getReader().getSymbolTable(columnIndex);
 
+        boolean allNative = true;
         long rowCount = 0;
         PartitionFrame frame;
         while ((frame = cursor.next()) != null) {
+            // TODO(puzpuzpuz): port the subsequent checks to parquet
+            if (frame.getPartitionFormat() != PartitionFormat.NATIVE) {
+                allNative = false;
+                continue;
+            }
+
             record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
             final long limit = frame.getRowHi();
             final long low = frame.getRowLo();
@@ -585,25 +632,51 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
             }
         }
-        Assert.assertEquals(expectedCount, rowCount);
+        if (allNative) {
+            Assert.assertEquals(expectedCount, rowCount);
+        }
     }
 
-    private void assertEquals(CharSequence expected, TestTableReaderRecord record, PartitionFrameCursor cursor) {
+    private void assertEqualTimestamps(CharSequence expected, TestTableReaderRecord record, PartitionFrameCursor cursor) {
         sink.clear();
         collectTimestamps(cursor, record);
         TestUtils.assertEquals(expected, sink);
     }
 
     private void collectTimestamps(PartitionFrameCursor cursor, TestTableReaderRecord record) {
-        int timestampIndex = cursor.getTableReader().getMetadata().getTimestampIndex();
-        PartitionFrame frame;
-        while ((frame = cursor.next()) != null) {
-            record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
-            long limit = frame.getRowHi();
-            long recordIndex;
-            while ((recordIndex = record.getRecordIndex()) < limit) {
-                sink.putISODate(record.getDate(timestampIndex)).put('\n');
-                record.setRecordIndex(recordIndex + 1);
+        try (
+                RowGroupBuffers parquetBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                DirectIntList parquetColumns = new DirectIntList(2, MemoryTag.NATIVE_DEFAULT)
+        ) {
+            int timestampIndex = cursor.getTableReader().getMetadata().getTimestampIndex();
+            parquetColumns.add(timestampIndex);
+            parquetColumns.add(ColumnType.TIMESTAMP);
+
+            PartitionFrame frame;
+            while ((frame = cursor.next()) != null) {
+                if (frame.getPartitionFormat() == PartitionFormat.NATIVE) {
+                    record.jumpTo(frame.getPartitionIndex(), frame.getRowLo());
+                    long limit = frame.getRowHi();
+                    long recordIndex;
+                    while ((recordIndex = record.getRecordIndex()) < limit) {
+                        sink.putISODate(record.getDate(timestampIndex)).put('\n');
+                        record.setRecordIndex(recordIndex + 1);
+                    }
+                    continue;
+                }
+
+                Assert.assertEquals(PartitionFormat.PARQUET, frame.getPartitionFormat());
+                PartitionDecoder parquetDecoder = frame.getParquetDecoder();
+                Assert.assertNotNull(parquetDecoder);
+                PartitionDecoder.Metadata parquetMetadata = parquetDecoder.metadata();
+                for (int i = 0, n = parquetMetadata.rowGroupCount(); i < n; i++) {
+                    int size = parquetMetadata.rowGroupSize(i);
+                    parquetDecoder.decodeRowGroup(parquetBuffers, parquetColumns, i, 0, size);
+                    long addr = parquetBuffers.getChunkDataPtr(0);
+                    for (long r = frame.getRowLo(); r < frame.getRowHi(); r++) {
+                        sink.putISODate(Unsafe.getUnsafe().getLong(addr + r * Long.BYTES)).put('\n');
+                    }
+                }
             }
         }
     }
@@ -640,10 +713,14 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
             }
 
+            if (convertToParquet) {
+                ddl("alter table x convert partition to parquet where timestamp >= 0;");
+            }
+
             try (
                     TableReader reader = newOffPoolReader(configuration, "x");
                     IntervalFwdPartitionFrameCursor cursor = new IntervalFwdPartitionFrameCursor(
-                            new RuntimeIntervalModel(IntervalFwdPartitionFrameCursorTest.intervals),
+                            new RuntimeIntervalModel(intervals),
                             reader.getMetadata().getTimestampIndex()
                     )
             ) {
@@ -651,7 +728,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 cursor.of(reader, null);
                 record.of(reader);
 
-                assertEquals(expected, record, cursor);
+                assertEqualTimestamps(expected, record, cursor);
 
                 if (expected.length() > 0) {
                     cursor.toTop();
@@ -661,7 +738,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
 
                 cursor.toTop();
-                assertEquals(expected, record, cursor);
+                assertEqualTimestamps(expected, record, cursor);
             }
         });
     }
