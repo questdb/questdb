@@ -207,15 +207,27 @@ public class ExpressionNode implements Mutable, Sinkable {
     }
 
 
-    public ExpressionNode of(int type, CharSequence token, int precedence, int position, ExpressionNode node, ExpressionNode node2) {
+    public ExpressionNode of(int type, CharSequence token, int precedence, int position, ExpressionNode node1, ExpressionNode node2) {
         clear();
         // though confusing, node2 is the correct arg here.
         // with 1 param, we put it in rhs. with two, the second arg goes in rhs
         of(type, token, precedence, position, node2);
         this.paramCount = 2;
-        this.lhs = node;
+        this.lhs = node1;
         return this;
     }
+
+    public ExpressionNode of(int type, CharSequence token, int precedence, int position, ExpressionNode node1, ExpressionNode node2, ExpressionNode node3) {
+        clear();
+        // args go in reverse order
+        of(type, token, precedence, position);
+        this.paramCount = 3;
+        this.args.add(node3);
+        this.args.add(node2);
+        this.args.add(node1);
+        return this;
+    }
+
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {

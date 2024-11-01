@@ -28,7 +28,19 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -1130,6 +1142,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         baseModel.setLimit(null, null);
     }
 
+    public void moveOrderByFrom(QueryModel model) {
+        orderBy.addAll(model.orderBy);
+        orderByDirection.addAll(model.orderByDirection);
+        model.orderBy.clear();
+        model.orderByDirection.clear();
+    }
+
     public void moveSampleByFrom(QueryModel model) {
         this.sampleBy = model.sampleBy;
         this.sampleByUnit = model.sampleByUnit;
@@ -1158,6 +1177,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         IntList ordered = orderedJoinModels == orderedJoinModels1 ? orderedJoinModels2 : orderedJoinModels1;
         ordered.clear();
         return ordered;
+    }
+
+    public QueryModel of(int selectModelType) {
+        this.selectModelType = selectModelType;
+        return this;
     }
 
     /*

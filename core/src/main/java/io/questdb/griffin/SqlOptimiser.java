@@ -251,18 +251,15 @@ public class SqlOptimiser implements Mutable {
         from:
             select timestamp, symbol, vwap(price, amount) from trades sample by 8h
         to:
-            select timestamp, symbol, vwap(timestamp, min_price, max_price, closing_price, volume)
+            select timestamp, symbol, vwap(timestamp, typical_price volume)
             from (
-                select timestamp, symbol, min(price) min_price, max(price) max_price, last(price) closing_price, sum(amount) volume
+                select timestamp, symbol, ((min(price) + max(price) + last(price)) / 3) typical_price, sum(amount) volume
                 from trades
                 sample by 8h
             )
             group by timestamp, symbol
             order by timestamp asc
      */
-    // start:
-    // select-choose timestamp, symbol, vwap(price,amount) vwap from
-    // (trades timestamp (timestamp) sample by 8h align to calendar with offset '00:00')
     public QueryModel rewriteVwap(QueryModel model) throws SqlException {
         boolean validModel = false;
 
@@ -270,6 +267,7 @@ public class SqlOptimiser implements Mutable {
             return model;
         }
 
+        // look for a choose-none pair that contains vwap
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE) {
             for (int i = 0, n = model.getColumns().size(); i < n; i++) {
                 final QueryColumn column = model.getColumns().getQuick(i);
@@ -280,7 +278,6 @@ public class SqlOptimiser implements Mutable {
                     QueryModel nested = model.getNestedModel();
 
                     if (nested != null && nested.getSampleBy() != null) {
-                        // todo: might need more conditions before this.
                         validModel = true;
                         break;
                     }
@@ -289,25 +286,20 @@ public class SqlOptimiser implements Mutable {
         }
 
         if (!validModel) {
+            // recurse
             model.setNestedModel(rewriteVwap(model.getNestedModel()));
             return model;
         }
 
+        @SuppressWarnings("UnnecessaryLocalVariable")
         QueryModel originalSelectChoose = model;
         QueryModel originalSelectNone = model.getNestedModel();
 
-        QueryModel outerSelectChoose = queryModelPool.next();
-        outerSelectChoose.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
+        QueryModel outerSelectChoose = queryModelPool.next().of(QueryModel.SELECT_MODEL_CHOOSE);
+        QueryModel nextInnerSelectNone = queryModelPool.next().of(QueryModel.SELECT_MODEL_NONE);
+        QueryModel nextInnerSelectChoose = queryModelPool.next().of(QueryModel.SELECT_MODEL_CHOOSE);
 
-        QueryModel nextInnerSelectNone = queryModelPool.next();
-        nextInnerSelectNone.setSelectModelType(QueryModel.SELECT_MODEL_NONE);
-
-        QueryModel nextInnerSelectChoose = queryModelPool.next();
-        nextInnerSelectChoose.setSelectModelType(QueryModel.SELECT_MODEL_CHOOSE);
-
-
-        ExpressionNode priceColName = null, volumeColName = null, timestamp;
-        timestamp = originalSelectNone.getTimestamp();
+        ExpressionNode priceColName = null, volumeColName = null, timestamp = originalSelectNone.getTimestamp();
 
         // outerSelectChoose
 
@@ -319,19 +311,10 @@ public class SqlOptimiser implements Mutable {
                 priceColName = ast.lhs;
                 volumeColName = ast.rhs;
 
-                ExpressionNode vwapExpr = expressionNodePool.next().of(
-                        FUNCTION,
-                        ast.token,
-                        ast.precedence,
-                        ast.position
-                );
-
-                vwapExpr.paramCount = 3;
-
-                // reverse ordering
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "volume", Integer.MIN_VALUE, 0));
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, "typical_price", Integer.MIN_VALUE, 0));
-                vwapExpr.args.add(expressionNodePool.next().of(LITERAL, timestamp.token, Integer.MIN_VALUE, 0));
+                ExpressionNode volumeExpr = expressionNodePool.next().of(LITERAL, "volume", Integer.MIN_VALUE, 0);
+                ExpressionNode typicalPriceExpr = expressionNodePool.next().of(LITERAL, "typical_price", Integer.MIN_VALUE, 0);
+                ExpressionNode timestampExpr = expressionNodePool.next().of(LITERAL, timestamp.token, Integer.MIN_VALUE, 0);
+                ExpressionNode vwapExpr = expressionNodePool.next().of(FUNCTION, ast.token, ast.precedence, ast.position, timestampExpr, typicalPriceExpr, volumeExpr);
 
                 outerSelectChoose.addBottomUpColumn(queryColumnPool.next().of(column.getAlias(), vwapExpr));
             } else {
@@ -342,7 +325,7 @@ public class SqlOptimiser implements Mutable {
             }
         }
 
-        nextInnerSelectNone.setSelectModelType(QueryModel.SELECT_MODEL_NONE);
+        // copy aliases up from the original select-choose
         ObjList<CharSequence> columnAliases = nextInnerSelectNone.getBottomUpColumnAliases();
         for (int i = 0, n = originalSelectChoose.getBottomUpColumnAliases().size(); i < n; i++) {
             CharSequence cs = originalSelectChoose.getBottomUpColumnAliases().getQuick(i);
@@ -353,19 +336,17 @@ public class SqlOptimiser implements Mutable {
         columnAliases.add("typical_price");
         columnAliases.add("volume");
 
+        // shift group by so its not lost
         nextInnerSelectNone.moveGroupByFrom(originalSelectNone);
 
+        // shift order by if necessary, otherwise order by timestamp
         if (originalSelectNone.getOrderBy() != null) {
-            for (int i = 0, n = originalSelectNone.getOrderBy().size(); i < n; i++) {
-                nextInnerSelectNone.addOrderBy(originalSelectNone.getOrderBy().getQuick(i), originalSelectNone.getOrderByDirection().getQuick(i));
-            }
+            nextInnerSelectNone.moveOrderByFrom(originalSelectNone);
         } else {
             nextInnerSelectNone.addOrderBy(timestamp, QueryModel.ORDER_DIRECTION_ASCENDING);
         }
 
-        originalSelectNone.getOrderBy().clear();
-        originalSelectNone.getOrderByDirection().clear();
-
+        // make sure our new inner select choose matches our original
         for (int i = 0, n = originalSelectChoose.getBottomUpColumns().size(); i < n; i++) {
             QueryColumn col = originalSelectChoose.getBottomUpColumns().getQuick(i);
             if (!isSingleShotVwap(col.getAst())) {
@@ -390,12 +371,13 @@ public class SqlOptimiser implements Mutable {
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("typical_price", divideExpr));
         nextInnerSelectChoose.addBottomUpColumn(queryColumnPool.next().of("volume", volumeExpr));
 
+        // nest the models
         outerSelectChoose.setNestedModel(nextInnerSelectNone);
         nextInnerSelectNone.setNestedModel(nextInnerSelectChoose);
         nextInnerSelectChoose.setNestedModel(originalSelectNone);
 
 
-        // join models
+        // handle join models
         for (int j = 1, m = originalSelectNone.getJoinModels().size(); j < m; j++) {
             QueryModel joinModel = originalSelectNone.getJoinModels().getQuick(j);
             joinModel.setNestedModel(rewriteVwap(joinModel.getNestedModel()));
@@ -404,7 +386,7 @@ public class SqlOptimiser implements Mutable {
         // recurse nested models
         outerSelectChoose.setNestedModel(rewriteVwap(nextInnerSelectNone));
 
-        // join models
+        // union models
 
         outerSelectChoose.setUnionModel(rewriteVwap(outerSelectChoose.getUnionModel()));
         originalSelectNone.setUnionModel(rewriteVwap(originalSelectNone.getUnionModel()));
