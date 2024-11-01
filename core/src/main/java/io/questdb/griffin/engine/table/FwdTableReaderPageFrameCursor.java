@@ -280,6 +280,8 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
             rowCount += rowGroupSize;
         }
 
+        // We may add rowGroupSize to rowCount second time here if we scanned to the last row group.
+        // This is fine since then we're going to proceed with the partitionHi value.
         final long adjustedHi = Math.min(partitionHi, rowCount + rowGroupSize);
         if (adjustedHi < partitionHi) {
             reenterPartitionLo = adjustedHi;
