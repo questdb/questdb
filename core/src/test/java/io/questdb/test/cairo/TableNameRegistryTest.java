@@ -230,7 +230,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         try (TableNameRegistryRO ro = new TableNameRegistryRO(
-                                configuration,
+                                engine,
                                 new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString())
                         )) {
                             startBarrier.await();
@@ -259,7 +259,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 engine.closeNameRegistry();
                 Rnd rnd = TestUtils.generateRandom(LOG);
                 try (TableNameRegistryRW rw = new TableNameRegistryRW(
-                        configuration,
+                        engine,
                         new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString())
                 )) {
                     rw.reload();

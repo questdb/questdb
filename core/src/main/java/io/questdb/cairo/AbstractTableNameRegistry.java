@@ -31,16 +31,16 @@ import io.questdb.std.ObjHashSet;
 import java.util.Map;
 
 public abstract class AbstractTableNameRegistry implements TableNameRegistry {
-    protected final CairoConfiguration configuration;
+    protected final CairoEngine engine;
     // drop marker must contain special symbols to avoid a table created by the same name
     protected final TableNameRegistryStore nameStore;
     protected final TableFlagResolver tableFlagResolver;
     protected ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap;
     protected ConcurrentHashMap<TableToken> tableNameToTableTokenMap;
 
-    public AbstractTableNameRegistry(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
-        this.configuration = configuration;
-        this.nameStore = new TableNameRegistryStore(configuration, tableFlagResolver);
+    public AbstractTableNameRegistry(CairoEngine engine, TableFlagResolver tableFlagResolver) {
+        this.engine = engine;
+        this.nameStore = new TableNameRegistryStore(engine.configuration, tableFlagResolver);
         this.tableFlagResolver = tableFlagResolver;
     }
 

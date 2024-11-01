@@ -124,6 +124,11 @@ public interface TableTransactionLogFile extends Closeable {
     long endMetadataChangeEntry();
 
     /**
+     * Syncs/flushes the log files to the disk unconditionally.
+     */
+    void fullSync();
+
+    /**
      * Returns the cursor to read transactions from the log
      *
      * @param txnLo transaction id to start reading from
@@ -153,9 +158,4 @@ public interface TableTransactionLogFile extends Closeable {
     long open(Path path);
 
     void setLastRefreshBaseTxn(long baseTxn);
-
-    /**
-     * Syncs/flushes the log files to the disk
-     */
-    void sync();
 }

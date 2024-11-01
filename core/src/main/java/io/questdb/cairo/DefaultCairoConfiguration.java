@@ -357,7 +357,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public long getGroupByPresizeMaxSize() {
+    public long getGroupByPresizeMaxCapacity() {
         return 1_000_000;
     }
 

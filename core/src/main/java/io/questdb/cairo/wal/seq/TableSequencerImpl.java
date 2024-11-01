@@ -91,11 +91,7 @@ public class TableSequencerImpl implements TableSequencer {
             metadata = new SequencerMetadata(ff);
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
-            tableTransactionLog = new TableTransactionLog(
-                    ff,
-                    configuration.getMkDirMode(),
-                    configuration.getDefaultSeqPartTxnCount()
-            );
+            tableTransactionLog = new TableTransactionLog(configuration);
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
                 schemaLock.writeLock().lock();
@@ -306,6 +302,10 @@ public class TableSequencerImpl implements TableSequencer {
         return tableTransactionLog.lastTxn();
     }
 
+    public boolean metadataMatches(long structureVersion) {
+        return metadata.getMetadataVersion() == structureVersion;
+    }
+
     @Override
     public long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
@@ -333,7 +333,7 @@ public class TableSequencerImpl implements TableSequencer {
                             .put(", newVersion: ").put(metadata.getMetadataVersion())
                             .put(']');
                 }
-                metadata.syncToDisk();
+                metadata.sync();
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
@@ -493,8 +493,15 @@ public class TableSequencerImpl implements TableSequencer {
             long txnRowCount
     ) {
         return tableTransactionLog.addEntry(
-                getStructureVersion(), walId, segmentId, segmentTxn, timestamp,
-                txnMinTimestamp, txnMaxTimestamp, txnRowCount);
+                getStructureVersion(),
+                walId,
+                segmentId,
+                segmentTxn,
+                timestamp,
+                txnMinTimestamp,
+                txnMaxTimestamp,
+                txnRowCount
+        );
     }
 
     private void notifyTxnCommitted(long txn) {

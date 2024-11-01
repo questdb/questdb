@@ -331,8 +331,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getGroupByPresizeMaxSize() {
-        return getDelegate().getGroupByPresizeMaxSize();
+    public long getGroupByPresizeMaxCapacity() {
+        return getDelegate().getGroupByPresizeMaxCapacity();
     }
 
     @Override
