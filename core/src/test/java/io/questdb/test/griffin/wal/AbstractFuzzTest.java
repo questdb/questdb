@@ -30,6 +30,7 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
@@ -67,7 +68,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
-    public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
+    public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) throws SqlException {
         fuzzer.applyWal(transactions, tableName, walWriterCount, applyRnd);
     }
 
