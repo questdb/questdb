@@ -268,8 +268,9 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
 
         long rowCount = 0;
         int rowGroupIndex = 0;
-        for (; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-            long rowGroupSize = metadata.rowGroupSize(rowGroupIndex);
+        for (int i = 0; i < rowGroupCount; i++) {
+            rowGroupIndex = i;
+            long rowGroupSize = metadata.rowGroupSize(i);
             if (partitionHi <= rowCount + rowGroupSize) {
                 break;
             }
