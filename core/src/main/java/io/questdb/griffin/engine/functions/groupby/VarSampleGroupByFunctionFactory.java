@@ -92,7 +92,7 @@ public class VarSampleGroupByFunctionFactory implements FunctionFactory {
 
             // So we use this instead:
             double mergedMean = (srcCount * srcMean + destCount * destMean) / mergedCount;
-            double mergedSum = srcSum + destSum + (delta * delta) * ((double) (srcCount * destCount) / mergedCount);
+            double mergedSum = srcSum + destSum + (delta * delta) * ((double) srcCount * destCount / mergedCount);
 
             destValue.putDouble(valueIndex, mergedMean);
             destValue.putDouble(valueIndex + 1, mergedSum);

@@ -31,11 +31,11 @@ import org.jetbrains.annotations.Nullable;
 
 public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
-    public TableNameRegistryRW(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
-        super(configuration, tableFlagResolver);
+    public TableNameRegistryRW(CairoEngine engine, TableFlagResolver tableFlagResolver) {
+        super(engine, tableFlagResolver);
         if (!nameStore.lock()) {
-            if (!configuration.getAllowTableRegistrySharedWrite()) {
-                throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(configuration.getRoot()).put(']');
+            if (!engine.getConfiguration().getAllowTableRegistrySharedWrite()) {
+                throw CairoException.critical(0).put("cannot lock table name registry file [path=").put(engine.getConfiguration().getRoot()).put(']');
             }
         }
         this.tableNameToTableTokenMap = new ConcurrentHashMap<>(false);
@@ -58,6 +58,9 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
                 dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.ofDropped(token));
             } else {
                 dirNameToTableTokenMap.remove(token.getDirName(), reverseMapItem);
+            }
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.dropTable(token);
             }
             return true;
         }
@@ -92,6 +95,9 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             nameStore.logAddTable(tableToken);
         }
         dirNameToTableTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(tableToken);
+        }
     }
 
     @Override
@@ -120,6 +126,9 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
                 nameStore.logDropTable(tableToken);
                 nameStore.logAddTable(renamedTableToken);
                 dirNameToTableTokenMap.put(renamedTableToken.getDirName(), ReverseTableMapItem.of(renamedTableToken));
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.renameTable(tableToken, renamedTableToken);
+                }
                 return renamedTableToken;
             } else {
                 // Already renamed by another thread. Revert new name reservation.
@@ -137,6 +146,9 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             nameStore.logDropTable(oldToken);
             nameStore.logAddTable(newToken);
             dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.renameTable(oldToken, newToken);
+            }
         }
     }
 
