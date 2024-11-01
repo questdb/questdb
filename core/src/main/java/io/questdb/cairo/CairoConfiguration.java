@@ -128,6 +128,10 @@ public interface CairoConfiguration {
 
     int getColumnPurgeTaskPoolCapacity();
 
+    default long getCommitLatency() {
+        return 30_000_000; // 30s
+    }
+
     int getCommitMode();
 
     @NotNull
@@ -200,9 +204,9 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
-    long getGroupByPresizeMaxHeapSize();
+    long getGroupByPresizeMaxCapacity();
 
-    long getGroupByPresizeMaxSize();
+    long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
 
