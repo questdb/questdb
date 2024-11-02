@@ -270,6 +270,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean lastOpenPartitionIsReadOnly;
     private long lastOpenPartitionTs = Long.MIN_VALUE;
     private long lastPartitionTimestamp;
+    private long lastWalCommitTimestampMicros;
     private LifecycleManager lifecycleManager;
     private long lockFd = -2;
     private long masterRef = 0L;
@@ -345,6 +346,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
         this.engine = cairoEngine;
+        this.lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
         try {
             this.path = new Path().of(root);
             this.pathRootSize = path.size();
@@ -1153,6 +1155,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             syncColumns();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
             txWriter.commit(denseSymbolMapWriters);
+            lastWalCommitTimestampMicros = configuration.getMicrosecondClock().getTicks();
 
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.maxTimestamp, configuration.getO3LastPartitionMaxSplits());
 
@@ -2088,7 +2091,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Can commit without O3 and LAG has just enough rows
                         || (commitToTimestamp >= newMaxLagTimestamp && totalUncommitted > getMetaMaxUncommittedRows())
                         // Too many uncommitted transactions in LAG
-                        || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount());
+                        || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount())
+                        // when the time between commits is too long we need to commit regardless of the row count or volume filled
+                        // this is to bring the latency of data visibility inline with user expectations
+                        || (configuration.getMicrosecondClock().getTicks() - lastWalCommitTimestampMicros > configuration.getCommitLatency());
 
                 boolean canFastCommit = indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
                 boolean lagOrderedNew = !isDeduplicationEnabled() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
