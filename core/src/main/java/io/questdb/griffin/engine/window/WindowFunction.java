@@ -68,4 +68,8 @@ public interface WindowFunction extends Function {
       Set index of record chain column used to store window function result.
      */
     void setColumnIndex(int columnIndex);
+
+    default boolean supportDeepClone() {
+        return false;
+    }
 }

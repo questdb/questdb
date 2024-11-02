@@ -39,7 +39,6 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class JsonExtractFunction implements ScalarFunction {
@@ -47,9 +46,9 @@ public class JsonExtractFunction implements ScalarFunction {
     private final Function json;
     private final int maxSize;
     private final Function path;
-    private final @NotNull JsonExtractSupportingState stateA;
+    private JsonExtractSupportingState stateA;
     // Only set for VARCHAR
-    private final @Nullable JsonExtractSupportingState stateB;
+    private @Nullable JsonExtractSupportingState stateB;
     private final int targetType;
     private DirectUtf8Sink pointer;
 
@@ -63,23 +62,6 @@ public class JsonExtractFunction implements ScalarFunction {
         this.json = json;
         this.path = path;
         this.maxSize = maxSize;
-        switch (targetType) {
-            case ColumnType.IPv4:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                // cxx json code will not resize the utf8 sink, so the initial size is its max size
-                stateA = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), false);
-                stateB = null;
-                break;
-            case ColumnType.VARCHAR:
-                stateA = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), true);
-                stateB = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), true);
-                break;
-            default:
-                stateA = new JsonExtractSupportingState(null, false);
-                stateB = null;
-                break;
-        }
     }
 
     @Override
@@ -384,6 +366,24 @@ public class JsonExtractFunction implements ScalarFunction {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        ScalarFunction.super.init(symbolTableSource, executionContext);
+        switch (targetType) {
+            case ColumnType.IPv4:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                // cxx json code will not resize the utf8 sink, so the initial size is its max size
+                stateA = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), false);
+                stateB = null;
+                break;
+            case ColumnType.VARCHAR:
+                stateA = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), true);
+                stateB = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), true);
+                break;
+            default:
+                stateA = new JsonExtractSupportingState(null, false);
+                stateB = null;
+                break;
+        }
         stateA.reopen();
         if (stateB != null) {
             stateB.reopen();

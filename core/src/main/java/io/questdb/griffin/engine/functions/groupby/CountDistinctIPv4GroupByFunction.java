@@ -38,15 +38,16 @@ import io.questdb.std.Numbers;
 
 public class CountDistinctIPv4GroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final GroupByIntHashSet setA;
-    private final GroupByIntHashSet setB;
+    private GroupByIntHashSet setA;
+    private GroupByIntHashSet setB;
     private int valueIndex;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
 
     public CountDistinctIPv4GroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        // Numbers.IPv4_NULL is zero which is nice for faster zeroing on rehash.
-        setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
-        setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
     }
 
     @Override
@@ -157,6 +158,8 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+        setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }

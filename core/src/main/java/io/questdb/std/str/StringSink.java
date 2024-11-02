@@ -25,10 +25,11 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Chars;
+import io.questdb.std.DeepCloneable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMutable, Utf16Sink {
+public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMutable, Utf16Sink, DeepCloneable<StringSink> {
 
     private char[] buffer;
     private int pos;
@@ -60,6 +61,11 @@ public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMuta
     @SuppressWarnings("unchecked")
     public <T> T copy() {
         return (T) new String(buffer, 0, pos);
+    }
+
+    @Override
+    public StringSink deepClone() {
+        return new StringSink(this);
     }
 
     @Override
@@ -171,6 +177,12 @@ public class StringSink implements MutableUtf16Sink, CharSequence, CloneableMuta
 
     public void trimTo(int pos) {
         clear(pos);
+    }
+
+    private StringSink(StringSink other) {
+        this.pos = other.pos;
+        this.buffer = new char[other.buffer.length];
+        System.arraycopy(other.buffer, 0, this.buffer, 0, other.buffer.length);
     }
 
     private void checkCapacity(int extra) {

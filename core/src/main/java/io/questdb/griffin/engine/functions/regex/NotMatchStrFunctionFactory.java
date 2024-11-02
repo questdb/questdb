@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.regex;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -65,7 +66,7 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
 
         try {
             Matcher matcher = Pattern.compile(Chars.toString(regex)).matcher("");
-            return new NoMatchStrFunction(value, matcher);
+            return new NoMatchStrFunction(value, matcher, regex);
         } catch (PatternSyntaxException e) {
             throw SqlException.$(argPositions.getQuick(1) + e.getIndex() + 1, e.getMessage());
         }
@@ -73,11 +74,24 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
 
     private static class NoMatchStrFunction extends BooleanFunction implements UnaryFunction {
         private final Function arg;
-        private final Matcher matcher;
+        private Matcher matcher;
+        private final CharSequence regex;
+        private boolean initialized;
 
-        public NoMatchStrFunction(Function arg, Matcher matcher) {
+        public NoMatchStrFunction(Function arg, Matcher matcher, CharSequence regex) {
             this.arg = arg;
             this.matcher = matcher;
+            this.regex = regex;
+            this.initialized = matcher != null;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (!initialized) {
+                matcher = Pattern.compile(Chars.toString(regex)).matcher("");
+                initialized = true;
+            }
         }
 
         @Override

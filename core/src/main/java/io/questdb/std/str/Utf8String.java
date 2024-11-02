@@ -24,6 +24,7 @@
 
 package io.questdb.std.str;
 
+import io.questdb.std.DeepCloneable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -32,7 +33,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * An immutable on-heap sequence of UTF-8 bytes.
  */
-public class Utf8String implements Utf8Sequence {
+public class Utf8String implements Utf8Sequence , DeepCloneable<Utf8String> {
     public static final Utf8String EMPTY = new Utf8String("");
     private final boolean ascii;
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
@@ -79,6 +80,11 @@ public class Utf8String implements Utf8Sequence {
     @Override
     public byte byteAt(int index) {
         return bytes[index];
+    }
+
+    @Override
+    public Utf8String deepClone() {
+        return newInstance(this);
     }
 
     public int intAt(int index) {

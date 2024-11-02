@@ -75,6 +75,7 @@ import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
+import io.questdb.griffin.engine.functions.FunctionCloneFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
@@ -814,11 +815,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (filter != null && !filter.isThreadSafe()) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
-            for (int i = 0; i < workerCount; i++) {
-                restoreWhereClause(filterExpr); // restore original filters in node query models
-                Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
-                workerFilters.extendAndSet(i, workerFilter);
-                assert filter.getClass() == workerFilter.getClass();
+            boolean supportDeepClone = true;
+            try {
+                for (int i = 0; i < workerCount; i++) {
+                    workerFilters.extendAndSet(i, FunctionCloneFactory.deepCloneFunction(filter));
+                }
+            } catch (UnsupportedOperationException e) {
+                LOG.debug().$("Failed to deepClone filter function for parallel worker").I$();
+                supportDeepClone = false;
+            }
+            if (!supportDeepClone) {
+                Misc.freeObjList(workerFilters);
+                for (int i = 0; i < workerCount; i++) {
+                    restoreWhereClause(filterExpr); // restore original filters in node query models
+                    Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
+                    workerFilters.extendAndSet(i, workerFilter);
+                    assert filter.getClass() == workerFilter.getClass();
+                }
             }
             return workerFilters;
         }
@@ -874,19 +887,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         if (!threadSafe) {
             ObjList<ObjList<Function>> allWorkerKeyFunctions = new ObjList<>();
-            for (int i = 0; i < workerCount; i++) {
-                ObjList<Function> workerKeyFunctions = new ObjList<>(keyFunctionNodes.size());
-                allWorkerKeyFunctions.extendAndSet(i, workerKeyFunctions);
-                for (int j = 0, n = keyFunctionNodes.size(); j < n; j++) {
-                    final Function func = functionParser.parseFunction(
-                            keyFunctionNodes.getQuick(j),
-                            metadata,
-                            executionContext
-                    );
-                    workerKeyFunctions.add(func);
+            boolean supportDeepClone = true;
+            try {
+                for (int i = 0; i < workerCount; i++) {
+                    ObjList<Function> workerKeyFunctions = new ObjList<>(keyFunctions.size());
+                    allWorkerKeyFunctions.extendAndSet(i, workerKeyFunctions);
+                    for(int j = 0, n = keyFunctions.size(); j < n; j++) {
+                        workerKeyFunctions.add(keyFunctions.getQuick(j));
+                    }
                 }
+            } catch (UnsupportedOperationException e) {
+                LOG.debug().$("Failed to deepClone keyFunctions for parallel worker").I$();
+                supportDeepClone = false;
             }
-            return allWorkerKeyFunctions;
+            if (!supportDeepClone) {
+                for (int i = 0, oSize = allWorkerKeyFunctions.size(); i < oSize; i++) {
+                    Misc.freeObjList(allWorkerKeyFunctions.getQuick(i));
+                }
+
+                allWorkerKeyFunctions.clear();
+                for (int i = 0; i < workerCount; i++) {
+                    ObjList<Function> workerKeyFunctions = new ObjList<>(keyFunctionNodes.size());
+                    allWorkerKeyFunctions.extendAndSet(i, workerKeyFunctions);
+                    for (int j = 0, n = keyFunctionNodes.size(); j < n; j++) {
+                        final Function func = functionParser.parseFunction(
+                                keyFunctionNodes.getQuick(j),
+                                metadata,
+                                executionContext
+                        );
+                        workerKeyFunctions.add(func);
+                    }
+                }
+                return allWorkerKeyFunctions;
+            }
         }
         return null;
     }

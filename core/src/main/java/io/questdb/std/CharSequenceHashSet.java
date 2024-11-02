@@ -31,7 +31,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
-public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements Sinkable {
+public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements Sinkable, DeepCloneable<CharSequenceHashSet> {
 
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final ObjList<CharSequence> list;
@@ -113,6 +113,11 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
     @Override
     public boolean contains(@Nullable CharSequence key) {
         return key == null ? hasNull : keyIndex(key) < 0;
+    }
+
+    @Override
+    public CharSequenceHashSet deepClone() {
+        return new CharSequenceHashSet(this);
     }
 
     @Override

@@ -38,14 +38,16 @@ import io.questdb.std.Numbers;
 
 public class CountDistinctIntGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final GroupByIntHashSet setA;
-    private final GroupByIntHashSet setB;
+    private GroupByIntHashSet setA;
+    private GroupByIntHashSet setB;
     private int valueIndex;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
 
     public CountDistinctIntGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
-        setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
     }
 
     @Override
@@ -156,6 +158,8 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
+        setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }

@@ -31,7 +31,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
-public class IntList implements Mutable, Sinkable {
+public class IntList implements Mutable, Sinkable, DeepCloneable<IntList> {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private static final int NO_ENTRY_VALUE = -1;
     private final int initialCapacity;
@@ -97,6 +97,11 @@ public class IntList implements Mutable, Sinkable {
 
     public boolean contains(int value) {
         return indexOf(value, 0, pos) > -1;
+    }
+
+    @Override
+    public IntList deepClone() {
+        return new IntList(this);
     }
 
     /**
@@ -282,6 +287,13 @@ public class IntList implements Mutable, Sinkable {
 
     public void zero(int value) {
         Arrays.fill(data, 0, pos, value);
+    }
+
+    private IntList(final IntList other) {
+        this.initialCapacity = Math.max(other.size(), DEFAULT_ARRAY_SIZE);
+        this.data = new int[initialCapacity];
+        setPos(other.size());
+        System.arraycopy(other.data, 0, this.data, 0, pos);
     }
 
     private void checkCapacity(int capacity) {

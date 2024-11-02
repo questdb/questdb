@@ -41,16 +41,16 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     private static final long NULL_VALUE = -1;
 
     private final Function arg;
-    private final HyperLogLog hllA;
-    private final HyperLogLog hllB;
+    private HyperLogLog hllA;
+    private HyperLogLog hllB;
     private int hllPtrIndex;
     private int overwrittenFlagIndex;
     private int valueIndex;
+    private final int precision;
 
     public ApproxCountDistinctLongGroupByFunction(Function arg, int precision) {
         this.arg = arg;
-        this.hllA = new HyperLogLog(precision);
-        this.hllB = new HyperLogLog(precision);
+        this.precision = precision;
     }
 
     public ApproxCountDistinctLongGroupByFunction(Function arg) {
@@ -198,6 +198,8 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        this.hllA = new HyperLogLog(precision);
+        this.hllB = new HyperLogLog(precision);
         hllA.setAllocator(allocator);
         hllB.setAllocator(allocator);
     }

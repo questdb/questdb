@@ -63,7 +63,7 @@ public class MatchStrFunctionFactory implements FunctionFactory {
             if (matcher == null) {
                 return BooleanConstant.FALSE;
             }
-            return new MatchStrConstPatternFunction(value, matcher);
+            return new MatchStrConstPatternFunction(value, matcher, pattern);
         } else if (pattern.isRuntimeConstant()) {
             return new MatchStrRuntimeConstPatternFunction(value, pattern, patternPosition);
         }
@@ -71,12 +71,26 @@ public class MatchStrFunctionFactory implements FunctionFactory {
     }
 
     static class MatchStrConstPatternFunction extends BooleanFunction implements UnaryFunction {
-        private final Matcher matcher;
+        private Matcher matcher;
         private final Function value;
+        private final Function pattern;
+        private boolean initialized;
 
-        public MatchStrConstPatternFunction(Function value, @NotNull Matcher matcher) {
+        public MatchStrConstPatternFunction(Function value, Matcher matcher, Function pattern) {
             this.value = value;
             this.matcher = matcher;
+            this.pattern = pattern;
+            initialized = matcher != null;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (!initialized) {
+                UnaryFunction.super.init(symbolTableSource, executionContext);
+                matcher = RegexUtils.createMatcher(pattern, 0);
+                initialized = true;
+            }
         }
 
         @Override

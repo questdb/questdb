@@ -30,7 +30,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
-public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements Sinkable {
+public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements Sinkable, DeepCloneable<Utf8SequenceHashSet> {
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final ObjList<Utf8Sequence> list;
     private boolean hasNull = false;
@@ -112,6 +112,11 @@ public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements 
     @Override
     public boolean contains(@Nullable Utf8Sequence key) {
         return key == null ? hasNull : keyIndex(key) < 0;
+    }
+
+    @Override
+    public Utf8SequenceHashSet deepClone() {
+        return new Utf8SequenceHashSet(this);
     }
 
     @Override

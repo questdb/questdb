@@ -268,6 +268,10 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return true;
     }
 
+    default boolean supportDeepClone() {
+        return true;
+    }
+
     default boolean supportsRandomAccess() {
         return true;
     }

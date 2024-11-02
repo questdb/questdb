@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionCloneFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastStrToSymbolFunctionFactory;
@@ -363,28 +364,39 @@ public class GroupByUtils {
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<GroupByFunction> workerGroupByFunctions
     ) throws SqlException {
-        final ObjList<QueryColumn> columns = model.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            final ExpressionNode node = column.getAst();
+        boolean supportDeepClone = true;
+        try {
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                workerGroupByFunctions.add((GroupByFunction) FunctionCloneFactory.deepCloneFunction(groupByFunctions.getQuick(i)));
+            }
+        } catch (UnsupportedOperationException e) {
+            supportDeepClone = false;
+        }
+        if (!supportDeepClone) {
+            Misc.freeObjList(groupByFunctions);
+            final ObjList<QueryColumn> columns = model.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                final ExpressionNode node = column.getAst();
 
-            if (node.type != ExpressionNode.LITERAL) {
-                // this can fail
-                final Function function = functionParser.parseFunction(
-                        node,
-                        metadata,
-                        executionContext
-                );
+                if (node.type != ExpressionNode.LITERAL) {
+                    // this can fail
+                    final Function function = functionParser.parseFunction(
+                            node,
+                            metadata,
+                            executionContext
+                    );
 
-                if (function instanceof GroupByFunction) {
-                    // configure map value columns for group-by functions
-                    // some functions may need more than one column in values,
-                    // so we have them do all the work
-                    GroupByFunction func = (GroupByFunction) function;
-                    workerGroupByFunctions.add(func);
-                } else {
-                    // it's a key function; we don't need it
-                    Misc.free(function);
+                    if (function instanceof GroupByFunction) {
+                        // configure map value columns for group-by functions
+                        // some functions may need more than one column in values,
+                        // so we have them do all the work
+                        GroupByFunction func = (GroupByFunction) function;
+                        workerGroupByFunctions.add(func);
+                    } else {
+                        // it's a key function; we don't need it
+                        Misc.free(function);
+                    }
                 }
             }
         }

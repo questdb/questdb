@@ -33,7 +33,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
-public class LongList implements Mutable, LongVec, Sinkable {
+public class LongList implements Mutable, LongVec, Sinkable, DeepCloneable<LongList> {
     private static final int DEFAULT_ARRAY_SIZE = 16;
     private static final long DEFAULT_NO_ENTRY_VALUE = -1L;
     private final int initialCapacity;
@@ -220,6 +220,11 @@ public class LongList implements Mutable, LongVec, Sinkable {
 
     public void clear() {
         pos = 0;
+    }
+
+    @Override
+    public LongList deepClone() {
+        return new LongList(this);
     }
 
     /**

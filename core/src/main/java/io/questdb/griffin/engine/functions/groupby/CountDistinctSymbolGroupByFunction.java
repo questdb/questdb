@@ -45,15 +45,17 @@ import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public class CountDistinctSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final GroupByIntHashSet setA;
-    private final GroupByIntHashSet setB;
+    private GroupByIntHashSet setA;
+    private GroupByIntHashSet setB;
     private int knownSymbolCount = -1;
     private int valueIndex;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
 
     public CountDistinctSymbolGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        this.setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
-        this.setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
     }
 
     @Override
@@ -189,6 +191,8 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        this.setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        this.setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }

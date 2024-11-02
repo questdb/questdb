@@ -27,8 +27,10 @@ package io.questdb.griffin.engine.functions.str;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
@@ -72,16 +74,37 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
 
     private static class ConstFunc extends VarcharFunction implements UnaryFunction {
         private final Function arg;
-        private final DirectUtf8Sink sink;
+        private DirectUtf8Sink sink;
+        private boolean initialized = false;
+        private final TrimType type;
 
         public ConstFunc(Function arg, TrimType type) {
             this.arg = arg;
-            Utf8Sequence value = getArg().getVarcharA(null);
-            if (value == null) {
-                this.sink = null;
-            } else {
-                this.sink = new DirectUtf8Sink(value.size());
-                trim(type, value, sink);
+            this.type = type;
+            if (type != null) {
+                Utf8Sequence value = getArg().getVarcharA(null);
+                if (value == null) {
+                    this.sink = null;
+                } else {
+                    this.sink = new DirectUtf8Sink(value.size());
+                    trim(type, value, sink);
+                }
+                initialized = true;
+            }
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (!initialized) {
+                Utf8Sequence value = getArg().getVarcharA(null);
+                if (value == null) {
+                    this.sink = null;
+                } else {
+                    this.sink = new DirectUtf8Sink(value.size());
+                    trim(type, value, sink);
+                }
+                initialized = true;
             }
         }
 
@@ -106,9 +129,17 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
             return sink;
         }
 
+        public boolean isInitialized() {
+            return initialized;
+        }
+
         @Override
         public boolean isThreadSafe() {
             return false;
+        }
+
+        public void setInitialized(boolean initialized) {
+            this.initialized = initialized;
         }
 
         @Override

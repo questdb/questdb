@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -40,6 +41,7 @@ import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * This is tactical implementation of regex replace over varchar column.
@@ -131,9 +133,9 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
                         throw SqlException.$(replacementPos, "no group ").put(group);
                     }
                     if (canSkipUtf8Decoding(patternStr)) {
-                        return new SingleGroupAsciiFunc(value, matcher, Chars.toString(replacementStr), group, position);
+                        return new SingleGroupAsciiFunc(value, matcher, pattern, Chars.toString(replacementStr), group , position);
                     } else {
-                        return new SingleGroupFunc(value, matcher, Chars.toString(replacementStr), group, position);
+                        return new SingleGroupFunc(value, matcher, pattern, Chars.toString(replacementStr), group, position);
                     }
                 } catch (NumericException ignore) {
                 }
@@ -224,23 +226,27 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
     private static class SingleGroupAsciiFunc extends VarcharFunction implements UnaryFunction {
         private final int functionPos;
         private final int group;
-        private final Matcher matcher;
+        private Matcher matcher;
         private final String replacement;
         private final DirectUtf8Sink utf8SinkA;
         private final DirectUtf8Sink utf8SinkB;
         private final Function value;
         private final DirectAsciiStringView viewA = new DirectAsciiStringView();
         private final DirectAsciiStringView viewB = new DirectAsciiStringView();
+        private final Function pattern;
+        private boolean initialized;
 
-        public SingleGroupAsciiFunc(Function value, Matcher matcher, String replacement, int group, int functionPos) {
+        public SingleGroupAsciiFunc(Function value, Matcher matcher, Function pattern, String replacement, int group, int functionPos) {
             try {
                 this.value = value;
                 this.matcher = matcher;
                 this.replacement = replacement;
                 this.group = group;
                 this.functionPos = functionPos;
+                this.pattern = pattern;
                 this.utf8SinkA = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
                 this.utf8SinkB = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
+                this.initialized = matcher != null;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -252,6 +258,15 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
             UnaryFunction.super.close();
             Misc.free(utf8SinkA);
             Misc.free(utf8SinkB);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (!initialized) {
+                matcher = RegexUtils.createMatcher(pattern, 0);
+                initialized = true;
+            }
         }
 
         @Override
@@ -330,24 +345,34 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
     private static class SingleGroupFunc extends StrFunction implements UnaryFunction {
         private final int functionPos;
         private final int group;
-        private final Matcher matcher;
+        private Matcher matcher;
         private final String replacement;
         private final DirectUtf16Sink utf16SinkA;
         private final DirectUtf16Sink utf16SinkB;
         private final Function value;
+        private final Function pattern;
 
-        public SingleGroupFunc(Function value, Matcher matcher, String replacement, int group, int functionPos) {
+        public SingleGroupFunc(Function value, Matcher matcher, Function pattern, String replacement, int group, int functionPos) {
             try {
                 this.value = value;
                 this.matcher = matcher;
                 this.replacement = replacement;
                 this.group = group;
                 this.functionPos = functionPos;
+                this.pattern = pattern;
                 this.utf16SinkA = new DirectUtf16Sink(INITIAL_SINK_CAPACITY);
                 this.utf16SinkB = new DirectUtf16Sink(INITIAL_SINK_CAPACITY);
             } catch (Throwable th) {
                 close();
                 throw th;
+            }
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (matcher == null) {
+                matcher = RegexUtils.createMatcher(pattern, 0);
             }
         }
 

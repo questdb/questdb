@@ -39,14 +39,16 @@ import io.questdb.std.Uuid;
 
 public final class CountDistinctUuidGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final GroupByLong128HashSet setA;
-    private final GroupByLong128HashSet setB;
+    private GroupByLong128HashSet setA;
+    private GroupByLong128HashSet setB;
     private int valueIndex;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
 
     public CountDistinctUuidGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        setA = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        setB = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
     }
 
     @Override
@@ -159,6 +161,8 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        setA = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        setB = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }

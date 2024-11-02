@@ -46,15 +46,18 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     private static final int INITIAL_SINK_CAPACITY = 128;
     private final Function arg;
     private final char delimiter;
-    private final GroupByIntHashSet set;
+    private GroupByIntHashSet set;
     private final ObjList<DirectUtf16Sink> sinks = new ObjList<>();
     private int sinkIndex = 0;
     private int valueIndex;
+    private final int setInitialCapacity;
+    private final double setLoadFactor;
 
     public StringDistinctAggSymbolGroupByFunction(Function arg, char delimiter, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
         this.delimiter = delimiter;
-        this.set = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        this.setInitialCapacity = setInitialCapacity;
+        this.setLoadFactor = setLoadFactor;
     }
 
     @Override
@@ -155,6 +158,7 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        this.set = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
         set.setAllocator(allocator);
     }
 

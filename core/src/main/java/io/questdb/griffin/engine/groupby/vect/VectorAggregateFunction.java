@@ -90,4 +90,8 @@ public interface VectorAggregateFunction extends Function, Mutable {
      * @return true if wrapUp was fine and false if it failed on memory allocation
      */
     boolean wrapUp(long pRosti);
+
+    default boolean supportDeepClone() {
+        return false;
+    }
 }

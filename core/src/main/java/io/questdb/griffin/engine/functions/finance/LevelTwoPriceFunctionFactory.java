@@ -147,12 +147,17 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 1 pair.
      */
     private static class L2PriceFunction1 extends L2PriceBaseFunction {
-        private final Function size0Func;
-        private final Function targetFunc;
-        private final Function value0Func;
+        private Function size0Func;
+        private Function targetFunc;
+        private Function value0Func;
 
         public L2PriceFunction1(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
             targetFunc = args.getQuick(0);
             size0Func = args.getQuick(1);
             value0Func = args.getQuick(2);
@@ -175,14 +180,19 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 2 pairs.
      */
     private static class L2PriceFunction2 extends L2PriceBaseFunction {
-        private final Function size0Func;
-        private final Function size1Func;
-        private final Function targetFunc;
-        private final Function value0Func;
-        private final Function value1Func;
+        private Function size0Func;
+        private Function size1Func;
+        private Function targetFunc;
+        private Function value0Func;
+        private Function value1Func;
 
         public L2PriceFunction2(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
             targetFunc = args.getQuick(0);
             size0Func = args.getQuick(1);
             value0Func = args.getQuick(2);
@@ -214,16 +224,21 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 3 pairs.
      */
     private static class L2PriceFunction3 extends L2PriceBaseFunction {
-        private final Function size0Func;
-        private final Function size1Func;
-        private final Function size2Func;
-        private final Function targetFunc;
-        private final Function value0Func;
-        private final Function value1Func;
-        private final Function value2Func;
+        private Function size0Func;
+        private Function size1Func;
+        private Function size2Func;
+        private Function targetFunc;
+        private Function value0Func;
+        private Function value1Func;
+        private Function value2Func;
 
         public L2PriceFunction3(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
             targetFunc = args.getQuick(0);
             size0Func = args.getQuick(1);
             value0Func = args.getQuick(2);
@@ -264,18 +279,23 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 4 pairs.
      */
     private static class L2PriceFunction4 extends L2PriceBaseFunction {
-        private final Function size0Func;
-        private final Function size1Func;
-        private final Function size2Func;
-        private final Function size3Func;
-        private final Function targetFunc;
-        private final Function value0Func;
-        private final Function value1Func;
-        private final Function value2Func;
-        private final Function value3Func;
+        private Function size0Func;
+        private Function size1Func;
+        private Function size2Func;
+        private Function size3Func;
+        private Function targetFunc;
+        private Function value0Func;
+        private Function value1Func;
+        private Function value2Func;
+        private Function value3Func;
 
         public L2PriceFunction4(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
             targetFunc = args.getQuick(0);
             size0Func = args.getQuick(1);
             value0Func = args.getQuick(2);
@@ -325,20 +345,25 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
      * Unrolled loop for 5 pairs.
      */
     private static class L2PriceFunction5 extends L2PriceBaseFunction {
-        private final Function size0Func;
-        private final Function size1Func;
-        private final Function size2Func;
-        private final Function size3Func;
-        private final Function size4Func;
-        private final Function targetFunc;
-        private final Function value0Func;
-        private final Function value1Func;
-        private final Function value2Func;
-        private final Function value3Func;
-        private final Function value4Func;
+        private Function size0Func;
+        private Function size1Func;
+        private Function size2Func;
+        private Function size3Func;
+        private Function size4Func;
+        private Function targetFunc;
+        private Function value0Func;
+        private Function value1Func;
+        private Function value2Func;
+        private Function value3Func;
+        private Function value4Func;
 
         public L2PriceFunction5(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
             targetFunc = args.getQuick(0);
             size0Func = args.getQuick(1);
             value0Func = args.getQuick(2);
