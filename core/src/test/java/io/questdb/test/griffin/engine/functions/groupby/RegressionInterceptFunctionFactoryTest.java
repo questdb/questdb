@@ -22,119 +22,127 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.finance;
+package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-public class RegressionSlopeFunctionFactoryTest extends AbstractCairoTest {
+public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
-    public void testRegrSlopeAllNull() throws Exception {
+    public void testRegrInterceptAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "regr_slope\nnull\n", "select regr_slope(y, x) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))"
+                "regr_intercept\nnull\n", "select regr_intercept(y, x) from (select cast(null as double) x, cast(null as double) y from long_sequence(100))"
         ));
     }
 
     @Test
-    public void testRegrSlopeNoValues() throws Exception {
+    public void testRegrInterceptNoValues() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x int, y int)");
             assertSql(
-                    "regr_slope\nnull\n", "select regr_slope(x, y) from tbl1"
+                    "regr_intercept\nnull\n", "select regr_intercept(x, y) from tbl1"
             );
         });
     }
 
     @Test
-    public void testRegrSlopeAllSameValues() throws Exception {
+    public void testRegrInterceptAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
             assertSql(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
+                    "regr_intercept\nnull\n", "select regr_intercept(x, y) from tbl1"
             );
         });
     }
 
     @Test
-    public void testRegrSlopeDoubleValues() throws Exception {
+    public void testRegrInterceptDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
             assertSql(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
+                    "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
             );
         });
     }
 
     @Test
-    public void testRegrSlopeWithNullValues() throws Exception {
+    public void testRegrInterceptWithNullValues() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x double, y double)");
             insert("insert into 'tbl1' VALUES (null, null)");
             insert("insert into 'tbl1' select x, x as y from long_sequence(100)");
             assertSql(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
+                    "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
             );
         });
     }
 
     @Test
-    public void testRegrSlopeFloatValues() throws Exception {
+    public void testRegrInterceptFloatValues() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select cast(x as float) x, cast(x as float) y from long_sequence(100))");
             assertSql(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
+                    "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
             );
         });
     }
 
     @Test
-    public void testRegrSlopeIntValues() throws Exception {
+    public void testRegrInterceptIntValues() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select cast(x as int) x, cast(x as int) y from long_sequence(100))");
             assertSql(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
+                    "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
             );
         });
     }
 
     @Test
-    public void testRegrSlopeOneColumnAllNull() throws Exception {
+    public void testRegrInterceptOneColumnAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
-                "regr_slope\nnull\n", "select regr_slope(x, y) from (select cast(null as double) x, x as y from long_sequence(100))"
+                "regr_intercept\nnull\n", "select regr_intercept(x, y) from (select cast(null as double) x, x as y from long_sequence(100))"
         ));
     }
 
     @Test
-    public void testRegrSlopeOneValue() throws Exception {
+    public void testRegrInterceptOneValue() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1(x int, y int)");
             insert("insert into 'tbl1' VALUES (17.2151920, 17.2151920)");
             assertSql(
-                    "regr_slope\nnull\n", "select regr_slope(x, y) from tbl1"
+                    "regr_intercept\nnull\n", "select regr_intercept(x, y) from tbl1"
             );
         });
     }
 
     @Test
-    public void testRegrSlopeNoOverflow() throws Exception {
+    public void testRegrInterceptNoOverflow() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
             assertSql(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
+                    "regr_intercept\nnull\n", "select regr_intercept(x, y) from tbl1"
             );
         });
     }
 
     @Test
-    public void testRegrSlopeSomeNull() throws Exception {
+    public void testRegrInterceptSomeNull() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
             insert("insert into 'tbl1' VALUES (null, null)");
             assertSql(
-                    "regr_slope\n1.0\n", "select regr_slope(x, y) from tbl1"
+                    "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
+            );
+        });
+    }
+
+    @Test
+    public void testRegrInterceptWithNonZeroIntercept() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tbl1 as (select x, 2 * x + 5 as y from long_sequence(100))");
+            assertSql(
+                    "regr_intercept\n-2.5\n", "select regr_intercept(x, y) from tbl1"
             );
         });
     }
