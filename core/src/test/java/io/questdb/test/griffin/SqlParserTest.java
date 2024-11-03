@@ -25,7 +25,11 @@
 package io.questdb.test.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -3382,6 +3386,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError("SELECT NaN NULL", 11, "dangling expression");
         assertSyntaxError("SELECT (1+1) TRUE", 13, "dangling expression");
         assertSyntaxError("SELECT TRUE (1+1)", 12, "dangling expression");
+    }
+
+    @Test
+    public void testDeclareWithBasicSelectWithDouble() throws Exception {
+        assertModel("select-virtual 5 5 from (long_sequence(1))", "DECLARE @x := 123.456 SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareWithBasicSelectWithInt() throws Exception {
+        assertModel("select-virtual 5 5 from (long_sequence(1))", "DECLARE @x := 5 SELECT @x", ExecutionModel.QUERY);
     }
 
     @Test

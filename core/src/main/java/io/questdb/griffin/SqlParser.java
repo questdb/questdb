@@ -30,19 +30,41 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
-import io.questdb.griffin.model.*;
-import io.questdb.std.*;
+import io.questdb.griffin.model.ColumnCastModel;
+import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.CreateTableModel;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExplainModel;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WithClauseModel;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
+import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.model.ExpressionNode.CONSTANT;
 
 public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
-    public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "'00:00'", 0, 0);
-    private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
+    public static final ExpressionNode ZERO_OFFSET = ExpressionNode.FACTORY.newInstance().of(CONSTANT, "'00:00'", 0, 0);
+    private static final ExpressionNode ONE = ExpressionNode.FACTORY.newInstance().of(CONSTANT, "1", 0, 0);
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
@@ -128,7 +150,7 @@ public class SqlParser {
     }
 
     public static boolean isFullSampleByPeriod(ExpressionNode n) {
-        return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
+        return n != null && (n.type == CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
     }
 
     private static SqlException err(GenericLexer lexer, @Nullable CharSequence tok, @NotNull String msg) {
@@ -991,6 +1013,37 @@ public class SqlParser {
         return null;
     }
 
+    private void parseDeclare(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+        while (true) {
+            CharSequence tok = optTok(lexer);
+
+            if (tok == null || isSelectKeyword(tok) || !(tok.charAt(0) == '@')) {
+                break;
+            }
+
+            if (tok.charAt(0) == ',') {
+                continue;
+            }
+
+            CharSequence immutableTok = GenericLexer.immutableOf(tok);
+            expectTok(lexer, ':');
+            expectTok(lexer, '=');
+
+            tok = tok(lexer, "constant value");
+
+            ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+
+            if (expr == null) {
+                throw SqlException.$((lexer.lastTokenPosition()), "empty declaration");
+            }
+
+            model.getDecls().put(immutableTok, expr);
+
+        }
+
+        lexer.unparseLast();
+    }
+
     private QueryModel parseDml(
             GenericLexer lexer,
             @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses,
@@ -1084,7 +1137,14 @@ public class SqlParser {
             model.getWithClauses().putAll(parentWithClauses);
         }
 
-        tok = tok(lexer, "'select', 'with' or table name expected");
+        tok = tok(lexer, "'select', 'with', 'declare' or table name expected");
+
+
+        // [declare]
+        if (isDeclareKeyword(tok)) {
+            parseDeclare(lexer, model, sqlParserCallback);
+            tok = tok(lexer, "'select', 'with', or table name expected");
+        }
 
         if (isWithKeyword(tok)) {
             parseWithClauses(lexer, model.getWithClauses(), sqlParserCallback);
@@ -1092,6 +1152,7 @@ public class SqlParser {
         } else if (topWithClauses != null) {
             model.getWithClauses().putAll(topWithClauses);
         }
+
 
         // [select]
         if (isSelectKeyword(tok)) {
@@ -1529,7 +1590,7 @@ public class SqlParser {
                 tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparseLast();
                 ExpressionNode n = expr(lexer, model, sqlParserCallback);
-                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != ExpressionNode.CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
+                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
                     throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
                 }
 
@@ -1553,7 +1614,7 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
 
-                if ((n.type == ExpressionNode.CONSTANT && Chars.equals("''", n.token)) ||
+                if ((n.type == CONSTANT && Chars.equals("''", n.token)) ||
                         (n.type == ExpressionNode.LITERAL && n.token.length() == 0)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "non-empty literal or expression expected");
                 }
@@ -1963,6 +2024,11 @@ public class SqlParser {
                     if (Chars.endsWith(expr.token, '.') && expr.type == ExpressionNode.LITERAL) {
                         throw SqlException.$(expr.position + expr.token.length(), "'*' or column name expected");
                     }
+
+                    if (model.getDecls().contains(expr.token)) {
+                        // swap "@var" out
+                        expr = model.getDecls().get(expr.token);
+                    }
                 }
 
                 final CharSequence alias;
@@ -2312,7 +2378,7 @@ public class SqlParser {
                         throw err(lexer, null, "'from' expected");
                     }
                     CharSequence alias;
-                    if (qc.getAst().type == ExpressionNode.CONSTANT && Chars.indexOf(token, '.') != -1) {
+                    if (qc.getAst().type == CONSTANT && Chars.indexOf(token, '.') != -1) {
                         alias = createConstColumnAlias(aliasMap);
                     } else {
                         alias = createColumnAlias(qc.getAst(), aliasMap);
@@ -2344,7 +2410,7 @@ public class SqlParser {
         // todo: validate table name for overlap with keywords
         switch (expr.type) {
             case ExpressionNode.LITERAL:
-            case ExpressionNode.CONSTANT:
+            case CONSTANT:
                 final ExpressionNode literal = literal(tableName, expr.position);
                 final WithClauseModel withClause = masterModel.get(tableName);
                 if (withClause != null) {
@@ -2585,10 +2651,10 @@ public class SqlParser {
                 if (where.type == ExpressionNode.OPERATION && where.token.charAt(0) == '=') {
                     ExpressionNode thisConstant;
                     ExpressionNode thisLiteral;
-                    if (where.lhs.type == ExpressionNode.CONSTANT && where.rhs.type == ExpressionNode.LITERAL) {
+                    if (where.lhs.type == CONSTANT && where.rhs.type == ExpressionNode.LITERAL) {
                         thisConstant = where.lhs;
                         thisLiteral = where.rhs;
-                    } else if (where.lhs.type == ExpressionNode.LITERAL && where.rhs.type == ExpressionNode.CONSTANT) {
+                    } else if (where.lhs.type == ExpressionNode.LITERAL && where.rhs.type == CONSTANT) {
                         thisConstant = where.rhs;
                         thisLiteral = where.lhs;
                     } else {
@@ -2747,7 +2813,7 @@ public class SqlParser {
                         characterStoreEntry.put(type);
                         node.args.add(
                                 expressionNodePool.next().of(
-                                        ExpressionNode.CONSTANT,
+                                        CONSTANT,
                                         characterStoreEntry.toImmutable(),
                                         typeNode.precedence,
                                         typeNode.position
@@ -2784,7 +2850,7 @@ public class SqlParser {
         if (node.type == ExpressionNode.OPERATION && SqlKeywords.isColonColon(node.token)) {
             node.token = "cast";
             node.type = ExpressionNode.FUNCTION;
-            node.rhs.type = ExpressionNode.CONSTANT;
+            node.rhs.type = CONSTANT;
             // In PG x::float casts x to "double precision" type
             if (SqlKeywords.isFloatKeyword(node.rhs.token) || SqlKeywords.isFloat8Keyword(node.rhs.token)) {
                 node.rhs.token = "double";
