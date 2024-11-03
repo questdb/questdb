@@ -59,8 +59,12 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
 
     @Override
     public void clear() {
-        hllA.resetPtr();
-        hllB.resetPtr();
+        if (hllA != null) {
+            hllA.resetPtr();
+        }
+        if (hllB != null) {
+            hllB.resetPtr();
+        }
     }
 
     @Override
@@ -198,8 +202,12 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
-        hllA = new HyperLogLog(precision);
-        hllB = new HyperLogLog(precision);
+        if (hllA == null) {
+            hllA = new HyperLogLog(precision);
+        }
+        if (hllB == null) {
+            hllB = new HyperLogLog(precision);
+        }
         hllA.setAllocator(allocator);
         hllB.setAllocator(allocator);
     }

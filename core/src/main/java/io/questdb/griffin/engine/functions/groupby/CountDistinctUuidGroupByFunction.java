@@ -33,9 +33,12 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
 import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
+
+import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public final class CountDistinctUuidGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
@@ -53,8 +56,12 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
 
     @Override
     public void clear() {
-        setA.resetPtr();
-        setB.resetPtr();
+        if (setA != null) {
+            setA.resetPtr();
+        }
+        if (setB != null) {
+            setB.resetPtr();
+        }
     }
 
     @Override
@@ -161,8 +168,12 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
-        setA = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        setB = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        if (setA == null) {
+            setA = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor,  Numbers.LONG_NULL);
+        }
+        if (setB == null) {
+            setB = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor,  Numbers.LONG_NULL);
+        }
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }

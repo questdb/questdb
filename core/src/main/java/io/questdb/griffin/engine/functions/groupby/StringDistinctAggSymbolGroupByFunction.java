@@ -158,7 +158,9 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
-        this.set = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        if (set == null) {
+            set = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        }
         set.setAllocator(allocator);
     }
 

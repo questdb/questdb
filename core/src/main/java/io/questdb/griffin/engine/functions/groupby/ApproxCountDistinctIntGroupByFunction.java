@@ -59,8 +59,12 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
 
     @Override
     public void clear() {
-        hllA.resetPtr();
-        hllB.resetPtr();
+        if (hllA != null) {
+            hllA.resetPtr();
+        }
+        if (hllB != null) {
+            hllB.resetPtr();
+        }
     }
 
     @Override
@@ -197,8 +201,12 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
-        this.hllA = new HyperLogLog(precision);
-        this.hllB = new HyperLogLog(precision);
+        if (hllA == null) {
+            hllA = new HyperLogLog(precision);
+        }
+        if (hllB == null) {
+            hllB = new HyperLogLog(precision);
+        }
         hllA.setAllocator(allocator);
         hllB.setAllocator(allocator);
     }

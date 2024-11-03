@@ -117,11 +117,11 @@ public class FunctionCloneFactory {
 
     private static ObjList<?> cloneObjList(ObjList<?> fValue) {
         if (fValue.size() == 0) {
-            return new ObjList<>(fValue);
+            return new ObjList<>();
         }
         ObjList nList = new ObjList<>(fValue.size());
         for (int i = 0, size = fValue.size(); i < size; i++) {
-            nList.add(cloneElem(fValue));
+            nList.add(cloneElem(fValue.getQuick(i)));
         }
         return nList;
     }

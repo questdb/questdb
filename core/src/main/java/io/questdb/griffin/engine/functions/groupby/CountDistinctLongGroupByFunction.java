@@ -52,8 +52,12 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     @Override
     public void clear() {
-        setA.resetPtr();
-        setB.resetPtr();
+        if (setA != null) {
+            setA.resetPtr();
+        }
+        if (setB != null) {
+            setB.resetPtr();
+        }
     }
 
     @Override
@@ -158,8 +162,12 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
-        setA = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        setB = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        if (setA == null) {
+            setA = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        }
+        if (setB == null) {
+            setB = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        }
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }

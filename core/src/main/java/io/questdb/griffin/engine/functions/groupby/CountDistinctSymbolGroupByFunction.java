@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
+import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
 import io.questdb.std.Numbers;
 
 import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
@@ -60,8 +61,12 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
 
     @Override
     public void clear() {
-        setA.resetPtr();
-        setB.resetPtr();
+        if (setA != null) {
+            setA.resetPtr();
+        }
+        if (setB != null) {
+            setB.resetPtr();
+        }
         knownSymbolCount = -1;
     }
 
@@ -191,8 +196,12 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
-        this.setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
-        this.setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        if (setA == null) {
+            setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        }
+        if (setB == null) {
+            setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        }
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }

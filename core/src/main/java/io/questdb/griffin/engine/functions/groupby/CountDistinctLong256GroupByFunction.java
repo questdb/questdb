@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
 import io.questdb.griffin.engine.groupby.GroupByLong256HashSet;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -54,8 +55,12 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
 
     @Override
     public void clear() {
-        setA.resetPtr();
-        setB.resetPtr();
+        if (setA != null) {
+            setA.resetPtr();
+        }
+        if (setB != null) {
+            setB.resetPtr();
+        }
     }
 
     @Override
@@ -169,8 +174,12 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
-        setA = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        setB = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        if (setA == null) {
+            setA = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+        }
+        if (setB == null) {
+            setB = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+        }
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
     }

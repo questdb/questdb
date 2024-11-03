@@ -893,7 +893,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ObjList<Function> workerKeyFunctions = new ObjList<>(keyFunctions.size());
                     allWorkerKeyFunctions.extendAndSet(i, workerKeyFunctions);
                     for(int j = 0, n = keyFunctions.size(); j < n; j++) {
-                        workerKeyFunctions.add(keyFunctions.getQuick(j));
+                        workerKeyFunctions.add(FunctionCloneFactory.deepCloneFunction(keyFunctions.getQuick(j)));
                     }
                 }
             } catch (UnsupportedOperationException e) {
@@ -918,8 +918,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         workerKeyFunctions.add(func);
                     }
                 }
-                return allWorkerKeyFunctions;
             }
+            return allWorkerKeyFunctions;
         }
         return null;
     }
