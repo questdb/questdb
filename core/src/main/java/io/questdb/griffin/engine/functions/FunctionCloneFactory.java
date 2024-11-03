@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.std.DeepCloneable;
 import io.questdb.std.ObjList;
 
@@ -50,6 +51,8 @@ public class FunctionCloneFactory {
         DEFAULT_CLAZZ_VALUES.put(CharSequence.class, "{}");
         DEFAULT_CLAZZ_VALUES.put(double[].class, new double[]{});
         DEFAULT_CLAZZ_VALUES.put(ObjList.class, new ObjList<>());
+        DEFAULT_CLAZZ_VALUES.put(SymbolFunction.class, new SymbolColumn(0, false));
+        DEFAULT_CLAZZ_VALUES.put(Function.class, new SymbolColumn(0, false));
     }
 
     /**
@@ -74,11 +77,7 @@ public class FunctionCloneFactory {
             Object[] pArgs = new Object[parameterCount];
             Class<?>[] pTypes = funcCons.getParameterTypes();
             for (int i = 0; i < parameterCount; i++) {
-                if (pTypes[i] == Function.class) {
-                    pArgs[i] = function;
-                } else {
-                    pArgs[i] = DEFAULT_CLAZZ_VALUES.get(funcCons.getParameterTypes()[i]);
-                }
+                pArgs[i] = DEFAULT_CLAZZ_VALUES.get(pTypes[i]);
             }
             cloneFunc = (Function) funcCons.newInstance(pArgs);
 
@@ -100,7 +99,7 @@ public class FunctionCloneFactory {
                         field.set(cloneFunc, ((DeepCloneable<?>) fValue).deepClone());
                     } else if (fValue instanceof ObjList) {
                         field.set(cloneFunc, cloneObjList((ObjList<?>) fValue));
-                    } else if (field.getType().isPrimitive() || field.get(cloneFunc) == null) {
+                    } else if (field.getType().isPrimitive() || field.get(cloneFunc) == null || field.getType() == CharSequence.class) {
                         field.set(cloneFunc, fValue);
                     }
                 }
