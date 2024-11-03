@@ -169,10 +169,10 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     @Override
     public void setAllocator(GroupByAllocator allocator) {
         if (setA == null) {
-            setA = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor,  Numbers.LONG_NULL);
+            setA = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
         }
         if (setB == null) {
-            setB = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor,  Numbers.LONG_NULL);
+            setB = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
         }
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);

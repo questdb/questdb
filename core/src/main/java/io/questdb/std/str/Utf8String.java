@@ -33,7 +33,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * An immutable on-heap sequence of UTF-8 bytes.
  */
-public class Utf8String implements Utf8Sequence , DeepCloneable<Utf8String> {
+public class Utf8String implements Utf8Sequence, DeepCloneable<Utf8String> {
     public static final Utf8String EMPTY = new Utf8String("");
     private final boolean ascii;
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();

@@ -133,7 +133,7 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
                         throw SqlException.$(replacementPos, "no group ").put(group);
                     }
                     if (canSkipUtf8Decoding(patternStr)) {
-                        return new SingleGroupAsciiFunc(value, matcher, pattern, Chars.toString(replacementStr), group , position);
+                        return new SingleGroupAsciiFunc(value, matcher, pattern, Chars.toString(replacementStr), group, position);
                     } else {
                         return new SingleGroupFunc(value, matcher, pattern, Chars.toString(replacementStr), group, position);
                     }
