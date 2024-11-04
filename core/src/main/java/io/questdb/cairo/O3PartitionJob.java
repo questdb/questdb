@@ -454,7 +454,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
                 dataTimestampLo = Unsafe.getUnsafe().getLong(srcTimestampAddr);
 
-
                 // create copy jobs
                 // we will have maximum of 3 stages:
                 // - prefix data
@@ -621,7 +620,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     //
                     //  +------+
                     //  | data |
-
 
                     prefixType = O3_BLOCK_O3;
                     prefixLo = srcOooLo;

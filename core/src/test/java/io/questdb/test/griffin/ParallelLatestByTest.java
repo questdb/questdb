@@ -63,7 +63,7 @@ public class ParallelLatestByTest extends AbstractTest {
     @Parameterized.Parameters(name = "parquet={0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                // TODO(puzpuzpuz): the factory seems to be trying to access symbol column file which doesn't exist
+                // TODO(puzpuzpuz): uncomment once we support symbol indexes in parquet partitions
                 // {true},
                 {false},
         });
@@ -342,7 +342,7 @@ public class ParallelLatestByTest extends AbstractTest {
                 " rnd_geohash(30) geo" +
                 " from long_sequence(10000)" +
                 "), index(sym) timestamp(ts) partition by DAY";
-        final String ddl2 = convertToParquet ? "alter table x convert partition to parquet where k >= 0" : null;
+        final String ddl2 = convertToParquet ? "alter table x convert partition to parquet where ts >= 0" : null;
 
         final String query = "select * from x where geo within(#gk1gj8, #mbx5c0) latest on ts partition by sym";
 

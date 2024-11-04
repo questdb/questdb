@@ -214,8 +214,6 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             int frameIndex = 0;
             frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
-                doneLatch.reset();
-
                 final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
                 final long partitionLo = frame.getPartitionLo();
                 final long partitionHi = frame.getPartitionHi() - 1;
@@ -226,6 +224,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 final long valuesMemorySize = indexReader.getValueMemorySize();
                 final int valueBlockCapacity = indexReader.getValueBlockCapacity();
                 final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
+
+                doneLatch.reset();
 
                 queuedCount = 0;
                 for (long i = 0; i < taskCount; i++) {
@@ -290,8 +290,11 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                     circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                     long seq = subSeq.next();
                     if (seq > -1) {
-                        queue.get(seq).run();
-                        subSeq.done(seq);
+                        try {
+                            queue.get(seq).run();
+                        } finally {
+                            subSeq.done(seq);
+                        }
                     } else {
                         Os.pause();
                     }
@@ -343,8 +346,11 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 if (circuitBreaker.checkIfTripped()) {
                     sharedCircuitBreaker.cancel();
                 }
-                queue.get(seq).run();
-                subSeq.done(seq);
+                try {
+                    queue.get(seq).run();
+                } finally {
+                    subSeq.done(seq);
+                }
             } else {
                 Os.pause();
             }
