@@ -67,7 +67,7 @@ public class LineUdpSender extends AbstractLineSender {
 
     @Override
     public final AbstractLineSender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
-        writeFieldName(name).put(value * unitToNanos(unit) / 1000);
+        writeFieldName(name).put(toMicros(value, unit));
         return this;
     }
 }
