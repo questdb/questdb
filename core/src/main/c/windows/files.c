@@ -593,7 +593,7 @@ static DWORD getResolvedPathAttrs(PCWSTR path) {
     return attrs;
 }
 
-JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isDir(JNIEnv *e, jclass cl, jlong lpszName) {
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isDir2(JNIEnv *e, jclass cl, jlong lpszName) {
     const size_t len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCCH) lpszName, -1, NULL, 0);
     fwprintf(stderr, L"isDir :: (A) len: %d, lpszName: %s\n", len, lpszName);
     if (len > 0) {

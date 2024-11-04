@@ -559,17 +559,15 @@ public class FilesTest {
         Assert.assertFalse(nonexistent.exists());
 
         assertMemoryLeak(() -> {
-//            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "something/that/does/not/exist"));
-//            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/"));
-//            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/."));
-//            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "file"));
-//            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_a_file/"));
-//            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/"));
-//            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/dir/.."));
-//            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_file"));
-            System.err.println("1111111111>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "something/that/does/not/exist"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/."));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_a_file/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/dir/.."));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_file"));
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_empty_dir"));
-            System.err.println("2222222222>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_a_file"));
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_an_empty_dir"));
             Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_nonexistent"));
