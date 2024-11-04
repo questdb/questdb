@@ -86,6 +86,70 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            insert("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
+            insert("insert into x values('k2', '2024-06-11T00:00:00.000000Z');");
+            insert("insert into x values('k3', '2024-06-12T00:00:00.000000Z');");
+            insert("insert into x values('k1', '2024-06-12T00:00:01.000000Z');");
+            insert("insert into x values('k2', '2024-06-15T00:00:00.000000Z');");
+            insert("insert into x values('k3', '2024-06-12T00:00:02.000000Z');");
+
+            ddl("alter table x alter column id add index;");
+            insert("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
+
+            ddl("alter table x convert partition to parquet where ts >= 0");
+            assertSql(
+                    "id\tts\n" +
+                            "k1\t2024-06-10T00:00:00.000000Z\n" +
+                            "k1\t2024-06-10T00:00:00.000000Z\n" +
+                            "k1\t2024-06-12T00:00:01.000000Z\n",
+                    "x where id = 'k1'"
+            );
+
+            // TODO(puzpuzpuz): implement and test the following:
+            // drop/add index on existing parquet partitions
+            // index rebuilt on O3 for parquet partitions
+
+//            ddl("alter table x alter column id drop index;");
+//            ddl("alter table x alter column id add index;");
+//            assertSql(
+//                    "id\tts\n" +
+//                            "k1\t2024-06-10T00:00:00.000000Z\n" +
+//                            "k1\t2024-06-10T00:00:00.000000Z\n" +
+//                            "k1\t2024-06-12T00:00:01.000000Z\n",
+//                    "x where id = 'k1'"
+//            );
+        });
+    }
+
+    @Test
+    public void testIndexColTopColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (ts timestamp) timestamp(ts) partition by day;");
+            insert("insert into x values('2024-06-10T00:00:00.000000Z');");
+
+            ddl("alter table x add column id symbol");
+            insert("insert into x values('2024-06-11T00:00:00.000000Z', 'k1');");
+            insert("insert into x values('2024-06-12T00:00:00.000000Z', 'k2');");
+            insert("insert into x values('2024-06-12T00:00:01.000000Z', 'k3');");
+            insert("insert into x values('2024-06-15T00:00:00.000000Z', 'k3');");
+
+            ddl("alter table x alter column id add index;");
+            insert("insert into x values('2024-06-10T00:00:00.000000Z', 'k1');");
+
+            ddl("alter table x convert partition to parquet where ts >= 0");
+            assertSql(
+                    "ts\tid\n" +
+                            "2024-06-10T00:00:00.000000Z\tk1\n" +
+                            "2024-06-11T00:00:00.000000Z\tk1\n",
+                    "x where id = 'k1'"
+            );
+        });
+    }
+
+    @Test
     public void testJitFilter() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);

@@ -63,8 +63,7 @@ public class ParallelLatestByTest extends AbstractTest {
     @Parameterized.Parameters(name = "parquet={0}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-                // TODO(puzpuzpuz): uncomment once we support symbol indexes in parquet partitions
-                // {true},
+                {true},
                 {false},
         });
     }
