@@ -26,7 +26,6 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -141,7 +140,6 @@ public class FuzzTransactionGenerator {
             } else if (wantToTruncateTable) {
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
             } else if (wantToDropPartition) {
-                assert tableMetadata.getPartitionBy() == PartitionBy.DAY;
                 generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
