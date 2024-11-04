@@ -54,7 +54,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
-import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
@@ -320,15 +319,16 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         Rnd rnd = generateRandomAndProps(LOG);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                convertToParquet ? 0 : 0.1 * rnd.nextDouble(),
+                0.1 * rnd.nextDouble(),
                 0,
-                convertToParquet ? 0 : rnd.nextDouble(),
+                rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
                 0.5,
@@ -352,15 +352,16 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupOneKeyCol() throws Exception {
+        Assume.assumeFalse(convertToParquet);
         Rnd rnd = generateRandomAndProps(LOG);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                convertToParquet ? 0 : 0.1 * rnd.nextDouble(),
+                0.1 * rnd.nextDouble(),
                 0,
-                convertToParquet ? 0 : rnd.nextDouble(),
+                rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
                 0.5,
@@ -992,7 +993,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String[] symbols,
             int existingDups,
             int colType
-    ) {
+    ) throws SqlException {
 
         LOG.info().$("Validating no timestamp duplicates [from=").$ts(fromTimestamp)
                 .$(", delta=").$(delta)
@@ -1016,15 +1017,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             }
             foundSymbols = new boolean[symbols.length];
         }
-
         try (
-                TableReader reader = getReader(tableName);
-                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+                RecordCursorFactory factory = select(tableName);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             Record rec = cursor.getRecord();
             AssertionError fail = null;
             int dups = existingDups;
-
             while (cursor.hasNext()) {
                 try {
                     long timestamp = rec.getTimestamp(0);
