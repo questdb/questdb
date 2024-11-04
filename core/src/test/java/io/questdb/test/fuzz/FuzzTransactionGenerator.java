@@ -32,7 +32,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.Timestamps;
+
+import static io.questdb.std.datetime.microtime.Timestamps.DAY_MICROS;
 
 public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
@@ -141,7 +142,7 @@ public class FuzzTransactionGenerator {
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
             } else if (wantToDropPartition) {
                 assert tableMetadata.getPartitionBy() == PartitionBy.DAY;
-                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp);
+                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
@@ -241,11 +242,14 @@ public class FuzzTransactionGenerator {
 
     private static void generateDropPartition(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp
+            long lastTimestamp, Rnd rnd
     ) {
-        long partitionTimestampToDrop = Timestamps.floorDD(lastTimestamp, 1); // - DAY_MICROS;
+        long cutoffTimestamp = lastTimestamp;
+        if (rnd.nextInt(100) <= 20) {
+            cutoffTimestamp -= DAY_MICROS;
+        }
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzDropPartitionOperation(partitionTimestampToDrop));
+        transaction.operationList.add(new FuzzDropPartitionOperation(cutoffTimestamp));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;

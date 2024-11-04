@@ -25,10 +25,13 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
-import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Rnd;
 
 public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
@@ -41,16 +44,22 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
 
     @Override
     public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
-        TableToken tableToken = wApi.getTableToken();
-        AlterOperationBuilder b = new AlterOperationBuilder().ofDropPartition(
-                0,
-                tableToken,
-                wApi.getMetadata().getTableId());
-        b.addPartitionToList(partitionTimestampToDrop, 0);
-        try {
-            wApi.apply(b.build(), false);
+        try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1);
+             SqlCompiler sqlCompiler = engine.getSqlCompiler()
+        ) {
+            context.with(AllowAllSecurityContext.INSTANCE);
+            TableRecordMetadata metadata = wApi.getMetadata();
+            String sql = String.format("ALTER TABLE %s DROP PARTITION WHERE %s < %d",
+                    wApi.getTableToken().getTableName(),
+                    metadata.getColumnName(metadata.getTimestampIndex()),
+                    partitionTimestampToDrop);
+            CompiledQuery query = sqlCompiler.compile(sql, context);
+            AlterOperation alterOp = query.getAlterOperation();
+            alterOp.withSqlStatement(sql);
+            alterOp.withContext(context);
+            wApi.apply(alterOp, false);
             return true;
-        } catch (CairoException e) {
+        } catch (Exception e) {
             return false;
         }
     }
