@@ -48,10 +48,6 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
         this.arg = arg;
         this.setInitialCapacity = setInitialCapacity;
         this.setLoadFactor = setLoadFactor;
-        if (setInitialCapacity != 0 || setLoadFactor != 0d) {
-            setA = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-            setB = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        }
     }
 
     @Override

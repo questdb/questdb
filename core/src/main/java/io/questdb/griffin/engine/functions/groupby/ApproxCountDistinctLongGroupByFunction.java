@@ -51,10 +51,6 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     public ApproxCountDistinctLongGroupByFunction(Function arg, int precision) {
         this.arg = arg;
         this.precision = precision;
-        if (this.precision != 0) {
-            this.hllA = new HyperLogLog(precision);
-            this.hllB = new HyperLogLog(precision);
-        }
     }
 
     public ApproxCountDistinctLongGroupByFunction(Function arg) {

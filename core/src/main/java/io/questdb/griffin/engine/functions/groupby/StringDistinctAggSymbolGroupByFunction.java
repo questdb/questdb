@@ -58,9 +58,6 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
         this.delimiter = delimiter;
         this.setInitialCapacity = setInitialCapacity;
         this.setLoadFactor = setLoadFactor;
-        if (setInitialCapacity != 0 || setLoadFactor != 0d) {
-            this.set = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
-        }
     }
 
     @Override

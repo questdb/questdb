@@ -51,10 +51,6 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
         this.arg = arg;
         this.setInitialCapacity = setInitialCapacity;
         this.setLoadFactor = setLoadFactor;
-        if (setInitialCapacity != 0 || setLoadFactor != 0d) {
-            setA = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-            setB = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
-        }
     }
 
     @Override

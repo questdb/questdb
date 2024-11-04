@@ -48,10 +48,6 @@ public class CountDistinctIPv4GroupByFunction extends LongFunction implements Un
         this.arg = arg;
         this.setInitialCapacity = setInitialCapacity;
         this.setLoadFactor = setLoadFactor;
-        if (setInitialCapacity != 0 || setLoadFactor != 0d) {
-            setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
-            setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
-        }
     }
 
     @Override
