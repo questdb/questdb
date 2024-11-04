@@ -149,8 +149,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final int cairoGroupByMergeShardQueueCapacity;
     private final boolean cairoGroupByPresizeEnabled;
-    private final long cairoGroupByPresizeMaxHeapSize;
     private final long cairoGroupByPresizeMaxCapacity;
+    private final long cairoGroupByPresizeMaxHeapSize;
     private final int cairoGroupByShardingThreshold;
     private final int cairoMaxCrashFiles;
     private final int cairoPageFrameReduceColumnListCapacity;
@@ -578,7 +578,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
     private boolean stringToCharCastAllowed;
-    private long symbolCacheWaitUsBeforeReload;
+    private long symbolCacheWaitBeforeReload;
 
 
     public PropServerConfiguration(
@@ -1372,7 +1372,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpWriterWorkerYieldThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD, 10);
                 this.lineTcpWriterWorkerNapThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_NAP_THRESHOLD, 7_000);
                 this.lineTcpWriterWorkerSleepThreshold = getLong(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD, 10_000);
-                this.symbolCacheWaitUsBeforeReload = getMicros(properties, env, PropertyKey.LINE_TCP_SYMBOL_CACHE_WAIT_US_BEFORE_RELOAD, 500_000);
+                this.symbolCacheWaitBeforeReload = getMicros(properties, env, PropertyKey.LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD, 500_000);
                 this.lineTcpIOWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_IO_WORKER_COUNT, cpuIoWorkers);
                 this.lineTcpIOWorkerAffinity = getAffinity(properties, env, PropertyKey.LINE_TCP_IO_WORKER_AFFINITY, lineTcpIOWorkerCount);
                 this.lineTcpIOWorkerPoolHaltOnError = getBoolean(properties, env, PropertyKey.LINE_TCP_IO_HALT_ON_ERROR, false);
@@ -1787,10 +1787,29 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected long getMillis(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, long defaultValue) throws ServerConfigurationException {
+    protected long getMicros(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey key,
+            long defaultValue
+    ) throws ServerConfigurationException {
         final String value = getString(properties, env, key, Long.toString(defaultValue));
         try {
-            return Numbers.parseLong(value);
+            return Numbers.parseNanos(value) * 1000L;
+        } catch (NumericException e) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
+        }
+    }
+
+    protected long getMillis(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey key,
+            long defaultValue
+    ) throws ServerConfigurationException {
+        final String value = getString(properties, env, key, Long.toString(defaultValue));
+        try {
+            return Numbers.parseNanos(value) * 1_000_000L;
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
@@ -1799,7 +1818,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected long getNanos(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, long defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, Long.toString(defaultValue));
         try {
-            return Numbers.parseLong(value);
+            return Numbers.parseNanos(value);
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
@@ -2440,13 +2459,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getGroupByPresizeMaxHeapSize() {
-            return cairoGroupByPresizeMaxHeapSize;
+        public long getGroupByPresizeMaxCapacity() {
+            return cairoGroupByPresizeMaxCapacity;
         }
 
         @Override
-        public long getGroupByPresizeMaxCapacity() {
-            return cairoGroupByPresizeMaxCapacity;
+        public long getGroupByPresizeMaxHeapSize() {
+            return cairoGroupByPresizeMaxHeapSize;
         }
 
         @Override
@@ -3786,7 +3805,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public long getSymbolCacheWaitUsBeforeReload() {
-            return symbolCacheWaitUsBeforeReload;
+            return symbolCacheWaitBeforeReload;
         }
 
         @Override
@@ -3962,8 +3981,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSymbolCacheWaitUsBeforeReload() {
-            return symbolCacheWaitUsBeforeReload;
+        public long getSymbolCacheWaitBeforeReload() {
+            return symbolCacheWaitBeforeReload;
         }
 
         @Override
@@ -4850,14 +4869,5 @@ public class PropServerConfiguration implements ServerConfiguration {
         WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
         WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
         WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
-    }
-
-    protected long getMicros(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, long defaultValue) throws ServerConfigurationException {
-        final String value = getString(properties, env, key, Long.toString(defaultValue));
-        try {
-            return Numbers.parseMicros(value);
-        } catch (NumericException e) {
-            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
-        }
     }
 }

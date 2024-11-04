@@ -1447,7 +1447,7 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
-    public static long parseMicros(CharSequence sequence) throws NumericException {
+    public static long parseNanos(CharSequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;
         }
@@ -1484,19 +1484,19 @@ public final class Numbers {
                         // could be 'ms' or an error
                         if ((sequence.charAt(i + 1) | 32) == 's' && i + 2 == lim) {
                             // 'ms' at the end of the string
-                            val *= Timestamps.MILLI_MICROS;
+                            val *= Timestamps.MILLI_MICROS * 1000;
                         } else {
                             throw NumericException.INSTANCE;
                         }
                     } else {
                         // 'm' at the end of the string
-                        val *= Timestamps.MINUTE_MICROS;
+                        val *= Timestamps.MINUTE_MICROS*1000;
                     }
                     break OUT;
                 case 's':
                     // second
                     if (digitCount > 0 && i + 1 == lim) {
-                        val *= Timestamps.SECOND_MICROS;
+                        val *= Timestamps.SECOND_MICROS * 1000;
                     } else {
                         throw NumericException.INSTANCE;
                     }
@@ -1506,10 +1506,17 @@ public final class Numbers {
                     if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
                         throw NumericException.INSTANCE;
                     }
+                    val *= 1000;
+                    break OUT;
+                case 'n':
+                    // nanosecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
                     break OUT;
                 case 'h':
                     if (digitCount > 0 && i + 1 == lim) {
-                        val *= Timestamps.HOUR_MICROS;
+                        val *= Timestamps.HOUR_MICROS * 1000;
                     } else {
                         throw NumericException.INSTANCE;
                     }
@@ -2739,6 +2746,7 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
+        int digitCounter = 0;
         long val = 0;
         for (; i < lim; i++) {
             int c = sequence.charAt(i);
@@ -2749,6 +2757,10 @@ public final class Numbers {
                     }
                     break;
                 case 127: // '_'
+                    if (digitCounter == 0) {
+                        throw NumericException.INSTANCE;
+                    }
+                    digitCounter = 0;
                     break;
                 default:
                     if (c < '0' || c > '9') {
@@ -2760,10 +2772,11 @@ public final class Numbers {
                         throw NumericException.INSTANCE;
                     }
                     val = r;
+                    digitCounter++;
             }
         }
 
-        if (val == Long.MIN_VALUE && !negative) {
+        if ((val == Long.MIN_VALUE && !negative) || digitCounter == 0) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;

@@ -36,29 +36,30 @@ import java.util.ArrayList;
 import java.util.Collection;
 
 @RunWith(Parameterized.class)
-public class ParseMicrosFuzzTest {
-    private static final char[] INVALID_CHARS = "abcdefgijklnopqrtwxyz#$%^&*()+={}[]|\\:;\"'<>,.?/".toCharArray();
-    private static final String[] INVALID_UNITS = {"ns", "d", "y", "w", "mo", "yr", "sec", "min", "hour", "HMS", "MSC"};
+public class ParseNanosFuzzTest {
+    private static final char[] INVALID_CHARS = "abcdefgijklopqrtwxyz#$%^&*()+={}[]|\\:;\"'<>,.?/".toCharArray();
+    private static final String[] INVALID_UNITS = {"d", "y", "w", "mo", "yr", "sec", "min", "hour", "HMS", "MSC"};
     private static final int MAX_VALUE = 1_000_000;
     private static final int NUM_INVALID_FUZZ = 5_000;
     // Test configuration
     private static final int NUM_TESTS = 10_000;
     // Time units and their multipliers (to microseconds)
-    private static final String[] UNITS = {"", "us", "ms", "s", "m", "h"};
+    private static final String[] UNITS = {"", "ns", "us", "ms", "s", "m", "h"};
     private static final long[] UNIT_MULTIPLIERS = {
-            1L,                    // no unit (assumed microseconds)
-            1L,                    // microseconds
-            1000L,                // milliseconds
-            1_000_000L,           // seconds
-            60_000_000L,          // minutes
-            3_600_000_000L        // hours
+            1L,                   // no unit (assumed nanoseconds)
+            1L,                   // nanoseconds
+            1000L,                // microseconds
+            1_000_000L,           // milliseconds
+            1_000_000_000L,       // seconds
+            60_000_000_000L,      // minutes
+            3_600_000_000_000L    // hours
     };
     private static final Rnd rnd = new Rnd();
     private final boolean expectError;
     private final long expected;
     private final String input;
 
-    public ParseMicrosFuzzTest(String input, long expected, boolean expectError) {
+    public ParseNanosFuzzTest(String input, long expected, boolean expectError) {
         this.input = input;
         this.expected = expected;
         this.expectError = expectError;
@@ -199,7 +200,7 @@ public class ParseMicrosFuzzTest {
         do {
             unit1 = UNITS[1 + rnd.nextInt(UNITS.length - 1)];
             unit2 = UNITS[1 + rnd.nextInt(UNITS.length - 1)];
-        } while ("m".equals(unit1) && "s".equals(unit2));
+        } while ("s".equals(unit2) && ("m".equals(unit1) || "n".equals(unit1)));
         return value + unit1 + unit2;
     }
 
@@ -243,11 +244,11 @@ public class ParseMicrosFuzzTest {
     }
 
     private static int getNumEdgeCases() {
-        return 15;
+        return 14;
     }
 
     private static int getNumInvalidCases() {
-        return 40;
+        return 39;
     }
 
     private static String insertOptionalUnderscores(String number) {
@@ -290,7 +291,7 @@ public class ParseMicrosFuzzTest {
 
     // Placeholder for your actual parser method
     private static long parseMicros(CharSequence input) throws NumericException {
-        return Numbers.parseMicros(input);
+        return Numbers.parseNanos(input);
     }
 
     private static void runFuzzTests(ArrayList<Object[]> testData) {
@@ -303,12 +304,10 @@ public class ParseMicrosFuzzTest {
         for (int i = 0; i < getNumEdgeCases(); i++) {
             testEdgeCase(i, testData);
         }
-
         // Test predefined invalid cases
         for (int i = 0; i < getNumInvalidCases(); i++) {
             testInvalidCase(i, testData);
         }
-
         // Test fuzzed invalid cases
         for (int i = 0; i < NUM_INVALID_FUZZ; i++) {
             testFuzzedInvalidCase(testData);
@@ -344,34 +343,31 @@ public class ParseMicrosFuzzTest {
                 testData.add(new Object[]{"-1_2_3_4_5", -12345L, false});
                 break;
             case 5:
-                testData.add(new Object[]{"1us", 1L, false});
+                testData.add(new Object[]{"1us", 1000L, false});
                 break;
             case 6:
-                testData.add(new Object[]{"1US", 1L, false});
+                testData.add(new Object[]{"1US", 1000L, false});
                 break;
             case 7:
-                testData.add(new Object[]{"1Ms", 1000L, false});
+                testData.add(new Object[]{"1Ms", 1000_000L, false});
                 break;
             case 8:
-                testData.add(new Object[]{"1S", 1_000_000L, false});
+                testData.add(new Object[]{"1S", 1_000_000_000L, false});
                 break;
             case 9:
-                testData.add(new Object[]{"1M", 60_000_000L, false});
+                testData.add(new Object[]{"1M", 60_000_000_000L, false});
                 break;
             case 10:
-                testData.add(new Object[]{"1H", 3_600_000_000L, false});
+                testData.add(new Object[]{"1H", 3_600_000_000_000L, false});
                 break;
             case 11:
-                testData.add(new Object[]{"-1_000_000us", -1000000L, false});
+                testData.add(new Object[]{"-1_000_000us", -1000000000L, false});
                 break;
             case 12:
-                testData.add(new Object[]{"-1_000_000MS", -1000000000L, false});
+                testData.add(new Object[]{"-1_000_000MS", -1000000000000L, false});
                 break;
             case 13:
-                testData.add(new Object[]{"-1_000_000S", -1000000000000L, false});
-                break;
-            case 14:
-                testData.add(new Object[]{"999_999_999h", 3599999996400000000L, false});
+                testData.add(new Object[]{"-1_000_000S", -1000000000000000L, false});
                 break;
             default:
                 break;
@@ -440,69 +436,66 @@ public class ParseMicrosFuzzTest {
                 testData.add(new Object[]{"ms1", 0L, true});
                 break;
             case 18:
-                testData.add(new Object[]{"1ns", 0L, true});
-                break;
-            case 19:
                 testData.add(new Object[]{"1y", 0L, true});
                 break;
-            case 20:
+            case 19:
                 testData.add(new Object[]{"1d", 0L, true});
                 break;
-            case 21:
+            case 20:
                 testData.add(new Object[]{"-", 0L, true});
                 break;
-            case 22:
+            case 21:
                 testData.add(new Object[]{"-us", 0L, true});
                 break;
-            case 23:
+            case 22:
                 testData.add(new Object[]{"--1s", 0L, true});
                 break;
-            case 24:
+            case 23:
                 testData.add(new Object[]{"¹s", 0L, true});  // superscript 1
                 break;
-            case 25:
+            case 24:
                 testData.add(new Object[]{"₁s", 0L, true});  // subscript 1
                 break;
-            case 26:
+            case 25:
                 testData.add(new Object[]{"①s", 0L, true});       // circled 1
                 break;
-            case 27:
+            case 26:
                 testData.add(new Object[]{"⑴s", 0L, true});       // parenthesized 1
                 break;
-            case 28:
+            case 27:
                 testData.add(new Object[]{"1\u0000s", 0L, true}); // null character
                 break;
-            case 29:
+            case 28:
                 testData.add(new Object[]{"1\u202Es", 0L, true}); // right-to-left override
                 break;
-            case 30:
+            case 29:
                 testData.add(new Object[]{"9223372036854775808", 0L, true}); // Long.MAX_VALUE + 1
                 break;
-            case 31:
+            case 30:
                 testData.add(new Object[]{"-9223372036854775809", 0L, true}); // Long.MIN_VALUE - 1
                 break;
-            case 32:
+            case 31:
                 testData.add(new Object[]{"1_us", 0L, true});
                 break;
-            case 33:
+            case 32:
                 testData.add(new Object[]{"18446744073709551616us", 0L, true}); // 2^64
                 break;
-            case 34:
+            case 33:
                 testData.add(new Object[]{"1.us", 0L, true});
                 break;
-            case 35:
+            case 34:
                 testData.add(new Object[]{".1us", 0L, true});
                 break;
-            case 36:
+            case 35:
                 testData.add(new Object[]{"1e6us", 0L, true});
                 break;
-            case 37:
+            case 36:
                 testData.add(new Object[]{"0x1us", 0L, true});
                 break;
-            case 38:
+            case 37:
                 testData.add(new Object[]{"true", 0L, true});
                 break;
-            case 39:
+            case 38:
                 testData.add(new Object[]{"null", 0L, true});
                 break;
             default:
