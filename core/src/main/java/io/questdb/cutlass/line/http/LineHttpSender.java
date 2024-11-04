@@ -113,7 +113,7 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public void at(long timestamp, ChronoUnit unit) {
-        request.putAscii(' ').put(toMicros(timestamp, unit)).put('t');
+        request.putAscii(' ').put(Timestamps.toMicros(timestamp, unit)).put('t');
         atNow();
     }
 
@@ -256,7 +256,7 @@ public final class LineHttpSender implements Sender {
     @Override
     public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
         // micros
-        writeFieldName(name).put(toMicros(value, unit)).put('t');
+        writeFieldName(name).put(Timestamps.toMicros(value, unit)).put('t');
         return this;
     }
 
@@ -285,24 +285,6 @@ public final class LineHttpSender implements Sender {
     private static boolean keepAliveDisabled(HttpClient.ResponseHeaders response) {
         DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
         return connectionHeader != null && Utf8s.equalsAscii("close", connectionHeader);
-    }
-
-    private static long toMicros(long value, ChronoUnit unit) {
-        switch (unit) {
-            case NANOS:
-                return value / 1_000;
-            case MICROS:
-                return value;
-            case MILLIS:
-                return value * 1_000;
-            case SECONDS:
-                return value * 1_000_000;
-            default:
-                Duration duration = unit.getDuration();
-                long micros = duration.toSeconds() * 1_000_000L;
-                micros += duration.toNanosPart() / 1_000;
-                return micros * value;
-        }
     }
 
     private int backoff(int retryBackoff) {

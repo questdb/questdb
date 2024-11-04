@@ -421,24 +421,6 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
         }
     }
 
-    protected static long toMicros(long value, ChronoUnit unit) {
-        switch (unit) {
-            case NANOS:
-                return value / 1_000;
-            case MICROS:
-                return value;
-            case MILLIS:
-                return value * 1_000;
-            case SECONDS:
-                return value * 1_000_000;
-            default:
-                Duration duration = unit.getDuration();
-                long micros = duration.toSeconds() * 1_000_000L;
-                micros += duration.toNanosPart() / 1_000;
-                return micros * value;
-        }
-    }
-
     protected void send00() {
         validateNotClosed();
         int len = (int) (ptr - lineStart);
