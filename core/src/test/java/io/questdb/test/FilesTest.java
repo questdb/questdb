@@ -553,6 +553,11 @@ public class FilesTest {
         setupPath(baseDir, "link_to_dir_with_an_empty_dir -> dir_with_an_empty_dir/");
         setupPath(baseDir, "nonexistent"); // deleted later
         setupPath(baseDir, "link_to_nonexistent -> nonexistent");
+        setupPath(baseDir, "link_to_link_to_file -> link_to_file");
+        setupPath(baseDir, "link_to_link_to_empty_dir -> link_to_empty_dir");
+        setupPath(baseDir, "link_to_link_to_dir_with_a_file -> link_to_dir_with_a_file");
+        setupPath(baseDir, "link_to_link_to_dir_with_an_empty_dir -> link_to_dir_with_an_empty_dir");
+        setupPath(baseDir, "link_to_link_to_nonexistent -> link_to_nonexistent");
 
         final File nonexistent = new File(baseDir, "nonexistent");
         nonexistent.delete();
@@ -571,6 +576,11 @@ public class FilesTest {
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_a_file"));
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_an_empty_dir"));
             Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_nonexistent"));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_link_to_file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_empty_dir"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_dir_with_a_file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_dir_with_an_empty_dir"));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_link_to_nonexistent"));
         });
     }
 

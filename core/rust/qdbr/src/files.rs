@@ -42,8 +42,19 @@ pub extern "system" fn Java_io_questdb_std_Files_isDir(
     if path.is_dir() {
         return true;
     }
-    let Ok(resolved) = std::path::Path::new(path).read_link() else {
+    let Ok(mut resolved) = std::path::Path::new(path).read_link() else {
         return false;
     };
-    resolved.is_dir()
+    if resolved.is_dir() {
+        return true;
+    }
+    loop {
+        let Ok(newly_resolved) = resolved.read_link() else {
+            return false;
+        };
+        if newly_resolved.is_dir() {
+            return true;
+        }
+        resolved = newly_resolved;
+    }
 }
