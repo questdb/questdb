@@ -417,10 +417,10 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        try (TableMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken)) {
-            try (TableMetadata tableMetadata = engine.getTableMetadata(tableToken)) {
-                return generateSet(rnd, sequencerMetadata, tableMetadata, start, end, tableName);
-            }
+        try (TableMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);
+             TableMetadata tableMetadata = engine.getTableMetadata(tableToken)
+        ) {
+            return generateSet(rnd, sequencerMetadata, tableMetadata, start, end, tableName);
         }
     }
 

@@ -49,9 +49,9 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
         b.addPartitionToList(partitionTimestampToDrop, 0);
         try {
             wApi.apply(b.build(), false);
+            return true;
         } catch (CairoException e) {
             return false;
         }
-        return true;
     }
 }

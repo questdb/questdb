@@ -240,7 +240,8 @@ public class FuzzTransactionGenerator {
     }
 
     private static void generateDropPartition(
-            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, long lastTimestamp
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
+            long lastTimestamp
     ) {
         long partitionTimestampToDrop = Timestamps.floorDD(lastTimestamp, 1); // - DAY_MICROS;
         FuzzTransaction transaction = new FuzzTransaction();
