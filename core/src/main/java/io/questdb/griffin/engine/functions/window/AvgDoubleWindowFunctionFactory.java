@@ -24,10 +24,22 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.map.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
@@ -37,7 +49,14 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
 
@@ -121,7 +140,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving average over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             AVG_COLUMN_TYPES
@@ -135,7 +154,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             AVG_COLUMN_TYPES
@@ -159,7 +178,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createOrderedMap(
+                        map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
                                 AVG_OVER_PARTITION_RANGE_COLUMN_TYPES
@@ -191,7 +210,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             AVG_COLUMN_TYPES
@@ -208,7 +227,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     return new AvgOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             AVG_COLUMN_TYPES
@@ -232,7 +251,7 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
                     Map map = null;
                     MemoryARW mem = null;
                     try {
-                        map = MapFactory.createOrderedMap(
+                        map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
                                 AVG_OVER_PARTITION_ROWS_COLUMN_TYPES
