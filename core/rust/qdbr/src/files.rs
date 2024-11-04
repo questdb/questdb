@@ -32,7 +32,7 @@ pub extern "system" fn Java_io_questdb_std_Files_isDir(
     // This is a Windows specific implementation
     // The other implementations are done in C.
     // This implementation avoids the complexity of dealing with reparse points in the Windows API.
-    // See // https://stackoverflow.com/questions/46383428/get-the-immediate-target-path-from-symlink-reparse-point
+    // See https://stackoverflow.com/questions/46383428/get-the-immediate-target-path-from-symlink-reparse-point
     // for more context.
     let path = unsafe { std::ffi::CStr::from_ptr(path) };
     let Ok(path) = path.to_str() else {
