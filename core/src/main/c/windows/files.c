@@ -30,11 +30,13 @@
 #include <winbase.h>
 #include <direct.h>
 #include <stdint.h>
+#include <windows.h>
 #include "../share/files.h"
 #include "errno.h"
 #include "files.h"
 
 #include <stdio.h>
+#include <ntdef.h>
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
@@ -464,10 +466,138 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, 
     return -1;
 }
 
+// Get the attributes of the path, resolving any intermediate reparse points.
+// Returns `INVALID_FILE_ATTRIBUTES` on error (e.g. if the path does not exist)
+static DWORD getResolvedPathAttrs(PCWSTR path) {
+    // https://stackoverflow.com/questions/46383428/get-the-immediate-target-path-from-symlink-reparse-point
+    DWORD attrs = GetFileAttributesW(path);
+
+    fwprintf(stderr, L"getResolvedPathAttrs :: (A) path: %S\n", path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        fwprintf(stderr, L"getResolvedPathAttrs :: (B)\n");
+        return INVALID_FILE_ATTRIBUTES;
+    }
+
+    fwprintf(stderr, L"getResolvedPathAttrs :: (C)\n");
+    if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
+        fwprintf(stderr, L"getResolvedPathAttrs :: (D)\n");
+        HANDLE file = (HANDLE) CreateFileW(
+                path,
+                GENERIC_READ,
+                FILE_SHARE_READ,
+                NULL,
+                OPEN_EXISTING,
+                FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+                NULL
+        );
+
+        if (file == INVALID_HANDLE_VALUE) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (E)\n");
+            return INVALID_FILE_ATTRIBUTES;
+        }
+
+        fwprintf(stderr, L"getResolvedPathAttrs :: (F)\n");
+
+        WCHAR resolved[MAX_PATH];
+        const DWORD len = GetFinalPathNameByHandleW(
+                file,
+                resolved,
+                MAX_PATH,
+                FILE_NAME_NORMALIZED
+        );
+
+        CloseHandle(file);
+
+        if (len == 0) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (G)\n");
+            return INVALID_FILE_ATTRIBUTES;
+        }
+        fwprintf(stderr, L"getResolvedPathAttrs :: (H) len: %d, resolved: %S\n", len, resolved);
+
+        attrs = GetFileAttributesW(resolved);
+    }
+    fwprintf(stderr, L"getResolvedPathAttrs :: (I) attrs: %d\n", attrs);
+
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_DIRECTORY\n");
+    }
+    else {
+        if (attrs & FILE_ATTRIBUTE_READONLY) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_READONLY\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_HIDDEN) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_HIDDEN\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_SYSTEM) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_SYSTEM\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_DIRECTORY) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_DIRECTORY\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_ARCHIVE) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_ARCHIVE\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_DEVICE) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_DEVICE\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_NORMAL) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_NORMAL\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_TEMPORARY) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_TEMPORARY\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_SPARSE_FILE) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_SPARSE_FILE\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_REPARSE_POINT\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_COMPRESSED) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_COMPRESSED\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_OFFLINE) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_OFFLINE\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_NOT_CONTENT_INDEXED) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_NOT_CONTENT_INDEXED\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_ENCRYPTED) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_ENCRYPTED\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_INTEGRITY_STREAM) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_INTEGRITY_STREAM\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_VIRTUAL) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_VIRTUAL\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_NO_SCRUB_DATA) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_NO_SCRUB_DATA\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_EA) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_EA\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_PINNED) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_PINNED\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_UNPINNED) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_UNPINNED\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_RECALL_ON_OPEN) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_RECALL_ON_OPEN\n");
+        }
+        if (attrs & FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS) {
+            fwprintf(stderr, L"getResolvedPathAttrs :: (X) FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS\n");
+        }
+    }
+
+    return attrs;
+}
+
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isDir(JNIEnv *e, jclass cl, jlong lpszName) {
     const size_t len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCCH) lpszName, -1, NULL, 0);
     fwprintf(stderr, L"isDir :: (A) len: %d, lpszName: %s\n", len, lpszName);
     if (len > 0) {
+        fwprintf(stderr, L"isDir :: (B)\n");
         wchar_t buf[len];
         MultiByteToWideChar(
                 CP_UTF8,
@@ -475,53 +605,89 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isDir(JNIEnv *e, jclass cl,
                 -1,
                 buf,
                 (int) len);
+        fwprintf(stderr, L"isDir :: (B)\n");
+        // TODO: Check return value of `MultiBytesToWideChar`.
 
-        DWORD attrs = GetFileAttributesW(buf);
-        fprintf(stderr, "isDir :: (C) attrs: %d\n", attrs);
-
-        if (attrs == INVALID_FILE_ATTRIBUTES) {
-            fprintf(stderr, "isDir :: (C1)\n");
-            return FALSE;
-        }
-
-        if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
-            fprintf(stderr, "isDir :: (D)\n");
-            attrs = INVALID_FILE_ATTRIBUTES;
-            // Resolve the symlink or junction
-            HANDLE hFile = CreateFileW(
-                    buf,
-                    GENERIC_READ,
-                    FILE_SHARE_READ,
-                    NULL,
-                    OPEN_EXISTING,
-                    FILE_FLAG_BACKUP_SEMANTICS,
-                    NULL);
-            if (hFile != INVALID_HANDLE_VALUE) {
-                fprintf(stderr, "isDir :: (E)\n");
-                BY_HANDLE_FILE_INFORMATION fileInfo;
-                if (GetFileInformationByHandle(hFile, &fileInfo)) {
-                    fprintf(stderr, "isDir :: (F)\n");
-                    CloseHandle(hFile);
-                    attrs = fileInfo.dwFileAttributes;
-                } else {
-                    fprintf(stderr, "isDir :: (G)\n");
-                    CloseHandle(hFile);
-                }
-                fprintf(stderr, "isDir :: (H)\n");
-            }
-            fprintf(stderr, "isDir :: (I)\n");
-        }
-
-        fprintf(stderr, "isDir :: (J)\n");
+        const DWORD attrs = getResolvedPathAttrs(buf);
         if ((attrs != INVALID_FILE_ATTRIBUTES) && (attrs & FILE_ATTRIBUTE_DIRECTORY)) {
-            fprintf(stderr, "isDir :: (K)\n");
             return TRUE;
         }
     }
-    fprintf(stderr, "isDir :: (L)\n");
-
     return FALSE;
 }
+
+//        if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
+//            fprintf(stderr, "isDir :: (D)\n");
+//            attrs = INVALID_FILE_ATTRIBUTES;
+//            // Resolve the symlink or junction
+//
+//            HANDLE file = (HANDLE) CreateFileW(
+//                    buf,
+//                    GENERIC_READ,
+//                    FILE_SHARE_READ,
+//                    NULL,
+//                    OPEN_EXISTING,
+//                    FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+//                    NULL
+//            );
+//
+//            if (file == INVALID_HANDLE_VALUE) {
+//                return FALSE;
+//            }
+//
+//            fprintf(stderr, "isDir :: (E) file: %lu\n", (long)(size_t) file);
+//
+//            wchar_t finalPath[MAX_PATH];
+
+            /*
+            typedef struct _REPARSE_DATA_BUFFER {
+              ULONG  ReparseTag;
+              USHORT ReparseDataLength;
+              USHORT Reserved;
+              union {
+                struct {
+                  USHORT SubstituteNameOffset;
+                  USHORT SubstituteNameLength;
+                  USHORT PrintNameOffset;
+                  USHORT PrintNameLength;
+                  ULONG  Flags;
+                  WCHAR  PathBuffer[1];
+                } SymbolicLinkReparseBuffer;
+                struct {
+                  USHORT SubstituteNameOffset;
+                  USHORT SubstituteNameLength;
+                  USHORT PrintNameOffset;
+                  USHORT PrintNameLength;
+                  WCHAR  PathBuffer[1];
+                } MountPointReparseBuffer;
+                struct {
+                  UCHAR DataBuffer[1];
+                } GenericReparseBuffer;
+              } DUMMYUNIONNAME;
+            } REPARSE_DATA_BUFFER, *PREPARSE_DATA_BUFFER;
+            */
+//            DWORD pathLen = GetFinalPathNameByHandleW(
+//                    file,
+//                    finalPath,
+//                    MAX_PATH,
+//                    FILE_NAME_OPENED);  // FILE_NAME_OPENED
+//            if ((pathLen == ERROR_PATH_NOT_FOUND) ||
+//                (pathLen == ERROR_PATH_NOT_FOUND) ||
+//                (pathLen == ERROR_NOT_ENOUGH_MEMORY) ||
+//                (pathLen == ERROR_NOT_ENOUGH_MEMORY) ||
+//                (pathLen == ERROR_INVALID_PARAMETER)) {
+//                fprintf(stderr, "isDir :: (F)\n");
+//                return FALSE;
+//            }
+//
+//            fwprintf(stderr, L"isDir :: (G) finalPath: %s\n", finalPath);
+
+//            attrs = GetFileAttributesW(finalPath);
+//            CloseHandle(file);
+//            fprintf(stderr, "isDir :: (I)\n");
+//        }
+//    }
+//}
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
     // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-deletefile
