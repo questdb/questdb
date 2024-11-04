@@ -153,14 +153,11 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
         public L2PriceFunction1(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            targetFunc = args.getQuick(0);
-            size0Func = args.getQuick(1);
-            value0Func = args.getQuick(2);
+            if (args.size() != 0) {
+                targetFunc = args.getQuick(0);
+                size0Func = args.getQuick(1);
+                value0Func = args.getQuick(2);
+            }
         }
 
         @Override
@@ -188,16 +185,13 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
         public L2PriceFunction2(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            targetFunc = args.getQuick(0);
-            size0Func = args.getQuick(1);
-            value0Func = args.getQuick(2);
-            size1Func = args.getQuick(3);
-            value1Func = args.getQuick(4);
+            if (args.size() != 0) {
+                targetFunc = args.getQuick(0);
+                size0Func = args.getQuick(1);
+                value0Func = args.getQuick(2);
+                size1Func = args.getQuick(3);
+                value1Func = args.getQuick(4);
+            }
         }
 
         @Override
@@ -234,18 +228,15 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
         public L2PriceFunction3(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            targetFunc = args.getQuick(0);
-            size0Func = args.getQuick(1);
-            value0Func = args.getQuick(2);
-            size1Func = args.getQuick(3);
-            value1Func = args.getQuick(4);
-            size2Func = args.getQuick(5);
-            value2Func = args.getQuick(6);
+            if (args.size() != 0) {
+                targetFunc = args.getQuick(0);
+                size0Func = args.getQuick(1);
+                value0Func = args.getQuick(2);
+                size1Func = args.getQuick(3);
+                value1Func = args.getQuick(4);
+                size2Func = args.getQuick(5);
+                value2Func = args.getQuick(6);
+            }
         }
 
         @Override
@@ -291,20 +282,17 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
         public L2PriceFunction4(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            targetFunc = args.getQuick(0);
-            size0Func = args.getQuick(1);
-            value0Func = args.getQuick(2);
-            size1Func = args.getQuick(3);
-            value1Func = args.getQuick(4);
-            size2Func = args.getQuick(5);
-            value2Func = args.getQuick(6);
-            size3Func = args.getQuick(7);
-            value3Func = args.getQuick(8);
+            if (args.size() != 0) {
+                targetFunc = args.getQuick(0);
+                size0Func = args.getQuick(1);
+                value0Func = args.getQuick(2);
+                size1Func = args.getQuick(3);
+                value1Func = args.getQuick(4);
+                size2Func = args.getQuick(5);
+                value2Func = args.getQuick(6);
+                size3Func = args.getQuick(7);
+                value3Func = args.getQuick(8);
+            }
         }
 
         @Override
@@ -359,22 +347,19 @@ public class LevelTwoPriceFunctionFactory implements FunctionFactory {
 
         public L2PriceFunction5(ObjList<Function> args, IntList argPositions) {
             super(args, argPositions);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            targetFunc = args.getQuick(0);
-            size0Func = args.getQuick(1);
-            value0Func = args.getQuick(2);
-            size1Func = args.getQuick(3);
-            value1Func = args.getQuick(4);
-            size2Func = args.getQuick(5);
-            value2Func = args.getQuick(6);
-            size3Func = args.getQuick(7);
-            value3Func = args.getQuick(8);
-            size4Func = args.getQuick(9);
-            value4Func = args.getQuick(10);
+            if (args.size() != 0) {
+                targetFunc = args.getQuick(0);
+                size0Func = args.getQuick(1);
+                value0Func = args.getQuick(2);
+                size1Func = args.getQuick(3);
+                value1Func = args.getQuick(4);
+                size2Func = args.getQuick(5);
+                value2Func = args.getQuick(6);
+                size3Func = args.getQuick(7);
+                value3Func = args.getQuick(8);
+                size4Func = args.getQuick(9);
+                value4Func = args.getQuick(10);
+            }
         }
 
         @Override

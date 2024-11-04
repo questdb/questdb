@@ -51,6 +51,10 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     public ApproxCountDistinctIPv4GroupByFunction(Function arg, int precision) {
         this.arg = arg;
         this.precision = precision;
+        if (this.precision != 0) {
+            this.hllA = new HyperLogLog(precision);
+            this.hllB = new HyperLogLog(precision);
+        }
     }
 
     public ApproxCountDistinctIPv4GroupByFunction(Function arg) {
