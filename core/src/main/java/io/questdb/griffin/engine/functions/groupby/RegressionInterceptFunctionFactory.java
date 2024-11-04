@@ -40,10 +40,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public class RegressionSlopeFunctionFactory implements FunctionFactory {
+public class RegressionInterceptFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "regr_slope(DD)";
+        return "regr_intercept(DD)";
     }
 
     @Override
@@ -53,16 +53,16 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RegressionSlopeFunction(args.getQuick(0), args.getQuick(1));
+        return new RegressionInterceptFunction(args.getQuick(0), args.getQuick(1));
     }
 
 
-    private static class RegressionSlopeFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
+    private static class RegressionInterceptFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
         protected final Function xFunc;
         protected final Function yFunc;
         protected int valueIndex;
 
-        public RegressionSlopeFunction(@NotNull Function arg0, @NotNull Function arg1) {
+        public RegressionInterceptFunction(@NotNull Function arg0, @NotNull Function arg1) {
             this.yFunc = arg0;
             this.xFunc = arg1;
         }
@@ -98,9 +98,16 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             if (count > 0) {
                 double sumXY = rec.getDouble(valueIndex + 2);
                 double covar = sumXY / count;
+
                 double sumX = rec.getDouble(valueIndex + 3);
                 double var = sumX / count;
-                return covar / var;
+
+                double slope = covar / var;
+
+                double meanY = rec.getDouble(valueIndex);
+                double meanX = rec.getDouble(valueIndex + 1);
+
+                return meanY - meanX * slope;
             }
             return Double.NaN;
         }
@@ -112,7 +119,7 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "regr_slope";
+            return "regr_intercept";
         }
 
         @Override
@@ -173,11 +180,10 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             // double mergedMean = srcMean + delta * ((double) destCount / mergedCount);
 
             // So we use this instead:
-            double weighting = ((double) srcCount * destCount) / mergedCount;
             double mergedMeanY = (srcCount * srcMeanY + destCount * destMeanY) / mergedCount;
             double mergedMeanX = (srcCount * srcMeanX + destCount * destMeanX) / mergedCount;
-            double mergedSumXY = srcSumXY + destSumXY + (deltaY * deltaX) * weighting;
-            double mergedSumX = srcSumX + destSumX + (deltaX * deltaX) * weighting;
+            double mergedSumXY = srcSumXY + destSumXY + (deltaY * deltaX) * (((double) srcCount * destCount) / mergedCount);
+            double mergedSumX = srcSumX + destSumX + (deltaX * deltaX) * ((double) (srcCount * destCount) / mergedCount);
 
             destValue.putDouble(valueIndex, mergedMeanY);
             destValue.putDouble(valueIndex + 1, mergedMeanX);
@@ -221,5 +227,4 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             mapValue.addLong(valueIndex + 4, 1L);
         }
     }
-
 }
