@@ -163,10 +163,10 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     @Override
     public void setAllocator(GroupByAllocator allocator) {
         if (setA == null) {
-            setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+            setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
         }
         if (setB == null) {
-            setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+            setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
         }
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);

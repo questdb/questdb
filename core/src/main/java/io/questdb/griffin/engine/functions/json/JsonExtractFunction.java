@@ -367,22 +367,24 @@ public class JsonExtractFunction implements ScalarFunction {
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         ScalarFunction.super.init(symbolTableSource, executionContext);
-        switch (targetType) {
-            case ColumnType.IPv4:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                // cxx json code will not resize the utf8 sink, so the initial size is its max size
-                stateA = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), false);
-                stateB = null;
-                break;
-            case ColumnType.VARCHAR:
-                stateA = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), true);
-                stateB = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), true);
-                break;
-            default:
-                stateA = new JsonExtractSupportingState(null, false);
-                stateB = null;
-                break;
+        if (stateA == null) {
+            switch (targetType) {
+                case ColumnType.IPv4:
+                case ColumnType.DATE:
+                case ColumnType.TIMESTAMP:
+                    // cxx json code will not resize the utf8 sink, so the initial size is its max size
+                    stateA = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), false);
+                    stateB = null;
+                    break;
+                case ColumnType.VARCHAR:
+                    stateA = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), true);
+                    stateB = new JsonExtractSupportingState(new DirectUtf8Sink(maxSize, false), true);
+                    break;
+                default:
+                    stateA = new JsonExtractSupportingState(null, false);
+                    stateB = null;
+                    break;
+            }
         }
         stateA.reopen();
         if (stateB != null) {

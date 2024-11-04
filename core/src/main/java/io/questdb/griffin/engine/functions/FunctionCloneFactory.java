@@ -99,7 +99,8 @@ public class FunctionCloneFactory {
                         field.set(cloneFunc, ((DeepCloneable<?>) fValue).deepClone());
                     } else if (fValue instanceof ObjList) {
                         field.set(cloneFunc, cloneObjList((ObjList<?>) fValue));
-                    } else if (field.getType().isPrimitive() || field.get(cloneFunc) == null || field.getType() == CharSequence.class) {
+                    } else if (field.getType().isPrimitive() || field.get(cloneFunc) == null || field.getType() == CharSequence.class
+                            || field.getType() == String.class) {
                         field.set(cloneFunc, fValue);
                     }
                 }
