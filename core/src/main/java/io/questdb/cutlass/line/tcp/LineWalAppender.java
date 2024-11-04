@@ -114,6 +114,9 @@ public class LineWalAppender {
 
         long timestamp = parser.getTimestamp();
         if (timestamp != LineTcpParser.NULL_TIMESTAMP) {
+            if (timestamp < 0) {
+                throw LineProtocolException.designatedTimestampMustBePositive(tud.getTableNameUtf16(), timestamp);
+            }
             timestamp = timestampAdapter.getMicros(timestamp, parser.getTimestampUnit());
         } else {
             timestamp = microsecondClock.getTicks();
