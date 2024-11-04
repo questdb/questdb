@@ -58,11 +58,8 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
             alterOp.withSqlStatement(sql);
             alterOp.withContext(context);
             wApi.apply(alterOp, false);
-            System.err.printf("Drop partition success: %,d\n", cutoffTimestamp / 1_000_000);
             return true;
         } catch (Exception e) {
-            System.err.printf("Drop partition fail: %,d\n", cutoffTimestamp / 1_000_000);
-            e.printStackTrace();
             return false;
         }
     }
