@@ -299,7 +299,7 @@ public final class LineHttpSender implements Sender {
                 return value * 1_000_000;
             default:
                 Duration duration = unit.getDuration();
-                long micros = duration.toSecondsPart() * 1_000_000L;
+                long micros = duration.toSeconds() * 1_000_000L;
                 micros += duration.toNanosPart() / 1_000;
                 return micros * value;
         }
