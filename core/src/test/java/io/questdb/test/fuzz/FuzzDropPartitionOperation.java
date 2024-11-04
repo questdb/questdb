@@ -36,10 +36,10 @@ import io.questdb.std.Rnd;
 
 public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
 
-    private final long partitionTimestampToDrop;
+    private final long cutoffTimestamp;
 
-    public FuzzDropPartitionOperation(long partitionTimestampToDrop) {
-        this.partitionTimestampToDrop = partitionTimestampToDrop;
+    public FuzzDropPartitionOperation(long cutoffTimestamp) {
+        this.cutoffTimestamp = cutoffTimestamp;
     }
 
     @Override
@@ -52,7 +52,7 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
             String sql = String.format("ALTER TABLE %s DROP PARTITION WHERE %s < %d",
                     wApi.getTableToken().getTableName(),
                     metadata.getColumnName(metadata.getTimestampIndex()),
-                    partitionTimestampToDrop);
+                    cutoffTimestamp);
             CompiledQuery query = sqlCompiler.compile(sql, context);
             AlterOperation alterOp = query.getAlterOperation();
             alterOp.withSqlStatement(sql);
