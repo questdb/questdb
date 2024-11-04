@@ -2311,19 +2311,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // Iterate partitions in descending order so if folders are missing on disk
         // removePartition does not fail to determine next minTimestamp
         final int partitionCount = reader.getPartitionCount();
-        long previousPartitionTimestamp = Long.MIN_VALUE;
         if (partitionCount > 0) { // table may be empty
             for (int i = partitionCount - 2; i > -1; i--) {
                 long physicalPartitionTimestamp = reader.getPartitionTimestampByIndex(i);
-                long partitionTimestamp = reader.getTxFile().getPartitionFloor(physicalPartitionTimestamp);
-                if (partitionTimestamp == previousPartitionTimestamp) {
-                    // several split partitions can resolve to the same logical timestamp
+                long logicalPartitionTimestamp = reader.getTxFile().getPartitionFloor(physicalPartitionTimestamp);
+                if (physicalPartitionTimestamp != logicalPartitionTimestamp) {
+                    // partitionTimestamp denotes a split partition, skip that
                     continue;
                 }
-                previousPartitionTimestamp = partitionTimestamp;
-                partitionFunctionRec.setTimestamp(partitionTimestamp);
+                partitionFunctionRec.setTimestamp(logicalPartitionTimestamp);
                 if (function.getBool(partitionFunctionRec)) {
-                    changePartitionStatement.addPartitionToList(partitionTimestamp, functionPosition);
+
+                    changePartitionStatement.addPartitionToList(logicalPartitionTimestamp, functionPosition);
                     affectedPartitions++;
                 }
             }
