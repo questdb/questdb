@@ -150,8 +150,8 @@ public final class Timestamps {
                 return value * 1_000_000;
             default:
                 Duration duration = unit.getDuration();
-                long micros = duration.toSeconds() * 1_000_000L;
-                micros += duration.toNanosPart() / 1_000;
+                long micros = duration.getSeconds() * 1_000_000L;
+                micros += duration.getNano() / 1_000;
                 return micros * value;
         }
     }
