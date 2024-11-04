@@ -373,7 +373,7 @@ public class GroupByUtils {
             supportDeepClone = false;
         }
         if (!supportDeepClone) {
-            Misc.freeObjList(groupByFunctions);
+            Misc.freeObjList(workerGroupByFunctions);
             final ObjList<QueryColumn> columns = model.getColumns();
             for (int i = 0, n = columns.size(); i < n; i++) {
                 final QueryColumn column = columns.getQuick(i);

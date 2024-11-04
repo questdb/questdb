@@ -175,10 +175,10 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public void setAllocator(GroupByAllocator allocator) {
         if (setA == null) {
-            setA = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+            setA = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
         }
         if (setB == null) {
-            setB = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.IPv4_NULL);
+            setB = new GroupByLong256HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
         }
         setA.setAllocator(allocator);
         setB.setAllocator(allocator);
