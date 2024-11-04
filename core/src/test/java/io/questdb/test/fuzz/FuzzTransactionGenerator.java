@@ -26,11 +26,13 @@ package io.questdb.test.fuzz;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Timestamps;
 
 public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
@@ -138,7 +140,8 @@ public class FuzzTransactionGenerator {
             } else if (wantToTruncateTable) {
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
             } else if (wantToDropPartition) {
-                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++);
+                assert tableMetadata.getPartitionBy() == PartitionBy.DAY;
+                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp);
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
@@ -236,9 +239,12 @@ public class FuzzTransactionGenerator {
         return null;
     }
 
-    private static void generateDropPartition(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion) {
+    private static void generateDropPartition(
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, long lastTimestamp
+    ) {
+        long partitionTimestampToDrop = Timestamps.floorDD(lastTimestamp, 1); // - DAY_MICROS;
         FuzzTransaction transaction = new FuzzTransaction();
-        transaction.operationList.add(new FuzzDropPartitionOperation());
+        transaction.operationList.add(new FuzzDropPartitionOperation(partitionTimestampToDrop));
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;

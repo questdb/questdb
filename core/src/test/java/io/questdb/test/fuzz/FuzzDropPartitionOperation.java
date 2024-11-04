@@ -25,7 +25,7 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableReader;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -33,7 +33,10 @@ import io.questdb.std.Rnd;
 
 public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
 
-    public FuzzDropPartitionOperation() {
+    private final long partitionTimestampToDrop;
+
+    public FuzzDropPartitionOperation(long partitionTimestampToDrop) {
+        this.partitionTimestampToDrop = partitionTimestampToDrop;
     }
 
     @Override
@@ -43,15 +46,12 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
                 0,
                 tableToken,
                 wApi.getMetadata().getTableId());
-        try (TableReader reader = engine.getReader(tableToken)) {
-            int partitionCount = reader.getPartitionCount();
-            if (partitionCount < 2) {
-                return false;
-            }
-            long partitionTimestampToDrop = reader.getPartitionTimestampByIndex(tempRnd.nextInt(partitionCount - 1));
-            b.addPartitionToList(partitionTimestampToDrop, 0);
+        b.addPartitionToList(partitionTimestampToDrop, 0);
+        try {
+            wApi.apply(b.build(), false);
+        } catch (CairoException e) {
+            return false;
         }
-        wApi.apply(b.build(), false);
         return true;
     }
 }
