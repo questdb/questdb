@@ -27,7 +27,15 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryW;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
@@ -251,6 +259,10 @@ public class TxReader implements Closeable, Mutable {
 
     public int getPartitionCount() {
         return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
+    }
+
+    public long getPartitionFloor(long timestamp) {
+        return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
     }
 
     public int getPartitionIndex(long ts) {
@@ -528,10 +540,6 @@ public class TxReader implements Closeable, Mutable {
     private long getLong(long readOffset) {
         assert readOffset + Long.BYTES <= size : "offset " + readOffset + ", size " + size + ", txn=" + txn;
         return roTxMemBase.getLong(baseOffset + readOffset);
-    }
-
-    private long getPartitionFloor(long timestamp) {
-        return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
     }
 
     private long getPartitionParquetFileSizeByIndex(int partitionRawIndex) {

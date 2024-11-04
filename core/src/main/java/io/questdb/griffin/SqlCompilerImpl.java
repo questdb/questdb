@@ -2313,10 +2313,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int partitionCount = reader.getPartitionCount();
         if (partitionCount > 0) { // table may be empty
             for (int i = partitionCount - 2; i > -1; i--) {
-                long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
-                partitionFunctionRec.setTimestamp(partitionTimestamp);
+                long physicalPartitionTimestamp = reader.getPartitionTimestampByIndex(i);
+                long logicalPartitionTimestamp = reader.getTxFile().getPartitionFloor(physicalPartitionTimestamp);
+                if (physicalPartitionTimestamp != logicalPartitionTimestamp) {
+                    // partitionTimestamp denotes a split partition, skip that
+                    continue;
+                }
+                partitionFunctionRec.setTimestamp(logicalPartitionTimestamp);
                 if (function.getBool(partitionFunctionRec)) {
-                    changePartitionStatement.addPartitionToList(partitionTimestamp, functionPosition);
+
+                    changePartitionStatement.addPartitionToList(logicalPartitionTimestamp, functionPosition);
                     affectedPartitions++;
                 }
             }
