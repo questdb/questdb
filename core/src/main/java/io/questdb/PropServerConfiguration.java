@@ -1787,15 +1787,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    protected long getMicros(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, long defaultValue) throws ServerConfigurationException {
-        final String value = getString(properties, env, key, Long.toString(defaultValue));
-        try {
-            return Numbers.parseLong(value);
-        } catch (NumericException e) {
-            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
-        }
-    }
-
     protected long getMillis(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, long defaultValue) throws ServerConfigurationException {
         final String value = getString(properties, env, key, Long.toString(defaultValue));
         try {
@@ -4859,5 +4850,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         WRITE_FO_OPTS.put("o_sync", (int) CairoConfiguration.O_SYNC);
         WRITE_FO_OPTS.put("o_async", (int) CairoConfiguration.O_ASYNC);
         WRITE_FO_OPTS.put("o_none", (int) CairoConfiguration.O_NONE);
+    }
+
+    protected long getMicros(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, long defaultValue) throws ServerConfigurationException {
+        final String value = getString(properties, env, key, Long.toString(defaultValue));
+        try {
+            return Numbers.parseMicros(value);
+        } catch (NumericException e) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
+        }
     }
 }

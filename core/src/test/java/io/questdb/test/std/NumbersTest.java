@@ -1308,31 +1308,74 @@ public class NumbersTest {
     public void testParseMicros() throws NumericException {
         Assert.assertEquals(25_000, Numbers.parseMicros("25ms"));
         Assert.assertEquals(25_000, Numbers.parseMicros("25MS"));
+        Assert.assertEquals(1_500_000_000, Numbers.parseMicros("25m"));
+        Assert.assertEquals(1_500_000_000, Numbers.parseMicros("25M"));
         Assert.assertEquals(14_400_000_000L, Numbers.parseMicros("4h"));
         Assert.assertEquals(10_800_000_000L, Numbers.parseMicros("3H"));
         Assert.assertEquals(90_000_000L, Numbers.parseMicros("90s"));
         Assert.assertEquals(560L, Numbers.parseMicros("560us"));
+        Assert.assertEquals(5600L, Numbers.parseMicros("5_600us"));
+//        Assert.assertEquals(5600L, Numbers.parseMicros("5_60__0us"));
 
-        try {
-            Numbers.parseMicros("60uk");
-            Assert.fail();
-        } catch (NumericException ignore) {
-        }
+        // check similar keywords are not picked up
 
-        try {
-            Numbers.parseMicros("us");
-            Assert.fail();
-        } catch (NumericException ignore) {
-        }
+        // u
+        assertParseMicrosException("60uk");
+        assertParseMicrosException("3usa");
 
-        try {
-            Numbers.parseMicros("aus");
-            Assert.fail();
-        } catch (NumericException ignore) {
-        }
+        // m
+        assertParseMicrosException("60mk");
+        assertParseMicrosException("3umsa");
 
+        // s
+        assertParseMicrosException("3sk");
+
+        // h
+        assertParseMicrosException("3hu");
+
+        // arbitrary
+        assertParseMicrosException("3k");
+
+        // assert unit without value
+        // u
+        assertParseMicrosException("us");
+        assertParseMicrosException("-us");
+        assertParseMicrosException("_us");
+
+        // m
+        assertParseMicrosException("ms");
+        assertParseMicrosException("-ms");
+        assertParseMicrosException("_ms");
+
+        assertParseMicrosException("m");
+        assertParseMicrosException("-m");
+        assertParseMicrosException("_m");
+
+        // s
+        assertParseMicrosException("s");
+        assertParseMicrosException("-s");
+        assertParseMicrosException("_s");
+
+        // h
+        assertParseMicrosException("h");
+        assertParseMicrosException("-h");
+        assertParseMicrosException("_h");
+
+        // no unit
+        assertParseMicrosException("_");
+
+        // underscore misuse
+        assertParseMicrosException("_");
+        assertParseMicrosException("_22");
+        assertParseMicrosException("_444_");
+        assertParseMicrosException("_28989__");
+        assertParseMicrosException("90902__");
+        assertParseMicrosException("123_");
+    }
+
+    private static void assertParseMicrosException(String sequence) {
         try {
-            Numbers.parseMicros("h");
+            Numbers.parseMicros(sequence);
             Assert.fail();
         } catch (NumericException ignore) {
         }
