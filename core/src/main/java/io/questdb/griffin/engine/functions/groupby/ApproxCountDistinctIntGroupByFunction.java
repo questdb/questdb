@@ -52,6 +52,10 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     public ApproxCountDistinctIntGroupByFunction(Function arg, int precision) {
         this.arg = arg;
         this.precision = precision;
+        if (precision != 0) {
+            this.hllA = new HyperLogLog(precision);
+            this.hllB = new HyperLogLog(precision);
+        }
     }
 
     public ApproxCountDistinctIntGroupByFunction(Function arg) {
