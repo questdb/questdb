@@ -325,6 +325,26 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         return p;
     }
 
+    private static boolean isEquals(long p) {
+        return Unsafe.getUnsafe().getByte(p) == '=';
+    }
+
+    private static int lowercaseByte(long p) {
+        return Unsafe.getUnsafe().getByte(p) | 0x20;
+    }
+
+    private static int swarLowercaseInt(long p) {
+        return Unsafe.getUnsafe().getInt(p) | 0x20202020;
+    }
+
+    private static long swarLowercaseLong(long p) {
+        return Unsafe.getUnsafe().getLong(p) | 0x2020202020202020L;
+    }
+
+    private static int swarLowercaseShort(long p) {
+        return Unsafe.getUnsafe().getShort(p) | 0x2020;
+    }
+
     private static DirectUtf8String unquote(CharSequence key, DirectUtf8String that) {
         int len = that.size();
         if (len == 0) {
@@ -342,8 +362,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         }
     }
 
-    private void cookieLogUnknownAttributeError(long p, long hi) {
-        LOG.error().$("unknown cookie attribute [attribute=").$(csPool.next().of(p, cookieSkipBytes(p, hi))).I$();
+    private void cookieLogUnknownAttributeError(long p, long lo, long hi) {
+        LOG.error()
+                .$("unknown cookie attribute [attribute=").$(csPool.next().of(p, cookieSkipBytes(p, hi)))
+                .$(", cookie=").$(csPool.next().of(lo, hi))
+                .I$();
     }
 
     private void cookieParse(long lo, long hi) {
@@ -356,10 +379,16 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         long p0 = lo;
         for (long p = lo; p < hi; p++) {
             char c = (char) Unsafe.getUnsafe().getByte(p);
-            switch (c) {
+            switch (c | 32) {
                 case '=':
                     if (p0 == p) {
                         LOG.error().$("cookie name is missing").$();
+                        return;
+                    }
+                    if (cookie != null) {
+                        // this means that we have an attribute with name, which we did not
+                        // recognize.
+                        cookieLogUnknownAttributeError(p0, lo, hi);
                         return;
                     }
                     cookie = cookiePool.next();
@@ -375,103 +404,86 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     attributeArea = true;
                     p0 = p + 1;
                     break;
-                case 'D':
+                case 'd':
                     if (attributeArea) {
                         // Domain=<domain-value>
                         // 0x69616d6f = "omai" from Domain
                         if (
                                 p + 6 < hi
-                                        && Unsafe.getUnsafe().getInt(p + 1) == 0x69616d6f
-                                        && Unsafe.getUnsafe().getByte(p + 5) == 'n'
-                                        && Unsafe.getUnsafe().getByte(p + 6) == '='
+                                        && swarLowercaseInt(p + 1) == 0x69616d6f
+                                        && lowercaseByte(p + 5) == 'n'
+                                        && isEquals(p + 6)
                         ) {
                             p += 7;
                             p0 = p;
                             p = cookieSkipBytes(p, hi);
                             cookie.domain = csPool.next().of(p0, p);
                         } else {
-                            cookieLogUnknownAttributeError(p, hi);
+                            cookieLogUnknownAttributeError(p, lo, hi);
                             return;
                         }
                     }
                     break;
-                case 'P':
+                case 'p':
                     if (attributeArea) {
                         // Path=<path-value>
-                        if (
-                                p + 4 < hi
-                                        && Unsafe.getUnsafe().getInt(p) == 0x68746150
-                                        && Unsafe.getUnsafe().getByte(p + 4) == '='
-                        ) {
+                        if (p + 4 < hi && swarLowercaseInt(p) == 0x68746170 && isEquals(p + 4)) {
                             p += 5;
                             p0 = p;
                             p = cookieSkipBytes(p, hi);
                             cookie.path = csPool.next().of(p0, p);
-                        } else if (
-                                p + 11 < hi
-                                        && Unsafe.getUnsafe().getLong(p + 1) == 0x6e6f697469747261L
-                                        && Unsafe.getUnsafe().getShort(p + 9) == 0x6465
-                        ) {
+                        } else if (p + 11 < hi && swarLowercaseLong(p + 1) == 0x6e6f697469747261L && swarLowercaseShort(p + 9) == 0x6465) {
                             // Partitioned, len = 11
                             p += 11;
                             p0 = p;
                             p = cookieSkipBytes(p, hi);
                             cookie.partitioned = true;
                         } else {
-                            cookieLogUnknownAttributeError(p, hi);
+                            cookieLogUnknownAttributeError(p, lo, hi);
                             return;
                         }
                     }
                     break;
-                case 'S':
+                case 's':
                     if (attributeArea) {
                         // Secure, len = 6, 'S' + 0x72756365 + 'e'
-                        if (p + 6 < hi && Unsafe.getUnsafe().getInt(p + 1) == 0x72756365 && Unsafe.getUnsafe().getByte(p + 5) == 'e') {
+                        if (p + 6 < hi && swarLowercaseInt(p + 1) == 0x72756365 && lowercaseByte(p + 5) == 'e') {
                             // Secure
                             p += 6;
                             p0 = p;
                             p = cookieSkipBytes(p, hi);
                             cookie.secure = true;
-                        } else if (
-                                p + 9 < hi
-                                        && Unsafe.getUnsafe().getLong(p) == 0x7469532d656d6153L
-                                        && Unsafe.getUnsafe().getByte(p + 9) == '='
-                        ) {
+                        } else if (p + 8 < hi && swarLowercaseLong(p) == 0x65746973656d6173L && isEquals(p + 8)) {
                             // SameSite=<value>
-                            p += 10;
+                            p += 9;
                             p0 = p;
                             p = cookieSkipBytes(p, hi);
                             cookie.sameSite = csPool.next().of(p0, p);
                         } else {
-                            cookieLogUnknownAttributeError(p, hi);
+                            cookieLogUnknownAttributeError(p, lo, hi);
                             return;
                         }
                     }
                     break;
-                case 'H':
+                case 'h':
                     if (attributeArea) {
                         // HttpOnly, len = 8, as long 0x796c6e4f70747448L
-                        if (p + 8 < hi && Unsafe.getUnsafe().getLong(p) == 0x796c6e4f70747448L) {
+                        if (p + 8 < hi && swarLowercaseLong(p) == 0x796c6e6f70747468L) {
                             // HttpOnly
                             p += 8;
                             p0 = p;
                             p = cookieSkipBytes(p, hi);
                             cookie.httpOnly = true;
                         } else {
-                            cookieLogUnknownAttributeError(p, hi);
+                            cookieLogUnknownAttributeError(p, lo, hi);
                             return;
                         }
                     }
                     break;
-                case 'M':
+                case 'm':
                     if (attributeArea) {
                         // Max-Age=<number>, key len = 7
-                        if (
-                                p + 7 < hi
-                                        && Unsafe.getUnsafe().getInt(p + 1) == 0x412d7861
-                                        && Unsafe.getUnsafe().getShort(p + 5) == 0x6567
-                                        && Unsafe.getUnsafe().getByte(p + 7) == '='
-                        ) {
+                        if (p + 7 < hi && swarLowercaseInt(p + 1) == 0x612d7861 && swarLowercaseShort(p + 5) == 0x6567 && isEquals(p + 7)) {
                             p += 8;
                             p0 = p;
                             p = cookieSkipBytes(p, hi);
@@ -483,42 +495,37 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                                 return;
                             }
                         } else {
-                            cookieLogUnknownAttributeError(p, hi);
+                            cookieLogUnknownAttributeError(p, lo, hi);
                             return;
                         }
                     }
                     break;
-                case 'E':
-                    if (cookie == null) {
-                        LOG.error().$("cookie name is missing").$();
-                        return;
-                    }
-                    if (!attributeArea) {
-                        break;
-                    }
-
-                    // Expires=<date>
-                    // 0x69727078 = "irpx" from Expires
-                    if (
-                            p + 7 < hi
-                                    && Unsafe.getUnsafe().getInt(p + 1) == 0x72697078
-                                    && Unsafe.getUnsafe().getByte(p + 6) == 's'
-                                    && Unsafe.getUnsafe().getByte(p + 7) == '='
-                    ) {
-                        p += 8;
-                        p0 = p;
-                        p = cookieSkipBytes(p, hi);
-                        Utf8Sequence v = csPool.next().of(p0, p);
-                        try {
-                            cookie.expires = TimestampFormatUtils.parseHTTP(v.asAsciiCharSequence());
-                        } catch (NumericException e) {
-                            LOG.error().$("invalid cookie Expires value [value=").$(v).I$();
+                case 'e':
+                    if (attributeArea) {
+                        // Expires=<date>
+                        // 0x69727078 = "irpx" from Expires
+                        if (
+                                p + 7 < hi
+                                        && swarLowercaseInt(p + 1) == 0x72697078
+                                        && lowercaseByte(p + 6) == 's'
+                                        && isEquals(p + 7)
+                        ) {
+                            p += 8;
+                            p0 = p;
+                            p = cookieSkipBytes(p, hi);
+                            Utf8Sequence v = csPool.next().of(p0, p);
+                            try {
+                                cookie.expires = TimestampFormatUtils.parseHTTP(v.asAsciiCharSequence());
+                            } catch (NumericException e) {
+                                LOG.error().$("invalid cookie Expires value [value=").$(v).I$();
+                                return;
+                            }
+                        } else {
+                            cookieLogUnknownAttributeError(p, lo, hi);
                             return;
                         }
-                    } else {
-                        cookieLogUnknownAttributeError(p, hi);
-                        return;
                     }
+                    break;
                 default:
                     break;
             }
