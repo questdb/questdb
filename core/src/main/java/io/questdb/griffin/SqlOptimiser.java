@@ -5813,6 +5813,7 @@ public class SqlOptimiser implements Mutable {
                 QueryModel none = nested.getNestedModel();
 
                 if (model.getLimitLo() != null
+                        && Chars.equals(model.getLimitLo().token, "-")
                         && model.getLimitHi() == null
                         && model.getUnionModel() == null
                         && model.getJoinModels().size() == 1
@@ -5826,18 +5827,22 @@ public class SqlOptimiser implements Mutable {
                         && !hasAggregateQueryColumn(model)
                         && !model.isDistinct()) {
 
+                    IntList copiedColumns = new IntList();
+
+                    // we are going to compact the models
                     if (model.getBottomUpColumns().size() >= nested.getBottomUpColumns().size()) {
-                        // its possible that this is a redundant model, or we can push down the extra select choose
+                        // since it is possible that this is a redundant model, or we can push down the extra select choose
                         for (int i = 0, n = nested.getBottomUpColumns().size(); i < n; i++) {
                             QueryColumn innerColumn = nested.getBottomUpColumns().get(i);
 
                             if (!model.getColumnNameToAliasMap().contains(innerColumn.getName())) {
-                                // if its not part of it, then is it the same as another column?
+                                // if it is not part of it, then is it the same as another column?
                                 CharSequence token = innerColumn.getAst().token;
 
                                 if (model.getColumnNameToAliasMap().contains(token)) {
                                     // we can push down this column
                                     nested.addBottomUpColumn(innerColumn);
+                                    copiedColumns.add(nested.getBottomUpColumns().size() - 1);
                                 }
                             }
                         }
@@ -5859,9 +5864,15 @@ public class SqlOptimiser implements Mutable {
                         }
                     }
 
+                    // if so, elide the top level model
                     if (identicalModels && model.getLimitLo() != null) {
                         // push down limit
                         model.setNestedModel(nested.getNestedModel());
+                    } else {
+                        // abort if needed
+                        for (int i = 0, n = copiedColumns.size(); i < n; i++) {
+                            model.removeColumn(copiedColumns.get(i));
+                        }
                     }
                 }
             }
