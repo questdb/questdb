@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
 
 public class WindowFunctionUnitTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(WindowFunctionUnitTest.class);
-    short[] columnTypes = new short[]{ColumnType.TIMESTAMP, ColumnType.INT, ColumnType.LONG};
+    private static final short[] columnTypes = new short[]{ColumnType.TIMESTAMP, ColumnType.INT, ColumnType.LONG};
 
     @Test
     public void testAggOverPartitionRangeFuzz() throws Exception {

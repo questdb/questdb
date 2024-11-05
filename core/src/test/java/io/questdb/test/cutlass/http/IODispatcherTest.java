@@ -542,6 +542,36 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testCursorTypeUnsupportedByCompiler() throws Exception {
+        String expectedErrorResponse = "HTTP/1.1 400 Bad request\r\n" +
+                "Server: questDB/1.0\r\n" +
+                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Content-Type: application/json; charset=utf-8\r\n" +
+                "Keep-Alive: timeout=5, max=10000\r\n" +
+                "\r\n" +
+                "93\r\n" +
+                "{\"query\":\"select query_activity() from long_sequence(1)\",\"error\":\"cursor function cannot be used as a column [column=query_activity]\",\"position\":7}\r\n" +
+                "00\r\n" +
+                "\r\n";
+
+        testJsonQuery(
+                20,
+                "GET /query?query=select%20query_activity%28%29%20from%20long_sequence%281%29 HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                expectedErrorResponse
+        );
+    }
+
+    @Test
     public void testDDLInExp() throws Exception {
         testJsonQuery(
                 20,
@@ -605,6 +635,55 @@ public class IODispatcherTest extends AbstractTest {
                 0,
                 false
         ), false);
+    }
+
+    @Test
+    public void testExceptionAfter1100Rows() throws Exception {
+        final StringSink sink = new StringSink();
+        final int numOfRows = 1100;
+        for (int i = 0, n = numOfRows / 2; i < n; i++) {
+            sink.put("[true],[false],");
+        }
+        sink.put("[]");
+
+        getSimpleTester().run(engine ->
+                testHttpClient.assertGet(
+                        "{" +
+                                "\"query\":\"select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")\"," +
+                                "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
+                                "\"timestamp\":-1," +
+                                "\"dataset\":[" + sink + "]," +
+                                "\"count\":" + (numOfRows + 1) + "," +
+                                "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                                "}",
+                        "select simulate_crash('P') from long_sequence(" + (numOfRows + 5) + ")"
+                )
+        );
+    }
+
+    @Test
+    public void testExceptionAfterHeader() throws Exception {
+        testExceptionAfterHeader(0, "[]");
+        testExceptionAfterHeader(1, "[true],[]");
+        testExceptionAfterHeader(2, "[true],[false],[]");
+    }
+
+    @Test
+    public void testExceptionAuthorization() throws Exception {
+        getSimpleTester().run(engine -> {
+            testHttpClient.assertGet(
+                    "{" +
+                            "\"query\":\"select simulate_crash('A') from long_sequence(5)\"," +
+                            "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[[]]," +
+                            "\"count\":1," +
+                            "\"error\":\"HTTP 403 (Forbidden), simulated authorization exception\"" +
+                            "}",
+                    "select simulate_crash('A') from long_sequence(5)"
+            );
+            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
+        });
     }
 
     @Test
@@ -1400,7 +1479,6 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n",
                                         1,
                                         0,
-                                        false,
                                         false
                                 );
 
@@ -1480,7 +1558,6 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n",
                                         1,
                                         0,
-                                        false,
                                         false
                                 );
 
@@ -1887,7 +1964,6 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n",
                                         1,
                                         0,
-                                        false,
                                         false
                                 );
 
@@ -2106,7 +2182,6 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n",
                                         1,
                                         0,
-                                        false,
                                         false
                                 );
 
@@ -2198,7 +2273,6 @@ public class IODispatcherTest extends AbstractTest {
                                                 "\r\n",
                                         1,
                                         0,
-                                        false,
                                         false
                                 );
 
@@ -3784,112 +3858,6 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
-    public void testJsonQueryDataError() throws Exception {
-        assertMemoryLeak(() -> {
-            final String baseDir = root;
-            final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(baseDir, false);
-            WorkerPool workerPool = new TestWorkerPool(1);
-            try (
-                    CairoEngine engine = new CairoEngine(new DefaultTestCairoConfiguration(baseDir), metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
-            ) {
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return HttpServerConfiguration.DEFAULT_PROCESSOR_URL;
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new StaticContentProcessor(httpConfiguration);
-                    }
-                });
-
-                httpServer.bind(new HttpRequestProcessorFactory() {
-                    @Override
-                    public String getUrl() {
-                        return "/query";
-                    }
-
-                    @Override
-                    public HttpRequestProcessor newInstance() {
-                        return new JsonQueryProcessor(
-                                httpConfiguration.getJsonQueryProcessorConfiguration(),
-                                engine,
-                                workerPool.getWorkerCount()
-                        );
-                    }
-                });
-
-                workerPool.start(LOG);
-
-                try {
-
-                    // send multipart request to server
-                    final String request = "GET /query?limit=0%2C1000&count=true&src=con&query=select%20npe()%20from%20long_sequence(1)&timings=true HTTP/1.1\r\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36\r\n" +
-                            "Accept: */*\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Sec-Fetch-Dest: empty\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "Cookie: _ga=GA1.1.2124932001.1573824669; _hjid=f2db90b2-18cf-4956-8870-fcdcde56f3ca; _hjIncludedInSample=1; _gid=GA1.1.697400188.1591597903\r\n" +
-                            "\r\n";
-
-                    NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    long fd = nf.socketTcp(true);
-                    try {
-                        long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
-                        assert sockAddrInfo != -1;
-                        try {
-                            TestUtils.assertConnectAddrInfo(fd, sockAddrInfo);
-                            Assert.assertEquals(0, nf.setTcpNoDelay(fd, true));
-
-                            final int len = request.length() * 2;
-                            long ptr = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
-                            try {
-                                int sent = 0;
-                                int reqLen = request.length();
-                                Utf8s.strCpyAscii(request, reqLen, ptr);
-                                while (sent < reqLen) {
-                                    int n = NetworkFacadeImpl.INSTANCE.sendRaw(fd, ptr + sent, reqLen - sent);
-                                    assertTrue(n > -1);
-                                    sent += n;
-                                }
-
-                                Os.sleep(1);
-
-                                nf.configureNonBlocking(fd);
-                                long t = System.currentTimeMillis();
-                                boolean disconnected = true;
-                                while (nf.recvRaw(fd, ptr, 1) > -1) {
-                                    if (t + 20000 < System.currentTimeMillis()) {
-                                        disconnected = false;
-                                        break;
-                                    }
-                                }
-                                assertTrue("disconnect expected", disconnected);
-                            } finally {
-                                Unsafe.free(ptr, len, MemoryTag.NATIVE_DEFAULT);
-                            }
-                        } finally {
-                            nf.freeAddrInfo(sockAddrInfo);
-                        }
-                    } finally {
-                        nf.close(fd);
-                    }
-                } finally {
-                    workerPool.halt();
-                }
-            }
-        });
-    }
-
-    @Test
     public void testJsonQueryDataUnavailableClientDisconnectsBeforeEventFired() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -5319,8 +5287,7 @@ public class IODispatcherTest extends AbstractTest {
                                     "00\r\n",
                             1,
                             0,
-                            false,
-                            true
+                            false
                     );
                 },
                 false,
@@ -5769,6 +5736,36 @@ public class IODispatcherTest extends AbstractTest {
                         "{\"query\":\"\\n\\n\\n\\nSELECT 'Raphaël' a, 'Léo' b FROM long_sequence(2)\",\"columns\":[{\"name\":\"a\",\"type\":\"STRING\"},{\"name\":\"b\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"Raphaël\",\"Léo\"],[\"Raphaël\",\"Léo\"]],\"count\":2}\r\n" +
                         "00\r\n" +
                         "\r\n"
+        );
+    }
+
+    @Test
+    public void testLong128Unsupported() throws Exception {
+        String expectedErrorResponse = "HTTP/1.1 400 Bad request\r\n" +
+                "Server: questDB/1.0\r\n" +
+                "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "Content-Type: application/json; charset=utf-8\r\n" +
+                "Keep-Alive: timeout=5, max=10000\r\n" +
+                "\r\n" +
+                "8d\r\n" +
+                "{\"query\":\"select to_long128(1, 1) from long_sequence(1);\",\"error\":\"column type not supported [column=to_long128, type=LONG128]\",\"position\":0}\r\n" +
+                "00\r\n" +
+                "\r\n";
+
+        testJsonQuery(
+                20,
+                "GET /query?query=select%20to_long128%281%2C%201%29%20from%20long_sequence%281%29%3B HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                expectedErrorResponse
         );
     }
 
@@ -7336,7 +7333,6 @@ public class IODispatcherTest extends AbstractTest {
                                     "\r\n",
                             1,
                             0,
-                            false,
                             false
                     );
 
@@ -7368,7 +7364,6 @@ public class IODispatcherTest extends AbstractTest {
                                     "\r\n",
                             1,
                             0,
-                            false,
                             false
                     );
 
@@ -7400,7 +7395,6 @@ public class IODispatcherTest extends AbstractTest {
                                     "\r\n",
                             1,
                             0,
-                            false,
                             false
                     );
                 });
@@ -7486,7 +7480,6 @@ public class IODispatcherTest extends AbstractTest {
                                             JSON_DDL_RESPONSE,
                                     1,
                                     0,
-                                    false,
                                     false
                             );
 
@@ -7517,7 +7510,6 @@ public class IODispatcherTest extends AbstractTest {
                                             "\r\n",
                                     1,
                                     0,
-                                    false,
                                     false
                             );
                         }
@@ -7630,7 +7622,6 @@ public class IODispatcherTest extends AbstractTest {
                                     JSON_DDL_RESPONSE,
                             1,
                             0,
-                            false,
                             false
                     );
 
@@ -7661,7 +7652,6 @@ public class IODispatcherTest extends AbstractTest {
                                     "00\r\n\r\n",
                             1,
                             0,
-                            false,
                             false
                     );
 
@@ -7690,7 +7680,6 @@ public class IODispatcherTest extends AbstractTest {
                                     JSON_DDL_RESPONSE,
                             1,
                             0,
-                            false,
                             false
                     );
 
@@ -7721,7 +7710,6 @@ public class IODispatcherTest extends AbstractTest {
                                     "00\r\n\r\n",
                             1,
                             0,
-                            false,
                             false
                     );
                 });
@@ -7910,69 +7898,56 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testTriggerInternalCairoError() throws Exception {
-        testJsonQuery0(1, engine -> {
-            sendAndReceive(
-                    NetworkFacadeImpl.INSTANCE,
-                    // select '' from long_sequence(1)
-                    "GET /exec?query=select%20simulate_crash%28'C'%29 HTTP/1.1\n" +
-                            "Host: localhost:9000\r\n" +
-                            "Connection: keep-alive\r\n" +
-                            "Accept: */*\r\n" +
-                            "X-Requested-With: XMLHttpRequest\r\n" +
-                            "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
-                            "Sec-Fetch-Site: same-origin\r\n" +
-                            "Sec-Fetch-Mode: cors\r\n" +
-                            "Referer: http://localhost:9000/index.html\r\n" +
-                            "Accept-Encoding: gzip, deflate, br\r\n" +
-                            "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                            "\r\n",
-                    "HTTP/1.1 200 OK\r\n" +
-                            "Server: questDB/1.0\r\n" +
-                            "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                            "Transfer-Encoding: chunked\r\n" +
-                            "Content-Type: application/json; charset=utf-8\r\n" +
-                            "Keep-Alive: timeout=5, max=10000\r\n",
-                    1,
-                    0,
-                    false,
-                    true
+        getSimpleTester().run(engine -> {
+            testHttpClient.assertGet(
+                    "{" +
+                            "\"query\":\"select simulate_crash('E')\"," +
+                            "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[[]]," +
+                            "\"count\":1," +
+                            "\"error\":\"HTTP 500 (Internal server error), simulated cairo error\"" +
+                            "}",
+                    "select simulate_crash('E')"
             );
             Assert.assertEquals(1, engine.getMetrics().health().unhandledErrorsCount());
-        }, false);
+        });
     }
 
     @Test
     public void testTriggerInternalCriticalCairoException() throws Exception {
-        testJsonQuery0(1, engine -> {
-                    sendAndReceive(
-                            NetworkFacadeImpl.INSTANCE,
-                            // select '' from long_sequence(1)
-                            "GET /exec?query=select%20simulate_crash%28'D'%29 HTTP/1.1\n" +
-                                    "Host: localhost:9000\r\n" +
-                                    "Connection: keep-alive\r\n" +
-                                    "Accept: */*\r\n" +
-                                    "X-Requested-With: XMLHttpRequest\r\n" +
-                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.130 Safari/537.36\r\n" +
-                                    "Sec-Fetch-Site: same-origin\r\n" +
-                                    "Sec-Fetch-Mode: cors\r\n" +
-                                    "Referer: http://localhost:9000/index.html\r\n" +
-                                    "Accept-Encoding: gzip, deflate, br\r\n" +
-                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
-                                    "\r\n",
-                            "HTTP/1.1 200 OK\r\n" +
-                                    "Server: questDB/1.0\r\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
-                                    "Transfer-Encoding: chunked\r\n" +
-                                    "Content-Type: application/json; charset=utf-8\r\n" +
-                                    "Keep-Alive: timeout=5, max=10000\r\n",
-                            1,
-                            0,
-                            false,
-                            true
-                    );
-                    Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
-                }
-                , false);
+        getSimpleTester().run(engine -> {
+            testHttpClient.assertGet(
+                    "{" +
+                            "\"query\":\"select simulate_crash('0')\"," +
+                            "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[[]]," +
+                            "\"count\":1," +
+                            "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                            "}",
+                    "select simulate_crash('0')"
+            );
+            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
+        });
+    }
+
+    @Test
+    public void testTriggerNPE() throws Exception {
+        getSimpleTester().run(engine -> {
+            testHttpClient.assertGet(
+                    "{" +
+                            "\"query\":\"select npe()\"," +
+                            "\"columns\":[{\"name\":\"npe\",\"type\":\"BOOLEAN\"}]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[[]]," +
+                            "\"count\":1," +
+                            "\"error\":\"HTTP 500 (Internal server error)\"" +
+                            "}",
+                    "select npe()"
+            );
+            Assert.assertEquals(1, engine.getMetrics().health().unhandledErrorsCount());
+        });
     }
 
     @Test
@@ -8601,7 +8576,6 @@ public class IODispatcherTest extends AbstractTest {
                 response,
                 1,
                 0,
-                false,
                 false
         );
     }
@@ -8612,7 +8586,7 @@ public class IODispatcherTest extends AbstractTest {
             CharSequence response,
             int requestCount,
             long pauseBetweenSendAndReceive,
-            @SuppressWarnings("SameParameterValue") boolean print
+            boolean print
     ) {
         sendAndReceive(
                 nf,
@@ -9078,6 +9052,23 @@ public class IODispatcherTest extends AbstractTest {
                         Misc.free(eventRef.get());
                     }
                 });
+    }
+
+    private void testExceptionAfterHeader(int numOfRows, String rows) throws Exception {
+        getSimpleTester().run(engine -> {
+            testHttpClient.assertGet(
+                    "{" +
+                            "\"query\":\"select simulate_crash('" + numOfRows + "') from long_sequence(5)\"," +
+                            "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[" + rows + "]," +
+                            "\"count\":" + (numOfRows + 1) + "," +
+                            "\"error\":\"HTTP 400 (Bad request), simulated cairo exception\"" +
+                            "}",
+                    "select simulate_crash('" + numOfRows + "') from long_sequence(5)"
+            );
+            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
+        });
     }
 
     private void testExecuteAndCancelSqlCommands(final String url) throws Exception {

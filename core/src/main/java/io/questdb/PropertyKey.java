@@ -99,7 +99,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY("cairo.sql.parallel.groupby.merge.shard.queue.capacity"),
     CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD("cairo.sql.parallel.groupby.sharding.threshold"),
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_ENABLED("cairo.sql.parallel.groupby.presize.enabled"),
-    CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_SIZE("cairo.sql.parallel.groupby.presize.max.size"),
+    CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_CAPACITY("cairo.sql.parallel.groupby.presize.max.capacity"),
     CAIRO_SQL_PARALLEL_GROUPBY_PRESIZE_MAX_HEAP_SIZE("cairo.sql.parallel.groupby.presize.max.heap.size"),
     CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD("cairo.sql.parallel.work.stealing.threshold"),
     CAIRO_PAGE_FRAME_SHARD_COUNT("cairo.page.frame.shard.count"),
@@ -166,6 +166,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS("cairo.sql.max.recompile.attempts"),
     CAIRO_ATTACH_PARTITION_SUFFIX("cairo.attach.partition.suffix"),
     CAIRO_ATTACH_PARTITION_COPY("cairo.attach.partition.copy"),
+    CAIRO_COMMIT_LATENCY("cairo.commit.latency"),
     CAIRO_DETACHED_MKDIR_MODE("cairo.detached.mkdir.mode"),
     CAIRO_SQL_BACKUP_DIR_TMP_NAME("cairo.sql.backup.dir.tmp.name"),
     CAIRO_SQL_BACKUP_MKDIR_MODE("cairo.sql.backup.mkdir.mode"),
@@ -279,6 +280,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_BUSY_RETRY_INITIAL_WAIT_QUEUE_SIZE("http.busy.retry.initialWaitQueueSize"),
     HTTP_BUSY_RETRY_MAX_PROCESSING_QUEUE_SIZE("http.busy.retry.maxProcessingQueueSize"),
     HTTP_MIN_WORKER_COUNT("http.min.worker.count"),
+    HTTP_MIN_WORKER_POOL_PRIORITY("http.min.worker.priority"),
     HTTP_MIN_NET_CONNECTION_LIMIT("http.min.net.connection.limit"),
     HTTP_NET_BIND_TO("http.net.bind.to"),
     HTTP_CONNECTION_POOL_INITIAL_CAPACITY("http.connection.pool.initial.capacity"),
@@ -500,8 +502,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT("http.min.multipart.idle.spin.count"),
     HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND("http.min.allow.deflate.before.send"),
     HTTP_MIN_SERVER_KEEP_ALIVE("http.min.server.keep.alive"),
-    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size"),
-    ;
+    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

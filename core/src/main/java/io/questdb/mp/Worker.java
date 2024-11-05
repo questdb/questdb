@@ -207,7 +207,7 @@ public class Worker extends Thread {
 
     private void stdErrCritical(Throwable e) {
         System.err.println(criticalErrorLine);
-        e.printStackTrace();
+        e.printStackTrace(System.err);
     }
 
     long getJobStartMicros() {

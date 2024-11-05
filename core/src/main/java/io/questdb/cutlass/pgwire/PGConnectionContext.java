@@ -27,26 +27,90 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.TelemetryOrigin;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.*;
+import io.questdb.griffin.BatchCallback;
+import io.questdb.griffin.CharacterStore;
+import io.questdb.griffin.CharacterStoreEntry;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlTimeoutException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IOOperation;
+import io.questdb.network.Net;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.QueryPausedException;
+import io.questdb.network.SuspendEvent;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectBinarySequence;
+import io.questdb.std.IntList;
+import io.questdb.std.Interval;
+import io.questdb.std.Long128;
+import io.questdb.std.Long256;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjObjHashMap;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.SimpleAssociativeCache;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Uuid;
+import io.questdb.std.Vect;
+import io.questdb.std.WeakMutableObjectPool;
+import io.questdb.std.WeakSelfReturningObjectPool;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -198,13 +262,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private TypesAndSelect typesAndSelect = null;
     private AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private boolean typesAndSelectIsCached = true;
-    private TypesAndUpdate typesAndUpdate = null;
-    private SimpleAssociativeCache<TypesAndUpdate> typesAndUpdateCache;
-    private boolean typesAndUpdateIsCached = false;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
     private final PGResumeProcessor resumeComputeCursorSizeQueryRef = this::resumeComputeCursorSizeQuery;
     private final PGResumeProcessor resumeCursorExecuteRef = this::resumeCursorExecute;
     private final PGResumeProcessor setResumeComputeCursorSizeExecuteRef = this::setResumeComputeCursorSizeExecute;
+    private TypesAndUpdate typesAndUpdate = null;
+    private SimpleAssociativeCache<TypesAndUpdate> typesAndUpdateCache;
+    private boolean typesAndUpdateIsCached = false;
     private NamedStatementWrapper wrapper;
 
     public PGConnectionContext(
@@ -1278,15 +1342,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
-        if (typesAndUpdate != null) {
-            if (typesAndUpdateIsCached) {
-                assert queryText != null;
-                typesAndUpdateCache.put(queryText, typesAndUpdate);
-                this.typesAndUpdate = null;
-            } else {
-                typesAndUpdate = Misc.free(typesAndUpdate);
-            }
-        }
+        freeOrCacheTypesAndUpdate();
     }
 
     private <T extends Mutable> void clearPool(
@@ -1679,6 +1735,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         typesAndSelect = Misc.free(typesAndSelect);
     }
 
+    private void freeOrCacheTypesAndUpdate() {
+        if (typesAndUpdate != null) {
+            if (typesAndUpdateIsCached) {
+                assert queryText != null;
+                typesAndUpdateCache.put(queryText, typesAndUpdate);
+                this.typesAndUpdate = null;
+            } else {
+                typesAndUpdate = Misc.free(typesAndUpdate);
+            }
+        }
+    }
+
     private void freeUpdateCommand(UpdateOperation op) {
         // Create a copy of sqlExecutionContext here
         bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
@@ -1830,7 +1898,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw BadProtocolException.INSTANCE;
         }
 
-        // this check is exactly the same as the one run inside security context on every permission checks.
+        // this check is exactly the same as the one runs inside security context on every permission checks.
         // however, this will run even if the command to be executed does not require permission checks.
         // this is useful in case a disabled user intends to hammer the database with queries which do not require authorization.
         sqlExecutionContext.getSecurityContext().checkEntityEnabled();
@@ -2430,6 +2498,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (currentCursor != null) {
             clearCursorAndFactory();
         }
+        // and clear TypesAndUpdate too
+        freeOrCacheTypesAndUpdate();
 
         //TODO: parsePhaseBindVariableCount have to be checked before parseQueryText and fed into it to serve as type hints !
         parseQueryText(lo, hi);
@@ -2474,6 +2544,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         CharacterStoreEntry e = characterStore.newEntry();
 
         if (Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
+            // do not cache simple queries, because we don't consult query cache when executing
+            // simple queries anyway. thus caching simple queries would only evict other cached queries
+            // from other clients, but they would not be used.
+            typesAndSelectIsCached = false;
+            typesAndUpdateIsCached = false;
             queryText = characterStore.toImmutable();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compileBatch(queryText, sqlExecutionContext, batchCallback);
@@ -2772,9 +2847,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     if (retries == maxRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
                     }
-                    LOG.info().$(e.getFlyweightMessage()).$();
+                    LOG.info().$(e.getFlyweightMessage()).$("setupFactoryAndCursor [retries=").$(retries).I$();
                     freeFactory();
-                    compileQuery();
+                    if (!compileQuery()) {
+                        // when we get a query from cache then we don't count it as
+                        // a recompile attempt. since a large cache full of stale queries
+                        // can trigger a lot of recompiles yet it's not an indication of
+                        // a problem with the query itself or a volatile schema.
+                        // it just means the cache had been populated and then the schema changed.
+                        retries--;
+                    }
                     buildSelectColumnTypes();
                     applyLatestBindColumnFormats();
                 } catch (Throwable e) {

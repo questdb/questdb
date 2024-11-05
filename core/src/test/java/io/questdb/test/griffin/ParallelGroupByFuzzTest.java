@@ -135,6 +135,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByCorrelation() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(corr(adouble, along), 14) FROM tab", "round\n" +
+                "-0.01506463207666\n");
+    }
+
+    @Test
     public void testGroupByOverLatestBy() throws Exception {
         // Parallel GROUP BY shouldn't kick in on this query, yet we want
         // to validate the result correctness.
@@ -699,6 +706,44 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    @Test
+    public void testParallelGroupByRegrIntercept() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(regr_intercept(adouble, along), 14) FROM tab", "round\n" +
+                "0.50356769718027\n");
+    }
+
+    @Test
+    public void testParallelGroupByCovariance() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(covar_samp(adouble, along), 14) FROM tab", "round\n" +
+                        "-92233.72036854776\n",
+                "SELECT round(covar_pop(adouble, along), 13) FROM tab", "round\n" +
+                        "-922337.2036854776\n");
+    }
+
+    @Test
+    public void testParallelGroupByStdDev() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(stddev_samp(adouble), 14) FROM tab", "round\n" +
+                        "0.2851973374189\n",
+                "SELECT round(stddev(adouble), 14) FROM tab", "round\n" +
+                        "0.2851973374189\n",
+                "SELECT round(stddev_pop(adouble), 13) FROM tab", "round\n" +
+                        "0.28515456316480003\n");
+    }
+
+    @Test
+    public void testParallelGroupByVariance() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(var_samp(adouble), 14) FROM tab", "round\n" +
+                        "0.08133752127083\n",
+                "SELECT round(variance(adouble), 14) FROM tab", "round\n" +
+                        "0.08133752127083\n",
+                "SELECT round(var_pop(adouble), 13) FROM tab", "round\n" +
+                        "0.0813131248937\n");
     }
 
     @Test

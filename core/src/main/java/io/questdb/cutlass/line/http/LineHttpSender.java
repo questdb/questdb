@@ -44,6 +44,7 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
@@ -112,14 +113,14 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public void at(long timestamp, ChronoUnit unit) {
-        request.putAscii(' ').put(timestamp * unitToNanos(unit));
+        request.putAscii(' ').put(Timestamps.toMicros(timestamp, unit)).put('t');
         atNow();
     }
 
     @Override
     public void at(Instant timestamp) {
-        long nanos = timestamp.getEpochSecond() * Timestamps.SECOND_NANOS + timestamp.getNano();
-        request.putAscii(' ').put(nanos);
+        long micros = timestamp.getEpochSecond() * Timestamps.SECOND_MICROS + timestamp.getNano() / 1_000;
+        request.putAscii(' ').put(micros).put('t');
         atNow();
     }
 
@@ -255,14 +256,14 @@ public final class LineHttpSender implements Sender {
     @Override
     public Sender timestampColumn(CharSequence name, long value, ChronoUnit unit) {
         // micros
-        writeFieldName(name).put(value * unitToNanos(unit) / 1000).put('t');
+        writeFieldName(name).put(Timestamps.toMicros(value, unit)).put('t');
         return this;
     }
 
     @Override
     public Sender timestampColumn(CharSequence name, Instant value) {
         // micros
-        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000).put('t');
+        writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_MICROS + value.getNano() / 1000L)).put('t');
         return this;
     }
 
@@ -284,21 +285,6 @@ public final class LineHttpSender implements Sender {
     private static boolean keepAliveDisabled(HttpClient.ResponseHeaders response) {
         DirectUtf8Sequence connectionHeader = response.getHeader(HttpConstants.HEADER_CONNECTION);
         return connectionHeader != null && Utf8s.equalsAscii("close", connectionHeader);
-    }
-
-    private static long unitToNanos(ChronoUnit unit) {
-        switch (unit) {
-            case NANOS:
-                return 1;
-            case MICROS:
-                return 1_000;
-            case MILLIS:
-                return 1_000_000;
-            case SECONDS:
-                return 1_000_000_000;
-            default:
-                return unit.getDuration().toNanos();
-        }
     }
 
     private int backoff(int retryBackoff) {
