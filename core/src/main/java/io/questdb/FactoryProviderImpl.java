@@ -93,7 +93,7 @@ public class FactoryProviderImpl implements FactoryProvider {
     }
 
     @Override
-    public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
         return pgWireAuthenticatorFactory;
     }
 
