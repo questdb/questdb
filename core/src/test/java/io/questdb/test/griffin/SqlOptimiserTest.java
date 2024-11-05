@@ -55,6 +55,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     " ('c', '2023-09-01T01:00:00.000Z')," +
                     " ('c', '2023-09-01T02:00:00.000Z')," +
                     " ('c', '2023-09-01T03:00:00.000Z')";
+    private static String tradesDdl = "CREATE TABLE 'trades' (\n" +
+            "  symbol SYMBOL,\n" +
+            "  side SYMBOL,\n" +
+            "  price DOUBLE,\n" +
+            "  amount DOUBLE,\n" +
+            "  timestamp TIMESTAMP\n" +
+            ") timestamp (timestamp) PARTITION BY DAY WAL;";
 
     @Test
     public void testAliasAppearsInFuncArgs1() throws Exception {
@@ -2575,13 +2582,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testRewriteNegativeLimitAvoidsJoins() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'trades' (\n" +
-                    "  symbol SYMBOL,\n" +
-                    "  side SYMBOL,\n" +
-                    "  price DOUBLE,\n" +
-                    "  amount DOUBLE,\n" +
-                    "  timestamp TIMESTAMP\n" +
-                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            ddl(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("SELECT trades.timestamp, * FROM trades\n" +
                     "ASOF JOIN (SELECT * from trades) trades2\n" +
@@ -2598,17 +2599,57 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteNegativeLimitHandleTimestampAndAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select timestamp ts1, timestamp ts2 from trades limit -3", "SelectedRecord\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [timestamp]\n" +
+                    "        SelectedRecord\n" +
+                    "            Limit lo: 3\n" +
+                    "                PageFrame\n" +
+                    "                    Row backward scan\n" +
+                    "                    Frame backward scan on: trades\n");
+        });
+    }
+
+    @Test
     public void testRewriteNegativeLimitHandlesWildcards() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'trades' (\n" +
-                    "  symbol SYMBOL,\n" +
-                    "  side SYMBOL,\n" +
-                    "  price DOUBLE,\n" +
-                    "  amount DOUBLE,\n" +
-                    "  timestamp TIMESTAMP\n" +
-                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            ddl(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select timestamp, * from trades limit -3", "Radix sort light\n" +
+                    "  keys: [timestamp]\n" +
+                    "    SelectedRecord\n" +
+                    "        Limit lo: 3\n" +
+                    "            PageFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteNegativeLimitHandlesWildcardsManualAliasing() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3", "Radix sort light\n" +
+                    "  keys: [timestamp]\n" +
+                    "    SelectedRecord\n" +
+                    "        Limit lo: 3\n" +
+                    "            PageFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteNegativeLimitHandlesWildcardsTimestampNotFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select *, timestamp from trades limit -3", "Radix sort light\n" +
                     "  keys: [timestamp]\n" +
                     "    SelectedRecord\n" +
                     "        Limit lo: 3\n" +
