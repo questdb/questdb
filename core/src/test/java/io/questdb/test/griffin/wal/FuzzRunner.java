@@ -24,8 +24,18 @@
 
 package io.questdb.test.griffin.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DebugUtils;
+import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -40,7 +50,14 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -760,16 +777,17 @@ public class FuzzRunner {
                 if (ColumnType.isVarSize(columnType)) {
                     for (int partitionIndex = 0; partitionIndex < reader.getPartitionCount(); partitionIndex++) {
                         reader.openPartition(partitionIndex);
-                        int columnBase = reader.getColumnBase(partitionIndex);
-                        MemoryR dCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i));
-                        MemoryR iCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i) + 1);
-
-                        long colTop = reader.getColumnTop(columnBase, i);
-                        long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
-                        long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
-                        if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
-                            Assert.fail("var column " + reader.getMetadata().getColumnName(i)
-                                    + " is not dense, .i file record size is different from .d file record size");
+                        if (PartitionFormat.NATIVE == reader.getPartitionFormat(partitionIndex)) {
+                            int columnBase = reader.getColumnBase(partitionIndex);
+                            MemoryR dCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i));
+                            MemoryR iCol = reader.getColumn(TableReader.getPrimaryColumnIndex(columnBase, i) + 1);
+                            long colTop = reader.getColumnTop(columnBase, i);
+                            long rowCount = reader.getPartitionRowCount(partitionIndex) - colTop;
+                            long dColAddress = dCol == null ? 0 : dCol.getPageAddress(0);
+                            if (DebugUtils.isSparseVarCol(rowCount, iCol.getPageAddress(0), dColAddress, columnType)) {
+                                Assert.fail("var column " + reader.getMetadata().getColumnName(i)
+                                        + " is not dense, .i file record size is different from .d file record size");
+                            }
                         }
                     }
                 }
