@@ -36,6 +36,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.Chars;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -74,7 +75,7 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
 
     private static class NoMatchStrFunction extends BooleanFunction implements UnaryFunction {
         private final Function arg;
-        private Matcher matcher;
+        private @DelayInitialize Matcher matcher;
         private final CharSequence regex;
         private boolean initialized;
 

@@ -226,7 +226,7 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
     private static class SingleGroupAsciiFunc extends VarcharFunction implements UnaryFunction {
         private final int functionPos;
         private final int group;
-        private Matcher matcher;
+        private @DelayInitialize Matcher matcher;
         private final String replacement;
         private final DirectUtf8Sink utf8SinkA;
         private final DirectUtf8Sink utf8SinkB;

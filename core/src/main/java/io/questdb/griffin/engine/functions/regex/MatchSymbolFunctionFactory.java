@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -104,7 +105,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
     }
 
     private static class MatchStaticSymbolTableConstPatternFunction extends BooleanFunction implements UnaryFunction {
-        private Matcher matcher;
+        private @DelayInitialize Matcher matcher;
         private final SymbolFunction symbolFun;
         private final IntList symbolKeys = new IntList();
         private boolean initialized;
@@ -159,7 +160,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private final SymbolFunction symbolFun;
         private final IntList symbolKeys = new IntList();
         private boolean initialized;
-        private Matcher matcher;
+        private @DelayInitialize Matcher matcher;
 
         public MatchStaticSymbolTableRuntimeConstPatternFunction(SymbolFunction symbolFun, Function pattern, int patternPosition) {
             this.symbolFun = symbolFun;

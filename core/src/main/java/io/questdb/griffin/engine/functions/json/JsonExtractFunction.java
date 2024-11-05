@@ -46,9 +46,9 @@ public class JsonExtractFunction implements ScalarFunction {
     private final Function json;
     private final int maxSize;
     private final Function path;
-    private JsonExtractSupportingState stateA;
+    private @DelayInitialize JsonExtractSupportingState stateA;
     // Only set for VARCHAR
-    private @Nullable JsonExtractSupportingState stateB;
+    private @DelayInitialize @Nullable JsonExtractSupportingState stateB;
     private final int targetType;
     private DirectUtf8Sink pointer;
 

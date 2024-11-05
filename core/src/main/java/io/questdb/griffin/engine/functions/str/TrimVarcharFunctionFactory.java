@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -74,7 +75,7 @@ public class TrimVarcharFunctionFactory implements FunctionFactory {
 
     private static class ConstFunc extends VarcharFunction implements UnaryFunction {
         private final Function arg;
-        private DirectUtf8Sink sink;
+        private @DelayInitialize DirectUtf8Sink sink;
         private boolean initialized = false;
         private final TrimType type;
 
