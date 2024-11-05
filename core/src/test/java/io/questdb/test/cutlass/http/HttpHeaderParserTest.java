@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.cutlass.http.HttpCookie;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpHeaderParser;
 import io.questdb.std.MemoryTag;
@@ -263,6 +264,198 @@ public class HttpHeaderParserTest {
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testCookieError() {
+        assertMalformedCookieIgnored(
+                "Set-Cookie: =123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: 123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: ; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: ; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: ; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: ; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: ; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: ; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: ; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: ; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: ; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; Domain=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; Do4main=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; Domain=hello.com; Path=/; Secre; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; Domain=hello.com; Path=/; Htt; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; Domain=hello.com; Path/; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; Domain=hello.com; Ph=/; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; Domain=hello.com; Max=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; Domain=hello.com; Max-Age=hello; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; Same-Sitestrict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; Sam; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; ExpiresWed, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: a=b; Expires=ok, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: Expires=ok, 21 Oct 2015 07:28:00 GMT\r\n"
+        );
+
+        assertMalformedCookieIgnored(
+                "Set-Cookie: something\r\n"
+        );
+    }
+
+    @Test
+    public void testCookiesNameHasKeywordSecure() {
+        String v = "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                "Set-Cookie: Secure=123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n" +
+                "\r\n";
+        long p = TestUtils.toMemory(v);
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            hp.parse(p, p + v.length(), true, false);
+            HttpCookie cookie = hp.getCookie(new Utf8String("Secure"));
+            Assert.assertNotNull(cookie);
+            TestUtils.assertEquals("123", cookie.value);
+            TestUtils.assertEquals("hello.com", cookie.domain);
+            TestUtils.assertEquals("/", cookie.path);
+            Assert.assertTrue(cookie.secure);
+            Assert.assertTrue(cookie.partitioned);
+            Assert.assertTrue(cookie.httpOnly);
+            Assert.assertEquals(1234545, cookie.maxAge);
+            TestUtils.assertEquals("strict", cookie.sameSite);
+            Assert.assertEquals(1445412480000000L, cookie.expires);
+
+        } finally {
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
+    public void testCookiesVanilla() {
+        assertCookieVanilla(
+                "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                        "Set-Cookie: id=123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n" +
+                        "\r\n"
+        );
+        // reorder the cookie attributes to make sure they don't affect each other
+        assertCookieVanilla(
+                "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                        "Set-Cookie: id=123; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Domain=hello.com\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testCookiesWithTheSameKeys() {
+        // reorder the cookie attributes to make sure they don't affect each other
+        assertPreferredCookie(
+                "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                        "Set-Cookie: id=124; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/aaaa; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Domain=hello.com\r\n" +
+                        "Set-Cookie: id=123; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Domain=hello.com\r\n" +
+                        "\r\n",
+                1445412480000000L
+        );
+
+        assertPreferredCookie(
+                "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                        "Set-Cookie: id=123; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Domain=hello.com\r\n" +
+                        "Set-Cookie: id=124; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/aaaa; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Domain=hello.com\r\n" +
+                        "\r\n",
+                1445412480000000L
+        );
+
+        assertPreferredCookie(
+                "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                        "Set-Cookie: id=123; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/aaaa; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Domain=hello.com\r\n" +
+                        "Set-Cookie: id=124; Expires=Wed, 21 Oct 2017 07:28:00 GMT; Path=/aaaa; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Domain=hello.com\r\n" +
+                        "\r\n",
+                1508570880000000L
+        );
+
+        assertPreferredCookie(
+                "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                        "Set-Cookie: id=124; Expires=Wed, 21 Oct 2017 07:28:00 GMT; Path=/aaaa; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Domain=hello.com\r\n" +
+                        "Set-Cookie: id=123; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/aaaa; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Domain=hello.com\r\n" +
+                        "\r\n",
+                1508570880000000L
+        );
     }
 
     @Test
@@ -535,6 +728,66 @@ public class HttpHeaderParserTest {
             } finally {
                 Unsafe.free(p, request.length(), MemoryTag.NATIVE_DEFAULT);
             }
+        }
+    }
+
+    private static void assertCookieVanilla(String v) {
+        long p = TestUtils.toMemory(v);
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            hp.parse(p, p + v.length(), true, false);
+            HttpCookie cookie = hp.getCookie(new Utf8String("id"));
+            Assert.assertNotNull(cookie);
+            TestUtils.assertEquals("123", cookie.value);
+            TestUtils.assertEquals("hello.com", cookie.domain);
+            TestUtils.assertEquals("/", cookie.path);
+            Assert.assertTrue(cookie.secure);
+            Assert.assertTrue(cookie.partitioned);
+            Assert.assertTrue(cookie.httpOnly);
+            Assert.assertEquals(1234545, cookie.maxAge);
+            TestUtils.assertEquals("strict", cookie.sameSite);
+            Assert.assertEquals(1445412480000000L, cookie.expires);
+
+        } finally {
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void assertMalformedCookieIgnored(String malformedCookie) {
+        String v = "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                "Set-Cookie: a=123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n" +
+                malformedCookie +
+                "Set-Cookie: b=123; Domain=hello.com; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; Same-Site=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n" +
+                "\r\n";
+        long p = TestUtils.toMemory(v);
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            hp.parse(p, p + v.length(), true, false);
+            Assert.assertEquals(2, hp.getCookieList().size());
+            Assert.assertNotNull(hp.getCookie(new Utf8String("a")));
+            Assert.assertNotNull(hp.getCookie(new Utf8String("b")));
+            Assert.assertEquals(1, hp.getIgnoredCookieCount());
+        } finally {
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void assertPreferredCookie(String v, long expiresTimestamp) {
+        long p = TestUtils.toMemory(v);
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            hp.parse(p, p + v.length(), true, false);
+            HttpCookie cookie = hp.getCookie(new Utf8String("id"));
+            Assert.assertNotNull(cookie);
+            TestUtils.assertEquals("124", cookie.value);
+            TestUtils.assertEquals("hello.com", cookie.domain);
+            TestUtils.assertEquals("/aaaa", cookie.path);
+            Assert.assertTrue(cookie.secure);
+            Assert.assertTrue(cookie.partitioned);
+            Assert.assertTrue(cookie.httpOnly);
+            Assert.assertEquals(1234545, cookie.maxAge);
+            TestUtils.assertEquals("strict", cookie.sameSite);
+            Assert.assertEquals(expiresTimestamp, cookie.expires);
+
+        } finally {
+            Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 

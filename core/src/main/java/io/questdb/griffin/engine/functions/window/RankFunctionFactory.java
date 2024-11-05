@@ -24,13 +24,20 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.ScalarFunction;
+import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -77,7 +84,7 @@ public class RankFunctionFactory implements FunctionFactory {
             arrayColumnTypes.add(ColumnType.LONG); // max index
             arrayColumnTypes.add(ColumnType.LONG); // current index
             arrayColumnTypes.add(ColumnType.LONG); // offset
-            Map map = MapFactory.createOrderedMap(configuration, windowContext.getPartitionByKeyTypes(), arrayColumnTypes);
+            Map map = MapFactory.createUnorderedMap(configuration, windowContext.getPartitionByKeyTypes(), arrayColumnTypes);
             return new RankFunction(map, windowContext.getPartitionByRecord(), windowContext.getPartitionBySink());
         }
         if (windowContext.isOrdered()) {
