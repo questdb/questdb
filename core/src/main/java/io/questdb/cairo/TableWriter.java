@@ -30,6 +30,7 @@ import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -693,7 +694,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration);
         writeIndex(columnName, indexValueBlockSize, columnIndex, indexer);
-        // set index flag in metadata and  create new _meta.swp
+        // set index flag in metadata and create new _meta.swp
         metaSwapIndex = copyMetadataAndSetIndexAttrs(columnIndex, true, indexValueBlockSize);
 
         swapMetaFile(columnName);
@@ -1912,7 +1913,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // purge old column versions
             finishColumnPurge();
-            LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).$();
+            LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).I$();
 
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.hydrateTable(metadata);
@@ -2050,6 +2051,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public int getPartitionCount() {
         return txWriter.getPartitionCount();
+    }
+
+    public byte getPartitionFormat(int partitionIndex) {
+        return txWriter.isPartitionParquet(partitionIndex) ? PartitionFormat.PARQUET : PartitionFormat.NATIVE;
     }
 
     public int getPartitionIndexByTimestamp(long timestamp) {
@@ -5564,12 +5569,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void indexHistoricPartitions(SymbolColumnIndexer indexer, CharSequence columnName, int indexValueBlockSize, int columnIndex) {
-        long ts = this.txWriter.getMaxTimestamp();
+        long ts = txWriter.getMaxTimestamp();
         if (ts > Numbers.LONG_NULL) {
             try {
                 // Index last partition separately
                 for (int i = 0, n = txWriter.getPartitionCount() - 1; i < n; i++) {
-
                     long timestamp = txWriter.getPartitionTimestampByIndex(i);
                     path.trimTo(pathSize);
                     setStateForTimestamp(path, timestamp);

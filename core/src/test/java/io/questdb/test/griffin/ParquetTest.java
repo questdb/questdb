@@ -116,19 +116,17 @@ public class ParquetTest extends AbstractCairoTest {
                     "x where id = 'k1'"
             );
 
-            // TODO(puzpuzpuz): implement and test the following:
-            // drop/add index on existing parquet partitions
-            // index rebuilt on O3 for parquet partitions
-
-//            ddl("alter table x alter column id drop index;");
-//            ddl("alter table x alter column id add index;");
-//            assertSql(
-//                    "id\tts\n" +
-//                            "k1\t2024-06-10T00:00:00.000000Z\n" +
-//                            "k1\t2024-06-10T00:00:00.000000Z\n" +
-//                            "k1\t2024-06-12T00:00:01.000000Z\n",
-//                    "x where id = 'k1'"
-//            );
+            // TODO(puzpuzpuz): uncomment
+            // ddl("alter table x convert partition to parquet where ts >= 0");
+            ddl("alter table x alter column id drop index;");
+            ddl("alter table x alter column id add index;");
+            assertSql(
+                    "id\tts\n" +
+                            "k1\t2024-06-10T00:00:00.000000Z\n" +
+                            "k1\t2024-06-10T00:00:00.000000Z\n" +
+                            "k1\t2024-06-12T00:00:01.000000Z\n",
+                    "x where id = 'k1'"
+            );
         });
     }
 
