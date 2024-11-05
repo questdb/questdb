@@ -1595,7 +1595,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // rollback
             if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
-                LOG.error().$("could not remove parquet file [path=").$(other).I$();
+                LOG.error().$("could not remove native partition dir [path=").$(other).I$();
             }
             throw e;
         } finally {
@@ -1649,7 +1649,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // rollback
             if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
-                LOG.error().$("could not remove parquet file [path=").$(other).I$();
+                LOG.error().$("could not remove native partition dir [path=").$(other).I$();
             }
             throw e;
         } finally {
