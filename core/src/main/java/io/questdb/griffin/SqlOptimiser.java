@@ -24,17 +24,56 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowDateStyleCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowMaxIdentifierLengthCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowParametersCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowServerVersionCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowServerVersionNumCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
-import io.questdb.griffin.model.*;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.WindowColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.BoolList;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.IntPriorityQueue;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -2327,6 +2366,22 @@ public class SqlOptimiser implements Mutable {
         opAnd = registry.map.get("and");
     }
 
+    private boolean isDesignatedTimestampFirstColumn(QueryModel model) {
+        if (model.getBottomUpColumns() == null) {
+            return false;
+        }
+
+        QueryModel curr = model;
+        ExpressionNode timestamp = null;
+
+        while (timestamp == null && curr != null) {
+            timestamp = curr.getTimestamp();
+            curr = curr.getNestedModel();
+        }
+
+        return timestamp != null && Chars.equalsIgnoreCaseNc(model.getBottomUpColumns().getQuick(0).getAst().token, timestamp.token);
+    }
+
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -4032,8 +4087,63 @@ public class SqlOptimiser implements Mutable {
      * @param model            input model
      * @param executionContext execution context
      */
-    private void rewriteNegativeLimit(final QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private void rewriteNegativeLimit(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model != null) {
+            if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                    && model.getNestedModel() != null
+                    && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                    && model.getNestedModel().getNestedModel() != null
+                    && model.getNestedModel().getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE) {
+                // Something like this: SELECT timestamp, * FROM trades LIMIT -3;
+                // compiles to:
+                // select-choose timestamp, symbol, side, price, amount, timestamp timestamp1
+                // from (select-choose timestamp, symbol, side, price, amount
+                // from (trades timestamp (timestamp))) limit -(3)
+                // We have this extra select choose to alias the already selected columns.
+                // We may be able to compact this
+
+                QueryModel inner = model.getNestedModel();
+
+                if (model.getBottomUpColumns().size() >= inner.getBottomUpColumns().size()) {
+                    // its possible that this is a redundant model, or we can push down the extra select choose
+                    for (int i = 0, n = inner.getBottomUpColumns().size(); i < n; i++) {
+                        QueryColumn innerColumn = inner.getBottomUpColumns().get(i);
+
+                        if (!model.getColumnNameToAliasMap().contains(innerColumn.getName())) {
+                            // if its not part of it, then is it the same as another column?
+                            CharSequence token = innerColumn.getAst().token;
+
+                            if (model.getColumnNameToAliasMap().contains(token)) {
+                                // we can push down this column
+                                inner.addBottomUpColumn(innerColumn);
+                            }
+                        }
+                    }
+                }
+
+                boolean identicalModels = true;
+
+                // now check that the models are identical
+                if (model.getBottomUpColumns().size() == inner.getBottomUpColumns().size()) {
+                    for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+                        QueryColumn outerColumn = model.getBottomUpColumns().get(i);
+                        QueryColumn innerColumn = inner.getBottomUpColumns().get(i);
+
+
+                        if (!(outerColumn.getAlias().equals(innerColumn.getAlias())
+                                && outerColumn.getAst().token.equals(innerColumn.getAst().token)
+                                && outerColumn.getAst().type == innerColumn.getAst().type)) {
+                            identicalModels = false;
+                        }
+                    }
+                }
+
+                if (identicalModels && model.getLimitLo() != null) {
+                    // push down limit
+                    model.setNestedModel(inner.getNestedModel());
+                }
+            }
+
             final QueryModel nested = model.getNestedModel();
             Function loFunction;
             ObjList<ExpressionNode> orderBy;

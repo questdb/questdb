@@ -2573,6 +2573,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteNegativeLimitHandlesWildcards() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL,\n" +
+                    "  side SYMBOL,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            drainWalQueue();
+            assertPlanNoLeakCheck("select timestamp, * from trades limit -3", "Radix sort light\n" +
+                    "  keys: [timestamp]\n" +
+                    "    SelectedRecord\n" +
+                    "        Limit lo: 3\n" +
+                    "            PageFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: trades\n");
+        });
+
+    }
+
+    @Test
     public void testSampleByFromToBasicWhereOptimisationBetween() throws Exception {
         assertMemoryLeak(() -> {
             ddl(SampleByTest.DDL_FROMTO);
