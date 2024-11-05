@@ -1671,6 +1671,74 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    @Override
+    public void forceRemovePartitions(LongList partitions) {
+        long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
+        long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
+        boolean firstPartitionDropped = false;
+        boolean activePartitionDropped = false;
+
+        txWriter.beginPartitionSizeUpdate();
+        partitionRemoveCandidates.clear();
+
+        int removedCount = 0;
+        for (int i = 0; i < partitions.size(); i++) {
+            long timestamp = partitions.getQuick(i);
+            final int index = txWriter.getPartitionIndex(timestamp);
+            if (index < 0) {
+                LOG.debug().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestamp).I$();
+                continue;
+            }
+
+            removedCount++;
+            if (!activePartitionDropped) {
+                activePartitionDropped = timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp);
+                if (activePartitionDropped) {
+                    // Need to do this only once
+                    closeActivePartition(false);
+                }
+            }
+
+            firstPartitionDropped |= timestamp == txWriter.getPartitionTimestampByIndex(0);
+            columnVersionWriter.removePartition(timestamp);
+            txWriter.removeAttachedPartitions(timestamp);
+            partitionRemoveCandidates.add(timestamp);
+        }
+
+        if (removedCount > 0) {
+            if (txWriter.getPartitionCount() > 0) {
+                if (firstPartitionDropped) {
+                    minTimestamp = readMinTimestamp(txWriter.getPartitionTimestampByIndex(1));
+                    txWriter.setMinTimestamp(minTimestamp);
+                }
+
+                if (activePartitionDropped) {
+                    long activePartitionTs = txWriter.getPartitionTimestampByIndex(txWriter.getPartitionCount() - 1);
+                    long activePartitionRows = txWriter.getPartitionSize(txWriter.getPartitionCount() - 1);
+                    readPartitionMinMax(ff, activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), activePartitionRows);
+                    maxTimestamp = attachMaxTimestamp;
+                    openLastPartition();
+                }
+
+                txWriter.finishPartitionSizeUpdate(minTimestamp, maxTimestamp);
+                txWriter.bumpTruncateVersion();
+
+                columnVersionWriter.commit();
+                txWriter.setColumnVersion(columnVersionWriter.getVersion());
+                txWriter.commit(denseSymbolMapWriters);
+            } else {
+                // all partitions are deleted, effectively same as truncating the table
+                rowAction = ROW_ACTION_OPEN_PARTITION;
+                txWriter.resetTimestamp();
+                columnVersionWriter.truncate();
+                txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+            }
+
+            // Call O3 methods to remove check TxnScoreboard and remove partition directly
+            processPartitionRemoveCandidates();
+        }
+    }
+
     public long getAppliedSeqTxn() {
         return txWriter.getSeqTxn() + txWriter.getLagTxnCount();
     }
@@ -2166,7 +2234,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (needsOrdering || needsDedup) {
                     if (needsOrdering) {
-                        LOG.info().$("sorting WAL [table=").$(tableToken)
+                        LOG.debug().$("sorting WAL [table=").$(tableToken)
                                 .$(", ordered=").$(ordered)
                                 .$(", lagRowCount=").$(walLagRowCount)
                                 .$(", walRowLo=").$(rowLo)
@@ -6759,7 +6827,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.close(fd);
                 }
             } else {
-                throw CairoException.critical(0).put("Partition does not exist [path=").put(other).put(']');
+                LOG.error().$("cannot read next partition min timestamp on attempt to drop the partition, next partition does not exist [path=").$(other).I$();
+                return partitionTimestamp;
             }
         } finally {
             other.trimTo(pathSize);

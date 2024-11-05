@@ -662,6 +662,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                 }
+            } else if (SqlKeywords.isForceKeyword(tok)) {
+                tok = expectToken(lexer, "'drop'");
+                if (SqlKeywords.isDropKeyword(tok)) {
+                    tok = expectToken(lexer, "'partition'");
+                    if (SqlKeywords.isPartitionKeyword(tok)) {
+                        tok = expectToken(lexer, "'list'");
+                        if (SqlKeywords.isListKeyword(tok)) {
+                            securityContext.authorizeAlterTableDropPartition(tableToken);
+                            alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, lexer.lastTokenPosition(), PartitionAction.FORCE_DROP);
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'list' expected");
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                    }
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'drop' expected");
+                }
             } else if (SqlKeywords.isAlterKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
@@ -1278,6 +1296,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case PartitionAction.DROP:
                 alterOperationBuilder = this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
                 break;
+            case PartitionAction.FORCE_DROP:
+                alterOperationBuilder = this.alterOperationBuilder.ofForceDropPartition(pos, tableToken, tableMetadata.getTableId());
+                break;
             case PartitionAction.DETACH:
                 alterOperationBuilder = this.alterOperationBuilder.ofDetachPartition(pos, tableToken, tableMetadata.getTableId());
                 break;
@@ -1316,7 +1337,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
             try {
-                long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy, 0, -1);
+                // When force drop partitions, allow to specify partitions with the full format and split part timestamp
+                // like 2022-02-26T155900-000001
+                // Otherwise ignore the split time part.
+                int hi = action == PartitionAction.FORCE_DROP ? partitionName.length() : -1;
+                long timestamp = PartitionBy.parsePartitionDirName(partitionName, partitionBy, 0, hi);
                 alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
             } catch (CairoException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
@@ -3284,6 +3309,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         public static final int CONVERT = 4;
         public static final int DETACH = 3;
         public static final int DROP = 1;
+        public static final int FORCE_DROP = 5;
     }
 
     private static class TableStructureAdapter implements TableStructure {

@@ -380,7 +380,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$(", rows=").$(rowsAdded)
                             .$(", time=").$(insertTimespan / 1000)
                             .$("ms, rate=").$(rowsAdded * 1000000L / Math.max(1, insertTimespan))
-                            .$("rows/s, physicalWrittenRowsMultiplier=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
+                            .$("rows/s, ampl=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
                             .I$();
                 }
             } finally {
