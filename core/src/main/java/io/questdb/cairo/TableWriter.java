@@ -1353,6 +1353,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         0
                                 );
                             }
+                        } else {
+                            // no rows in column
+                            partitionDescriptor.addColumn(
+                                    columnName,
+                                    columnType,
+                                    columnId,
+                                    partitionRowCount,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0,
+                                    0
+                            );
                         }
                     } else {
                         throw CairoException.critical(0).put("unsupported column type [column=").put(columnName).put(", type=").put(columnType).put(']');
