@@ -1715,12 +1715,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (activePartitionDropped) {
                     long activePartitionTs = txWriter.getPartitionTimestampByIndex(txWriter.getPartitionCount() - 1);
                     long activePartitionRows = txWriter.getPartitionSize(txWriter.getPartitionCount() - 1);
-                    readPartitionMinMax(ff, activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), activePartitionRows);
-                    maxTimestamp = attachMaxTimestamp;
-                    openLastPartition();
+                    setPathForPartition(path.trimTo(pathSize), partitionBy, activePartitionTs, txWriter.getPartitionNameTxn(txWriter.getPartitionCount() - 1));
+                    try {
+                        readPartitionMinMax(ff, activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), activePartitionRows);
+                        maxTimestamp = attachMaxTimestamp;
+                    } finally {
+                        path.trimTo(pathSize);
+                    }
                 }
 
                 txWriter.finishPartitionSizeUpdate(minTimestamp, maxTimestamp);
+                if (activePartitionDropped) {
+                    openLastPartition();
+                }
                 txWriter.bumpTruncateVersion();
 
                 columnVersionWriter.commit();
@@ -1731,6 +1738,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 rowAction = ROW_ACTION_OPEN_PARTITION;
                 txWriter.resetTimestamp();
                 columnVersionWriter.truncate();
+                freeColumns(false);
+                releaseIndexerWriters();
                 txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
             }
 

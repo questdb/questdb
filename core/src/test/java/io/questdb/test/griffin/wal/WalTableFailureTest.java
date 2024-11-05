@@ -647,6 +647,48 @@ public class WalTableFailureTest extends AbstractCairoTest {
                             "4200\t2022-02-24T00:00:00.000000Z\t2022-02-26T23:58:00.000000Z\n",
                     "select count(), min(ts), max(ts) from " + tableName.getTableName()
             );
+
+            // Drop last partition
+            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26T185900-000001', '2022-02-26'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "2881\t2022-02-24T00:00:00.000000Z\t2022-02-25T23:59:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Insert more data
+            insert("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-26T16', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60)");
+
+            drainWalQueue();
+
+            // Drop all partitions
+            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-25', '2022-02-24', '2022-02-26'");
+            assertSql("count\tmin\tmax\n" +
+                            "0\t\t\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Insert more data
+            insert("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-26T16', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60 * 24)");
+
+            drainWalQueue();
+
+            assertSql("count\tmin\tmax\n" +
+                            "1440\t2022-02-26T16:00:00.000000Z\t2022-02-27T15:59:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Force drop first partition, but keep last
+            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "960\t2022-02-27T00:00:00.000000Z\t2022-02-27T15:59:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
         });
     }
 
