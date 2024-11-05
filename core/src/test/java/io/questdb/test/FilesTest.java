@@ -540,6 +540,51 @@ public class FilesTest {
     }
 
     @Test
+    public void testIsDirOrSoftLinkDir() throws Exception {
+        final File baseDir = temporaryFolder.newFolder();
+
+        setupPath(baseDir, "empty_dir/");
+        setupPath(baseDir, "file");
+        setupPath(baseDir, "dir_with_a_file/file");
+        setupPath(baseDir, "dir_with_an_empty_dir/dir/");
+        setupPath(baseDir, "link_to_file -> file");
+        setupPath(baseDir, "link_to_empty_dir -> empty_dir/");
+        setupPath(baseDir, "link_to_dir_with_a_file -> dir_with_a_file/");
+        setupPath(baseDir, "link_to_dir_with_an_empty_dir -> dir_with_an_empty_dir/");
+        setupPath(baseDir, "nonexistent"); // deleted later
+        setupPath(baseDir, "link_to_nonexistent -> nonexistent");
+        setupPath(baseDir, "link_to_link_to_file -> link_to_file");
+        setupPath(baseDir, "link_to_link_to_empty_dir -> link_to_empty_dir");
+        setupPath(baseDir, "link_to_link_to_dir_with_a_file -> link_to_dir_with_a_file");
+        setupPath(baseDir, "link_to_link_to_dir_with_an_empty_dir -> link_to_dir_with_an_empty_dir");
+        setupPath(baseDir, "link_to_link_to_nonexistent -> link_to_nonexistent");
+
+        final File nonexistent = new File(baseDir, "nonexistent");
+        nonexistent.delete();
+        Assert.assertFalse(nonexistent.exists());
+
+        assertMemoryLeak(() -> {
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "something/that/does/not/exist"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "empty_dir/."));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_a_file/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/dir/.."));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_empty_dir"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_a_file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_an_empty_dir"));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_nonexistent"));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_link_to_file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_empty_dir"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_dir_with_a_file"));
+            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_dir_with_an_empty_dir"));
+            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_link_to_nonexistent"));
+        });
+    }
+
+    @Test
     public void testLastModified() throws Exception {
         LogFactory.getLog(FilesTest.class); // so that it is not accounted in assertMemoryLeak
         assertMemoryLeak(() -> {
@@ -1514,5 +1559,48 @@ public class FilesTest {
                 Assert.assertTrue(Files.remove(softLinkRenamedFilePath.$()));
             }
         });
+    }
+
+    private boolean isDirOrSoftLinkDir(File basePath, String path) {
+        try (Path p = new Path().of(new File(basePath, path).toString())) {
+            return Files.isDirOrSoftLinkDir(p.$());
+        }
+    }
+
+    private void setupPath(File baseDir, String scenario) throws IOException {
+        // Under the base dir:
+        //   - create dirs for any scenario ending in /
+        //   - create symlinks for any scenario containing arrows (i.e. "LINK -> TARGET")
+        //   - create files for any other scenario
+        if (scenario.contains(" -> ")) {
+            final String[] parts = scenario.split(" -> ");
+            final String targetPathString = parts[1].replaceAll("/$", "");
+            final File target = new File(baseDir, targetPathString);
+            final File link = new File(baseDir, parts[0]);
+            link.getParentFile().mkdirs();
+            try (
+                    Path targetPath = new Path().of(target.getAbsolutePath());
+                    Path linkPath = new Path().of(link.getAbsolutePath())
+            ) {
+                Files.softLink(targetPath.$(), linkPath.$());
+                Assert.assertTrue(
+                        "Could not set up scenario: " + scenario,
+                        Files.exists(linkPath.$()));
+            }
+
+        } else if (scenario.endsWith("/")) {
+            final File file = new File(baseDir, scenario.replaceAll("/$", ""));
+            file.mkdirs();
+            Assert.assertTrue(
+                    "Could not set up scenario: " + scenario,
+                    file.exists());
+        } else {
+            final File file = new File(baseDir, scenario);
+            file.getParentFile().mkdirs();
+            touch(file);
+            Assert.assertTrue(
+                    "Could not set up scenario: " + scenario,
+                    file.exists());
+        }
     }
 }

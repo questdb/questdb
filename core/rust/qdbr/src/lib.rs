@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 
+mod files;
 mod parquet_read;
 mod parquet_write;
 mod utils;

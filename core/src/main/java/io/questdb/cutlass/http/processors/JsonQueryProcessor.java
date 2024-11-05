@@ -300,7 +300,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     @Override
     public void onRequestRetry(
             HttpConnectionContext context
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException {
         JsonQueryProcessorState state = LV.get(context);
         execute0(state);
     }
@@ -390,7 +390,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private static int getStatusCode(CairoException e) {
         if (e.isAuthorizationError()) {
-            return HTTP_UNAUTHORIZED;
+            return HTTP_FORBIDDEN;
         }
         if (e.isInterruption()) {
             return HTTP_CLIENT_TIMEOUT;
