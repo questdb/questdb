@@ -4089,90 +4089,22 @@ public class SqlOptimiser implements Mutable {
      */
     private void rewriteNegativeLimit(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model != null) {
-            if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
-                    && model.getNestedModel() != null
-                    && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
-                    && model.getNestedModel().getNestedModel() != null
-                    && model.getNestedModel().getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE) {
-                // Something like this: SELECT timestamp, * FROM trades LIMIT -3;
-                // compiles to:
-                // select-choose timestamp, symbol, side, price, amount, timestamp timestamp1
-                // from (select-choose timestamp, symbol, side, price, amount
-                // from (trades timestamp (timestamp))) limit -(3)
-                // We have this extra select choose to alias the already selected columns.
-                // We may be able to compact this
 
-                QueryModel inner = model.getNestedModel();
-
-                if (model.getBottomUpColumns().size() >= inner.getBottomUpColumns().size()) {
-                    // its possible that this is a redundant model, or we can push down the extra select choose
-                    for (int i = 0, n = inner.getBottomUpColumns().size(); i < n; i++) {
-                        QueryColumn innerColumn = inner.getBottomUpColumns().get(i);
-
-                        if (!model.getColumnNameToAliasMap().contains(innerColumn.getName())) {
-                            // if its not part of it, then is it the same as another column?
-                            CharSequence token = innerColumn.getAst().token;
-
-                            if (model.getColumnNameToAliasMap().contains(token)) {
-                                // we can push down this column
-                                inner.addBottomUpColumn(innerColumn);
-                            }
-                        }
-                    }
-                }
-
-                boolean identicalModels = true;
-
-                // now check that the models are identical
-                if (model.getBottomUpColumns().size() == inner.getBottomUpColumns().size()) {
-                    for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                        QueryColumn outerColumn = model.getBottomUpColumns().get(i);
-                        QueryColumn innerColumn = inner.getBottomUpColumns().get(i);
-
-
-                        if (!(outerColumn.getAlias().equals(innerColumn.getAlias())
-                                && outerColumn.getAst().token.equals(innerColumn.getAst().token)
-                                && outerColumn.getAst().type == innerColumn.getAst().type)) {
-                            identicalModels = false;
-                        }
-                    }
-                }
-
-                if (identicalModels && model.getLimitLo() != null) {
-                    // push down limit
-                    model.setNestedModel(inner.getNestedModel());
-                }
+            if (!rewriteNegativeLimitGuard(model, executionContext)) {
+                // try to condense potential wildcard model
+                rewriteToCondenseWildcardModels(model);
             }
 
             final QueryModel nested = model.getNestedModel();
-            Function loFunction;
-            ObjList<ExpressionNode> orderBy;
-            long limitValue;
 
             if (
-                    model.getLimitLo() != null
-                            && model.getLimitHi() == null
-                            && model.getUnionModel() == null
-                            && model.getJoinModels().size() == 1
-                            && model.getGroupBy().size() == 0
-                            && model.getSampleBy() == null
-                            && !hasAggregateQueryColumn(model)
-                            && !model.isDistinct()
-                            && nested != null
-                            && nested.getJoinModels().size() == 1
-                            && nested.getTimestamp() != null
-                            && nested.getWhereClause() == null
-                            && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
-                            && loFunction.isConstant()
-                            && (limitValue = loFunction.getLong(null)) < 0
-                            && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
-                            && ((orderBy = nested.getOrderBy()).size() == 0 ||
-                            (
-                                    orderBy.size() == 1
-                                            && nested.isOrderByTimestamp(orderBy.getQuick(0).token)
-                            )
-                    )
+                    rewriteNegativeLimitGuard(model, executionContext)
             ) {
+                Function loFunction = getLoFunction(model.getLimitLo(), executionContext);
+                ObjList<ExpressionNode> orderBy = nested.getOrderBy();
+                assert loFunction != null; // covered by the guard
+                long limitValue = loFunction.getLong(null);
+
                 final CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
                 characterStoreEntry.put(-limitValue);
                 ExpressionNode limitNode = nextLiteral(characterStoreEntry.toImmutable());
@@ -4246,6 +4178,36 @@ public class SqlOptimiser implements Mutable {
             // assign different nested model because it might need to be re-written
             rewriteNegativeLimit(nested, executionContext);
         }
+    }
+
+    private boolean rewriteNegativeLimitGuard(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final QueryModel nested = model.getNestedModel();
+        Function loFunction;
+        ObjList<ExpressionNode> orderBy;
+        long limitValue;
+        return
+                (model.getLimitLo() != null
+                        && model.getLimitHi() == null
+                        && model.getUnionModel() == null
+                        && model.getJoinModels().size() == 1
+                        && model.getGroupBy().size() == 0
+                        && model.getSampleBy() == null
+                        && !hasAggregateQueryColumn(model)
+                        && !model.isDistinct()
+                        && nested != null
+                        && nested.getJoinModels().size() == 1
+                        && nested.getTimestamp() != null
+                        && nested.getWhereClause() == null
+                        && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
+                        && loFunction.isConstant()
+                        && (limitValue = loFunction.getLong(null)) < 0
+                        && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
+                        && ((orderBy = nested.getOrderBy()).size() == 0 ||
+                        (
+                                orderBy.size() == 1
+                                        && nested.isOrderByTimestamp(orderBy.getQuick(0).token)
+                        ))
+                );
     }
 
     /**
@@ -5843,6 +5805,81 @@ public class SqlOptimiser implements Mutable {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             rewriteSingleFirstLastGroupBy(joinModels.getQuick(i));
+        }
+    }
+
+    private void rewriteToCondenseWildcardModels(QueryModel model) throws SqlException {
+
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                && model.getNestedModel() != null
+                && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                && model.getNestedModel().getNestedModel() != null
+                && model.getNestedModel().getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE) {
+
+            {
+                // Something like this: SELECT timestamp, * FROM trades LIMIT -3;
+                // compiles to:
+                // select-choose timestamp, symbol, side, price, amount, timestamp timestamp1
+                // from (select-choose timestamp, symbol, side, price, amount
+                // from (trades timestamp (timestamp))) limit -(3)
+                // We have this extra select choose to alias the already selected columns.
+                // We may be able to compact this
+
+                QueryModel nested = model.getNestedModel();
+                QueryModel none = nested.getNestedModel();
+
+                if (model.getLimitLo() != null
+                        && model.getLimitHi() == null
+                        && model.getUnionModel() == null
+                        && model.getJoinModels().size() == 1
+                        && nested.getJoinModels().size() == 1
+                        && none.getJoinModels().size() == 1
+                        && model.getGroupBy().size() == 0
+                        && nested.getGroupBy().size() == 1
+                        && model.getSampleBy() == null
+                        && nested.getSampleBy() == null
+                        && !hasAggregateQueryColumn(model)
+                        && !model.isDistinct()) {
+
+                    if (model.getBottomUpColumns().size() >= nested.getBottomUpColumns().size()) {
+                        // its possible that this is a redundant model, or we can push down the extra select choose
+                        for (int i = 0, n = nested.getBottomUpColumns().size(); i < n; i++) {
+                            QueryColumn innerColumn = nested.getBottomUpColumns().get(i);
+
+                            if (!model.getColumnNameToAliasMap().contains(innerColumn.getName())) {
+                                // if its not part of it, then is it the same as another column?
+                                CharSequence token = innerColumn.getAst().token;
+
+                                if (model.getColumnNameToAliasMap().contains(token)) {
+                                    // we can push down this column
+                                    nested.addBottomUpColumn(innerColumn);
+                                }
+                            }
+                        }
+                    }
+
+                    boolean identicalModels = true;
+
+                    // now check that the models are identical
+                    if (model.getBottomUpColumns().size() == nested.getBottomUpColumns().size()) {
+                        for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
+                            QueryColumn outerColumn = model.getBottomUpColumns().get(i);
+                            QueryColumn innerColumn = nested.getBottomUpColumns().get(i);
+
+                            if (!(outerColumn.getAlias().equals(innerColumn.getAlias())
+                                    && outerColumn.getAst().token.equals(innerColumn.getAst().token)
+                                    && outerColumn.getAst().type == innerColumn.getAst().type)) {
+                                identicalModels = false;
+                            }
+                        }
+                    }
+
+                    if (identicalModels && model.getLimitLo() != null) {
+                        // push down limit
+                        model.setNestedModel(nested.getNestedModel());
+                    }
+                }
+            }
         }
     }
 
