@@ -1795,7 +1795,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException {
         final String value = getString(properties, env, key, Long.toString(defaultValue));
         try {
-            return Numbers.parseNanos(value) * 1000L;
+            return Numbers.parseMicros(value);
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
@@ -1809,7 +1809,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException {
         final String value = getString(properties, env, key, Long.toString(defaultValue));
         try {
-            return Numbers.parseNanos(value) * 1_000_000L;
+            return Numbers.parseMillis(value);
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
