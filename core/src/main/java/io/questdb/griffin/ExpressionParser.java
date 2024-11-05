@@ -1319,7 +1319,7 @@ public class ExpressionParser {
                             }
 
                             // If the token is a function token, then push it onto the stack.
-                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), 0, lastPos));
+                            opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lastPos));
                         }
                     } else {
                         ExpressionNode last = this.opStack.peek();

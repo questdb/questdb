@@ -2366,22 +2366,6 @@ public class SqlOptimiser implements Mutable {
         opAnd = registry.map.get("and");
     }
 
-    private boolean isDesignatedTimestampFirstColumn(QueryModel model) {
-        if (model.getBottomUpColumns() == null) {
-            return false;
-        }
-
-        QueryModel curr = model;
-        ExpressionNode timestamp = null;
-
-        while (timestamp == null && curr != null) {
-            timestamp = curr.getTimestamp();
-            curr = curr.getNestedModel();
-        }
-
-        return timestamp != null && Chars.equalsIgnoreCaseNc(model.getBottomUpColumns().getQuick(0).getAst().token, timestamp.token);
-    }
-
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
@@ -5835,7 +5819,8 @@ public class SqlOptimiser implements Mutable {
                         && nested.getJoinModels().size() == 1
                         && none.getJoinModels().size() == 1
                         && model.getGroupBy().size() == 0
-                        && nested.getGroupBy().size() == 1
+                        && nested.getGroupBy().size() == 0
+                        && none.getGroupBy().size() == 0
                         && model.getSampleBy() == null
                         && nested.getSampleBy() == null
                         && !hasAggregateQueryColumn(model)
