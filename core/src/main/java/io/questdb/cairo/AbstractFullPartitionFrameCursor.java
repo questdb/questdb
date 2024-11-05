@@ -33,7 +33,7 @@ import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractFullPartitionFrameCursor implements PartitionFrameCursor {
     protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
-    protected final PartitionDecoder parquetDecoder = new PartitionDecoder();
+    protected PartitionDecoder parquetDecoder;
     protected int partitionHi;
     protected int partitionIndex;
     protected TableReader reader;

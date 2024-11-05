@@ -89,7 +89,7 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
                 long lo;
                 if (partitionTimestampLo < intervalLo) {
-                    // IntervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
+                    // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
                     // and then do index + 1 to skip to top of where we need to be.
                     // We are not scanning up on the exact value of intervalLo because it may not exist. In which case
                     // the search function will scan up to top of the lower value.
