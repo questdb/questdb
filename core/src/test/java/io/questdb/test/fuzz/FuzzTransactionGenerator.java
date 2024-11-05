@@ -93,15 +93,15 @@ public class FuzzTransactionGenerator {
         transactionCount = Math.max(Math.min(transactionCount, 1_500_000 / rowCount), 3);
 
         // Decide if drop will be generated
-        boolean generateDrop = rnd.nextDouble() < tableDropProbability;
-        int dropIteration = generateDrop ? rnd.nextInt(transactionCount) : -1;
-        if (generateDrop) {
+        boolean generateTableDrop = rnd.nextDouble() < tableDropProbability;
+        int tableDropIteration = generateTableDrop ? rnd.nextInt(transactionCount) : -1;
+        if (generateTableDrop) {
             transactionCount++;
         }
-        long estimatedToalRows = rowCount + initialRowCount;
+        long estimatedTotalRows = rowCount + initialRowCount;
 
         for (int i = 0; i < transactionCount; i++) {
-            if (i == dropIteration) {
+            if (i == tableDropIteration) {
                 generateTableDropCreate(transactionList, metaVersion, waitBarrierVersion++);
                 metaVersion = 0;
                 continue;
@@ -124,7 +124,7 @@ public class FuzzTransactionGenerator {
             if (wantToRemoveColumn) {
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {
-                    // Sometimes there can be nothing to remove
+                    // Sometimes there is nothing to remove
                     metaVersion++;
                     waitBarrierVersion++;
                     meta = newTableMetadata;
@@ -132,7 +132,7 @@ public class FuzzTransactionGenerator {
             } else if (wantToRenameColumn) {
                 RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {
-                    // Sometimes there can be nothing to rename
+                    // Sometimes there is nothing to rename
                     metaVersion++;
                     waitBarrierVersion++;
                     meta = newTableMetadata;
@@ -144,7 +144,7 @@ public class FuzzTransactionGenerator {
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
-                meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedToalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
+                meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);
