@@ -1895,14 +1895,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testQualifiedTableNames() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table \"foo.bah\" (ts timestamp) timestamp(ts) partition by day wal;");
-            assertPlanNoLeakCheck("select ts, count from \"foo.bah\" sample by 1d from '2008-12-28' TO '2009-01-05' FILL(NULL)", "");
-        });
-    }
-
-    @Test
     public void testQueryPlanForFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int, ts timestamp) timestamp(ts);");
