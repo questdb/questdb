@@ -55,15 +55,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private boolean authorizationError = false;
     private boolean cacheable;
     private boolean cancellation; // when query is explicitly cancelled by user
-    private boolean entityDisabled; // used when account is disabled and connection should be dropped
     private boolean interruption; // used when a query times out
     private int messagePosition;
     private boolean outOfMemory;
 
     public static CairoException authorization() {
-        CairoException e = nonCritical();
-        e.authorizationError = true;
-        return e;
+        return nonCritical().setAuthorizationError();
     }
 
     public static CairoException critical(int errno) {
@@ -102,7 +99,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     @SuppressWarnings("unused")
     public static CairoException entityIsDisabled(CharSequence entityName) {
-        return nonCritical().setEntityDisabled(true).put("entity is disabled [name=").put(entityName).put(']');
+        return nonCritical().put("entity is disabled [name=").put(entityName).put(']');
     }
 
     public static boolean errnoPathDoesNotExist(int errno) {
@@ -217,10 +214,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return errno != NON_CRITICAL && errno != PARTITION_MANIPULATION_RECOVERABLE && errno != METADATA_VALIDATION_RECOVERABLE;
     }
 
-    public boolean isEntityDisabled() {
-        return entityDisabled;
-    }
-
     public boolean isInterruption() {
         return interruption;
     }
@@ -283,6 +276,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    public CairoException setAuthorizationError() {
+        this.authorizationError = true;
+        return this;
+    }
+
     public CairoException setCacheable(boolean cacheable) {
         this.cacheable = cacheable;
         return this;
@@ -290,11 +288,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException setCancellation(boolean cancellation) {
         this.cancellation = cancellation;
-        return this;
-    }
-
-    public CairoException setEntityDisabled(boolean disabled) {
-        this.entityDisabled = disabled;
         return this;
     }
 
@@ -349,7 +342,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         cacheable = false;
         interruption = false;
         authorizationError = false;
-        entityDisabled = false;
         messagePosition = 0;
         outOfMemory = false;
     }

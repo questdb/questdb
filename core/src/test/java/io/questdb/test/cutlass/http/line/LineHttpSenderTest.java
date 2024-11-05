@@ -34,6 +34,9 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -54,6 +57,84 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testTimestampUpperBounds() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            TimestampFormatCompiler timestampFormatCompiler = new TimestampFormatCompiler();
+
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+                serverMain.compile("create table tab (ts timestamp, ts2 timestamp) timestamp(ts) partition by DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .build()
+                ) {
+
+                    DateFormat format = timestampFormatCompiler.compile("yyyy-MM-dd HH:mm:ss.SSSUUU");
+                    // technically, we the storage layer supports dates up to 294247-01-10T04:00:54.775807Z
+                    // but DateFormat does reliably support only 4 digit years. thus we use 9999-12-31T23:59:59.999Z
+                    // is the maximum date that can be reliably worked with.
+                    long nonDsTs = format.parse("9999-12-31 23:59:59.999999", DateFormatUtils.EN_LOCALE);
+                    long dsTs = format.parse("9999-12-31 23:59:59.999999", DateFormatUtils.EN_LOCALE);
+
+                    // first try with ChronoUnit
+                    sender.table("tab")
+                            .timestampColumn("ts2", nonDsTs, ChronoUnit.MICROS)
+                            .at(dsTs, ChronoUnit.MICROS);
+                    sender.flush();
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
+                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n");
+
+
+                    // now try with the Instant overloads of `at()` and `timestampColumn()`
+                    Instant nonDsInstant = Instant.ofEpochSecond(nonDsTs / 1_000_000, (nonDsTs % 1_000_000) * 1_000);
+                    Instant dsInstant = Instant.ofEpochSecond(dsTs / 1_000_000, (nonDsTs % 1_000_000) * 1_000);
+                    sender.table("tab")
+                            .timestampColumn("ts2", nonDsInstant)
+                            .at(dsInstant);
+                    sender.flush();
+
+                    serverMain.awaitTable("tab");
+                    serverMain.assertSql("SELECT * FROM tab", "ts\tts2\n" +
+                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n" +
+                            "9999-12-31T23:59:59.999999Z\t9999-12-31T23:59:59.999999Z\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNegativeDesignatedTimestampDoesNotRetry() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .retryTimeoutMillis(Integer.MAX_VALUE) // high-enoung value so the test times out if retry is attempted
+                        .build()
+                ) {
+                    sender.table("tab")
+                            .longColumn("l", 1) // filler
+                            .at(-1, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "error in line 1: table: tab, timestamp: -1; designated timestamp before 1970-01-01 is not allowed"
+                    );
+                }
+            }
+        });
     }
 
     @Test
