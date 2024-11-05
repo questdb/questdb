@@ -29,6 +29,7 @@ import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.std.DeepCloneable;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.ObjList;
 
 import java.lang.reflect.Array;
@@ -88,20 +89,10 @@ public class FunctionCloneFactory {
                     if (fValue == null || Modifier.isStatic(field.getModifiers())) {
                         continue;
                     }
-
-                    if (fValue instanceof Function) {
-                        if (fValue instanceof IndexedParameterLinkFunction || fValue instanceof NamedParameterLinkFunction) {
-                            field.set(cloneFunc, fValue);
-                        } else {
-                            field.set(cloneFunc, deepCloneFunction((Function) fValue));
-                        }
-                    } else if (fValue instanceof DeepCloneable<?>) {
-                        field.set(cloneFunc, ((DeepCloneable<?>) fValue).deepClone());
-                    } else if (fValue instanceof ObjList) {
-                        field.set(cloneFunc, cloneObjList((ObjList<?>) fValue));
-                    } else if (field.getType().isPrimitive() || field.get(cloneFunc) == null || field.getType() == CharSequence.class
-                            || field.getType() == String.class) {
-                        field.set(cloneFunc, fValue);
+                    if (hasDelayInitialize(field)) {
+                        field.set(cloneFunc, null);
+                    } else {
+                        field.set(cloneFunc, cloneElem(field.getType(), fValue, field.get(cloneFunc)));
                     }
                 }
                 cls = cls.getSuperclass();
@@ -121,13 +112,15 @@ public class FunctionCloneFactory {
         }
         ObjList nList = new ObjList<>(fValue.size());
         for (int i = 0, size = fValue.size(); i < size; i++) {
-            nList.add(cloneElem(fValue.getQuick(i)));
+            nList.add(cloneElem(null, fValue.getQuick(i), null));
         }
         return nList;
     }
 
-    private static Object cloneElem(Object fValue) {
-        if (fValue instanceof Function) {
+    private static Object cloneElem(Class<?> fType, Object fValue, Object cValue) {
+        if (fValue == null) {
+            return null;
+        } else if (fValue instanceof Function) {
             if (fValue instanceof IndexedParameterLinkFunction || fValue instanceof NamedParameterLinkFunction) {
                 return fValue;
             } else {
@@ -135,8 +128,22 @@ public class FunctionCloneFactory {
             }
         } else if (fValue instanceof DeepCloneable<?>) {
             return ((DeepCloneable<?>) fValue).deepClone();
+        } else if (fValue instanceof ObjList) {
+            return cloneObjList((ObjList<?>) fValue);
         } else {
-            return fValue;
+            if (fType == null) {
+                fType = fValue.getClass();
+            }
+            if (fType.isPrimitive() || cValue == null || fType == CharSequence.class || fType == String.class) {
+                return fValue;
+            } else {
+                return cValue;
+            }
         }
+    }
+
+    private static boolean hasDelayInitialize(Field f) {
+        DelayInitialize annotation = f.getAnnotation(DelayInitialize.class);
+        return annotation != null;
     }
 }

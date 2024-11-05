@@ -366,8 +366,8 @@ public class JsonExtractFunction implements ScalarFunction {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        ScalarFunction.super.init(symbolTableSource, executionContext);
         if (stateA == null) {
+            assert stateB == null;
             switch (targetType) {
                 case ColumnType.IPv4:
                 case ColumnType.DATE:

@@ -88,6 +88,11 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
+    default boolean supportDeepClone() {
+        return getLeft().supportDeepClone() && getRight().supportDeepClone();
+    }
+
+    @Override
     default void toPlan(PlanSink sink) {
         if (isOperator()) {
             sink.val(getLeft()).val(getName()).val(getRight());

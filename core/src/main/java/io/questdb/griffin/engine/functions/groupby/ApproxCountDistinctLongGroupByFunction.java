@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLog;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.Hash;
 import io.questdb.std.Numbers;
 
@@ -41,8 +42,8 @@ public class ApproxCountDistinctLongGroupByFunction extends LongFunction impleme
     private static final long NULL_VALUE = -1;
 
     private final Function arg;
-    private HyperLogLog hllA;
-    private HyperLogLog hllB;
+    private @DelayInitialize HyperLogLog hllA;
+    private @DelayInitialize HyperLogLog hllB;
     private int hllPtrIndex;
     private int overwrittenFlagIndex;
     private int valueIndex;

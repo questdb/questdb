@@ -40,14 +40,15 @@ import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
 import io.questdb.griffin.engine.groupby.GroupByLongHashSet;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.Numbers;
 
 import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public class CountDistinctSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private GroupByIntHashSet setA;
-    private GroupByIntHashSet setB;
+    private @DelayInitialize GroupByIntHashSet setA;
+    private @DelayInitialize GroupByIntHashSet setB;
     private int knownSymbolCount = -1;
     private int valueIndex;
     private final int setInitialCapacity;

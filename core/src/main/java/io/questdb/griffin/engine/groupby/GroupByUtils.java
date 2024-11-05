@@ -369,7 +369,7 @@ public class GroupByUtils {
             for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                 workerGroupByFunctions.add((GroupByFunction) FunctionCloneFactory.deepCloneFunction(groupByFunctions.getQuick(i)));
             }
-        } catch (UnsupportedOperationException e) {
+        } catch (Throwable e) {
             supportDeepClone = false;
         }
         if (!supportDeepClone) {

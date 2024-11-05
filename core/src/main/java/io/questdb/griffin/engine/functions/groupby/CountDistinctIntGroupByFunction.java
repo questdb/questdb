@@ -34,12 +34,13 @@ import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.Numbers;
 
 public class CountDistinctIntGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private GroupByIntHashSet setA;
-    private GroupByIntHashSet setB;
+    private @DelayInitialize GroupByIntHashSet setA;
+    private @DelayInitialize GroupByIntHashSet setB;
     private int valueIndex;
     private final int setInitialCapacity;
     private final double setLoadFactor;

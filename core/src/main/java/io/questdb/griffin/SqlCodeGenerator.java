@@ -820,8 +820,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (int i = 0; i < workerCount; i++) {
                     workerFilters.extendAndSet(i, FunctionCloneFactory.deepCloneFunction(filter));
                 }
-            } catch (UnsupportedOperationException e) {
-                LOG.debug().$("Failed to deepClone filter function for parallel worker").I$();
+            } catch (Throwable e) {
+                LOG.debug().$("Failed to deepClone filter function for parallel worker").$();
                 supportDeepClone = false;
             }
             if (!supportDeepClone) {
@@ -896,8 +896,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         workerKeyFunctions.add(FunctionCloneFactory.deepCloneFunction(keyFunctions.getQuick(j)));
                     }
                 }
-            } catch (UnsupportedOperationException e) {
-                LOG.debug().$("Failed to deepClone keyFunctions for parallel worker").I$();
+            } catch (Throwable e) {
+                LOG.debug().$("Failed to deepClone keyFunctions for parallel worker").$();
                 supportDeepClone = false;
             }
             if (!supportDeepClone) {

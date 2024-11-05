@@ -268,6 +268,12 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return true;
     }
 
+    /**
+     * Return true if the function support clone itself init states for parallel execution,
+     * which would call by ({@link io.questdb.griffin.engine.functions.FunctionCloneFactory}).
+     *
+     * @return true if the function and all of its children functions are support deepClone.
+     */
     default boolean supportDeepClone() {
         return true;
     }

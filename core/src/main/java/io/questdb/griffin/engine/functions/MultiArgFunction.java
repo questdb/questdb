@@ -100,6 +100,18 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
+    default boolean supportDeepClone() {
+        final ObjList<Function> args = getArgs();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (!function.supportDeepClone()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
     default void toPlan(PlanSink sink) {
         sink.val(getName()).val('(').val(getArgs()).val(')');
     }

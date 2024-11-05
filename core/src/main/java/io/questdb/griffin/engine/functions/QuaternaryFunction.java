@@ -112,6 +112,14 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
+    default boolean supportDeepClone() {
+        return getFunc0().supportDeepClone()
+                && getFunc1().supportDeepClone()
+                && getFunc2().supportDeepClone()
+                && getFunc3().supportDeepClone();
+    }
+
+    @Override
     default void toPlan(PlanSink sink) {
         sink.val(getName()).val('(')
                 .val(getFunc0()).val(',')

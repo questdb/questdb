@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
 import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
+import io.questdb.std.DelayInitialize;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
 
@@ -42,8 +43,8 @@ import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public final class CountDistinctUuidGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private GroupByLong128HashSet setA;
-    private GroupByLong128HashSet setB;
+    private @DelayInitialize GroupByLong128HashSet setA;
+    private @DelayInitialize GroupByLong128HashSet setB;
     private int valueIndex;
     private final int setInitialCapacity;
     private final double setLoadFactor;

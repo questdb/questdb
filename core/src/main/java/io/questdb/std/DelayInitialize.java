@@ -24,13 +24,13 @@
 
 package io.questdb.std;
 
-/**
- * Return itself deepClone instance.
- * <p>
- * Fields in ({@link io.questdb.cairo.sql.Function}) that not thread safe in parallel
- * execution need to implement this interface.
- * Would be used in ({@link io.questdb.griffin.engine.functions.FunctionCloneFactory}).
- */
-public interface DeepCloneable<T> {
-    T deepClone();
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.FIELD)
+public @interface DelayInitialize {
+    String value() default "";
 }

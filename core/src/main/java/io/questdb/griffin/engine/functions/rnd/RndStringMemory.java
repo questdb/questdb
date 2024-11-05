@@ -28,22 +28,18 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryAR;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.DeepCloneable;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 
 import java.io.Closeable;
 
-class RndStringMemory implements Closeable, DeepCloneable<RndStringMemory> {
+class RndStringMemory implements Closeable {
     private final int count;
     private final int hi;
     private final MemoryAR idxMem;
     private final int lo;
     private final MemoryAR strMem;
-    private final String signature;
-    private final int pageSize;
-    private final int maxPages;
 
     RndStringMemory(String signature, int count, int lo, int hi, int position, CairoConfiguration configuration) throws SqlException {
         try {
@@ -51,9 +47,8 @@ class RndStringMemory implements Closeable, DeepCloneable<RndStringMemory> {
             this.lo = lo;
             this.hi = hi;
 
-            this.signature = signature;
-            this.pageSize = configuration.getRndFunctionMemoryPageSize();
-            this.maxPages = configuration.getRndFunctionMemoryMaxPages();
+            final int pageSize = configuration.getRndFunctionMemoryPageSize();
+            final int maxPages = configuration.getRndFunctionMemoryMaxPages();
             final long memLimit = (long) maxPages * pageSize;
             // check against worst case, the highest possible mem usage
             final long requiredMem = count * (Vm.getStorageLength(hi) + Long.BYTES);
@@ -82,29 +77,12 @@ class RndStringMemory implements Closeable, DeepCloneable<RndStringMemory> {
         Misc.free(idxMem);
     }
 
-    @Override
-    public RndStringMemory deepClone() {
-        return new RndStringMemory(this);
-    }
-
     public int getHi() {
         return hi;
     }
 
     public int getLo() {
         return lo;
-    }
-
-    private RndStringMemory(RndStringMemory other) {
-        this.count = other.count;
-        this.lo = other.lo;
-        this.hi = other.hi;
-        this.signature = other.signature;
-        this.pageSize = other.pageSize;
-        this.maxPages = other.maxPages;
-        final int idxPages = count * 8 / pageSize + 1;
-        this.strMem = Vm.getARInstance(pageSize, maxPages - idxPages, MemoryTag.NATIVE_FUNC_RSS);
-        this.idxMem = Vm.getARInstance(pageSize, idxPages, MemoryTag.NATIVE_FUNC_RSS);
     }
 
     private long getStrAddress(long index) {
