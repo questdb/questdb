@@ -669,6 +669,24 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testExceptionAuthorization() throws Exception {
+        getSimpleTester().run(engine -> {
+            testHttpClient.assertGet(
+                    "{" +
+                            "\"query\":\"select simulate_crash('A') from long_sequence(5)\"," +
+                            "\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}]," +
+                            "\"timestamp\":-1," +
+                            "\"dataset\":[[]]," +
+                            "\"count\":1," +
+                            "\"error\":\"HTTP 403 (Forbidden), simulated authorization exception\"" +
+                            "}",
+                    "select simulate_crash('A') from long_sequence(5)"
+            );
+            Assert.assertEquals(0, engine.getMetrics().health().unhandledErrorsCount());
+        });
+    }
+
+    @Test
     public void testExecuteAndCancelSqlCommandsOnExpEndpoint() throws Exception {
         testExecuteAndCancelSqlCommands("/exp");
     }
