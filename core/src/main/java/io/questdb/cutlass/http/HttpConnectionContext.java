@@ -56,7 +56,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final boolean dumpNetworkTraffic;
     private final int forceFragmentationReceiveChunkSize;
     private final HttpHeaderParser headerParser;
-    private final boolean preAllocateBuffers;
     private final LocalValueMap localValueMap = new LocalValueMap();
     private final Metrics metrics;
     private final HttpHeaderParser multipartContentHeaderParser;
@@ -64,6 +63,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final long multipartIdleSpinCount;
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final NetworkFacade nf;
+    private final boolean preAllocateBuffers;
     private final int recvBufferSize;
     private final RejectProcessor rejectProcessor;
     private final HttpResponseSink responseSink;
@@ -369,7 +369,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public HttpResponseSink.SimpleResponseImpl simpleResponse() {
-        return responseSink.getSimple();
+        return responseSink.simpleResponse();
     }
 
     public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {
