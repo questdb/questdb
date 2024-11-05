@@ -129,7 +129,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalAddDropPartitionO3() throws Exception {
-        Rnd rnd = generateRandom(LOG, 676104031438666L, 1730310427350L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 1.0, 0.0, 0.01, 0.0, 0.0);
         setFuzzCounts(true, 100_000, 500, 20, 10, 20, 100_000, 5);
         setFuzzProperties(rnd);
