@@ -26,12 +26,9 @@
 extern crate core;
 pub extern crate jni;
 
-mod files;
-mod parquet_read;
-mod parquet_write;
-mod utils;
 mod allocator;
 mod cairo;
+mod files;
 mod parquet;
 mod parquet_read;
 mod parquet_write;
