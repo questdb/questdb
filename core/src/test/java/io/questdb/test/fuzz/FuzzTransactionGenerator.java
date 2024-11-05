@@ -107,19 +107,32 @@ public class FuzzTransactionGenerator {
                 continue;
             }
 
-            double rndDouble = rnd.nextDouble();
-            double aggregateProbability = probabilityOfAddingNewColumn;
+            final double rndDouble = rnd.nextDouble();
+            double aggregateProbability = 0;
+            boolean wantSomething = false;
+
+            aggregateProbability += probabilityOfAddingNewColumn;
             boolean wantToAddNewColumn = rndDouble < aggregateProbability;
+            wantSomething |= wantToAddNewColumn;
+
             aggregateProbability += probabilityOfRemovingColumn;
-            boolean wantToRemoveColumn = !wantToAddNewColumn && rndDouble < aggregateProbability;
+            boolean wantToRemoveColumn = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToRemoveColumn;
+
             aggregateProbability += probabilityOfRenamingColumn;
-            boolean wantToRenameColumn = !wantToRemoveColumn && rndDouble < aggregateProbability;
+            boolean wantToRenameColumn = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToRenameColumn;
+
             aggregateProbability += probabilityOfColumnTypeChange;
-            boolean wantToChangeColumnType = !wantToRenameColumn && rndDouble < aggregateProbability;
+            boolean wantToChangeColumnType = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToChangeColumnType;
+
             aggregateProbability += probabilityOfTruncate;
-            boolean wantToTruncateTable = !wantToChangeColumnType && rndDouble < aggregateProbability;
+            boolean wantToTruncateTable = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToTruncateTable;
+
             aggregateProbability += probabilityOfDropPartition;
-            boolean wantToDropPartition = !wantToTruncateTable && rndDouble < aggregateProbability;
+            boolean wantToDropPartition = !wantSomething && rndDouble < aggregateProbability;
 
             if (wantToRemoveColumn) {
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
