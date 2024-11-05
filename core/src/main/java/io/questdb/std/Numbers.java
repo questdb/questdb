@@ -34,9 +34,12 @@ import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.Utf8s;import org.jetbrains.annotations.NotNull;
+//#if jdk.version==8
+//$import sun.misc.FDBigInteger;
+//#else
 import jdk.internal.math.FDBigInteger;
-import org.jetbrains.annotations.NotNull;
+//#endif
 
 import java.util.Arrays;
 
