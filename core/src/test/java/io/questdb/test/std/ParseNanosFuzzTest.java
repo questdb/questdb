@@ -27,6 +27,7 @@ package io.questdb.test.std;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -168,9 +169,11 @@ public class ParseNanosFuzzTest {
     }
 
     private static String generateInvalidUnderscoreFormat() {
-        String number = String.valueOf(rnd.nextInt(MAX_VALUE));
-        return "_".repeat(rnd.nextInt(5) + 1) + number +
-                "_".repeat(rnd.nextInt(5) + 1);
+        StringSink sink = new StringSink();
+        sink.repeat("_", rnd.nextInt(5) + 1);
+        sink.put(rnd.nextInt(MAX_VALUE));
+        sink.repeat("_", rnd.nextInt(5) + 1);
+        return sink.toString();
     }
 
     private static String generateInvalidUnit() {
@@ -253,17 +256,19 @@ public class ParseNanosFuzzTest {
 
     private static String insertOptionalUnderscores(String number) {
         if (number.length() < 2) return number;
-        StringBuilder result = new StringBuilder();
+        StringSink result = new StringSink();
         boolean isNegative = number.startsWith("-");
         String digits = isNegative ? number.substring(1) : number;
 
-        if (isNegative) result.append('-');
-        result.append(digits.charAt(0));
+        if (isNegative) {
+            result.put('-');
+        }
+        result.put(digits.charAt(0));
 
         for (int i = 1; i < digits.length(); i++) {
             int underscores = rnd.nextInt(2); // 0-3 consecutive underscores
-            result.append("_".repeat(underscores));
-            result.append(digits.charAt(i));
+            result.repeat("_", underscores);
+            result.put(digits.charAt(i));
         }
         return result.toString();
     }
