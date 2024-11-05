@@ -97,6 +97,8 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 // calculate intersection for inclusive intervals "intervalLo" and "intervalHi"
                 final long lo;
                 if (partitionTimestampLo < intervalLo) {
+                    // intervalLo is inclusive of value. We will look for bottom index of intervalLo - 1
+                    // and then do index + 1 to skip to top of where we need to be.
                     lo = timestampFinder.findTimestamp(intervalLo - 1, 0, limitHi) + 1;
                 } else {
                     lo = 0;
