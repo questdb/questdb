@@ -1450,7 +1450,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             closeActivePartition(false);
         }
 
-        // remove old partition folder
+        // remove old partition dir
         safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
 
         if (lastPartitionConverted) {
@@ -1491,6 +1491,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
 
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        setPathForNativePartition(path.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
+        final int partitionDirLen = path.size();
+        // set parquet file full path
         setPathForParquetPartition(path.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
         if (!ff.exists(path.$())) {
             throw CairoException.nonCritical().put("partition path does not exist [path=").put(path).put(']');
@@ -1499,7 +1502,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // upgrade partition version
         setPathForNativePartition(other.trimTo(pathSize), partitionBy, partitionTimestamp, getTxn());
         createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
-        final int newPartitionPathLen = other.size();
+        final int newPartitionDirLen = other.size();
 
         // packed as [auxFd, dataFd, dataVecBytesWritten]
         // dataVecBytesWritten is used to adjust offsets in the auxiliary vector
@@ -1529,13 +1532,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 parquetColumnIdsAndTypes.add(columnType);
 
                 if (ColumnType.isVarSize(columnType)) {
-                    long dstAuxFd = openAppend(ff, iFile(other.trimTo(newPartitionPathLen), columnName, columnNameTxn), LOG);
-                    long dstDataFd = openAppend(ff, dFile(other.trimTo(newPartitionPathLen), columnName, columnNameTxn), LOG);
+                    long dstAuxFd = openAppend(ff, iFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
+                    long dstDataFd = openAppend(ff, dFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
                     columnFdAndDataSize.add(dstAuxFd);
                     columnFdAndDataSize.add(dstDataFd);
                     columnFdAndDataSize.add(0);
                 } else {
-                    long dstFixFd = openAppend(ff, dFile(other.trimTo(newPartitionPathLen), columnName, columnNameTxn), LOG);
+                    long dstFixFd = openAppend(ff, dFile(other.trimTo(newPartitionDirLen), columnName, columnNameTxn), LOG);
                     columnFdAndDataSize.add(-1);
                     columnFdAndDataSize.add(dstFixFd);
                     columnFdAndDataSize.add(0);
@@ -1585,6 +1588,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
             }
+        } catch (CairoException e) {
+            LOG.error().$("could not convert partition to native [table=").utf8(tableToken.getTableName())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", error=").$(e.getMessage()).I$();
+
+            // rollback
+            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove parquet file [path=").$(other).I$();
+            }
+            throw e;
         } finally {
             for (long i = 0; i < columnCount; i++) {
                 final long dstAuxFd = columnFdAndDataSize.get(3L * i);
@@ -1599,8 +1612,51 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Misc.free(parquetDecoder);
         }
 
-        path.trimTo(pathSize);
-        other.trimTo(pathSize);
+        LOG.info().$("copying index files to native [path=").$substr(pathRootSize, path).I$();
+        try {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final String columnName = metadata.getColumnName(columnIndex);
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
+                    final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
+
+                    BitmapIndexUtils.keyFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
+                    BitmapIndexUtils.keyFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
+                    if (ff.copy(path.$(), other.$()) < 0) {
+                        throw CairoException.critical(ff.errno())
+                                .put("could not copy index key file [table=")
+                                .put(tableToken.getTableName())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    }
+
+                    BitmapIndexUtils.valueFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
+                    BitmapIndexUtils.valueFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
+                    if (ff.copy(path.$(), other.$()) < 0) {
+                        throw CairoException.critical(ff.errno())
+                                .put("could not copy index value file [table=")
+                                .put(tableToken.getTableName())
+                                .put(", column=")
+                                .put(columnName)
+                                .put(']');
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            LOG.error().$("could not copy index files [table=").utf8(tableToken.getTableName())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", error=").$(e.getMessage()).I$();
+
+            // rollback
+            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove parquet file [path=").$(other).I$();
+            }
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
         // used to update txn and bump recordStructureVersion
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
         txWriter.resetPartitionParquetFormat(partitionTimestamp);
@@ -1611,7 +1667,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             closeActivePartition(false);
         }
 
-        // remove old partition folder
+        // remove old partition dir
         safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
 
         if (lastPartitionConverted) {

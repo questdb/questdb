@@ -99,12 +99,20 @@ public class ParquetTest extends AbstractCairoTest {
             ddl("alter table x alter column id add index;");
             insert("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
 
+            String expected = "id\tts\n" +
+                    "k1\t2024-06-10T00:00:00.000000Z\n" +
+                    "k1\t2024-06-10T00:00:00.000000Z\n" +
+                    "k1\t2024-06-12T00:00:01.000000Z\n";
+
             ddl("alter table x convert partition to parquet where ts >= 0");
             assertSql(
-                    "id\tts\n" +
-                            "k1\t2024-06-10T00:00:00.000000Z\n" +
-                            "k1\t2024-06-10T00:00:00.000000Z\n" +
-                            "k1\t2024-06-12T00:00:01.000000Z\n",
+                    expected,
+                    "x where id = 'k1'"
+            );
+
+            ddl("alter table x convert partition to native where ts >= 0");
+            assertSql(
+                    expected,
                     "x where id = 'k1'"
             );
 
