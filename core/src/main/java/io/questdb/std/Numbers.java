@@ -28,18 +28,18 @@ package io.questdb.std;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.fastdouble.FastDoubleParser;
 import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.Utf8s;import org.jetbrains.annotations.NotNull;
 //#if jdk.version==8
 //$import sun.misc.FDBigInteger;
 //#else
 import jdk.internal.math.FDBigInteger;
 //#endif
-import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -1451,6 +1451,311 @@ public final class Numbers {
         return negative ? val : -val;
     }
 
+    public static long parseMicros(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        int lim = sequence.length();
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+
+        int i = 0;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        int digitCount = 0;
+        char c;
+        OUT:
+        for (; i < lim; i++) {
+            c = sequence.charAt(i);
+            switch (c | 32) {
+                case 'm':
+                    // must be 'ms' (millisecond) or 'm' (minute)
+                    if (digitCount == 0) {
+                        // not at the start of the string
+                        throw NumericException.INSTANCE;
+                    }
+                    if (i + 1 < lim) {
+                        // could be 'ms' or an error
+                        if ((sequence.charAt(i + 1) | 32) == 's' && i + 2 == lim) {
+                            // 'ms' at the end of the string
+                            val *= Timestamps.MILLI_MICROS;
+                        } else {
+                            throw NumericException.INSTANCE;
+                        }
+                    } else {
+                        // 'm' at the end of the string
+                        val *= Timestamps.MINUTE_MICROS;
+                    }
+                    break OUT;
+                case 's':
+                    // second
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Timestamps.SECOND_MICROS;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'u':
+                    // microsecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'n':
+                    // nanosecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    val /= 1000;
+                    break OUT;
+                case 'h':
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Timestamps.HOUR_MICROS;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 127:
+                    if (digitCount == 0) {
+                        throw NumericException.INSTANCE;
+                    }
+                    digitCount = 0;
+                    // ignore
+                    break;
+                default:
+                    if (c < '0' || c > '9') {
+                        throw NumericException.INSTANCE;
+                    }
+                    // val * 10 + (c - '0')
+                    long r = (val << 3) + (val << 1) - (c - '0');
+                    if (r > val) {
+                        throw NumericException.INSTANCE;
+                    }
+                    val = r;
+                    digitCount++;
+                    break;
+            }
+        }
+
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0 ) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
+    }
+
+    public static long parseMillis(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        int lim = sequence.length();
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+
+        int i = 0;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        int digitCount = 0;
+        char c;
+        OUT:
+        for (; i < lim; i++) {
+            c = sequence.charAt(i);
+            switch (c | 32) {
+                case 'm':
+                    // must be 'ms' (millisecond) or 'm' (minute)
+                    if (digitCount == 0) {
+                        // not at the start of the string
+                        throw NumericException.INSTANCE;
+                    }
+                    if (i + 1 < lim) {
+                        // could be 'ms' or an error
+                        if ((sequence.charAt(i + 1) | 32)!='s' || i + 2!=lim) {
+                            throw NumericException.INSTANCE;
+                        }
+                        // 'ms' at the end of the string
+                    } else {
+                        // 'm' at the end of the string
+                        val *= Dates.MINUTE_MILLIS;
+                    }
+                    break OUT;
+                case 's':
+                    // second
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Dates.SECOND_MILLIS;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'u':
+                    // microsecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    val /= 1000;
+                    break OUT;
+                case 'n':
+                    // nanosecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    val /= 1000_000;
+                    break OUT;
+                case 'h':
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Dates.HOUR_MILLIS;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 127:
+                    if (digitCount == 0) {
+                        throw NumericException.INSTANCE;
+                    }
+                    digitCount = 0;
+                    // ignore
+                    break;
+                default:
+                    if (c < '0' || c > '9') {
+                        throw NumericException.INSTANCE;
+                    }
+                    // val * 10 + (c - '0')
+                    long r = (val << 3) + (val << 1) - (c - '0');
+                    if (r > val) {
+                        throw NumericException.INSTANCE;
+                    }
+                    val = r;
+                    digitCount++;
+                    break;
+            }
+        }
+
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0 ) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
+    }
+
+    public static long parseNanos(CharSequence sequence) throws NumericException {
+        if (sequence == null) {
+            throw NumericException.INSTANCE;
+        }
+        int lim = sequence.length();
+        if (lim == 0) {
+            throw NumericException.INSTANCE;
+        }
+
+        boolean negative = sequence.charAt(0) == '-';
+
+        int i = 0;
+        if (negative) {
+            i++;
+        }
+
+        if (i >= lim) {
+            throw NumericException.INSTANCE;
+        }
+
+        long val = 0;
+        int digitCount = 0;
+        char c;
+        OUT:
+        for (; i < lim; i++) {
+            c = sequence.charAt(i);
+            switch (c | 32) {
+                case 'm':
+                    // must be 'ms' (millisecond) or 'm' (minute)
+                    if (digitCount == 0) {
+                        // not at the start of the string
+                        throw NumericException.INSTANCE;
+                    }
+                    if (i + 1 < lim) {
+                        // could be 'ms' or an error
+                        if ((sequence.charAt(i + 1) | 32) == 's' && i + 2 == lim) {
+                            // 'ms' at the end of the string
+                            val *= Timestamps.MILLI_MICROS * 1000;
+                        } else {
+                            throw NumericException.INSTANCE;
+                        }
+                    } else {
+                        // 'm' at the end of the string
+                        val *= Timestamps.MINUTE_MICROS*1000;
+                    }
+                    break OUT;
+                case 's':
+                    // second
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Timestamps.SECOND_MICROS * 1000;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'u':
+                    // microsecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    val *= 1000;
+                    break OUT;
+                case 'n':
+                    // nanosecond
+                    if (digitCount == 0 || i + 2 != lim || (sequence.charAt(i + 1) | 32) != 's') {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 'h':
+                    if (digitCount > 0 && i + 1 == lim) {
+                        val *= Timestamps.HOUR_MICROS * 1000;
+                    } else {
+                        throw NumericException.INSTANCE;
+                    }
+                    break OUT;
+                case 127:
+                    if (digitCount == 0) {
+                        throw NumericException.INSTANCE;
+                    }
+                    digitCount = 0;
+                    // ignore
+                    break;
+                default:
+                    if (c < '0' || c > '9') {
+                        throw NumericException.INSTANCE;
+                    }
+                    // val * 10 + (c - '0')
+                    long r = (val << 3) + (val << 1) - (c - '0');
+                    if (r > val) {
+                        throw NumericException.INSTANCE;
+                    }
+                    val = r;
+                    digitCount++;
+                    break;
+            }
+        }
+
+        if ((val == Long.MIN_VALUE && !negative) || digitCount == 0 ) {
+            throw NumericException.INSTANCE;
+        }
+        return negative ? val : -val;
+    }
+
     public static short parseShort(Utf8Sequence sequence) throws NumericException {
         if (sequence == null) {
             throw NumericException.INSTANCE;
@@ -2609,24 +2914,32 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
+        int digitCounter = 0;
         int val = 0;
         for (; i < lim; i++) {
             char c = sequence.charAt(i);
-            if (c < '0' || c > '9') {
+            if (c == '_') {
+                if (digitCounter == 0) {
+                    throw NumericException.INSTANCE;
+                }
+                digitCounter = 0;
+            } else if (c < '0' || c > '9') {
                 throw NumericException.INSTANCE;
+            } else {
+                // val * 10 + (c - '0')
+                if (val < (Integer.MIN_VALUE / 10)) {
+                    throw NumericException.INSTANCE;
+                }
+                int r = (val << 3) + (val << 1) - (c - '0');
+                if (r > val) {
+                    throw NumericException.INSTANCE;
+                }
+                val = r;
+                digitCounter++;
             }
-            // val * 10 + (c - '0')
-            if (val < (Integer.MIN_VALUE / 10)) {
-                throw NumericException.INSTANCE;
-            }
-            int r = (val << 3) + (val << 1) - (c - '0');
-            if (r > val) {
-                throw NumericException.INSTANCE;
-            }
-            val = r;
         }
 
-        if (val == Integer.MIN_VALUE && !negative) {
+        if ((val == Integer.MIN_VALUE && !negative) || digitCounter == 0) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
@@ -2648,27 +2961,37 @@ public final class Numbers {
             throw NumericException.INSTANCE;
         }
 
+        int digitCounter = 0;
         long val = 0;
         for (; i < lim; i++) {
             int c = sequence.charAt(i);
-            if (c == 'L' || c == 'l') {
-                if (i == 0 || i + 1 < lim) {
-                    throw NumericException.INSTANCE;
-                }
-                break;
+            switch (c | 32) {
+                case 'l':
+                    if (i == 0 || i + 1 < lim) {
+                        throw NumericException.INSTANCE;
+                    }
+                    break;
+                case 127: // '_'
+                    if (digitCounter == 0) {
+                        throw NumericException.INSTANCE;
+                    }
+                    digitCounter = 0;
+                    break;
+                default:
+                    if (c < '0' || c > '9') {
+                        throw NumericException.INSTANCE;
+                    }
+                    // val * 10 + (c - '0')
+                    long r = (val << 3) + (val << 1) - (c - '0');
+                    if (r > val) {
+                        throw NumericException.INSTANCE;
+                    }
+                    val = r;
+                    digitCounter++;
             }
-            if (c < '0' || c > '9') {
-                throw NumericException.INSTANCE;
-            }
-            // val * 10 + (c - '0')
-            long r = (val << 3) + (val << 1) - (c - '0');
-            if (r > val) {
-                throw NumericException.INSTANCE;
-            }
-            val = r;
         }
 
-        if (val == Long.MIN_VALUE && !negative) {
+        if ((val == Long.MIN_VALUE && !negative) || digitCounter == 0) {
             throw NumericException.INSTANCE;
         }
         return negative ? val : -val;
