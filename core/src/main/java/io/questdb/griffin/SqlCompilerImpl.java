@@ -2312,27 +2312,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // removePartition does not fail to determine next minTimestamp
         final int partitionCount = reader.getPartitionCount();
         if (partitionCount > 0) { // table may be empty
-            for (int i = partitionCount - 2; i > -1; i--) {
-                long physicalPartitionTimestamp = reader.getPartitionTimestampByIndex(i);
-                long logicalPartitionTimestamp = reader.getTxFile().getPartitionFloor(physicalPartitionTimestamp);
-                if (physicalPartitionTimestamp != logicalPartitionTimestamp) {
-                    // partitionTimestamp denotes a split partition, skip that
+            for (int i = partitionCount - 2; i >= -1; i--) {
+                // perform the action on the last partition in the end, it's more expensive than others
+                int partitionIndex = (i != -1) ? i : partitionCount - 1;
+                long physicalTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+                long logicalTimestamp = reader.getTxFile().getPartitionFloor(physicalTimestamp);
+                if (physicalTimestamp != logicalTimestamp) {
                     continue;
                 }
-                partitionFunctionRec.setTimestamp(logicalPartitionTimestamp);
+                partitionFunctionRec.setTimestamp(logicalTimestamp);
                 if (function.getBool(partitionFunctionRec)) {
-
-                    changePartitionStatement.addPartitionToList(logicalPartitionTimestamp, functionPosition);
+                    changePartitionStatement.addPartitionToList(logicalTimestamp, functionPosition);
                     affectedPartitions++;
                 }
-            }
-
-            // do action on last partition at the end, it's more expensive than others
-            long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionCount - 1);
-            partitionFunctionRec.setTimestamp(partitionTimestamp);
-            if (function.getBool(partitionFunctionRec)) {
-                changePartitionStatement.addPartitionToList(partitionTimestamp, functionPosition);
-                affectedPartitions++;
             }
         }
         return affectedPartitions;
