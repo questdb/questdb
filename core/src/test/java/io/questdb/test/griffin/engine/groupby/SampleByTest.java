@@ -11433,8 +11433,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 3600000000) p," +
                         " timestamp_sequence(172800000000, 3600000000) k" +
                         " from" +
-                        " long_sequence(5)" +
-                        ") timestamp(k)",
+                        " long_sequence(5)",
                 "first\tfirst1\tmin\tmax\tfirst2\tsum\tfirst3\tfirst4\tk\n" +
                         "-1148479920\tT\tnull\t0.0849\t635\t-7611843578141082998\t45\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:00:00.000000Z\n" +
                         "-394179013\tU\tnull\t0.3101\t615\t-7444863803039212544\t35\t1970-01-01T00:00:00.000000Z\t1970-01-03T00:15:00.000000Z\n" +
