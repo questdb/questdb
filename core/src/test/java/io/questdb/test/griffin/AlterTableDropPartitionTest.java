@@ -718,6 +718,21 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForceDropPartitionExpectDrop() throws Exception {
+        createXAndAssertException("alter table x force partition list '2022-02-04';", 20, "'drop' expected");
+    }
+
+    @Test
+    public void testForceDropPartitionExpectList() throws Exception {
+        createXAndAssertException("alter table x force drop partition where ts < '2022-02-04';", 35, "'list' expected");
+    }
+
+    @Test
+    public void testForceDropPartitionExpectPartition() throws Exception {
+        createXAndAssertException("alter table x force drop list '2022-02-04';", 25, "'partition' expected");
+    }
+
+    @Test
     public void testPartitionDeletedFromDiskAfterOpening() throws Exception {
         String expected = "[0] Table 'src' data directory does not exist on the disk at ";
         String startDate = "2020-01-01";
@@ -746,8 +761,8 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     @Test
     public void testPartitionDeletedFromDiskWithoutDropByDay() throws Exception {
         String expected = "[0] Partition '2020-01-02' does not exist in table 'src' directory. " +
-                "Run [ALTER TABLE src DROP PARTITION LIST '2020-01-02'] " +
-                "to repair the table or restore the partition directory.";
+                "Run [ALTER TABLE src FORCE DROP PARTITION LIST '2020-01-02'] " +
+                "to repair the table or the database from the backup.";
         String startDate = "2020-01-01";
         int day = PartitionBy.DAY;
         int partitionToCheck = 0;
@@ -760,8 +775,8 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     @Test
     public void testPartitionDeletedFromDiskWithoutDropByDayNoVersionInErrorMsg() throws Exception {
         String expected = "[0] Partition '2020-01-02' does not exist in table 'src' directory. " +
-                "Run [ALTER TABLE src DROP PARTITION LIST '2020-01-02'] " +
-                "to repair the table or restore the partition directory.";
+                "Run [ALTER TABLE src FORCE DROP PARTITION LIST '2020-01-02'] " +
+                "to repair the table or the database from the backup.";
         String startDate = "2020-01-01";
         int day = PartitionBy.DAY;
         int partitionToCheck = 0;
@@ -774,8 +789,8 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     @Test
     public void testPartitionDeletedFromDiskWithoutDropByMonth() throws Exception {
         String expected = "[0] Partition '2020-02' does not exist in table 'src' directory. " +
-                "Run [ALTER TABLE src DROP PARTITION LIST '2020-02'] " +
-                "to repair the table or restore the partition directory.";
+                "Run [ALTER TABLE src FORCE DROP PARTITION LIST '2020-02'] " +
+                "to repair the table or the database from the backup.";
         String startDate = "2020-01-01";
         int day = PartitionBy.MONTH;
         int partitionToCheck = 0;
@@ -800,8 +815,8 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     @Test
     public void testPartitionDeletedFromDiskWithoutDropByWeek() throws Exception {
         String expected = "[0] Partition '2020-W02' does not exist in table 'src' directory. " +
-                "Run [ALTER TABLE src DROP PARTITION LIST '2020-W02'] " +
-                "to repair the table or restore the partition directory.";
+                "Run [ALTER TABLE src FORCE DROP PARTITION LIST '2020-W02'] " +
+                "to repair the table or the database from the backup.";
         String startDate = "2020-01-01";
         int day = PartitionBy.WEEK;
         int partitionToCheck = 0;
@@ -1055,7 +1070,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     }
 
                     if (partitionBy != PartitionBy.NONE) {
-                        ddl("ALTER TABLE " + src.getName() + " DROP PARTITION LIST '" + partitionDirBaseName + "';", sqlExecutionContext);
+                        ddl("ALTER TABLE " + src.getName() + " FORCE DROP PARTITION LIST '" + partitionDirBaseName + "';", sqlExecutionContext);
                     }
                 }
             }
