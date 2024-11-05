@@ -75,22 +75,18 @@ public class MatchStrFunctionFactory implements FunctionFactory {
         private @DelayInitialize Matcher matcher;
         private final Function value;
         private final Function pattern;
-        private boolean initialized;
 
         public MatchStrConstPatternFunction(Function value, Matcher matcher, Function pattern) {
             this.value = value;
             this.matcher = matcher;
             this.pattern = pattern;
-            initialized = matcher != null;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (!initialized) {
-                UnaryFunction.super.init(symbolTableSource, executionContext);
+            if (matcher == null) {
                 matcher = RegexUtils.createMatcher(pattern, 0);
-                initialized = true;
             }
         }
 

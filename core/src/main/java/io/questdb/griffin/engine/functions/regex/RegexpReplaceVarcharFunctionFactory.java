@@ -234,7 +234,6 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         private final DirectAsciiStringView viewA = new DirectAsciiStringView();
         private final DirectAsciiStringView viewB = new DirectAsciiStringView();
         private final Function pattern;
-        private boolean initialized;
 
         public SingleGroupAsciiFunc(Function value, Matcher matcher, Function pattern, String replacement, int group, int functionPos) {
             try {
@@ -246,7 +245,6 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
                 this.pattern = pattern;
                 this.utf8SinkA = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
                 this.utf8SinkB = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
-                this.initialized = matcher != null;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -263,9 +261,8 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (!initialized) {
+            if (matcher == null) {
                 matcher = RegexUtils.createMatcher(pattern, 0);
-                initialized = true;
             }
         }
 

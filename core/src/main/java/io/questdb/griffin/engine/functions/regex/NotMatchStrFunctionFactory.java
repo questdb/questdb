@@ -77,21 +77,18 @@ public class NotMatchStrFunctionFactory implements FunctionFactory {
         private final Function arg;
         private @DelayInitialize Matcher matcher;
         private final CharSequence regex;
-        private boolean initialized;
 
         public NoMatchStrFunction(Function arg, Matcher matcher, CharSequence regex) {
             this.arg = arg;
             this.matcher = matcher;
             this.regex = regex;
-            this.initialized = matcher != null;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (!initialized) {
+            if (matcher == null) {
                 matcher = Pattern.compile(Chars.toString(regex)).matcher("");
-                initialized = true;
             }
         }
 
