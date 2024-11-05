@@ -27,22 +27,41 @@ package io.questdb.cutlass.http;
 import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.network.*;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.Socket;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+import io.questdb.std.Zip;
 import io.questdb.std.bytes.Bytes;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.ex.ZLibException;
-import io.questdb.std.str.*;
+import io.questdb.std.str.StdoutSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.std.Chars.isBlank;
+import static java.net.HttpURLConnection.*;
 
 public class HttpResponseSink implements Closeable, Mutable {
+    private static final int HTTP_RANGE_NOT_SATISFIABLE = 416;
+    private static final int HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE = 431;
     private static final Log LOG = LogFactory.getLog(HttpResponseSink.class);
     private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
     private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
@@ -57,7 +76,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private final String httpVersion;
     private final NetworkFacade nf;
     private final HttpRawSocketImpl rawSocket = new HttpRawSocketImpl();
-    private final SimpleResponseImpl simple = new SimpleResponseImpl();
+    private final SimpleResponseImpl simpleResponse = new SimpleResponseImpl();
     private final ResponseSinkImpl sink = new ResponseSinkImpl();
     private boolean chunkedRequestDone;
     private boolean compressedHeaderDone;
@@ -84,13 +103,17 @@ public class HttpResponseSink implements Closeable, Mutable {
         this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
     }
 
+    public static String getStatusMessage(int code) {
+        return httpStatusMap.get(code);
+    }
+
     @Override
     public void clear() {
         headerImpl.clear();
         totalBytesSent = 0;
         headersSent = false;
         chunkedRequestDone = false;
-        simple.clear();
+        simpleResponse.clear();
         resetZip();
     }
 
@@ -111,10 +134,6 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     public int getCode() {
         return headerImpl.getCode();
-    }
-
-    public SimpleResponseImpl getSimple() {
-        return simple;
     }
 
     public void resumeSend() throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -146,6 +165,10 @@ public class HttpResponseSink implements Closeable, Mutable {
             zStreamPtr = Zip.deflateInit();
             compressOutBuffer.reopen();
         }
+    }
+
+    public SimpleResponseImpl simpleResponse() {
+        return simpleResponse;
     }
 
     private void deflate() {
@@ -430,7 +453,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     private class ChunkedResponseImpl extends ResponseSinkImpl implements HttpChunkedResponse {
-        private long bookmark = 0;
+        private long bookmark = 0L;
 
         @Override
         public void bookmark() {
@@ -672,12 +695,14 @@ public class HttpResponseSink implements Closeable, Mutable {
             headerSent = false;
         }
 
+        @SuppressWarnings("unused")
         public void sendStatusJsonContent(
                 int code
         ) throws PeerDisconnectedException, PeerIsSlowToReadException {
             sendStatusJsonContent(code, null, null, null, null);
         }
 
+        @SuppressWarnings("unused")
         public void sendStatusJsonContent(
                 int code,
                 @Nullable CharSequence message
@@ -803,21 +828,21 @@ public class HttpResponseSink implements Closeable, Mutable {
     }
 
     static {
-        httpStatusMap.put(200, "OK");
-        httpStatusMap.put(204, "OK");
-        httpStatusMap.put(206, "Partial content");
-        httpStatusMap.put(302, "Temporarily Moved");
-        httpStatusMap.put(304, "Not Modified");
-        httpStatusMap.put(400, "Bad request");
-        httpStatusMap.put(401, "Unauthorized");
-        httpStatusMap.put(403, "Forbidden");
-        httpStatusMap.put(404, "Not Found");
-        httpStatusMap.put(408, "Request Timeout");
-        httpStatusMap.put(411, "Length Required");
-        httpStatusMap.put(413, "Content Too Large");
-        httpStatusMap.put(415, "Bad request");
-        httpStatusMap.put(416, "Request range not satisfiable");
-        httpStatusMap.put(431, "Headers too large");
-        httpStatusMap.put(500, "Internal server error");
+        httpStatusMap.put(HTTP_OK, "OK");
+        httpStatusMap.put(HTTP_NO_CONTENT, "OK");
+        httpStatusMap.put(HTTP_PARTIAL, "Partial content");
+        httpStatusMap.put(HTTP_MOVED_TEMP, "Temporarily Moved");
+        httpStatusMap.put(HTTP_NOT_MODIFIED, "Not Modified");
+        httpStatusMap.put(HTTP_BAD_REQUEST, "Bad request");
+        httpStatusMap.put(HTTP_UNAUTHORIZED, "Unauthorized");
+        httpStatusMap.put(HTTP_FORBIDDEN, "Forbidden");
+        httpStatusMap.put(HTTP_NOT_FOUND, "Not Found");
+        httpStatusMap.put(HTTP_CLIENT_TIMEOUT, "Request Timeout");
+        httpStatusMap.put(HTTP_LENGTH_REQUIRED, "Length Required");
+        httpStatusMap.put(HTTP_ENTITY_TOO_LARGE, "Content Too Large");
+        httpStatusMap.put(HTTP_UNSUPPORTED_TYPE, "Bad request");
+        httpStatusMap.put(HTTP_RANGE_NOT_SATISFIABLE, "Request range not satisfiable");
+        httpStatusMap.put(HTTP_REQUEST_HEADER_FIELDS_TOO_LARGE, "Headers too large");
+        httpStatusMap.put(HTTP_INTERNAL_ERROR, "Internal server error");
     }
 }
