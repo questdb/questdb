@@ -110,13 +110,11 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private final IntList symbolKeys = new IntList();
         private boolean initialized;
         private final Function pattern;
-        private boolean matcherInitialized;
 
         public MatchStaticSymbolTableConstPatternFunction(SymbolFunction symbolFun, Matcher matcher, Function pattern) {
             this.symbolFun = symbolFun;
             this.matcher = matcher;
             this.pattern = pattern;
-            this.matcherInitialized = matcher != null;
         }
 
         @Override
@@ -137,9 +135,8 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             initialized = false;
-            if (!matcherInitialized) {
+            if (matcher == null) {
                 matcher = RegexUtils.createMatcher(pattern, 0);
-                matcherInitialized = true;
             }
         }
 
