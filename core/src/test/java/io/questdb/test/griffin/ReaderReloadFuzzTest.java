@@ -64,16 +64,15 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
         );
 
         // Basic load to keep the test lite, we just want to fuzz different transaction types, not intensive inserting
-        fuzzer.setFuzzCounts(
-                rnd.nextBoolean(),
-                rnd.nextInt(2_000),
-                rnd.nextInt(1000),
-                rnd.nextInt(3),
-                rnd.nextInt(5),
-                rnd.nextInt(1000),
-                rnd.nextInt(1_000_000),
-                5 + rnd.nextInt(10)
-        );
+        boolean isO3 = rnd.nextBoolean();
+        int fuzzRowCount = rnd.nextInt(2_000);
+        int transactionCount = rnd.nextInt(1000);
+        int strLen = rnd.nextInt(3);
+        int symbolStrLenMax = rnd.nextInt(5);
+        int symbolCountMax = rnd.nextInt(1000);
+        int initialRowCount = rnd.nextInt(1_000_000);
+        int partitionCount = 5 + rnd.nextInt(10);
+        fuzzer.setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount);
 
         setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
         runFuzzWithWithReload(rnd);
