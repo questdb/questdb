@@ -1161,6 +1161,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelFunctionDeepCloneEnabled() {
+        return getDelegate().isSqlParallelFunctionDeepCloneEnabled();
+    }
+
+    @Override
     public boolean isSqlParallelGroupByEnabled() {
         return getDelegate().isSqlParallelGroupByEnabled();
     }

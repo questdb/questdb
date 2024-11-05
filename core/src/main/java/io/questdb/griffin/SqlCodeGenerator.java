@@ -815,14 +815,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (filter != null && !filter.isThreadSafe()) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
-            boolean supportDeepClone = true;
-            try {
-                for (int i = 0; i < workerCount; i++) {
-                    workerFilters.extendAndSet(i, FunctionCloneFactory.deepCloneFunction(filter));
+            boolean supportDeepClone = configuration.isSqlParallelFunctionDeepCloneEnabled();
+            if (supportDeepClone) {
+                try {
+                    for (int i = 0; i < workerCount; i++) {
+                        workerFilters.extendAndSet(i, FunctionCloneFactory.deepCloneFunction(filter));
+                    }
+                } catch (Throwable e) {
+                    LOG.debug().$("Failed to deepClone filter function for parallel worker").$();
+                    supportDeepClone = false;
                 }
-            } catch (Throwable e) {
-                LOG.debug().$("Failed to deepClone filter function for parallel worker").$();
-                supportDeepClone = false;
             }
             if (!supportDeepClone) {
                 Misc.freeObjList(workerFilters);
@@ -853,6 +855,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         if (!threadSafe) {
+            final boolean functionDeepClone = configuration.isSqlParallelFunctionDeepCloneEnabled();
             ObjList<ObjList<GroupByFunction>> allWorkerGroupByFunctions = new ObjList<>();
             for (int i = 0; i < workerCount; i++) {
                 ObjList<GroupByFunction> workerGroupByFunctions = new ObjList<>(groupByFunctions.size());
@@ -860,6 +863,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 GroupByUtils.prepareWorkerGroupByFunctions(
                         model,
                         metadata,
+                        functionDeepClone,
                         functionParser,
                         executionContext,
                         groupByFunctions,
@@ -887,18 +891,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         if (!threadSafe) {
             ObjList<ObjList<Function>> allWorkerKeyFunctions = new ObjList<>();
-            boolean supportDeepClone = true;
-            try {
-                for (int i = 0; i < workerCount; i++) {
-                    ObjList<Function> workerKeyFunctions = new ObjList<>(keyFunctions.size());
-                    allWorkerKeyFunctions.extendAndSet(i, workerKeyFunctions);
-                    for (int j = 0, n = keyFunctions.size(); j < n; j++) {
-                        workerKeyFunctions.add(FunctionCloneFactory.deepCloneFunction(keyFunctions.getQuick(j)));
+            boolean supportDeepClone = configuration.isSqlParallelFunctionDeepCloneEnabled();
+            if (supportDeepClone) {
+                try {
+                    for (int i = 0; i < workerCount; i++) {
+                        ObjList<Function> workerKeyFunctions = new ObjList<>(keyFunctions.size());
+                        allWorkerKeyFunctions.extendAndSet(i, workerKeyFunctions);
+                        for (int j = 0, n = keyFunctions.size(); j < n; j++) {
+                            workerKeyFunctions.add(FunctionCloneFactory.deepCloneFunction(keyFunctions.getQuick(j)));
+                        }
                     }
+                } catch (Throwable e) {
+                    LOG.debug().$("Failed to deepClone keyFunctions for parallel worker").$();
+                    supportDeepClone = false;
                 }
-            } catch (Throwable e) {
-                LOG.debug().$("Failed to deepClone keyFunctions for parallel worker").$();
-                supportDeepClone = false;
             }
             if (!supportDeepClone) {
                 for (int i = 0, oSize = allWorkerKeyFunctions.size(); i < oSize; i++) {

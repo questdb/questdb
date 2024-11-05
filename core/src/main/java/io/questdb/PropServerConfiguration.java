@@ -376,6 +376,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlPageFrameMinRows;
     private final boolean sqlParallelFilterEnabled;
     private final boolean sqlParallelFilterPreTouchEnabled;
+    private final boolean sqlParallelFunctionDeepCloneEnabled;
     private final boolean sqlParallelGroupByEnabled;
     private final int sqlParallelWorkStealingThreshold;
     private final int sqlQueryRegistryPoolSize;
@@ -1461,6 +1462,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final int defaultReduceShardCount = Math.min(sharedWorkerCount, 4);
             this.cairoPageFrameReduceShardCount = getInt(properties, env, PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, defaultReduceShardCount);
             this.sqlParallelFilterPreTouchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, true);
+            this.sqlParallelFunctionDeepCloneEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FUNCTION_DEEP_CLONE_ENABLED, true);
             this.sqlCopyModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY, 32);
 
             boolean defaultParallelSqlEnabled = sharedWorkerCount >= 4;
@@ -3257,6 +3259,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         public boolean isSqlParallelFilterPreTouchEnabled() {
             return sqlParallelFilterPreTouchEnabled;
         }
+
+        @Override
+        public boolean isSqlParallelFunctionDeepCloneEnabled() {
+            return sqlParallelFunctionDeepCloneEnabled;
+        }
+
 
         @Override
         public boolean isSqlParallelGroupByEnabled() {

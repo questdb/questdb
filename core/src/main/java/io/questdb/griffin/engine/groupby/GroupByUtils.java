@@ -359,18 +359,20 @@ public class GroupByUtils {
     public static void prepareWorkerGroupByFunctions(
             @NotNull QueryModel model,
             @NotNull RecordMetadata metadata,
+            boolean supportDeepClone,
             @NotNull FunctionParser functionParser,
             @NotNull SqlExecutionContext executionContext,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
             @NotNull ObjList<GroupByFunction> workerGroupByFunctions
     ) throws SqlException {
-        boolean supportDeepClone = true;
-        try {
-            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                workerGroupByFunctions.add((GroupByFunction) FunctionCloneFactory.deepCloneFunction(groupByFunctions.getQuick(i)));
+        if (supportDeepClone) {
+            try {
+                for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                    workerGroupByFunctions.add((GroupByFunction) FunctionCloneFactory.deepCloneFunction(groupByFunctions.getQuick(i)));
+                }
+            } catch (Throwable e) {
+                supportDeepClone = false;
             }
-        } catch (Throwable e) {
-            supportDeepClone = false;
         }
         if (!supportDeepClone) {
             Misc.freeObjList(workerGroupByFunctions);

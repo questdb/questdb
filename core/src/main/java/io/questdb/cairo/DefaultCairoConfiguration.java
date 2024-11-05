@@ -1179,6 +1179,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelFunctionDeepCloneEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelGroupByEnabled() {
         return true;
     }
