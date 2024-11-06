@@ -362,11 +362,13 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         }
     }
 
-    private void cookieLogUnknownAttributeError(long p, long lo, long hi) {
+    private long cookieLogUnknownAttributeError(long p, long lo, long hi) {
+        long pnext = cookieSkipBytes(p, hi);
         LOG.error()
-                .$("unknown cookie attribute [attribute=").$(csPool.next().of(p, cookieSkipBytes(p, hi)))
+                .$("unknown cookie attribute [attribute=").$(csPool.next().of(p, pnext))
                 .$(", cookie=").$(csPool.next().of(lo, hi))
                 .I$();
+        return pnext;
     }
 
     private void cookieParse(long lo, long hi) {
@@ -388,12 +390,12 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     if (cookie != null) {
                         // this means that we have an attribute with name, which we did not
                         // recognize.
-                        cookieLogUnknownAttributeError(p0, lo, hi);
-                        return;
+                        p = cookieLogUnknownAttributeError(p0, lo, hi);
+                    } else {
+                        cookie = cookiePool.next();
+                        cookie.cookieName = csPool.next().of(p0, p);
+                        p0 = p + 1;
                     }
-                    cookie = cookiePool.next();
-                    cookie.cookieName = csPool.next().of(p0, p);
-                    p0 = p + 1;
                     break;
                 case ';':
                     if (cookie == null) {
@@ -419,8 +421,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                             p = cookieSkipBytes(p, hi);
                             cookie.domain = csPool.next().of(p0, p);
                         } else {
-                            cookieLogUnknownAttributeError(p, lo, hi);
-                            return;
+                            p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
                     }
                     break;
@@ -439,8 +440,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                             p = cookieSkipBytes(p, hi);
                             cookie.partitioned = true;
                         } else {
-                            cookieLogUnknownAttributeError(p, lo, hi);
-                            return;
+                            p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
                     }
                     break;
@@ -460,8 +460,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                             p = cookieSkipBytes(p, hi);
                             cookie.sameSite = csPool.next().of(p0, p);
                         } else {
-                            cookieLogUnknownAttributeError(p, lo, hi);
-                            return;
+                            p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
                     }
                     break;
@@ -475,8 +474,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                             p = cookieSkipBytes(p, hi);
                             cookie.httpOnly = true;
                         } else {
-                            cookieLogUnknownAttributeError(p, lo, hi);
-                            return;
+                            p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
                     }
                     break;
@@ -492,11 +490,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                                 cookie.maxAge = Numbers.parseLong(v);
                             } catch (NumericException e) {
                                 LOG.error().$("invalid cookie Max-Age value [value=").$(v).I$();
-                                return;
                             }
                         } else {
-                            cookieLogUnknownAttributeError(p, lo, hi);
-                            return;
+                            p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
                     }
                     break;
@@ -518,11 +514,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                                 cookie.expires = TimestampFormatUtils.parseHTTP(v.asAsciiCharSequence());
                             } catch (NumericException e) {
                                 LOG.error().$("invalid cookie Expires value [value=").$(v).I$();
-                                return;
                             }
                         } else {
-                            cookieLogUnknownAttributeError(p, lo, hi);
-                            return;
+                            p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
                     }
                     break;

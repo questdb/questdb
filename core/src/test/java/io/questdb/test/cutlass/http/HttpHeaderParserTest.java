@@ -32,6 +32,7 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -281,104 +282,126 @@ public class HttpHeaderParserTest {
         );
 
         assertMalformedCookieIgnored(
-                "Set-Cookie: ; Path=/; Secure; Partitioned; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: ; Secure; Partitioned; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: Secure; Partitioned; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: ; Partitioned; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: Partitioned; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: ; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
                 "Set-Cookie: HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
         );
 
-
         assertMalformedCookieIgnored(
-                "Set-Cookie: ; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: ; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: ; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: ; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; Domain=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; Do4main=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; Domain=hello.com; Path=/; Secre; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; Domain=hello.com; Path=/; Htt; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; Domain=hello.com; Path/; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; Domain=hello.com; Ph=/; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; Domain=hello.com; Max=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; Domain=hello.com; Max-Age=hello; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; SameSitestrict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; Sam; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; ExpiresWed, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; Expires=ok, 21 Oct 2015 07:28:00 GMT\r\n"
-        );
-
-        assertMalformedCookieIgnored(
-                "Set-Cookie: a=b; hello\r\n"
+                "Set-Cookie: =; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n"
         );
 
         assertMalformedCookieIgnored(
                 "Set-Cookie: something\r\n"
+        );
+    }
+
+    @Test
+    public void testCookieIgnoresUnknownAttribute() {
+        StringSink sink = new StringSink();
+        // unknown attribute, boolean - starts with 'P' (along known alphabet)
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", path=\"/\", secure=true, httpOnly=true, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                        "Set-Cookie: a=b; Domain=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // Path missing '='
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; Path/; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // another Path variation
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; Ph=/; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+
+        // unknown attribute, boolean - starts with 'D'  (along known alphabet)
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", path=\"/\", secure=true, httpOnly=true, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                        "Set-Cookie: a=b; Do4main=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // unknown attribute, boolean - starts with 'S'  (along known alphabet)
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", path=\"/\", secure=false, httpOnly=true, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; Path=/; Secre; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // SameSite is malformed
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=0}]",
+                "Set-Cookie: a=b; SameSitestrict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // another variation with S
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=0}]",
+                "Set-Cookie: a=b; Sam; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // unknown attribute, boolean - starts with 'H'  (along known alphabet)
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", path=\"/\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; Path=/; Htt; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+
+        // unknown attribute, boolean - starts with 'M'  (along known alphabet)
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=0, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; Max=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // Max-Age is invalid number
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=0, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; Max-Age=hello; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // unknown attribute, boolean - starts with 'E' (along known alphabet)
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=false, expires=-1, maxAge=0}]",
+                "Set-Cookie: a=b; ExpiresWed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // malformed date in "Expires" attribute
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=false, expires=-1, maxAge=0}]",
+                "Set-Cookie: a=b; Expires=ok, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // unknown attribute "ZT", boolean (unknown alphabet)
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=false, expires=-1, maxAge=0}]",
+                "Set-Cookie: a=b; ZT\r\n",
+                sink
+        );
+
+        // unknown attribute "ZT with value
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=false, expires=-1, maxAge=0}]",
+                "Set-Cookie: a=b; ZT=123\r\n",
+                sink
+        );
+
+        // no attributes
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=false, expires=-1, maxAge=0}]",
+                "Set-Cookie: a=b\r\n",
+                sink
         );
     }
 
@@ -405,6 +428,24 @@ public class HttpHeaderParserTest {
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testCookiesUnrecognisedAttribute() {
+        // SameSite
+        assertCaseInsensitivity("GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                "Set-Cookie: _gh_sess=HSVQNiqqkeSqpG%2B7x9fBrnGqXk4nI%2BW2j9BITSM7WLy53vJNNeFqLpfiDH9TyA%2BUa%2FX3%2FrfzQgidqybd36Lh9wsADt3GQP2VQh7pBSAlsGicsqSe2oYK9%2F2y1K3L8gCiYDNtSNk4zdBsTYNLRG72D82X2JvK3ArL79zLkBg6qys45Fou39r33iNH9DxfCisqGS2zvDw0MiJ2H%2FzVD85GB7iXeuznThBI107uPHLJxzpgUAgqj4gLr8ocbDgkFeBuiiWHYRaT9b4wZmHIHMnDz%2BU0Pu45spvs6PLSvCoePzpIazmAqvVvvh5SQ1hqZuCn5ffl3x777xHiUU9z--akaypyDbIgToO26U--D%2BUL6IEkoc6dkRNuUkoosQ%3D%3D; Path=/; Secure; HttpOnly; saMesite=Lax\r\n" +
+                "\r\n");
+
+        // Secure
+        assertCaseInsensitivity("GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                "Set-Cookie: _gh_sess=HSVQNiqqkeSqpG%2B7x9fBrnGqXk4nI%2BW2j9BITSM7WLy53vJNNeFqLpfiDH9TyA%2BUa%2FX3%2FrfzQgidqybd36Lh9wsADt3GQP2VQh7pBSAlsGicsqSe2oYK9%2F2y1K3L8gCiYDNtSNk4zdBsTYNLRG72D82X2JvK3ArL79zLkBg6qys45Fou39r33iNH9DxfCisqGS2zvDw0MiJ2H%2FzVD85GB7iXeuznThBI107uPHLJxzpgUAgqj4gLr8ocbDgkFeBuiiWHYRaT9b4wZmHIHMnDz%2BU0Pu45spvs6PLSvCoePzpIazmAqvVvvh5SQ1hqZuCn5ffl3x777xHiUU9z--akaypyDbIgToO26U--D%2BUL6IEkoc6dkRNuUkoosQ%3D%3D; Path=/; secuRe; HttpOnly; SameSite=Lax\r\n" +
+                "\r\n");
+
+        // Path
+        assertCaseInsensitivity("GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
+                "Set-Cookie: _gh_sess=HSVQNiqqkeSqpG%2B7x9fBrnGqXk4nI%2BW2j9BITSM7WLy53vJNNeFqLpfiDH9TyA%2BUa%2FX3%2FrfzQgidqybd36Lh9wsADt3GQP2VQh7pBSAlsGicsqSe2oYK9%2F2y1K3L8gCiYDNtSNk4zdBsTYNLRG72D82X2JvK3ArL79zLkBg6qys45Fou39r33iNH9DxfCisqGS2zvDw0MiJ2H%2FzVD85GB7iXeuznThBI107uPHLJxzpgUAgqj4gLr8ocbDgkFeBuiiWHYRaT9b4wZmHIHMnDz%2BU0Pu45spvs6PLSvCoePzpIazmAqvVvvh5SQ1hqZuCn5ffl3x777xHiUU9z--akaypyDbIgToO26U--D%2BUL6IEkoc6dkRNuUkoosQ%3D%3D; PATH=/; secure; HttpOnly; SameSite=Lax\r\n" +
+                "\r\n");
     }
 
     @Test
@@ -456,45 +497,6 @@ public class HttpHeaderParserTest {
                         "\r\n",
                 1508570880000000L
         );
-    }
-
-    @Test
-    public void testCookiesUnrecognisedAttribute() {
-        // SameSite
-        assertCaseInsensitivity("GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
-                "Set-Cookie: _gh_sess=HSVQNiqqkeSqpG%2B7x9fBrnGqXk4nI%2BW2j9BITSM7WLy53vJNNeFqLpfiDH9TyA%2BUa%2FX3%2FrfzQgidqybd36Lh9wsADt3GQP2VQh7pBSAlsGicsqSe2oYK9%2F2y1K3L8gCiYDNtSNk4zdBsTYNLRG72D82X2JvK3ArL79zLkBg6qys45Fou39r33iNH9DxfCisqGS2zvDw0MiJ2H%2FzVD85GB7iXeuznThBI107uPHLJxzpgUAgqj4gLr8ocbDgkFeBuiiWHYRaT9b4wZmHIHMnDz%2BU0Pu45spvs6PLSvCoePzpIazmAqvVvvh5SQ1hqZuCn5ffl3x777xHiUU9z--akaypyDbIgToO26U--D%2BUL6IEkoc6dkRNuUkoosQ%3D%3D; Path=/; Secure; HttpOnly; saMesite=Lax\r\n" +
-                "\r\n");
-
-        // Secure
-        assertCaseInsensitivity("GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
-                "Set-Cookie: _gh_sess=HSVQNiqqkeSqpG%2B7x9fBrnGqXk4nI%2BW2j9BITSM7WLy53vJNNeFqLpfiDH9TyA%2BUa%2FX3%2FrfzQgidqybd36Lh9wsADt3GQP2VQh7pBSAlsGicsqSe2oYK9%2F2y1K3L8gCiYDNtSNk4zdBsTYNLRG72D82X2JvK3ArL79zLkBg6qys45Fou39r33iNH9DxfCisqGS2zvDw0MiJ2H%2FzVD85GB7iXeuznThBI107uPHLJxzpgUAgqj4gLr8ocbDgkFeBuiiWHYRaT9b4wZmHIHMnDz%2BU0Pu45spvs6PLSvCoePzpIazmAqvVvvh5SQ1hqZuCn5ffl3x777xHiUU9z--akaypyDbIgToO26U--D%2BUL6IEkoc6dkRNuUkoosQ%3D%3D; Path=/; secuRe; HttpOnly; SameSite=Lax\r\n" +
-                "\r\n");
-
-        // Path
-        assertCaseInsensitivity("GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" +
-                "Set-Cookie: _gh_sess=HSVQNiqqkeSqpG%2B7x9fBrnGqXk4nI%2BW2j9BITSM7WLy53vJNNeFqLpfiDH9TyA%2BUa%2FX3%2FrfzQgidqybd36Lh9wsADt3GQP2VQh7pBSAlsGicsqSe2oYK9%2F2y1K3L8gCiYDNtSNk4zdBsTYNLRG72D82X2JvK3ArL79zLkBg6qys45Fou39r33iNH9DxfCisqGS2zvDw0MiJ2H%2FzVD85GB7iXeuznThBI107uPHLJxzpgUAgqj4gLr8ocbDgkFeBuiiWHYRaT9b4wZmHIHMnDz%2BU0Pu45spvs6PLSvCoePzpIazmAqvVvvh5SQ1hqZuCn5ffl3x777xHiUU9z--akaypyDbIgToO26U--D%2BUL6IEkoc6dkRNuUkoosQ%3D%3D; PATH=/; secure; HttpOnly; SameSite=Lax\r\n" +
-                "\r\n");
-    }
-
-    private static void assertCaseInsensitivity(String request) {
-        long p = TestUtils.toMemory(request);
-        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
-            hp.parse(p, p + request.length(), true, false);
-            HttpCookie cookie = hp.getCookie(new Utf8String("_gh_sess"));
-            Assert.assertNotNull(cookie);
-            TestUtils.assertEquals("HSVQNiqqkeSqpG%2B7x9fBrnGqXk4nI%2BW2j9BITSM7WLy53vJNNeFqLpfiDH9TyA%2BUa%2FX3%2FrfzQgidqybd36Lh9wsADt3GQP2VQh7pBSAlsGicsqSe2oYK9%2F2y1K3L8gCiYDNtSNk4zdBsTYNLRG72D82X2JvK3ArL79zLkBg6qys45Fou39r33iNH9DxfCisqGS2zvDw0MiJ2H%2FzVD85GB7iXeuznThBI107uPHLJxzpgUAgqj4gLr8ocbDgkFeBuiiWHYRaT9b4wZmHIHMnDz%2BU0Pu45spvs6PLSvCoePzpIazmAqvVvvh5SQ1hqZuCn5ffl3x777xHiUU9z--akaypyDbIgToO26U--D%2BUL6IEkoc6dkRNuUkoosQ%3D%3D", cookie.value);
-            Assert.assertNull(cookie.domain);
-            TestUtils.assertEquals("/", cookie.path);
-            Assert.assertTrue(cookie.secure);
-            Assert.assertFalse(cookie.partitioned);
-            Assert.assertTrue(cookie.httpOnly);
-            Assert.assertEquals(0, cookie.maxAge);
-            TestUtils.assertEquals("Lax", cookie.sameSite);
-            Assert.assertEquals(-1, cookie.expires);
-
-        } finally {
-            Unsafe.free(p, request.length(), MemoryTag.NATIVE_DEFAULT);
-        }
     }
 
     @Test
@@ -770,6 +772,27 @@ public class HttpHeaderParserTest {
         }
     }
 
+    private static void assertCaseInsensitivity(String request) {
+        long p = TestUtils.toMemory(request);
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            hp.parse(p, p + request.length(), true, false);
+            HttpCookie cookie = hp.getCookie(new Utf8String("_gh_sess"));
+            Assert.assertNotNull(cookie);
+            TestUtils.assertEquals("HSVQNiqqkeSqpG%2B7x9fBrnGqXk4nI%2BW2j9BITSM7WLy53vJNNeFqLpfiDH9TyA%2BUa%2FX3%2FrfzQgidqybd36Lh9wsADt3GQP2VQh7pBSAlsGicsqSe2oYK9%2F2y1K3L8gCiYDNtSNk4zdBsTYNLRG72D82X2JvK3ArL79zLkBg6qys45Fou39r33iNH9DxfCisqGS2zvDw0MiJ2H%2FzVD85GB7iXeuznThBI107uPHLJxzpgUAgqj4gLr8ocbDgkFeBuiiWHYRaT9b4wZmHIHMnDz%2BU0Pu45spvs6PLSvCoePzpIazmAqvVvvh5SQ1hqZuCn5ffl3x777xHiUU9z--akaypyDbIgToO26U--D%2BUL6IEkoc6dkRNuUkoosQ%3D%3D", cookie.value);
+            Assert.assertNull(cookie.domain);
+            TestUtils.assertEquals("/", cookie.path);
+            Assert.assertTrue(cookie.secure);
+            Assert.assertFalse(cookie.partitioned);
+            Assert.assertTrue(cookie.httpOnly);
+            Assert.assertEquals(0, cookie.maxAge);
+            TestUtils.assertEquals("Lax", cookie.sameSite);
+            Assert.assertEquals(-1, cookie.expires);
+
+        } finally {
+            Unsafe.free(p, request.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     private static void assertCookieVanilla(String v) {
         long p = TestUtils.toMemory(v);
         try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
@@ -788,6 +811,19 @@ public class HttpHeaderParserTest {
 
         } finally {
             Unsafe.free(p, v.length(), MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private static void assertCookies(CharSequence expected, String response, StringSink sink) {
+        sink.clear();
+        response = "GET /ok?x=a&y=b+c&z=123 HTTP/1.1\r\n" + response + "\r\n";
+        long p = TestUtils.toMemory(response);
+        try (HttpHeaderParser hp = new HttpHeaderParser(1024, pool)) {
+            hp.parse(p, p + response.length(), true, false);
+            hp.getCookieList().toSink(sink);
+            TestUtils.assertEquals(expected, sink);
+        } finally {
+            Unsafe.free(p, response.length(), MemoryTag.NATIVE_DEFAULT);
         }
     }
 
