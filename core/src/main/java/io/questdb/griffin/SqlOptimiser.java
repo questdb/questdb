@@ -5815,7 +5815,6 @@ public class SqlOptimiser implements Mutable {
                 && model.getNestedModel().getNestedModel() != null
                 && model.getNestedModel().getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE) {
 
-
             // Something like this: SELECT timestamp, * FROM trades LIMIT -3;
             // compiles to:
             // select-choose timestamp, symbol, side, price, amount, timestamp timestamp1
@@ -5840,48 +5839,44 @@ public class SqlOptimiser implements Mutable {
                     && model.getSampleBy() == null
                     && nested.getSampleBy() == null
                     && !hasAggregateQueryColumn(model)
-                    && !model.isDistinct()) {
-
+                    && !model.isDistinct()
+                    && model.getBottomUpColumns().size() >= nested.getBottomUpColumns().size()) {
                 IntList copiedColumns = new IntList();
 
-                // we are going to compact the models
-                if (model.getBottomUpColumns().size() >= nested.getBottomUpColumns().size()) {
-                    // since it is possible that this is a redundant model, or we can push down the extra select choose
-                    for (int i = 0, n = nested.getBottomUpColumns().size(); i < n; i++) {
-                        QueryColumn nestedColumn = nested.getBottomUpColumns().get(i);
+                // since it is possible that this is a redundant model, or we can push down the extra select choose
+                for (int i = 0, n = nested.getBottomUpColumns().size(); i < n; i++) {
+                    QueryColumn nestedColumn = nested.getBottomUpColumns().get(i);
 
-                        if (!model.getColumnNameToAliasMap().contains(nestedColumn.getName())) {
-                            // if it is not part of it, then is it the same as another column?
-                            CharSequence token = nestedColumn.getAst().token;
+                    if (!model.getColumnNameToAliasMap().contains(nestedColumn.getName())) {
+                        // if it is not part of it, then is it the same as another column?
+                        CharSequence token = nestedColumn.getAst().token;
 
-                            if (model.getColumnNameToAliasMap().contains(token)) {
-                                // we can pull up this column
-                                model.addBottomUpColumn(nestedColumn);
-                                copiedColumns.add(nested.getBottomUpColumns().size() - 1);
-                            }
-                        } else {
-                            // catch cases like
-                            // select-choose ts1, ts1 ts2 from (select-choose timestamp ts1 from (trades timestamp (timestamp))) limit -(3)
-                            // here, the outer model relies on an earlier alias, so we must reify the alias
-                            if (nestedColumn.getAlias() != null && model.getColumnNameToAliasMap().contains(nestedColumn.getAlias())) {
-                                // we must reify the alias
-                                QueryColumn aliasedCol = model.getAliasToColumnMap().get(nestedColumn.getAlias());
-                                aliasedCol.getAst().token = nestedColumn.getAst().token;
+                        if (model.getColumnNameToAliasMap().contains(token)) {
+                            // we can pull up this column
+                            model.addBottomUpColumn(nestedColumn);
+                            copiedColumns.add(nested.getBottomUpColumns().size() - 1);
+                        }
+                    } else {
+                        // catch cases like
+                        // select-choose ts1, ts1 ts2 from (select-choose timestamp ts1 from (trades timestamp (timestamp))) limit -(3)
+                        // here, the outer model relies on an earlier alias, so we must reify the alias
+                        if (nestedColumn.getAlias() != null && model.getColumnNameToAliasMap().contains(nestedColumn.getAlias())) {
+                            // we must reify the alias
+                            QueryColumn aliasedCol = model.getAliasToColumnMap().get(nestedColumn.getAlias());
+                            aliasedCol.getAst().token = nestedColumn.getAst().token;
 
-                                // check for any other columns relying on it
-                                for (int j = 0, m = model.getBottomUpColumns().size(); j < m; j++) {
-                                    QueryColumn modelColumn = model.getBottomUpColumns().get(j);
+                            // check for any other columns relying on it
+                            for (int j = 0, m = model.getBottomUpColumns().size(); j < m; j++) {
+                                QueryColumn modelColumn = model.getBottomUpColumns().get(j);
 
-                                    if (Chars.equals(modelColumn.getAst().token, aliasedCol.getAlias())) {
-                                        modelColumn.getAst().token = aliasedCol.getAst().token;
-                                    }
+                                if (Chars.equals(modelColumn.getAst().token, aliasedCol.getAlias())) {
+                                    modelColumn.getAst().token = aliasedCol.getAst().token;
                                 }
                             }
                         }
                     }
-                    model.setNestedModel(nested.getNestedModel());
                 }
-
+                model.setNestedModel(nested.getNestedModel());
             }
         }
     }
