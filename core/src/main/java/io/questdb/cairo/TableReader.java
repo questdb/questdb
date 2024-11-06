@@ -1271,7 +1271,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 (MemoryCMRDetachedImpl) mem1,
                                 (MemoryCMRDetachedImpl) columns.getQuick(index + 1),
                                 metadata.getColumnType(i),
-                                rowCount
+                                columnFilesRowCount
                         ))) {
                     return false;
                 }

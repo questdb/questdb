@@ -121,7 +121,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable("B", true);
             createTable("C", true);
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+            assertSql("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                     "B\tfalse\t0\t0\t0\t\t\t0\n" +
                     "C\tfalse\t0\t0\t0\t\t\t0\n", "wal_tables()");
         });

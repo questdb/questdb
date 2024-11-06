@@ -71,8 +71,13 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
         if (newSize == size()) {
             return true;
         }
-        if (fd != -1) {
-            super.changeSize(newSize);
+        if (newSize > 0) {
+            if (fd != -1) {
+                super.changeSize(newSize);
+                return true;
+            }
+        } else {
+            close();
             return true;
         }
         return false;
