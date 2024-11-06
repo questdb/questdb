@@ -91,7 +91,7 @@ public interface MetadataServiceStub extends MetadataService {
         throw new UnsupportedOperationException();
     }
 
-    default void forceRemovePartitions(LongList partitions) {
+    default void forceRemovePartitions(LongList partitionTimestamps) {
         throw CairoException.critical(0).put("recover partitions does not update sequencer metadata");
     }
 

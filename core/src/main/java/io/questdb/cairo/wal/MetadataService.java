@@ -122,7 +122,7 @@ public interface MetadataService {
 
     UpdateOperator getUpdateOperator();
 
-    void forceRemovePartitions(LongList partitions);
+    void forceRemovePartitions(LongList partitionTimestamps);
 
     void removeColumn(@NotNull CharSequence columnName);
 

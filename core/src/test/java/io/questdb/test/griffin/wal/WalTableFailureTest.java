@@ -683,12 +683,22 @@ public class WalTableFailureTest extends AbstractCairoTest {
             );
 
             // Force drop first partition, but keep last
+            if (Os.isWindows()) {
+                engine.releaseInactive();
+            }
+            tempPath = Path.getThreadLocal(root).concat(tableName).concat("2022-02-26.6");
+            Assert.assertTrue(ff.exists(tempPath.$()));
             compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26'");
 
             assertSql("count\tmin\tmax\n" +
                             "960\t2022-02-27T00:00:00.000000Z\t2022-02-27T15:59:00.000000Z\n",
                     "select count(), min(ts), max(ts) from " + tableName.getTableName()
             );
+
+            // Check that partitions are removed from disk, there are no open readers, directory removal should happen at the end
+            // of alter table operation
+            tempPath = Path.getThreadLocal(root).concat(tableName).concat("2022-02-26.6");
+            Assert.assertFalse(ff.exists(tempPath.$()));
         });
     }
 

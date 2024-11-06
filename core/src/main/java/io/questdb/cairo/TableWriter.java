@@ -1672,7 +1672,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void forceRemovePartitions(LongList partitions) {
+    public void forceRemovePartitions(LongList partitionTimestamps) {
         long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
         long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
         boolean firstPartitionDropped = false;
@@ -1682,8 +1682,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionRemoveCandidates.clear();
 
         int removedCount = 0;
-        for (int i = 0; i < partitions.size(); i++) {
-            long timestamp = partitions.getQuick(i);
+        for (int i = 0; i < partitionTimestamps.size(); i++) {
+            long timestamp = partitionTimestamps.getQuick(i);
             final int index = txWriter.getPartitionIndex(timestamp);
             if (index < 0) {
                 LOG.debug().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestamp).I$();
@@ -1702,7 +1702,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             firstPartitionDropped |= timestamp == txWriter.getPartitionTimestampByIndex(0);
             columnVersionWriter.removePartition(timestamp);
             txWriter.removeAttachedPartitions(timestamp);
-            partitionRemoveCandidates.add(timestamp);
+            // Add the partition to partition remove list that can be deleted if there are no open readers
+            // after the commit
+            partitionRemoveCandidates.add(timestamp, txWriter.getPartitionNameTxn(index));
         }
 
         if (removedCount > 0) {
@@ -6740,7 +6742,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < n; i += 2) {
             try {
                 final long timestamp = partitionRemoveCandidates.getQuick(i);
-                final long txn = partitionRemoveCandidates.getQuick(i + 1);
+                final long txn = partitionRemoveCandidates.get(i + 1);
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as result of a rollback
                 if (!anyReadersBeforeCommittedTxn || txn >= lastCommittedTxn) {
