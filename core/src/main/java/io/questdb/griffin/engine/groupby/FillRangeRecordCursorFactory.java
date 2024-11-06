@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -81,7 +82,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             TimestampSampler timestampSampler,
             ObjList<Function> fillValues,
             int timestampIndex
-    ) {
+    ) throws SqlException {
         super(metadata);
         this.base = base;
         this.fromFunc = fromFunc;
@@ -93,7 +94,24 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.timestampIndex = timestampIndex;
         this.valueFuncs = fillValues;
         this.metadata = metadata;
+
+        int passedTimestamp = 0;
+        // validate metadata
+        for (int i = 0; i < metadata.getColumnCount(); i++) {
+            int columnType = metadata.getColumnType(i);
+            if (i == metadata.getTimestampIndex() ||
+                    (columnType == ColumnType.TIMESTAMP && metadata.getTimestampIndex() == -1)) {
+                passedTimestamp = 1;
+                continue;
+            }
+            int fillColumnType = valueFuncs.get(i - passedTimestamp).getType();
+            if (!ColumnType.isBuiltInWideningCast(fillColumnType, columnType)) {
+                throw SqlException.$(0, "invalid fill value, cannot cast " + ColumnType.nameOf(fillColumnType) + " to " + ColumnType.nameOf(columnType));
+            }
+        }
+
         this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex);
+
     }
 
     @Override

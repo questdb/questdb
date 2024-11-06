@@ -50,7 +50,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -3834,6 +3838,18 @@ public class SampleByTest extends AbstractCairoTest {
 
                 assertFactoryMemoryUsage();
             }
+        });
+    }
+
+    @Test
+    public void testSampleByFromToFillMismatchedTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(DDL_FROMTO);
+            drainWalQueue();
+            assertException("select ts, count from fromto\n" +
+                    "sample by 5d from '2005' to '2006' fill(1.0)", 0, "invalid fill value");
+            assertException("select ts, count, 0::timestamp from fromto\n" +
+                    "sample by 5d from '2005' to '2006' fill(1.0)", 0, "not supported for keyed");
         });
     }
 
