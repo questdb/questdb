@@ -105,7 +105,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 continue;
             }
             int fillColumnType = valueFuncs.get(i - passedTimestamp).getType();
-            if (!ColumnType.isBuiltInWideningCast(fillColumnType, columnType)) {
+            if (fillColumnType != columnType && !ColumnType.isBuiltInWideningCast(fillColumnType, columnType)) {
                 throw SqlException.$(0, "invalid fill value, cannot cast " + ColumnType.nameOf(fillColumnType) + " to " + ColumnType.nameOf(columnType));
             }
         }
