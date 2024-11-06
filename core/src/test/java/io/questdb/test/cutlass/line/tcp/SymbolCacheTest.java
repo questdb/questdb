@@ -187,7 +187,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
-                     public long getSymbolCacheWaitUsBeforeReload() {
+                     public long getSymbolCacheWaitBeforeReload() {
                          return 0;
                      }
                  })
@@ -368,7 +368,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
-                     public long getSymbolCacheWaitUsBeforeReload() {
+                     public long getSymbolCacheWaitBeforeReload() {
                          return 0;
                      }
                  })
@@ -431,7 +431,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
-                     public long getSymbolCacheWaitUsBeforeReload() {
+                     public long getSymbolCacheWaitBeforeReload() {
                          return 0;
                      }
                  })
@@ -591,7 +591,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
-                     public long getSymbolCacheWaitUsBeforeReload() {
+                     public long getSymbolCacheWaitBeforeReload() {
                          return 0;
                      }
                  })
@@ -674,7 +674,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
-                     public long getSymbolCacheWaitUsBeforeReload() {
+                     public long getSymbolCacheWaitBeforeReload() {
                          return 0;
                      }
                  })

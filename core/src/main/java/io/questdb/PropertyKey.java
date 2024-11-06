@@ -340,7 +340,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     LINE_TCP_WRITER_WORKER_YIELD_THRESHOLD("line.tcp.writer.worker.yield.threshold"),
     LINE_TCP_WRITER_WORKER_NAP_THRESHOLD("line.tcp.writer.worker.nap.threshold"),
     LINE_TCP_WRITER_WORKER_SLEEP_THRESHOLD("line.tcp.writer.worker.sleep.threshold"),
-    LINE_TCP_SYMBOL_CACHE_WAIT_US_BEFORE_RELOAD("line.tcp.symbol.cache.wait.us.before.reload"),
+    LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD("line.tcp.symbol.cache.wait.before.reload"),
     LINE_TCP_IO_WORKER_COUNT("line.tcp.io.worker.count"),
     LINE_TCP_IO_WORKER_AFFINITY("line.tcp.io.worker.affinity"),
     LINE_TCP_IO_HALT_ON_ERROR("line.tcp.io.halt.on.error"),
