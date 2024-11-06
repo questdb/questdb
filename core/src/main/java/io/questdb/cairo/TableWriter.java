@@ -1196,6 +1196,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return rowsAdded;
     }
 
+    // TODO(puzpuzpuz): error handling here leaves many mem and resource leaks
     @Override
     public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
         final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
@@ -6874,7 +6875,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // original partition timestamp
                     Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
 
-
                     if (append) {
                         // we are appending last partition, make sure it has been mapped!
                         // this also might fail, make sure exception is trapped and partitions are
@@ -7705,12 +7705,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void removeSymbolMapFilesQuiet(CharSequence name, long columnNamTxn) {
+    private void removeSymbolMapFilesQuiet(CharSequence name, long columnNameTxn) {
         try {
-            removeFileOrLog(ff, offsetFileName(path.trimTo(pathSize), name, columnNamTxn));
-            removeFileOrLog(ff, charFileName(path.trimTo(pathSize), name, columnNamTxn));
-            removeFileOrLog(ff, keyFileName(path.trimTo(pathSize), name, columnNamTxn));
-            removeFileOrLog(ff, valueFileName(path.trimTo(pathSize), name, columnNamTxn));
+            removeFileOrLog(ff, offsetFileName(path.trimTo(pathSize), name, columnNameTxn));
+            removeFileOrLog(ff, charFileName(path.trimTo(pathSize), name, columnNameTxn));
+            removeFileOrLog(ff, keyFileName(path.trimTo(pathSize), name, columnNameTxn));
+            removeFileOrLog(ff, valueFileName(path.trimTo(pathSize), name, columnNameTxn));
         } finally {
             path.trimTo(pathSize);
         }

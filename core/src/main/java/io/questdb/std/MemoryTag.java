@@ -129,7 +129,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_OFFLOAD, "NATIVE_OFFLOAD");
         tagNameMap.extendAndSet(MMAP_UPDATE, "MMAP_UPDATE");
         tagNameMap.extendAndSet(MMAP_PARQUET_PARTITION_CONVERTER, "MMAP_PARQUET_PARTITION_CONVERTER");
-        tagNameMap.extendAndSet(MMAP_PARQUET_PARTITION_DECODER, "MMAP_PARTITION_DECODER");
+        tagNameMap.extendAndSet(MMAP_PARQUET_PARTITION_DECODER, "MMAP_PARQUET_PARTITION_DECODER");
         tagNameMap.extendAndSet(NATIVE_PATH, "NATIVE_PATH");
         tagNameMap.extendAndSet(NATIVE_TABLE_READER, "NATIVE_TABLE_READER");
         tagNameMap.extendAndSet(NATIVE_TABLE_WRITER, "NATIVE_TABLE_WRITER");
