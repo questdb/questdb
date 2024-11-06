@@ -25,7 +25,11 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
@@ -86,7 +90,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     public void configureWriter(Path path, CharSequence name, long columnNameTxn, long columnTop) {
         this.columnTop = columnTop;
         try {
-            this.writer.of(path, name, columnNameTxn);
+            writer.of(path, name, columnNameTxn);
         } catch (Throwable e) {
             this.close();
             throw e;

@@ -685,8 +685,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         partitionCount--;
     }
 
+    private void closeIndexReader(int base, int columnIndex) {
+        int index = getPrimaryColumnIndex(base, columnIndex);
+        Misc.free(bitmapIndexes.getAndSetQuick(index, null));
+        Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
+    }
+
     private void closeParquetPartition(int partitionIndex) {
         Misc.free(parquetPartitions.getQuick(partitionIndex));
+        int columnBase = getColumnBase(partitionIndex);
+        for (int i = 0; i < columnCount; i++) {
+            closeIndexReader(columnBase, i);
+        }
     }
 
     private void closePartition(int partitionIndex) {
@@ -705,8 +715,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         int index = getPrimaryColumnIndex(base, columnIndex);
         Misc.free(columns.get(index));
         Misc.free(columns.get(index + 1));
-        Misc.free(bitmapIndexes.getAndSetQuick(index, null));
-        Misc.free(bitmapIndexes.getAndSetQuick(index + 1, null));
+        closeIndexReader(base, columnIndex);
     }
 
     private void closePartitionColumns(int columnBase) {
@@ -1032,12 +1041,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 .$(", format=native")
                                 .I$();
 
-                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
+                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionCount++;
                     }
 
@@ -1235,6 +1244,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
             final int secondaryIndex = primaryIndex + 1;
             final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
+            final byte partitionFormat = (byte) openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_FORMAT);
             int writerIndex = metadata.getWriterIndex(columnIndex);
             final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
             final long columnTop = versionRecordIndex > -1 ? columnVersionReader.getColumnTopByIndex(versionRecordIndex) : 0;
@@ -1251,31 +1261,42 @@ public class TableReader implements Closeable, SymbolTableSource {
             // column file. This makes it necessary to check the partition timestamp in Column Version file
             // of when the column was added.
             if (columnRowCount > 0 && (versionRecordIndex > -1 || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
-                final int columnType = metadata.getColumnType(columnIndex);
+                if (partitionFormat == PartitionFormat.NATIVE) {
+                    final int columnType = metadata.getColumnType(columnIndex);
 
-                final MemoryCMR dataMem = columns.getQuick(primaryIndex);
-                if (ColumnType.isVarSize(columnType)) {
-                    final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-                    long auxSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
-                    TableUtils.iFile(path.trimTo(plen), name, columnTxn);
-                    MemoryCMR auxMem = columns.getQuick(secondaryIndex);
-                    auxMem = openOrCreateColumnMemory(path, columns, secondaryIndex, auxMem, auxSize);
-                    long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
-                    if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
-                        LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(dataSize).$(", path=").$(path).I$();
-                        throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(dataSize).put(']');
+                    final MemoryCMR dataMem = columns.getQuick(primaryIndex);
+                    if (ColumnType.isVarSize(columnType)) {
+                        final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                        long auxSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
+                        TableUtils.iFile(path.trimTo(plen), name, columnTxn);
+                        MemoryCMR auxMem = columns.getQuick(secondaryIndex);
+                        auxMem = openOrCreateColumnMemory(path, columns, secondaryIndex, auxMem, auxSize);
+                        long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
+                        if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
+                            LOG.critical().$("Invalid var len column size [column=").$(name)
+                                    .$(", size=").$(dataSize)
+                                    .$(", path=").$(path)
+                                    .I$();
+                            throw CairoException.critical(0).put("Invalid column size [column=").put(path)
+                                    .put(", size=").put(dataSize)
+                                    .put(']');
+                        }
+                        TableUtils.dFile(path.trimTo(plen), name, columnTxn);
+                        openOrCreateColumnMemory(path, columns, primaryIndex, dataMem, dataSize);
+                    } else {
+                        TableUtils.dFile(path.trimTo(plen), name, columnTxn);
+                        openOrCreateColumnMemory(
+                                path,
+                                columns,
+                                primaryIndex,
+                                dataMem,
+                                columnRowCount << ColumnType.pow2SizeOf(columnType)
+                        );
+                        Misc.free(columns.getAndSetQuick(secondaryIndex, null));
                     }
-                    TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateColumnMemory(path, columns, primaryIndex, dataMem, dataSize);
                 } else {
-                    TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateColumnMemory(
-                            path,
-                            columns,
-                            primaryIndex,
-                            dataMem,
-                            columnRowCount << ColumnType.pow2SizeOf(columnType)
-                    );
+                    assert partitionFormat == PartitionFormat.PARQUET;
+                    Misc.free(columns.getAndSetQuick(primaryIndex, null));
                     Misc.free(columns.getAndSetQuick(secondaryIndex, null));
                 }
 
