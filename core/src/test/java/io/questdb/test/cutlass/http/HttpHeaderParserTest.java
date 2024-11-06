@@ -300,7 +300,7 @@ public class HttpHeaderParserTest {
         // unknown attribute, boolean - starts with 'P' (along known alphabet)
         assertCookies(
                 "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", path=\"/\", secure=true, httpOnly=true, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
-                        "Set-Cookie: a=b; Domain=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                "Set-Cookie: a=b; Domain=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
                 sink
         );
 
@@ -322,7 +322,7 @@ public class HttpHeaderParserTest {
         // unknown attribute, boolean - starts with 'D'  (along known alphabet)
         assertCookies(
                 "[{cookieName=\"a\", value=\"b\", path=\"/\", secure=true, httpOnly=true, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
-                        "Set-Cookie: a=b; Do4main=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                "Set-Cookie: a=b; Do4main=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
                 sink
         );
 
