@@ -379,6 +379,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         HttpCookie cookie = null;
         boolean attributeArea = false;
         long p0 = lo;
+        int nonSpaceCount = 0; // non-space character count since p0
         for (long p = lo; p < hi; p++) {
             char c = (char) Unsafe.getUnsafe().getByte(p);
             switch (c | 32) {
@@ -394,8 +395,9 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     } else {
                         cookie = cookiePool.next();
                         cookie.cookieName = csPool.next().of(p0, p);
-                        p0 = p + 1;
                     }
+                    p0 = p + 1;
+                    nonSpaceCount = 0;
                     break;
                 case ';':
                     if (cookie == null) {
@@ -404,10 +406,12 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     }
                     cookie.value = csPool.next().of(p0, p);
                     attributeArea = true;
+
                     p0 = p + 1;
+                    nonSpaceCount = 0;
                     break;
                 case 'd':
-                    if (attributeArea) {
+                    if (attributeArea && nonSpaceCount == 0) {
                         // Domain=<domain-value>
                         // 0x69616d6f = "omai" from Domain
                         if (
@@ -423,34 +427,38 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                         } else {
                             p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
+                        p0 = p + 1;
+                    } else {
+                        nonSpaceCount++;
                     }
                     break;
                 case 'p':
-                    if (attributeArea) {
+                    if (attributeArea && nonSpaceCount == 0) {
                         // Path=<path-value>
                         if (p + 4 < hi && swarLowercaseInt(p) == 0x68746170 && isEquals(p + 4)) {
                             p += 5;
                             p0 = p;
                             p = cookieSkipBytes(p, hi);
                             cookie.path = csPool.next().of(p0, p);
-                        } else if (p + 11 < hi && swarLowercaseLong(p + 1) == 0x6e6f697469747261L && swarLowercaseShort(p + 9) == 0x6465) {
+                        } else if (p + 10 < hi && swarLowercaseLong(p + 1) == 0x6e6f697469747261L && swarLowercaseShort(p + 9) == 0x6465) {
                             // Partitioned, len = 11
                             p += 11;
-                            p0 = p;
                             p = cookieSkipBytes(p, hi);
                             cookie.partitioned = true;
                         } else {
                             p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
+                        p0 = p + 1;
+                    } else {
+                        nonSpaceCount++;
                     }
                     break;
                 case 's':
-                    if (attributeArea) {
+                    if (attributeArea && nonSpaceCount == 0) {
                         // Secure, len = 6, 'S' + 0x72756365 + 'e'
-                        if (p + 6 < hi && swarLowercaseInt(p + 1) == 0x72756365 && lowercaseByte(p + 5) == 'e') {
+                        if (p + 5 < hi && swarLowercaseInt(p + 1) == 0x72756365 && lowercaseByte(p + 5) == 'e') {
                             // Secure
                             p += 6;
-                            p0 = p;
                             p = cookieSkipBytes(p, hi);
                             cookie.secure = true;
                         } else if (p + 8 < hi && swarLowercaseLong(p) == 0x65746973656d6173L && isEquals(p + 8)) {
@@ -462,24 +470,29 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                         } else {
                             p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
+                        p0 = p + 1;
+                    } else {
+                        nonSpaceCount++;
                     }
                     break;
                 case 'h':
-                    if (attributeArea) {
+                    if (attributeArea && nonSpaceCount == 0) {
                         // HttpOnly, len = 8, as long 0x796c6e4f70747448L
-                        if (p + 8 < hi && swarLowercaseLong(p) == 0x796c6e6f70747468L) {
+                        if (p + 7 < hi && swarLowercaseLong(p) == 0x796c6e6f70747468L) {
                             // HttpOnly
                             p += 8;
-                            p0 = p;
                             p = cookieSkipBytes(p, hi);
                             cookie.httpOnly = true;
                         } else {
                             p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
+                        p0 = p + 1;
+                    } else {
+                        nonSpaceCount++;
                     }
                     break;
                 case 'm':
-                    if (attributeArea) {
+                    if (attributeArea && nonSpaceCount == 0) {
                         // Max-Age=<number>, key len = 7
                         if (p + 7 < hi && swarLowercaseInt(p + 1) == 0x612d7861 && swarLowercaseShort(p + 5) == 0x6567 && isEquals(p + 7)) {
                             p += 8;
@@ -494,10 +507,13 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                         } else {
                             p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
+                        p0 = p + 1;
+                    } else {
+                        nonSpaceCount++;
                     }
                     break;
                 case 'e':
-                    if (attributeArea) {
+                    if (attributeArea && nonSpaceCount == 0) {
                         // Expires=<date>
                         // 0x69727078 = "irpx" from Expires
                         if (
@@ -518,9 +534,18 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                         } else {
                             p = cookieLogUnknownAttributeError(p, lo, hi);
                         }
+                        p0 = p + 1;
+                    } else {
+                        nonSpaceCount++;
                     }
                     break;
+                case ' ':
+                    if (nonSpaceCount == 0) {
+                        break;
+                    }
+                    // fallthrough
                 default:
+                    nonSpaceCount++;
                     break;
             }
         }

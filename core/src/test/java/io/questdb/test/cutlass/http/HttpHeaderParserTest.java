@@ -318,11 +318,38 @@ public class HttpHeaderParserTest {
                 sink
         );
 
+        // prefixed "Path" with alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", secure=true, httpOnly=true, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; dPath=/; Secure; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // prefixed "Path" with non-alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", secure=true, httpOnly=true, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; xPath=/; Secure; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
 
         // unknown attribute, boolean - starts with 'D'  (along known alphabet)
         assertCookies(
                 "[{cookieName=\"a\", value=\"b\", path=\"/\", secure=true, httpOnly=true, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
                 "Set-Cookie: a=b; Do4main=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // prefixed "Domain" with alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", path=\"/\", secure=true, httpOnly=true, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; sDomain=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // prefixed "Domain" with nont-alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", path=\"/\", secure=true, httpOnly=true, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; xDomain=hello.com; Path=/; Secure; Part?; HttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
                 sink
         );
 
@@ -340,6 +367,20 @@ public class HttpHeaderParserTest {
                 sink
         );
 
+        // SameSite is prefixed with alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=0}]",
+                "Set-Cookie: a=b; pSameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // SameSite is prefixed with non-alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=0}]",
+                "Set-Cookie: a=b; xSameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
         // another variation with S
         assertCookies(
                 "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=0}]",
@@ -354,6 +395,19 @@ public class HttpHeaderParserTest {
                 sink
         );
 
+        // prefixed HttpOnly with alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", path=\"/\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; Path=/; dHttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // prefixed HttpOnly with non-alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", path=\"/\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=1234545, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; Path=/; dHttpOnly; Max-Age=1234545; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
 
         // unknown attribute, boolean - starts with 'M'  (along known alphabet)
         assertCookies(
@@ -369,10 +423,51 @@ public class HttpHeaderParserTest {
                 sink
         );
 
+        // Max-Age is prefixed with alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=0, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; sMax-Age=10; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // Max-Age is prefixed with non-alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", domain=\"hello.com\", secure=false, httpOnly=false, partitioned=false, expires=1445412480000000, maxAge=0, sameSite=\"strict\"}]",
+                "Set-Cookie: a=b; Domain=hello.com; xMax-Age=10; SameSite=strict; Expires=Wed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
         // unknown attribute, boolean - starts with 'E' (along known alphabet)
         assertCookies(
                 "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=false, expires=-1, maxAge=0}]",
                 "Set-Cookie: a=b; ExpiresWed, 21 Oct 2015 07:28:00 GMT\r\n",
+                sink
+        );
+
+        // Expires is prefixed with alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=true, httpOnly=false, partitioned=false, expires=-1, maxAge=0}]",
+                "Set-Cookie: a=b; hExpires=Wed, 21 Oct 2015 07:28:00 GMT; secure\r\n",
+                sink
+        );
+
+        // Expires is prefixed with non-alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=true, httpOnly=false, partitioned=false, expires=-1, maxAge=0}]",
+                "Set-Cookie: a=b; xExpires=Wed, 21 Oct 2015 07:28:00 GMT; secure\r\n",
+                sink
+        );
+
+        // Expires is prefixed with non-alphabet
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=false, partitioned=true, expires=-1, maxAge=0}]",
+                "Set-Cookie: a=b; xExpires=Wed, 21 Oct 2015 07:28:00 GMT; partitioned\r\n",
+                sink
+        );
+
+        assertCookies(
+                "[{cookieName=\"a\", value=\"b\", secure=false, httpOnly=true, partitioned=false, expires=-1, maxAge=0}]",
+                "Set-Cookie: a=b; xExpires=Wed, 21 Oct 2015 07:28:00 GMT; httponly\r\n",
                 sink
         );
 
