@@ -4851,8 +4851,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean dropPartitionByExactTimestamp(long timestamp) {
-        final long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
-        final long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
+        final long minTimestamp = txWriter.getMinTimestamp(); // table min timestamp
+        final long maxTimestamp = txWriter.getMaxTimestamp(); // table max timestamp
 
         final int index = txWriter.getPartitionIndex(timestamp);
         if (index < 0) {
