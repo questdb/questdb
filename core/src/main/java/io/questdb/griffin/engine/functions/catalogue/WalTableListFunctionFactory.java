@@ -41,7 +41,6 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTableListFunctionFactory implements FunctionFactory {
@@ -251,7 +250,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             suspendedFlag = seqTxnTracker.isSuspended();
                             sequencerTxn = seqTxnTracker.getSeqTxn();
                             writerTxn = seqTxnTracker.getWriterTxn();
-                            writerLagTxnCount = seqTxnTracker.getLagTxnCount();
+                            bufferedTxnSize = seqTxnTracker.getLagTxnCount();
                             if (suspendedFlag) {
                                 // only read error details from seqTxnTracker if the table is suspended
                                 // when the table is not suspended, it is not guaranteed that error details are immediately cleared
