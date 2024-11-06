@@ -32,7 +32,12 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 public interface TableNameRegistry extends Closeable {
+    TableToken LOCKED_DROP_TOKEN = new TableToken("__locked_drop__", "__locked_drop__", Integer.MAX_VALUE - 1, false, false, false);
     TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false, false, false);
+
+    static boolean isLocked(TableToken tableToken) {
+        return tableToken == LOCKED_TOKEN || tableToken == LOCKED_DROP_TOKEN;
+    }
 
     TableToken addTableAlias(String newName, TableToken tableToken);
 
@@ -143,8 +148,9 @@ public interface TableNameRegistry extends Closeable {
      *
      * @param convertedTables - list of table tokens for tables that have just been converted from WAL to non-WAL or
      *                        other way around. This list can be null or empty if no tables have changes the layout.
+     * @return true if reload did not find any inconsistencies, useful for tests
      */
-    void reload(@Nullable ObjList<TableToken> convertedTables);
+    boolean reload(@Nullable ObjList<TableToken> convertedTables);
 
     void removeAlias(TableToken tableToken);
 

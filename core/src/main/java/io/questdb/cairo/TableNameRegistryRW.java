@@ -51,10 +51,14 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public boolean dropTable(TableToken token) {
+        assert !TableNameRegistry.isLocked(token);
         final ReverseTableMapItem reverseMapItem = dirNameToTableTokenMap.get(token.getDirName());
-        if (reverseMapItem != null && tableNameToTableTokenMap.remove(token.getTableName(), token)) {
+        if (reverseMapItem != null && tableNameToTableTokenMap.replace(token.getTableName(), token, LOCKED_DROP_TOKEN)) {
             if (token.isWal()) {
                 nameStore.logDropTable(token);
+            }
+            assert tableNameToTableTokenMap.remove(token.getTableName(), LOCKED_DROP_TOKEN);
+            if (token.isWal()) {
                 dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.ofDropped(token));
             } else {
                 dirNameToTableTokenMap.remove(token.getDirName(), reverseMapItem);
@@ -63,6 +67,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
                 metadataRW.dropTable(token);
             }
             return true;
+
         }
         return false;
     }
@@ -101,13 +106,13 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
-    public synchronized void reload(@Nullable ObjList<TableToken> convertedTables) {
+    public synchronized boolean reload(@Nullable ObjList<TableToken> convertedTables) {
         tableNameToTableTokenMap.clear();
         dirNameToTableTokenMap.clear();
         if (!nameStore.isLocked()) {
             nameStore.lock();
         }
-        nameStore.reload(tableNameToTableTokenMap, dirNameToTableTokenMap, convertedTables);
+        return nameStore.reload(tableNameToTableTokenMap, dirNameToTableTokenMap, convertedTables);
     }
 
     @Override
@@ -121,14 +126,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         TableToken renamedTableToken = tableToken.renamed(newTableNameStr);
 
         if (tableNameToTableTokenMap.putIfAbsent(newTableNameStr, renamedTableToken) == null) {
-            if (tableNameToTableTokenMap.remove(oldName, tableToken)) {
-                // Persist to file
-                nameStore.logDropTable(tableToken);
-                nameStore.logAddTable(renamedTableToken);
-                dirNameToTableTokenMap.put(renamedTableToken.getDirName(), ReverseTableMapItem.of(renamedTableToken));
-                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                    metadataRW.renameTable(tableToken, renamedTableToken);
-                }
+            if (renameToNew(tableToken, renamedTableToken)) {
                 return renamedTableToken;
             } else {
                 // Already renamed by another thread. Revert new name reservation.
@@ -142,18 +140,25 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public void rename(TableToken oldToken, TableToken newToken) {
-        if (tableNameToTableTokenMap.remove(oldToken.getTableName(), oldToken)) {
-            nameStore.logDropTable(oldToken);
-            nameStore.logAddTable(newToken);
-            dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
-            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                metadataRW.renameTable(oldToken, newToken);
-            }
-        }
+        renameToNew(oldToken, newToken);
     }
 
     @Override
     public void unlockTableName(TableToken tableToken) {
         tableNameToTableTokenMap.remove(tableToken.getTableName(), LOCKED_TOKEN);
+    }
+
+    private boolean renameToNew(TableToken oldToken, TableToken newToken) {
+        if (tableNameToTableTokenMap.replace(oldToken.getTableName(), oldToken, LOCKED_DROP_TOKEN)) {
+            nameStore.logDropTable(oldToken);
+            nameStore.logAddTable(newToken);
+            assert tableNameToTableTokenMap.remove(oldToken.getTableName(), LOCKED_DROP_TOKEN);
+            dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.renameTable(oldToken, newToken);
+            }
+            return true;
+        }
+        return false;
     }
 }
