@@ -27,8 +27,8 @@ package io.questdb.std;
 /**
  * Return itself deepClone instance.
  * <p>
- * Fields in {@link io.questdb.cairo.sql.Function} that not thread safe in parallel
- * execution need to implement this interface.
+ * Fields in {@link io.questdb.cairo.sql.Function} that are not immutable (hence, not thread safe) need to implement this interface.
+ * Filter and group by functions used in parallel SQL are cloned for each worker thread.
  * Cloning is done by {@link io.questdb.griffin.engine.functions.FunctionCloneFactory}.
  */
 public interface DeepCloneable<T> {
