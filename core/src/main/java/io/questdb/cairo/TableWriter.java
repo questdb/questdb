@@ -4854,7 +4854,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
         final long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
 
-        timestamp = txWriter.getPartitionTimestampByTimestamp(timestamp);
         final int index = txWriter.getPartitionIndex(timestamp);
         if (index < 0) {
             LOG.error().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestamp).I$();
