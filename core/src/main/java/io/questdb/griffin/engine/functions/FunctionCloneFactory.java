@@ -37,7 +37,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.Map;
-import java.util.regex.Matcher;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 import static java.util.stream.Collectors.toMap;
@@ -47,6 +47,7 @@ public class FunctionCloneFactory {
     static Map<Class<?>, Object> DEFAULT_CLAZZ_VALUES = Stream
             .of(boolean.class, byte.class, char.class, double.class, float.class, int.class, long.class, short.class)
             .collect(toMap(clazz -> clazz, clazz -> Array.get(Array.newInstance(clazz, 1), 0)));
+    static Map<Class<?>, FieldWrapper[]> FUNCTION_FIELDS_CACHE = new ConcurrentHashMap<>(1024);
 
     static {
         DEFAULT_CLAZZ_VALUES.put(CharSequence.class, "{}");
@@ -80,20 +81,47 @@ public class FunctionCloneFactory {
             for (int i = 0; i < parameterCount; i++) {
                 pArgs[i] = DEFAULT_CLAZZ_VALUES.get(pTypes[i]);
             }
+            DEFAULT_CLAZZ_VALUES.get(cls);
             cloneFunc = (Function) funcCons.newInstance(pArgs);
 
             while (cls != null) {
-                for (Field field : cls.getDeclaredFields()) {
-                    field.setAccessible(true);
-                    Object fValue = field.get(function);
-                    if (fValue == null || Modifier.isStatic(field.getModifiers())) {
+                FieldWrapper[] fields = FUNCTION_FIELDS_CACHE.get(cls);
+                if (fields == null) {
+                    Field[] fs = cls.getDeclaredFields();
+                    fields = new FieldWrapper[fs.length];
+                    for (int i = 0, size = fs.length; i < size; i++) {
+                        fs[i].setAccessible(true);
+                        fields[i] = new FieldWrapper(fs[i], hasDelayInitialize(fs[i]), Modifier.isStatic(fs[i].getModifiers()));
+                    }
+                    FUNCTION_FIELDS_CACHE.put(cls, fields);
+                }
+                for (FieldWrapper fw : fields) {
+                    if (fw.isStatic) {
                         continue;
                     }
-                    if (hasDelayInitialize(field)) {
-                        field.set(cloneFunc, null);
-                    } else {
-                        field.set(cloneFunc, cloneElem(field.getType(), fValue, field.get(cloneFunc)));
+
+                    Field field = fw.field;
+                    Object fValue = field.get(function);
+                    if (fValue == null) {
+                        continue;
                     }
+
+                    if (fw.hasDelayInitialize) {
+                        field.set(cloneFunc, null);
+                    } else if (fValue instanceof Function) {
+                        if (fValue instanceof IndexedParameterLinkFunction || fValue instanceof NamedParameterLinkFunction) {
+                            field.set(cloneFunc, fValue);
+                        } else {
+                            field.set(cloneFunc, deepCloneFunction((Function) fValue));
+                        }
+                    } else if (fValue instanceof DeepCloneable<?>) {
+                        field.set(cloneFunc, ((DeepCloneable<?>) fValue).deepClone());
+                    } else if (fValue instanceof ObjList) {
+                        field.set(cloneFunc, cloneObjList((ObjList<?>) fValue));
+                    } else if (field.getType().isPrimitive() || field.get(cloneFunc) == null || field.getType() == CharSequence.class
+                            || field.getType() == String.class) {
+                        field.set(cloneFunc, fValue);
+                    } // else just keep as it is.
                 }
                 cls = cls.getSuperclass();
             }
@@ -106,21 +134,31 @@ public class FunctionCloneFactory {
         }
     }
 
+    private static class FieldWrapper {
+        private final Field field;
+        private final boolean hasDelayInitialize;
+        private final boolean isStatic;
+
+        private FieldWrapper(Field field, boolean hasDelayInitialize, boolean isStatic) {
+            this.field = field;
+            this.hasDelayInitialize = hasDelayInitialize;
+            this.isStatic = isStatic;
+        }
+    }
+
     private static ObjList<?> cloneObjList(ObjList<?> fValue) {
         if (fValue.size() == 0) {
             return new ObjList<>();
         }
         ObjList nList = new ObjList<>(fValue.size());
         for (int i = 0, size = fValue.size(); i < size; i++) {
-            nList.add(cloneElem(null, fValue.getQuick(i), null));
+            nList.add(cloneElem(fValue.getQuick(i)));
         }
         return nList;
     }
 
-    private static Object cloneElem(Class<?> fType, Object fValue, Object cValue) {
-        if (fValue == null) {
-            return null;
-        } else if (fValue instanceof Function) {
+    private static Object cloneElem(Object fValue) {
+        if (fValue instanceof Function) {
             if (fValue instanceof IndexedParameterLinkFunction || fValue instanceof NamedParameterLinkFunction) {
                 return fValue;
             } else {
@@ -128,17 +166,8 @@ public class FunctionCloneFactory {
             }
         } else if (fValue instanceof DeepCloneable<?>) {
             return ((DeepCloneable<?>) fValue).deepClone();
-        } else if (fValue instanceof ObjList) {
-            return cloneObjList((ObjList<?>) fValue);
         } else {
-            if (fType == null) {
-                fType = fValue.getClass();
-            }
-            if (fType.isPrimitive() || cValue == null || fType == CharSequence.class || fType == String.class) {
-                return fValue;
-            } else {
-                return cValue;
-            }
+            return fValue;
         }
     }
 
