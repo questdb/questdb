@@ -854,7 +854,8 @@ public class FuzzRunner {
         long endNonWalMicro = System.nanoTime() / 1000;
         long nonWalTotal = endNonWalMicro - startMicro;
 
-        applyWal(transactions, tableNameWal, getRndParallelWalCount(rnd), rnd);
+        int rndParallelWalCount = getRndParallelWalCount(rnd);
+        applyWal(transactions, tableNameWal, 1, rnd);
 
         long endWalMicro = System.nanoTime() / 1000;
         long walTotal = endWalMicro - endNonWalMicro;

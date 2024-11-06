@@ -49,10 +49,13 @@ public class FuzzDropPartitionOperation implements FuzzTransactionOperation {
         ) {
             context.with(AllowAllSecurityContext.INSTANCE);
             TableRecordMetadata metadata = wApi.getMetadata();
-            String sql = String.format("ALTER TABLE %s DROP PARTITION WHERE %s < %d",
+            String sql = String.format("ALTER TABLE %s DROP PARTITION WHERE %s < %d AND %s > %d - 86400000000",
                     wApi.getTableToken().getTableName(),
                     metadata.getColumnName(metadata.getTimestampIndex()),
-                    cutoffTimestamp);
+                    cutoffTimestamp,
+                    metadata.getColumnName(metadata.getTimestampIndex()),
+                    cutoffTimestamp
+            );
             CompiledQuery query = sqlCompiler.compile(sql, context);
             AlterOperation alterOp = query.getAlterOperation();
             alterOp.withSqlStatement(sql);

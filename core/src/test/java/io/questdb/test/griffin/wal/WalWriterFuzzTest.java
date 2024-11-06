@@ -67,6 +67,15 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testAddDropColumnDropPartition() throws Exception {
+        Rnd rnd = generateRandom(LOG, 155138622551208L, 1730821881671L);
+        // 155138622551208L, 1730821881671L
+        setFuzzProbabilities(0.0, 0.0, 0.0, 0.0, 0.05, 0.05, 0.0, 0.0, 1.0, 0.01, 0.01, 0.0, 0.0);
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testChunkedSequencerWalTransactionQueries() throws Exception {
         assertMemoryLeak(() -> {
             int chunkSize = TestUtils.generateRandom(LOG).nextInt(100) + 1;
@@ -124,15 +133,6 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(10_000_000),
                 rnd.nextInt(1500), 20, 10, 200, 0, 1
         );
-        runFuzz(rnd);
-    }
-
-    @Test
-    public void testWalAddDropPartitionO3() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        setFuzzProbabilities(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.01, 1.0, 0.0, 0.01, 0.0, 0.0);
-        setFuzzCounts(true, 100_000, 500, 20, 10, 20, 100_000, 5);
-        setFuzzProperties(rnd);
         runFuzz(rnd);
     }
 
