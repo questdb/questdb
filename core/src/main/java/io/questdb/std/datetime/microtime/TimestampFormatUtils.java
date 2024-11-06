@@ -24,7 +24,11 @@
 
 package io.questdb.std.datetime.microtime;
 
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -371,6 +375,10 @@ public class TimestampFormatUtils {
     @TestOnly
     public static long parseDateTime(@NotNull CharSequence seq) throws NumericException {
         return NANOS_UTC_FORMAT.parse(seq, 0, seq.length(), EN_LOCALE);
+    }
+
+    public static long parseHTTP(@NotNull CharSequence in) throws NumericException {
+        return HTTP_FORMAT.parse(in, EN_LOCALE);
     }
 
     // YYYY-MM-DDThh:mm:ss.mmmZ

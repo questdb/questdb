@@ -54,7 +54,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
     private static final int nameColumn;
     private static final int sequencerTxnColumn;
     private static final int suspendedColumn;
-    private static final int writerLagTxnCountColumn;
+    private static final int bufferedTxnSizeColumn;
     private static final int writerTxnColumn;
 
     @Override
@@ -182,7 +182,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                 private long sequencerTxn;
                 private boolean suspendedFlag;
                 private String tableName;
-                private long writerLagTxnCount;
+                private long bufferedTxnSize;
                 private long writerTxn;
 
                 @Override
@@ -206,8 +206,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                     if (col == writerTxnColumn) {
                         return writerTxn;
                     }
-                    if (col == writerLagTxnCountColumn) {
-                        return writerLagTxnCount;
+                    if (col == bufferedTxnSizeColumn) {
+                        return bufferedTxnSize;
                     }
                     if (col == sequencerTxnColumn) {
                         return sequencerTxn;
@@ -288,7 +288,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             final MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
                             final long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
                             TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                            writerLagTxnCount = txReader.getLagTxnCount();
+                            bufferedTxnSize = txReader.getLagTxnCount();
                             SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                             return true;
                         } finally {
@@ -319,8 +319,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         suspendedColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("writerTxn", ColumnType.LONG));
         writerTxnColumn = metadata.getColumnCount() - 1;
-        metadata.add(new TableColumnMetadata("writerLagTxnCount", ColumnType.LONG));
-        writerLagTxnCountColumn = metadata.getColumnCount() - 1;
+        metadata.add(new TableColumnMetadata("bufferedTxnSize", ColumnType.LONG));
+        bufferedTxnSizeColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("sequencerTxn", ColumnType.LONG));
         sequencerTxnColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("errorTag", ColumnType.STRING));

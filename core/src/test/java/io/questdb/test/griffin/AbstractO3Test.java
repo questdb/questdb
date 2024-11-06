@@ -25,12 +25,22 @@
 package io.questdb.test.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.*;
+import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.griffin.RecordToRowCopierUtils;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.BytecodeAssembler;
@@ -45,7 +55,11 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Rule;
 import org.junit.rules.Timeout;
 
 import java.util.concurrent.TimeUnit;
@@ -53,14 +67,14 @@ import java.util.concurrent.TimeUnit;
 public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink = new StringSink();
     protected static final StringSink sink2 = new StringSink();
+    protected static long cairoCommitLatency = 30_000_000;
     protected static int commitMode = CommitMode.NOSYNC;
     protected static int dataAppendPageSize = -1;
-    protected static int o3ColumnMemorySize = -1;
     protected static boolean mixedIOEnabled;
     protected static boolean mixedIOEnabledFFDefault;
+    protected static int o3ColumnMemorySize = -1;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
-
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -97,6 +111,7 @@ public class AbstractO3Test extends AbstractTest {
         o3ColumnMemorySize = -1;
         o3MemMaxPages = -1;
         partitionO3SplitThreshold = -1;
+        cairoCommitLatency = 30_000_000;
         super.tearDown();
     }
 
@@ -293,14 +308,13 @@ public class AbstractO3Test extends AbstractTest {
 
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public CharSequence getSqlCopyInputRoot() {
-                        // reuse root as input root for tests
-                        return root;
+                    public boolean disableColumnPurgeJob() {
+                        return false;
                     }
 
                     @Override
-                    public boolean disableColumnPurgeJob() {
-                        return false;
+                    public long getCommitLatency() {
+                        return cairoCommitLatency;
                     }
 
                     @Override
@@ -337,6 +351,12 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        // reuse root as input root for tests
+                        return root;
+                    }
+
+                    @Override
                     public boolean isWriterMixedIOEnabled() {
                         // Allow enabling mixed I/O only if the ff allows it.
                         return mixedIOEnabledFFDefault && mixedIOEnabled;
@@ -348,13 +368,13 @@ public class AbstractO3Test extends AbstractTest {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
-                    public CharSequence getSqlCopyInputRoot() {
-                        return root;
+                    public boolean disableColumnPurgeJob() {
+                        return false;
                     }
 
                     @Override
-                    public boolean disableColumnPurgeJob() {
-                        return false;
+                    public long getCommitLatency() {
+                        return cairoCommitLatency;
                     }
 
                     @Override
@@ -413,6 +433,11 @@ public class AbstractO3Test extends AbstractTest {
                     @Override
                     public long getPartitionO3SplitMinSize() {
                         return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
+                    }
+
+                    @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        return root;
                     }
 
                     @Override
