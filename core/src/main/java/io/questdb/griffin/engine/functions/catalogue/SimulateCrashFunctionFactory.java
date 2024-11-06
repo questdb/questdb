@@ -72,6 +72,8 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
                     return CairoExceptionFunction.INSTANCE_2;
                 case 'P':
                     return CairoExceptionFunction.INSTANCE_P;
+                case 'A':
+                    return CairoExceptionFunction.INSTANCE_A;
                 default:
                     throw new UnsupportedOperationException("Unsupported crash type: " + crashType);
             }
@@ -105,15 +107,17 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
     }
 
     private static class CairoExceptionFunction extends BooleanFunction {
-        private static final CairoExceptionFunction INSTANCE_0 = new CairoExceptionFunction(0);
-        private static final CairoExceptionFunction INSTANCE_1 = new CairoExceptionFunction(1);
-        private static final CairoExceptionFunction INSTANCE_2 = new CairoExceptionFunction(2);
-        private static final CairoExceptionFunction INSTANCE_P = new CairoExceptionFunction(1100);
-
+        private static final CairoExceptionFunction INSTANCE_0 = new CairoExceptionFunction(0, false);
+        private static final CairoExceptionFunction INSTANCE_1 = new CairoExceptionFunction(1, false);
+        private static final CairoExceptionFunction INSTANCE_2 = new CairoExceptionFunction(2, false);
+        private static final CairoExceptionFunction INSTANCE_A = new CairoExceptionFunction(0, true);
+        private static final CairoExceptionFunction INSTANCE_P = new CairoExceptionFunction(1100, false);
+        private final boolean authorizationException;
         private final int numOfRecordsBeforeException;
         private int current;
 
-        public CairoExceptionFunction(int numOfRecordsBeforeException) {
+        public CairoExceptionFunction(int numOfRecordsBeforeException, boolean authorizationException) {
+            this.authorizationException = authorizationException;
             this.numOfRecordsBeforeException = numOfRecordsBeforeException;
         }
 
@@ -121,6 +125,9 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         public boolean getBool(Record rec) {
             if (current < numOfRecordsBeforeException) {
                 return current++ % 2 == 0;
+            }
+            if (authorizationException) {
+                throw CairoException.authorization().put("simulated authorization exception");
             }
             throw CairoException.critical(1).put("simulated cairo exception");
         }

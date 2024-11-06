@@ -169,7 +169,7 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public long getSymbolCacheWaitUsBeforeReload() {
+    public long getSymbolCacheWaitBeforeReload() {
         return 500_000;
     }
 

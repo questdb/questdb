@@ -25,9 +25,12 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.std.Mutable;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
 
-public class HttpCookie implements Mutable {
+public class HttpCookie implements Mutable, Sinkable {
     public DirectUtf8String cookieName;
     public DirectUtf8String domain;
     public long expires = -1L;
@@ -51,6 +54,29 @@ public class HttpCookie implements Mutable {
         this.secure = false;
         this.value = null;
         this.cookieName = null;
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.put('{');
+
+        sink.put("cookieName=").putQuoted(cookieName);
+        sink.put(", value=").putQuoted(value);
+        if (domain != null) {
+            sink.put(", domain=").putQuoted(domain);
+        }
+        if (path != null) {
+            sink.put(", path=").putQuoted(path);
+        }
+        sink.put(", secure=").put(secure);
+        sink.put(", httpOnly=").put(httpOnly);
+        sink.put(", partitioned=").put(partitioned);
+        sink.put(", expires=").put(expires);
+        sink.put(", maxAge=").put(maxAge);
+        if (sameSite != null) {
+            sink.put(", sameSite=").putQuoted(sameSite);
+        }
+        sink.put('}');
     }
 
     public boolean isDeleted() {
