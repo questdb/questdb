@@ -568,7 +568,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } else {
                 long lastWriterTxn;
                 txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
+                TableWriter writer = null;
+                try {
+                    writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON);
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
                     if (txnTracker.shouldBackOffDueToMemoryPressure(MicrosecondClockImpl.INSTANCE.getTicks())) {
                         // rely on CheckWalTransactionsJob to notify us when to apply transactions
@@ -591,6 +593,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // We do not suspend table because of having initial value on lastWriterTxn. It will either be
                     // "ignore" or last txn we applied.
                     return;
+                } catch (Throwable th) {
+                    // There is some unexpected error and table will likely to be suspended.
+                    // It is safer to create new TableWriter after exceptions.
+                    if (writer != null) {
+                        writer.markDistressed();
+                    }
+                    throw th;
+                } finally {
+                    Misc.free(writer);
                 }
 
                 if (engine.getTableSequencerAPI().notifyCommitReadable(tableToken, lastWriterTxn)) {

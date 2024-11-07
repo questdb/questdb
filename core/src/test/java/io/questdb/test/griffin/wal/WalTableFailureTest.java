@@ -580,6 +580,74 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForceDropPartitionFailsAndRolledBack() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            insert("insert into " + tableToken.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-24T01', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(10 * 4)");
+
+            drainWalQueue();
+
+            assertSql("count\tmin\tmax\n" +
+                            "33\t2022-02-24T00:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableToken.getTableName() +
+                            " where ts not in '2022-03-04' and ts not in '2022-03-02'"
+            );
+            // Evict reader to simulate reader that is not able to read partition
+            engine.releaseInactive();
+
+            // Remove one but last partition from the disk
+            Path tempPath = Path.getThreadLocal(root).concat(tableToken).concat("2022-03-04");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            Assert.assertTrue(ff.rmdir(tempPath));
+
+            try {
+                // This should execute immediately, drop partition before the last one
+                compile("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-05'");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist:");
+                TestUtils.assertContains(e.getFlyweightMessage(), "2022-03-04");
+            }
+
+            try {
+                assertSql("count\tmin\tmax\n" +
+                                "20\t2022-03-01T01:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                        "select count(), min(ts), max(ts) from " + tableToken.getTableName()
+                );
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2022-03-04' does not exist in table");
+            }
+
+            // Previous command to delete 2022-03-05 is not executed because writer rolled back correctly
+            compile("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-02'");
+            tempPath = Path.getThreadLocal(root).concat(tableToken).concat("2022-03-05");
+            Assert.assertTrue(ff.exists(tempPath.$()));
+
+            // Force delete partition that is not on disk to unblock reading
+            compile("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-04'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "33\t2022-02-24T00:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableToken.getTableName()
+            );
+
+            // Check writer is healthy and can insert records to the last partition
+            insert("insert into " + tableToken.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-03-05', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(10 * 4)");
+            drainWalQueue();
+            assertSql("count\tmin\tmax\n" +
+                            "73\t2022-02-24T00:00:00.000000Z\t2022-03-14T18:00:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableToken.getTableName() + " where ts not in '2022-03-04'"
+            );
+        });
+    }
+
+    @Test
     public void testForceDropPartitionRangeNotOnDisk() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableName = createStandardWalTable(testName.getMethodName());

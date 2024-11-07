@@ -39,6 +39,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private TableWriter.ExtensionListener extensionListener;
     private int lastRecordBaseOffset = -1;
     private long lastRecordStructureVersion = -1;
+    private long prevPartitionTableVersion = -1;
     private long prevMaxTimestamp;
     private long prevMinTimestamp;
     private int prevRecordBaseOffset = -2;
@@ -180,6 +181,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
             prevRecordBaseOffset = lastRecordBaseOffset;
             lastRecordBaseOffset = writeBaseOffset;
+            prevPartitionTableVersion = partitionTableVersion;
             int commitMode = configuration.getCommitMode();
             if (commitMode != CommitMode.NOSYNC) {
                 txMemBase.sync(commitMode == CommitMode.ASYNC);
@@ -216,7 +218,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public boolean inTransaction() {
-        return txPartitionCount > 1 || transientRowCount != prevTransientRowCount;
+        return txPartitionCount > 1 || transientRowCount != prevTransientRowCount || prevPartitionTableVersion != partitionTableVersion;
     }
 
     public void initLastPartition(long timestamp) {
@@ -448,6 +450,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public boolean unsafeLoadAll() {
         super.unsafeLoadAll();
         this.baseVersion = getVersion();
+        this.prevPartitionTableVersion = partitionTableVersion;
+        this.txPartitionCount = 1;
         if (baseVersion >= 0) {
             this.readBaseOffset = getBaseOffset();
             this.readRecordSize = getRecordSize();
@@ -560,6 +564,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         lastRecordStructureVersion = recordStructureVersion;
         prevRecordBaseOffset = lastRecordBaseOffset;
         lastRecordBaseOffset = writeBaseOffset;
+        prevPartitionTableVersion = partitionTableVersion;
     }
 
     private void finishABHeader(int areaOffset, int bytesSymbols, int bytesPartitions, int commitMode) {

@@ -771,6 +771,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (inTransaction()) {
+            assert !tableToken.isWal();
             LOG.info().$("committing open transaction before applying attach partition command [table=").utf8(tableToken.getTableName())
                     .$(", partition=").$ts(timestamp).I$();
             commit();
@@ -1184,6 +1185,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert PartitionBy.isPartitioned(partitionBy);
 
         if (inTransaction()) {
+            assert !tableToken.isWal();
             LOG.info()
                     .$("committing open transaction before applying convert partition to parquet command [table=")
                     .utf8(tableToken.getTableName())
@@ -1396,6 +1398,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert PartitionBy.isPartitioned(partitionBy);
 
         if (inTransaction()) {
+            assert !tableToken.isWal();
             LOG.info()
                     .$("committing open transaction before applying detach partition command [table=")
                     .utf8(tableToken.getTableName())
@@ -1584,6 +1587,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
         if (inTransaction()) {
+            assert !tableToken.isWal();
             LOG.info()
                     .$("committing current transaction before DROP INDEX execution [txn=").$(txWriter.getTxn())
                     .$(", table=").utf8(tableToken.getTableName())
@@ -1985,6 +1989,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
+    }
+
+    public void markDistressed() {
+        this.distressed = true;
     }
 
     public void markSeqTxnCommitted(long seqTxn) {
@@ -2621,11 +2629,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
         bumpColumnStructureVersion();
-
-//        try (MetadataCacheWriter metadataRW = engine.getCairoMetadata().write()) {
-//            metadataRW.dropTable(fromTableName);
-//            metadataRW.hydrateTable(metadata, true);
-//        }
     }
 
     @Override
@@ -2657,6 +2660,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.critical().$("could not perform rollback [name=").utf8(tableToken.getTableName()).$(", msg=").$(e).I$();
                 distressed = true;
             }
+            assert distressed || (!inTransaction() && !o3InError);
         }
     }
 
