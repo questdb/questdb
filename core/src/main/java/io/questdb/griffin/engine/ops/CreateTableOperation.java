@@ -16,8 +16,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.COLUMN_FLAG_CACHED;
-import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.COLUMN_FLAG_INDEXED;
+import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.*;
 
 public class CreateTableOperation implements TableStructure, QuietCloseable {
     // two cast maps, one for symbol cache flag and the other for symbol capacity
@@ -299,12 +298,12 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
 
     @Override
     public boolean isDedupKey(int index) {
-        return (getLowAt(index * 2 + 1) & CreateTableOperationBuilder.COLUMN_FLAG_DEDUP_KEY) != 0;
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_DEDUP_KEY) != 0;
     }
 
     @Override
     public boolean isIndexed(int index) {
-        return (getLowAt(index * 2 + 1) & CreateTableOperationBuilder.COLUMN_FLAG_INDEXED) != 0;
+        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
     }
 
     @Override
