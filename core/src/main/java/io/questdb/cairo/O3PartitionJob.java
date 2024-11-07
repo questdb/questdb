@@ -2042,9 +2042,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (indexWriter == null) {
                         indexWriter = o3Basket.nextIndexer();
                     }
-                    if (indexWriter.isOpen()) {
-                        Misc.free(indexWriter);
-                    }
 
                     final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
                     final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);

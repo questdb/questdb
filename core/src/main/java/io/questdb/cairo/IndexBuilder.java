@@ -142,7 +142,6 @@ public class IndexBuilder extends RebuildColumnBase {
 
                 final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
                 if (columnTop > -1L) {
-
                     if (partitionSize > columnTop) {
                         LOG.info().$("indexing [path=").$(path).I$();
                         createIndexFiles(ff, columnName, indexValueBlockCapacity, plen, columnNameTxn);
