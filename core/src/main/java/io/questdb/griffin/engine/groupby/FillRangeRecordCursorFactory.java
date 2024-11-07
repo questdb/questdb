@@ -95,20 +95,30 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.valueFuncs = fillValues;
         this.metadata = metadata;
 
-        int passedTimestamp = 0;
-        // validate metadata
-        for (int i = 0; i < metadata.getColumnCount(); i++) {
-            int columnType = metadata.getColumnType(i);
-            if (i == metadata.getTimestampIndex() ||
-                    (columnType == ColumnType.TIMESTAMP && metadata.getTimestampIndex() == -1)) {
-                passedTimestamp = 1;
-                continue;
+        // only do this for value fill
+        if (!(valueFuncs.size() == 1 && valueFuncs.get(0).isNullConstant())) {
+            if (metadata.getColumnCount() > valueFuncs.size() - 1) {
+                throw SqlException.$(0, "not enough fill values");
             }
-            int fillColumnType = valueFuncs.get(i - passedTimestamp).getType();
-            if (fillColumnType != columnType && !ColumnType.isBuiltInWideningCast(fillColumnType, columnType)) {
-                throw SqlException.$(0, "invalid fill value, cannot cast " + ColumnType.nameOf(fillColumnType) + " to " + ColumnType.nameOf(columnType));
+
+            int passedTimestamp = 0;
+
+            // validate metadata
+            for (int i = 0; i < metadata.getColumnCount(); i++) {
+                int columnType = metadata.getColumnType(i);
+                if (i == metadata.getTimestampIndex() ||
+                        (columnType == ColumnType.TIMESTAMP && metadata.getTimestampIndex() == -1)) {
+                    passedTimestamp = 1;
+                    continue;
+                }
+
+                int fillColumnType = valueFuncs.get(i - passedTimestamp).getType();
+                if (fillColumnType != columnType && !ColumnType.isBuiltInWideningCast(fillColumnType, columnType)) {
+                    throw SqlException.$(0, "invalid fill value, cannot cast " + ColumnType.nameOf(fillColumnType) + " to " + ColumnType.nameOf(columnType));
+                }
             }
         }
+
 
         this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex);
 
