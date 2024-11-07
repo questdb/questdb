@@ -4258,9 +4258,9 @@ public class SqlOptimiser implements Mutable {
             nested.clearOrderBy();
 
             // bwd scan
-            nested.addOrderBy(nested.getTimestamp(), ORDER_DIRECTION_DESCENDING);
             nested.getOrderByAdvice().add(nested.getTimestamp());
             nested.getOrderByDirectionAdvice().add(ORDER_DIRECTION_DESCENDING);
+            nested.setAllowPropagationOfOrderByAdvice(false); // stop ption
 
             // copy limit across
             nested.moveLimitFrom(model);
@@ -5996,9 +5996,11 @@ public class SqlOptimiser implements Mutable {
      * @param orderByDirectionAdvice The advice direction
      */
     private void setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
-        model.setOrderByAdviceMnemonic(orderByMnemonic);
-        model.copyOrderByAdvice(advice);
-        model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+        if (model.getAllowPropagationOfOrderByAdvice()) {
+            model.setOrderByAdviceMnemonic(orderByMnemonic);
+            model.copyOrderByAdvice(advice);
+            model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+        }
     }
 
     private CharSequence setAndGetModelAlias(QueryModel model) {

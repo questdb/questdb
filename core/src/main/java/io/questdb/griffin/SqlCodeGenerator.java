@@ -635,7 +635,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
-        IntList direction = model.getOrderBy().size() > 0 ? model.getOrderByDirection() : model.getOrderByDirectionAdvice();
+        IntList direction = model.getOrderByDirectionAdvice();
         if (index >= direction.size()) {
             return ORDER_DIRECTION_ASCENDING;
         } else {
@@ -5865,11 +5865,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private boolean isOrderByDesignatedTimestampOnly(QueryModel model) {
-        ObjList<ExpressionNode> orderBy = model.getOrderBy().size() != 0 ? model.getOrderBy() : model.getOrderByAdvice();
-
-        return orderBy.size() == 1
+        return model.getOrderByAdvice().size() == 1
                 && model.getTimestamp() != null
-                && Chars.equalsIgnoreCase(orderBy.getQuick(0).token,
+                && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token,
                 model.getTimestamp().token);
     }
 

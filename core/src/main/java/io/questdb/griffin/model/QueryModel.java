@@ -28,7 +28,19 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -133,6 +145,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     // be the only fields for these values.
     public ExpressionNode fillTimestampAlias;
     private ExpressionNode alias;
+    private boolean allowPropagationOfOrderByAdvice = true;
     private boolean artificialStar;
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
@@ -146,7 +159,6 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode fillStride;
     private ExpressionNode fillTo;
     private ObjList<ExpressionNode> fillValues;
-
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
@@ -451,6 +463,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillStride = null;
         fillValues = null;
         skipped = false;
+        allowPropagationOfOrderByAdvice = true;
     }
 
     public void clearColumnMapStructs() {
@@ -646,7 +659,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(unionModel, that.unionModel)
                 && Objects.equals(updateTableModel, that.updateTableModel)
                 && Objects.equals(updateTableToken, that.updateTableToken)
-                && skipped == that.skipped;
+                && skipped == that.skipped
+                && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice;
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -669,6 +683,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public LowerCaseCharSequenceObjHashMap<CharSequence> getAliasToColumnNameMap() {
         return aliasToColumnNameMap;
+    }
+
+    public boolean getAllowPropagationOfOrderByAdvice() {
+        return allowPropagationOfOrderByAdvice;
     }
 
     public ObjList<CharSequence> getBottomUpColumnAliases() {
@@ -1210,6 +1228,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setAlias(ExpressionNode alias) {
         this.alias = alias;
+    }
+
+    public void setAllowPropagationOfOrderByAdvice(boolean value) {
+        allowPropagationOfOrderByAdvice = value;
     }
 
     public void setArtificialStar(boolean artificialStar) {
