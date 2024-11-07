@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -120,6 +121,46 @@ public class ParquetTest extends AbstractCairoTest {
         });
     }
 
+    // TODO(puzpuzpuz): enable when we support DDLs for parquet partitions
+    @Ignore
+    @Test
+    public void testIndexBumpedColumnVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+
+            // bump column version
+            ddl("alter table x drop column id;");
+            ddl("alter table x add column id symbol;");
+
+            insert("insert into x (id, ts) values('k1', '2024-06-10T01:00:00.000000Z');");
+            insert("insert into x (id, ts) values('k2', '2024-06-11T01:00:00.000000Z');");
+            insert("insert into x (id, ts) values('k3', '2024-06-12T01:00:00.000000Z');");
+            insert("insert into x (id, ts) values('k1', '2024-06-12T01:00:01.000000Z');");
+            insert("insert into x (id, ts) values('k2', '2024-06-15T01:00:00.000000Z');");
+            insert("insert into x (id, ts) values('k3', '2024-06-12T01:00:02.000000Z');");
+
+            // bump column version one more time
+            ddl("alter table x alter column id add index;");
+            ddl("alter table x alter column id drop index;");
+
+            ddl("alter table x convert partition to parquet where ts >= 0");
+
+            final String expected = "ts\tid\n" +
+                    "2024-06-10T01:00:00.000000Z\tk1\n" +
+                    "2024-06-11T01:00:00.000000Z\tk2\n" +
+                    "2024-06-12T01:00:00.000000Z\tk3\n" +
+                    "2024-06-12T01:00:01.000000Z\tk1\n" +
+                    "2024-06-12T01:00:02.000000Z\tk3\n" +
+                    "2024-06-15T01:00:00.000000Z\tk2\n";
+            final String query = "x";
+
+            assertSql(expected, query);
+
+            ddl("alter table x convert partition to native where ts >= 0");
+            assertSql(expected, query);
+        });
+    }
+
     @Test
     public void testIndexColTopColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -182,12 +223,13 @@ public class ParquetTest extends AbstractCairoTest {
     public void testIndexO3WritesBumpedColumnVersion() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
-            insert("insert into x values('k1', '2024-06-10T01:00:00.000000Z');");
-            insert("insert into x values('k2', '2024-06-11T01:00:00.000000Z');");
-            insert("insert into x values('k3', '2024-06-12T01:00:00.000000Z');");
-            insert("insert into x values('k1', '2024-06-12T01:00:01.000000Z');");
-            insert("insert into x values('k2', '2024-06-15T01:00:00.000000Z');");
-            insert("insert into x values('k3', '2024-06-12T01:00:02.000000Z');");
+
+            insert("insert into x (id, ts) values('k1', '2024-06-10T01:00:00.000000Z');");
+            insert("insert into x (id, ts) values('k2', '2024-06-11T01:00:00.000000Z');");
+            insert("insert into x (id, ts) values('k3', '2024-06-12T01:00:00.000000Z');");
+            insert("insert into x (id, ts) values('k1', '2024-06-12T01:00:01.000000Z');");
+            insert("insert into x (id, ts) values('k2', '2024-06-15T01:00:00.000000Z');");
+            insert("insert into x (id, ts) values('k3', '2024-06-12T01:00:02.000000Z');");
 
             // bump column version
             ddl("alter table x alter column id add index;");
@@ -196,9 +238,9 @@ public class ParquetTest extends AbstractCairoTest {
             ddl("alter table x convert partition to parquet where ts >= 0");
             ddl("alter table x alter column id add index;");
 
-            insert("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
-            insert("insert into x values('k1', '2024-06-11T00:00:00.000000Z');");
-            insert("insert into x values('k1', '2024-06-12T00:00:00.000000Z');");
+            insert("insert into x (id, ts) values('k1', '2024-06-10T00:00:00.000000Z');");
+            insert("insert into x (id, ts) values('k1', '2024-06-11T00:00:00.000000Z');");
+            insert("insert into x (id, ts) values('k1', '2024-06-12T00:00:00.000000Z');");
 
             final String expected = "id\tts\n" +
                     "k1\t2024-06-10T00:00:00.000000Z\n" +

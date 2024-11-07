@@ -2035,15 +2035,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             setPathForNativePartition(path, partitionBy, partitionTimestamp, srcNameTxn);
             final int pLen = path.size();
 
-            final BitmapIndexWriter indexWriter = o3Basket.nextIndexer();
-
+            BitmapIndexWriter indexWriter = null;
             final int columnCount = tableWriterMetadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                if (indexWriter.isOpen()) {
-                    Misc.free(indexWriter);
-                }
-
                 if (tableWriterMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL && tableWriterMetadata.isColumnIndexed(columnIndex)) {
+                    if (indexWriter == null) {
+                        indexWriter = o3Basket.nextIndexer();
+                    }
+                    if (indexWriter.isOpen()) {
+                        Misc.free(indexWriter);
+                    }
+
                     final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
                     final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
                     final int indexBlockCapacity = tableWriterMetadata.getIndexValueBlockCapacity(columnIndex);
