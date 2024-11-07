@@ -97,7 +97,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         // only do this for value fill
         if (!(valueFuncs.size() == 1 && valueFuncs.get(0).isNullConstant())) {
-            if (metadata.getColumnCount() > valueFuncs.size() - 1) {
+            if (metadata.getColumnCount() - 1 > valueFuncs.size()) {
                 throw SqlException.$(0, "not enough fill values");
             }
 
