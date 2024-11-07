@@ -323,12 +323,15 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             int columnType = colMeta.getColumnType();
             boolean isIndexed = colMeta.isSymbolIndexFlag();
             boolean isCached = colMeta.isSymbolCacheFlag();
+            boolean isDedupKey = colMeta.isDedupKeyFlag();
             int symbolCapacity = colMeta.getSymbolCapacity();
-            int flags = (isCached ? COLUMN_FLAG_CACHED : 0) | (isIndexed ? COLUMN_FLAG_INDEXED : 0);
+            int indexBlockCapacity = colMeta.getIndexValueBlockCapacity();
+            int flags = (isCached ? COLUMN_FLAG_CACHED : 0) | (isIndexed ? COLUMN_FLAG_INDEXED : 0) |
+                    (isDedupKey ? COLUMN_FLAG_DEDUP_KEY : 0);
             columnNames.add(colMeta.getColumnName());
             columnBits.add(
                     Numbers.encodeLowHighInts(columnType, symbolCapacity),
-                    Numbers.encodeLowHighInts(flags, 0)
+                    Numbers.encodeLowHighInts(flags, indexBlockCapacity)
             );
         }
     }
@@ -359,6 +362,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         // in case of "create-as-select" because they don't capture any useful data
         // at SQL parse time.
         columnBits.clear();
+        timestampIndex = metadata.getTimestampIndex();
 
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             String columnName = metadata.getColumnName(i);
@@ -368,30 +372,38 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             int symbolCapacity;
             boolean symbolCacheFlag;
             boolean symbolIndexed;
+            boolean isDedupKey;
+            int indexBlockCapacity;
             if (augMeta != null) {
                 columnType = augMeta.getColumnType();
                 symbolCapacity = augMeta.getSymbolCapacity();
                 symbolCacheFlag = augMeta.isSymbolCacheFlag();
                 symbolIndexed = augMeta.isSymbolIndexFlag();
+                isDedupKey = augMeta.isDedupKeyFlag();
+                indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
             } else {
                 columnType = metadata.getColumnType(i);
                 TableColumnMetadata colMeta = metadata.getColumnMetadata(i);
                 symbolCapacity = colMeta.getSymbolCapacity();
                 symbolCacheFlag = colMeta.isSymbolCacheFlag();
                 symbolIndexed = colMeta.isSymbolIndexFlag();
+                isDedupKey = colMeta.isDedupKeyFlag();
+                indexBlockCapacity = colMeta.getIndexValueBlockCapacity();
             }
 
             if (ColumnType.isNull(columnType)) {
                 throw SqlException.$(0, "cannot create NULL-type column, please use type cast, e.g. ").put(columnName).put("::").put("type");
             }
-            if (!ColumnType.isSymbol(metadata.getColumnType(i)) && symbolIndexed) {
+            if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
                 throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
             }
 
-            int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0) | (symbolIndexed ? COLUMN_FLAG_INDEXED : 0);
+            columnNames.add(columnName);
+            int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0) | (symbolIndexed ? COLUMN_FLAG_INDEXED : 0) |
+                    (isDedupKey ? COLUMN_FLAG_DEDUP_KEY : 0);
             columnBits.add(
                     Numbers.encodeLowHighInts(columnType, symbolCapacity),
-                    Numbers.encodeLowHighInts(flags, 0)
+                    Numbers.encodeLowHighInts(flags, indexBlockCapacity)
             );
         }
     }
