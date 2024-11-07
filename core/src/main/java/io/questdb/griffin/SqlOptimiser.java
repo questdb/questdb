@@ -4083,7 +4083,7 @@ public class SqlOptimiser implements Mutable {
 
             // if still doesn't pass, maybe it has an order by clause
             if (!rewriteNegativeLimitGuard(model, executionContext)) {
-                rewriteOrderByWithNegativeLimit(model);
+                rewriteNegativeLimitWithOrderBy(model);
             }
 
             final QueryModel nested = model.getNestedModel();
@@ -4199,6 +4199,75 @@ public class SqlOptimiser implements Mutable {
                                         && nested.isOrderByTimestamp(orderBy.getQuick(0).token)
                         ))
                 );
+    }
+
+    /**
+     * Handle queries like:
+     * SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3
+     * This would ordinarily compile to a LimitedSizePartiallySortedRecordCursor.
+     * That means it will forward scan - and run out of memory on demo!
+     * Instead, we aim to subquery a backwards scan and then sort.
+     *
+     * @param model
+     */
+    private void rewriteNegativeLimitWithOrderBy(QueryModel model) throws SqlException {
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                && model.getNestedModel() != null
+                && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE
+                && model.getNestedModel().getOrderBy() != null
+                && model.getNestedModel().getOrderBy().size() > 1
+                && model.getNestedModel().getTimestamp() != null
+                && model.getLimitLo() != null
+                && Chars.equals(model.getLimitLo().token, "-")) {
+
+            QueryModel nested = model.getNestedModel();
+
+            int firstOrderByDir = nested.getOrderByDirection().get(0);
+
+            if (firstOrderByDir != ORDER_DIRECTION_ASCENDING) {
+                return;
+            }
+
+            ExpressionNode firstOrderByArg = nested.getOrderBy().get(0);
+
+            if (!Chars.equals(firstOrderByArg.token, nested.getTimestamp().token)) {
+                return;
+            }
+
+            // first is designated timestamp and asc
+            // we want to perform this conversion
+            // SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3
+            // becomes
+            // SELECT timestamp, side FROM (SELECT timestamp, side from TRADES ORDER BY timestamp DESC LIMIT 3) ORDER BY timestamp ASC, side DESC
+            // Essentially, we push down a limited reverse scan, and then sort the data afterwards.
+
+
+            // first, copy the order by up
+
+            for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                model.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
+                model.getOrderByAdvice().add(nested.getOrderBy().get(i));
+                model.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
+                // also strip advice
+
+                model.getOrderByAdvice().remove(i);
+                model.getOrderByDirectionAdvice().remove(i);
+            }
+
+            // remove from old model
+            nested.clearOrderBy();
+
+            // bwd scan
+            nested.addOrderBy(nested.getTimestamp(), ORDER_DIRECTION_DESCENDING);
+            nested.getOrderByAdvice().add(nested.getTimestamp());
+            nested.getOrderByDirectionAdvice().add(ORDER_DIRECTION_DESCENDING);
+
+            // copy limit across
+            nested.moveLimitFrom(model);
+
+            // copy the integral part i.e if its -3, the 3
+            nested.setLimit(nested.getLimitLo().rhs, null);
+        }
     }
 
     /**
@@ -4548,75 +4617,6 @@ public class SqlOptimiser implements Mutable {
         next = model.getNestedModel();
         if (next != null) {
             rewriteOrderByPositionForUnionModels(next);
-        }
-    }
-
-    /**
-     * Handle queries like:
-     * SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3
-     * This would ordinarily compile to a LimitedSizePartiallySortedRecordCursor.
-     * That means it will forward scan - and run out of memory on demo!
-     * Instead, we aim to subquery a backwards scan and then sort.
-     *
-     * @param model
-     */
-    private void rewriteOrderByWithNegativeLimit(QueryModel model) throws SqlException {
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
-                && model.getNestedModel() != null
-                && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE
-                && model.getNestedModel().getOrderBy() != null
-                && model.getNestedModel().getOrderBy().size() > 1
-                && model.getNestedModel().getTimestamp() != null
-                && model.getLimitLo() != null
-                && Chars.equals(model.getLimitLo().token, "-")) {
-
-            QueryModel nested = model.getNestedModel();
-
-            int firstOrderByDir = nested.getOrderByDirection().get(0);
-
-            if (firstOrderByDir != ORDER_DIRECTION_ASCENDING) {
-                return;
-            }
-
-            ExpressionNode firstOrderByArg = nested.getOrderBy().get(0);
-
-            if (!Chars.equals(firstOrderByArg.token, nested.getTimestamp().token)) {
-                return;
-            }
-
-            // first is designated timestamp and asc
-            // we want to perform this conversion
-            // SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3
-            // becomes
-            // SELECT timestamp, side FROM (SELECT timestamp, side from TRADES ORDER BY timestamp DESC LIMIT 3) ORDER BY timestamp ASC, side DESC
-            // Essentially, we push down a limited reverse scan, and then sort the data afterwards.
-
-
-            // first, copy the order by up
-
-            for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
-                model.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
-                model.getOrderByAdvice().add(nested.getOrderBy().get(i));
-                model.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
-                // also strip advice
-
-                model.getOrderByAdvice().remove(i);
-                model.getOrderByDirectionAdvice().remove(i);
-            }
-
-            // remove from old model
-            nested.clearOrderBy();
-
-            // bwd scan
-            nested.addOrderBy(nested.getTimestamp(), ORDER_DIRECTION_DESCENDING);
-            nested.getOrderByAdvice().add(nested.getTimestamp());
-            nested.getOrderByDirectionAdvice().add(ORDER_DIRECTION_DESCENDING);
-
-            // copy limit across
-            nested.moveLimitFrom(model);
-
-            // copy the integral part i.e if its -3, the 3
-            nested.setLimit(nested.getLimitLo().rhs, null);
         }
     }
 
