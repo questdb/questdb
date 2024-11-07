@@ -24,19 +24,23 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 
-public class ColumnCastModel implements Mutable {
-    public static final ObjectFactory<ColumnCastModel> FACTORY = ColumnCastModel::new;
+public class TouchUpColumnModel implements Mutable {
+    public static final ObjectFactory<TouchUpColumnModel> FACTORY = TouchUpColumnModel::new;
     private ExpressionNode columnName;
     private int columnNamePos;
-    private int columnType;
+    private int columnType = ColumnType.UNDEFINED;
     private int columnTypePos;
+    private int indexClausePosition;
+    private int indexValueBlockSize;
+    private boolean indexedFlag;
     private boolean symbolCacheFlag;
     private int symbolCapacity;
 
-    private ColumnCastModel() {
+    private TouchUpColumnModel() {
     }
 
     @Override
@@ -60,6 +64,14 @@ public class ColumnCastModel implements Mutable {
         return columnTypePos;
     }
 
+    public int getIndexClausePosition() {
+        return indexClausePosition;
+    }
+
+    public int getIndexValueBlockSize() {
+        return indexValueBlockSize;
+    }
+
     public boolean getSymbolCacheFlag() {
         return symbolCacheFlag;
     }
@@ -68,8 +80,18 @@ public class ColumnCastModel implements Mutable {
         return symbolCapacity;
     }
 
+    public boolean isIndexed() {
+        return indexedFlag;
+    }
+
     public void setColumnName(ExpressionNode columnName) {
         this.columnName = columnName;
+    }
+
+    public void setIndexed(int indexClausePosition, int indexValueBlockSize) {
+        indexedFlag = true;
+        this.indexClausePosition = indexClausePosition;
+        this.indexValueBlockSize = indexValueBlockSize;
     }
 
     public void setSymbolCacheFlag(boolean symbolCacheFlag) {

@@ -32,10 +32,10 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.ColumnCastModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.TouchUpColumnModel;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
@@ -53,13 +53,9 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     // For create-as-select SQL, parser does not populate this list. Instead, the list
     // is used at the execution time to capture the attributes of columns of the "select" SQL.
     private final LongList columnBits = new LongList();
-    private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<String> columnNames = new ObjList<>();
-    private final CharSequenceIntHashMap createAsSelectIndexBlockSizes = new CharSequenceIntHashMap();
-    private final CharSequenceIntHashMap createAsSelectIndexColumnNamePositions = new CharSequenceIntHashMap();
-    // todo: perhaps consolidate both these maps into one str-to-long?
-    private final CharSequenceBoolHashMap createAsSelectIndexFlags = new CharSequenceBoolHashMap();
+    private final CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModels = new CharSequenceObjHashMap<>();
     private final IntIntHashMap typeCasts = new IntIntHashMap();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
@@ -87,10 +83,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         );
     }
 
-    public boolean addColumnCastModel(ColumnCastModel model) {
-        return columnCastModels.put(model.getColumnName().token, model);
-    }
-
     public CreateTableOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (queryModel != null) {
             setFactory(compiler.generateSelectWithRetries(queryModel, sqlExecutionContext, false));
@@ -102,10 +94,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                     batchSize,
                     batchO3MaxLag,
                     recordCursorFactory,
-                    columnCastModels,
-                    createAsSelectIndexColumnNamePositions,
-                    createAsSelectIndexFlags,
-                    createAsSelectIndexBlockSizes
+                    touchUpColumnModels
             );
         }
 
@@ -144,7 +133,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     @Override
     public void clear() {
         typeCasts.clear();
-        columnCastModels.clear();
+        touchUpColumnModels.clear();
         queryModel = null;
         timestamp = null;
         partitionBy = null;
@@ -158,13 +147,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         o3MaxLag = -1;
         batchO3MaxLag = -1;
         batchSize = -1;
-        createAsSelectIndexFlags.clear();
-        createAsSelectIndexBlockSizes.clear();
-        createAsSelectIndexColumnNamePositions.clear();
-    }
-
-    public CharSequenceObjHashMap<ColumnCastModel> getColumnCastModels() {
-        return columnCastModels;
     }
 
     public int getColumnIndex(CharSequence columnName) {
@@ -205,6 +187,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         return timestamp != null ? getColumnIndex(timestamp.token) : -1;
     }
 
+    public CharSequenceObjHashMap<TouchUpColumnModel> getTouchUpColumnModels() {
+        return touchUpColumnModels;
+    }
+
     public boolean isAtomic() {
         return batchSize == -1;
     }
@@ -225,13 +211,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         this.batchSize = batchSize;
     }
 
-    public void setCreateAsSelectIndexedColumn(CharSequence columnName, int columnNamePosition, int indexValueBlockSize) {
-        String columnNameStr = Chars.toString(columnName);
-        createAsSelectIndexFlags.put(columnNameStr, true);
-        createAsSelectIndexBlockSizes.put(columnNameStr, indexValueBlockSize);
-        createAsSelectIndexColumnNamePositions.put(columnNameStr, columnNamePosition);
-    }
-
     public void setDedupKeyFlag(int index) {
         int flagsIndex = index * 2 + 1;
         int flags = getLowAt(flagsIndex) | COLUMN_FLAG_DEDUP_KEY;
@@ -241,7 +220,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     public void setFactory(RecordCursorFactory factory) throws SqlException {
         this.recordCursorFactory = factory;
         final RecordMetadata metadata = factory.getMetadata();
-        CharSequenceObjHashMap<ColumnCastModel> castModels = columnCastModels;
+        CharSequenceObjHashMap<TouchUpColumnModel> castModels = touchUpColumnModels;
         ObjList<CharSequence> castColumnNames = castModels.keys();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             columnNameIndexMap.put(metadata.getColumnName(i), i);
@@ -250,7 +229,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         for (int i = 0, n = castColumnNames.size(); i < n; i++) {
             CharSequence columnName = castColumnNames.getQuick(i);
             int index = metadata.getColumnIndexQuiet(columnName);
-            ColumnCastModel ccm = castModels.get(columnName);
+            TouchUpColumnModel ccm = castModels.get(columnName);
             // the only reason why columns cannot be found at this stage is
             // concurrent table modification of table structure
             if (index == -1) {
@@ -360,10 +339,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                     sink.putAscii(')');
                 }
             }
-            final ObjList<CharSequence> castColumns = getColumnCastModels().keys();
+            final ObjList<CharSequence> castColumns = getTouchUpColumnModels().keys();
             for (int i = 0, n = castColumns.size(); i < n; i++) {
                 final CharSequence column = castColumns.getQuick(i);
-                final ColumnCastModel m = getColumnCastModels().get(column);
+                final TouchUpColumnModel m = getTouchUpColumnModels().get(column);
                 final int type = m.getColumnType();
                 sink.putAscii(", cast(");
                 sink.put(column);
@@ -380,9 +359,9 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                         sink.putAscii(" nocache");
                     }
 
-                    if (createAsSelectIndexFlags.get(column)) {
+                    if (m.isIndexed()) {
                         sink.putAscii(" index capacity ");
-                        sink.put(createAsSelectIndexBlockSizes.get(column));
+                        sink.put(m.getIndexValueBlockSize());
                     }
                 }
                 sink.putAscii(')');

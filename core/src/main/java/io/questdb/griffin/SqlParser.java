@@ -58,8 +58,8 @@ public class SqlParser {
     private final CharSequence column;
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
-    private final ObjectPool<ColumnCastModel> createTableColumnCastModelPool;
     private final CreateTableOperationBuilder createTableOperationBuilder = new CreateTableOperationBuilder();
+    private final ObjectPool<TouchUpColumnModel> createTableTouchUpColumnModelPool;
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -97,7 +97,7 @@ public class SqlParser {
         this.queryColumnPool = queryColumnPool;
         this.expressionTreeBuilder = new ExpressionTreeBuilder();
         this.windowColumnPool = new ObjectPool<>(WindowColumn.FACTORY, configuration.getWindowColumnPoolCapacity());
-        this.createTableColumnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, configuration.getColumnCastModelPoolCapacity());
+        this.createTableTouchUpColumnModelPool = new ObjectPool<>(TouchUpColumnModel.FACTORY, configuration.getColumnCastModelPoolCapacity());
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertModelPoolCapacity());
@@ -815,15 +815,22 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "cast is only supported in 'create table as ...' context");
         }
         expectTok(lexer, '(');
-        ColumnCastModel columnCastModel = createTableColumnCastModelPool.next();
-
         final ExpressionNode columnName = expectLiteral(lexer);
-        columnCastModel.setColumnName(columnName);
+
+        CharSequenceObjHashMap<TouchUpColumnModel> touchUpModels = createTableOperationBuilder.getTouchUpColumnModels();
+        TouchUpColumnModel touchUpModel = touchUpModels.get(columnName.token);
+        if (touchUpModel == null) {
+            touchUpModel = createTableTouchUpColumnModelPool.next();
+            touchUpModel.setColumnName(columnName);
+            touchUpModels.put(columnName.token, touchUpModel);
+        } else if (touchUpModel.getColumnType() != ColumnType.UNDEFINED) {
+            throw SqlException.$(touchUpModel.getColumnName().position, "duplicate cast");
+        }
         expectTok(lexer, "as");
 
         final ExpressionNode columnType = expectLiteral(lexer);
         final int type = toColumnType(lexer, columnType.token);
-        columnCastModel.setType(type, columnName.position, columnType.position);
+        touchUpModel.setType(type, columnName.position, columnType.position);
 
         if (ColumnType.isSymbol(type)) {
             CharSequence tok = tok(lexer, "'capacity', 'nocache', 'cache' or ')'");
@@ -832,10 +839,10 @@ public class SqlParser {
             int capacityPosition;
             if (isCapacityKeyword(tok)) {
                 capacityPosition = lexer.getPosition();
-                columnCastModel.setSymbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
+                touchUpModel.setSymbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
                 tok = tok(lexer, "'nocache', 'cache' or ')'");
             } else {
-                columnCastModel.setSymbolCapacity(configuration.getDefaultSymbolCapacity());
+                touchUpModel.setSymbolCapacity(configuration.getDefaultSymbolCapacity());
                 symbolCapacity = -1;
                 capacityPosition = -1;
             }
@@ -850,19 +857,14 @@ public class SqlParser {
                 lexer.unparseLast();
             }
 
-            columnCastModel.setSymbolCacheFlag(cached);
+            touchUpModel.setSymbolCacheFlag(cached);
 
             if (cached && symbolCapacity != -1) {
                 assert capacityPosition != -1;
                 TableUtils.validateSymbolCapacityCached(true, symbolCapacity, capacityPosition);
             }
         }
-
         expectTok(lexer, ')');
-
-        if (!createTableOperationBuilder.addColumnCastModel(columnCastModel)) {
-            throw SqlException.$(columnCastModel.getColumnName().position, "duplicate cast");
-        }
     }
 
     private void parseCreateTableColumns(GenericLexer lexer) throws SqlException {
@@ -939,7 +941,7 @@ public class SqlParser {
 
     private void parseCreateTableIndexDef(GenericLexer lexer, boolean isCreateAsSelect) throws SqlException {
         expectTok(lexer, '(');
-        final CharSequence columnName = expectLiteral(lexer).token;
+        final ExpressionNode columnName = expectLiteral(lexer);
         final int columnNamePosition = lexer.lastTokenPosition();
 
         int indexValueBlockSize;
@@ -953,9 +955,18 @@ public class SqlParser {
             lexer.unparseLast();
         }
         if (isCreateAsSelect) {
-            createTableOperationBuilder.setCreateAsSelectIndexedColumn(columnName, columnNamePosition, indexValueBlockSize);
+            CharSequenceObjHashMap<TouchUpColumnModel> touchUpModels = createTableOperationBuilder.getTouchUpColumnModels();
+            TouchUpColumnModel touchUpModel = touchUpModels.get(columnName.token);
+            if (touchUpModel == null) {
+                touchUpModel = createTableTouchUpColumnModelPool.next();
+                touchUpModel.setColumnName(columnName);
+                touchUpModels.put(columnName.token, touchUpModel);
+            } else if (touchUpModel.isIndexed()) {
+                throw SqlException.$(touchUpModel.getColumnName().position, "duplicate index");
+            }
+            touchUpModel.setIndexed(columnNamePosition, indexValueBlockSize);
         } else {
-            createTableOperationBuilder.setIndexedColumn(columnName, columnNamePosition, indexValueBlockSize);
+            createTableOperationBuilder.setIndexedColumn(columnName.token, columnNamePosition, indexValueBlockSize);
         }
         expectTok(lexer, ')');
     }
@@ -2901,7 +2912,7 @@ public class SqlParser {
         expressionNodePool.clear();
         windowColumnPool.clear();
         createTableOperationBuilder.clear();
-        createTableColumnCastModelPool.clear();
+        createTableTouchUpColumnModelPool.clear();
         renameTableModelPool.clear();
         withClauseModelPool.clear();
         subQueryMode = false;

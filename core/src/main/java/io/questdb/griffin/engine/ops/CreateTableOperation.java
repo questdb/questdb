@@ -11,7 +11,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.ColumnCastModel;
+import io.questdb.griffin.model.TouchUpColumnModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
@@ -109,10 +109,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             long batchSize,
             long batchO3MaxLag,
             RecordCursorFactory recordCursorFactory,
-            @Transient CharSequenceObjHashMap<ColumnCastModel> columnCastModelMap,
-            @Transient CharSequenceIntHashMap createAsSelectIndexColumnNamePositions,
-            @Transient CharSequenceBoolHashMap createAsSelectIndexFlags,
-            @Transient CharSequenceIntHashMap createAsSelectIndexCapacities
+            @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap
     ) throws SqlException {
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
@@ -131,36 +128,32 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         // - (symbol) column cache flag
         assert columnNames.size() == 0;
         assert columnBits.size() == 0;
-        for (int i = 0, n = columnNames.size(); i < n; i++) {
-            CharSequence columnName = columnNames.get(i);
-            ColumnCastModel castModel = columnCastModelMap.get(columnName);
-            boolean hasIndexClause = createAsSelectIndexFlags.get(columnName);
-            int indexClauseCapacity = createAsSelectIndexCapacities.get(columnName);
-            int indexClausePos = createAsSelectIndexColumnNamePositions.get(columnName);
-            if (hasIndexClause) {
+        ObjList<CharSequence> touchedUpColNames = touchUpColumnModelMap.keys();
+        for (int i = 0, n = touchedUpColNames.size(); i < n; i++) {
+            CharSequence columnName = touchedUpColNames.get(i);
+            TouchUpColumnModel touchUpModel = touchUpColumnModelMap.get(columnName);
+            if (touchUpModel.isIndexed()) {
                 // perform some basic validation
-                if (castModel != null && castModel.getColumnType() != ColumnType.SYMBOL) {
-                    throw SqlException.$(indexClausePos, "index flag cannot be applied to ")
-                            .put(ColumnType.nameOf(castModel.getColumnType()));
+                if (touchUpModel.getColumnType() != ColumnType.SYMBOL) {
+                    throw SqlException.$(touchUpModel.getIndexClausePosition(), "index flag cannot be applied to ")
+                            .put(ColumnType.nameOf(touchUpModel.getColumnType()));
                 }
             }
-            if (hasIndexClause || castModel != null) {
-                String columnNameStr = Chars.toString(columnName);
-                TableColumnMetadata tcm = new TableColumnMetadata(
-                        columnNameStr,
-                        castModel != null ? castModel.getColumnType() : ColumnType.NULL,
-                        hasIndexClause,
-                        indexClauseCapacity,
-                        true,
-                        null,
-                        -1, // writer index is irrelevant here
-                        false,// dedup flag cannot be set on "create as select", not yet
-                        -1, // replacingIndex is irrelevant here
-                        castModel != null && castModel.getSymbolCacheFlag(),
-                        castModel != null ? castModel.getSymbolCapacity() : -1
-                );
-                augmentedColumnMetadata.put(columnNameStr, tcm);
-            }
+            String columnNameStr = Chars.toString(columnName);
+            TableColumnMetadata tcm = new TableColumnMetadata(
+                    columnNameStr,
+                    touchUpModel.getColumnType(),
+                    touchUpModel.isIndexed(),
+                    touchUpModel.getIndexValueBlockSize(),
+                    true,
+                    null,
+                    -1, // writer index is irrelevant here
+                    false,// dedup flag cannot be set on "create as select", not yet
+                    -1, // replacingIndex is irrelevant here
+                    touchUpModel.getSymbolCacheFlag(),
+                    touchUpModel.getSymbolCapacity()
+            );
+            augmentedColumnMetadata.put(columnNameStr, tcm);
         }
     }
 
