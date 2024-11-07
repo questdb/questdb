@@ -207,6 +207,7 @@ import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
 import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
@@ -3086,6 +3087,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
                         model.setLimitImplemented(true);
                         int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
+                        if (
+                                !preSortedByTs
+                                        && loFunc.isConstant()
+                                        && hiFunc == null
+                                        && listColumnFilterA.size() == 1
+                                        && recordCursorFactory.recordCursorSupportsLongTopK()
+                        ) {
+                            final long lo = loFunc.getLong(null);
+                            final int index = listColumnFilterA.getQuick(0);
+                            final int columnIndex = (index > 0 ? index : -index) - 1;
+                            // TODO(puzpuzpuz): support ASC direction
+                            if (lo > 0 && lo <= Integer.MAX_VALUE && index < 0 && metadata.getColumnType(columnIndex) == ColumnType.LONG) {
+                                return new LongTopKRecordCursorFactory(
+                                        orderedMetadata,
+                                        recordCursorFactory,
+                                        columnIndex,
+                                        (int) lo
+                                );
+                            }
+                        }
                         return new LimitedSizeSortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,

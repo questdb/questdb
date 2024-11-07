@@ -24,10 +24,22 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectLongLongMaxHeap;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.bytes.Bytes;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -47,9 +59,9 @@ import org.jetbrains.annotations.Nullable;
  * the declared column types to guarantee memory access safety.
  */
 public class Unordered2Map implements Map, Reopenable {
-
     static final long KEY_SIZE = Short.BYTES;
     private static final int TABLE_SIZE = Short.toUnsignedInt((short) -1) + 1;
+
     private final Unordered2MapCursor cursor;
     private final long entrySize;
     private final Key key;
@@ -172,6 +184,25 @@ public class Unordered2Map implements Map, Reopenable {
     @Override
     public boolean isOpen() {
         return memStart != 0;
+    }
+
+    @Override
+    public void longTopK(DirectLongLongMaxHeap maxHeap, Function recordFunction) {
+        // First, we handle zero key.
+        if (hasZero) {
+            record.of(memStart);
+            long v = recordFunction.getLong(record);
+            maxHeap.add(memStart, v);
+        }
+
+        // Then we handle all non-zero keys.
+        for (long addr = memStart + entrySize, lim = memStart + entrySize * size; addr < lim; addr += entrySize) {
+            if (!isZeroKey(addr)) {
+                record.of(addr);
+                long v = recordFunction.getLong(record);
+                maxHeap.add(addr, v);
+            }
+        }
     }
 
     @Override

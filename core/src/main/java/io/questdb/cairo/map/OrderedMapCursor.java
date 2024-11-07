@@ -24,8 +24,10 @@
 
 package io.questdb.cairo.map;
 
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.std.DirectLongLongMaxHeap;
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.Bytes;
 
@@ -90,6 +92,12 @@ public final class OrderedMapCursor implements MapRecordCursor {
             return true;
         }
         return false;
+    }
+
+    @Override
+    public void longTopK(DirectLongLongMaxHeap maxHeap, Function recordFunction) {
+        // TODO(puzpuzpuz): move this method to cursor
+        map.longTopK(maxHeap, recordFunction);
     }
 
     @Override

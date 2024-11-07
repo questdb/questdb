@@ -24,11 +24,25 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectLongLongMaxHeap;
+import io.questdb.std.Hash;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.bytes.Bytes;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -67,10 +81,10 @@ import org.jetbrains.annotations.Nullable;
  * </pre>
  */
 public class Unordered8Map implements Map, Reopenable {
-
     static final long KEY_SIZE = Long.BYTES;
     private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_KEY_CAPACITY = 16;
+
     private final Unordered8MapCursor cursor;
     private final long entrySize;
     private final Key key;
@@ -226,6 +240,25 @@ public class Unordered8Map implements Map, Reopenable {
     @Override
     public boolean isOpen() {
         return memStart != 0;
+    }
+
+    @Override
+    public void longTopK(DirectLongLongMaxHeap maxHeap, Function recordFunction) {
+        // First, we handle zero key.
+        if (hasZero) {
+            record.of(zeroMemStart);
+            long v = recordFunction.getLong(record);
+            maxHeap.add(zeroMemStart, v);
+        }
+
+        // Then we handle all non-zero keys.
+        for (long addr = keyMemStart, lim = keyMemStart + entrySize * size; addr < lim; addr += entrySize) {
+            if (!isZeroKey(addr)) {
+                record.of(addr);
+                long v = recordFunction.getLong(record);
+                maxHeap.add(addr, v);
+            }
+        }
     }
 
     @Override

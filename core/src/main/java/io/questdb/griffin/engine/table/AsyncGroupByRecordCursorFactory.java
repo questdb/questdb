@@ -128,7 +128,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             } else {
                 this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, AGGREGATE, reduceTaskFactory, workerCount, PageFrameReduceTask.TYPE_GROUP_BY);
             }
-            this.cursor = new AsyncGroupByRecordCursor(configuration, groupByFunctions, recordFunctions, messageBus);
+            this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, recordFunctions, messageBus);
             this.workerCount = workerCount;
         } catch (Throwable e) {
             close();
@@ -156,6 +156,11 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
+    }
+
+    @Override
+    public boolean recordCursorSupportsLongTopK() {
+        return true;
     }
 
     @Override

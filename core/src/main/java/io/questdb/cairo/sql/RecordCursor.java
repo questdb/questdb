@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.DataUnavailableException;
+import io.questdb.std.DirectLongLongMaxHeap;
 
 import java.io.Closeable;
 
@@ -119,6 +120,10 @@ public interface RecordCursor extends Closeable, SymbolTableSource {
      */
     default boolean isUsingIndex() {
         return false;
+    }
+
+    default void longTopK(DirectLongLongMaxHeap maxHeap, int columnIndex) {
+        throw new UnsupportedOperationException();
     }
 
     /**
