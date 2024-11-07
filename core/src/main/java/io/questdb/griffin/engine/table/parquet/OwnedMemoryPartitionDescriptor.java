@@ -31,6 +31,7 @@ import io.questdb.std.Unsafe;
 // This class manages memory for Parquet partition data.
 // It ensures that memory with the same lifetime is handled consistently and is responsible for releasing it.
 public class OwnedMemoryPartitionDescriptor extends PartitionDescriptor {
+
     @Override
     public void clear() {
         final int columnCount = getColumnCount();

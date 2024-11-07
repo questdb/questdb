@@ -27,13 +27,14 @@ package io.questdb.griffin.engine.table.parquet;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 
 // This class manages memory for Parquet partition data.
 // It handles memory with a different lifetime than the PartitionDescriptor.
-public class PartitionDescriptor implements QuietCloseable {
+public class PartitionDescriptor implements QuietCloseable, Mutable {
     public static final int COLUMN_ADDR_OFFSET = 3;
     public static final int COLUMN_ENTRY_SIZE = 9;
     public static final int COLUMN_ID_AND_TYPE_OFFSET = 1; // two 4-byte integers packed into a single 8-byte long
@@ -52,7 +53,9 @@ public class PartitionDescriptor implements QuietCloseable {
     protected long partitionRowCount;
     protected DirectUtf8Sink tableName = new DirectUtf8Sink(16);
     protected int timestampIndex = -1;
+    private long pendingEntryIndex = 0;
 
+    // adds all column fields at once
     public void addColumn(
             final CharSequence columnName,
             int columnType,
@@ -68,6 +71,7 @@ public class PartitionDescriptor implements QuietCloseable {
         final int startSize = columnNames.size();
         columnNames.put(columnName);
         final int columnNameSize = columnNames.size() - startSize;
+        pendingEntryIndex = columnData.size();
         columnData.add(columnNameSize);
         columnData.add((long) columnId << 32 | columnType);
         columnData.add(columnTop);
@@ -79,7 +83,50 @@ public class PartitionDescriptor implements QuietCloseable {
         columnData.add(symbolOffsetsSize);
     }
 
+    // start column add operation
+    // the addresses must be set separately
+    public void addColumn(
+            final CharSequence columnName,
+            int columnType,
+            int columnId,
+            long columnTop
+    ) {
+        final int startSize = columnNames.size();
+        columnNames.put(columnName);
+        final int columnNameSize = columnNames.size() - startSize;
+        pendingEntryIndex = columnData.size();
+        columnData.add(columnNameSize);
+        columnData.add((long) columnId << 32 | columnType);
+        columnData.add(columnTop);
+        columnData.add(0); // columnAddr
+        columnData.add(0); // columnSize
+        columnData.add(0); // columnSecondaryAddr
+        columnData.add(0); // columnSecondarySize
+        columnData.add(0); // symbolOffsetsAddr
+        columnData.add(0); // symbolOffsetsSize
+    }
+
+    // must be called after addColumn
+    public void addColumnAddr(long columnAddr, long columnSize) {
+        columnData.set(pendingEntryIndex + COLUMN_ADDR_OFFSET, columnAddr);
+        columnData.set(pendingEntryIndex + COLUMN_SIZE_OFFSET, columnSize);
+    }
+
+    // must be called after addColumn
+    public void addSecondaryColumnAddr(long columnSecondaryAddr, long columnSecondarySize) {
+        columnData.set(pendingEntryIndex + COLUMN_SECONDARY_ADDR_OFFSET, columnSecondaryAddr);
+        columnData.set(pendingEntryIndex + COLUMN_SECONDARY_SIZE_OFFSET, columnSecondarySize);
+    }
+
+    // must be called after addColumn
+    public void addSymbolOffsetsAddr(long symbolOffsetsAddr, long symbolOffsetsSize) {
+        columnData.set(pendingEntryIndex + SYMBOL_OFFSET_ADDR_OFFSET, symbolOffsetsAddr);
+        columnData.set(pendingEntryIndex + SYMBOL_OFFSET_SIZE_OFFSET, symbolOffsetsSize);
+    }
+
+    @Override
     public void clear() {
+        pendingEntryIndex = 0;
         tableName.clear();
         columnNames.clear();
         columnData.clear();
@@ -126,7 +173,7 @@ public class PartitionDescriptor implements QuietCloseable {
     }
 
     public PartitionDescriptor of(final CharSequence tableName, long partitionRowCount, int timestampIndex) {
-        this.clear();
+        clear();
         this.tableName.put(tableName);
         this.partitionRowCount = partitionRowCount;
         this.timestampIndex = timestampIndex;

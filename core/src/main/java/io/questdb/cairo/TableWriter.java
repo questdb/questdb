@@ -1196,7 +1196,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return rowsAdded;
     }
 
-    // TODO(puzpuzpuz): error handling here leaves many mem and resource leaks
     @Override
     public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
         final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
@@ -1258,7 +1257,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("converting partition to parquet [path=").$substr(pathRootSize, path).I$();
         long parquetFileLength;
         try {
-            try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor()) {
+            try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
                 final long partitionRowCount = getPartitionSize(partitionIndex);
                 final int timestampIndex = metadata.getTimestampIndex();
                 partitionDescriptor.of(getTableToken().getTableName(), partitionRowCount, timestampIndex);
@@ -1273,11 +1272,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
                         final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
 
-                        if (columnRowCount != 0) {
-                            // Do not add the column to the parquet file if there are no rows
+                        // Do not add the column to the parquet file if there are no rows
+                        if (columnRowCount > 0) {
                             if (ColumnType.isSymbol(columnType)) {
-                                long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
-                                long columnAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);
+                                partitionDescriptor.addColumn(
+                                        columnName,
+                                        columnType,
+                                        columnId,
+                                        columnTop
+                                );
+
+                                final long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
+                                final long columnAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);
+                                partitionDescriptor.addColumnAddr(columnAddr, columnSize);
 
                                 offsetFileName(path.trimTo(pathSize), columnName, columnNameTxn);
                                 if (!ff.exists(path.$())) {
@@ -1285,63 +1292,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
                                 }
 
-                                long fileLength = ff.length(path.$());
+                                final long fileLength = ff.length(path.$());
                                 if (fileLength < SymbolMapWriter.HEADER_SIZE) {
                                     LOG.error().$(path).$("symbol file is too short [fileLength=").$(fileLength).$(']').$();
                                     throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
                                 }
 
+                                final LPSZ charFileName = charFileName(path.trimTo(pathSize), columnName, columnNameTxn);
+                                final long columnSecondarySize = ff.length(charFileName);
+                                final long columnSecondaryAddr = mapRO(ff, charFileName, LOG, columnSecondarySize, memoryTag);
+                                partitionDescriptor.addSecondaryColumnAddr(columnSecondaryAddr, columnSecondarySize);
+
                                 final int symbolCount = getSymbolMapWriter(columnIndex).getSymbolCount();
                                 final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
-
-                                long symbolOffsetsAddr = mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
-
-                                final LPSZ charFileName = charFileName(path.trimTo(pathSize), columnName, columnNameTxn);
-                                long columnSecondarySize = ff.length(charFileName);
-                                long columnSecondaryAddr = mapRO(ff, charFileName, LOG, columnSecondarySize, memoryTag);
-
-                                partitionDescriptor.addColumn(
-                                        columnName,
-                                        columnType,
-                                        columnId,
-                                        columnTop,
-                                        columnAddr,
-                                        columnSize,
-                                        columnSecondaryAddr,
-                                        columnSecondarySize,
-                                        symbolOffsetsAddr + HEADER_SIZE,
-                                        symbolCount
-                                );
+                                final long symbolOffsetsAddr = mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
+                                partitionDescriptor.addSymbolOffsetsAddr(symbolOffsetsAddr + HEADER_SIZE, symbolCount);
 
                                 // recover partition path
                                 setPathForNativePartition(path.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
                             } else if (ColumnType.isVarSize(columnType)) {
-                                final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-                                long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
-                                long auxVectorAddr = mapRO(ff, iFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, auxVectorSize, memoryTag);
+                                partitionDescriptor.addColumn(columnName, columnType, columnId, columnTop);
 
-                                long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
+                                final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                                final long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
+                                final long auxVectorAddr = mapRO(ff, iFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, auxVectorSize, memoryTag);
+                                partitionDescriptor.addSecondaryColumnAddr(auxVectorAddr, auxVectorSize);
+
+                                final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
                                 if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
-                                    LOG.critical().$("Invalid var len column size [column=").$(columnName).$(", size=").$(dataSize).$(", path=").$(path).I$();
-                                    throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(dataSize).put(']');
+                                    LOG.critical().$("Invalid var len column size [column=").$(columnName)
+                                            .$(", size=").$(dataSize)
+                                            .$(", path=").$(path)
+                                            .I$();
+                                    throw CairoException.critical(0).put("Invalid column size [column=").put(path)
+                                            .put(", size=").put(dataSize)
+                                            .put(']');
                                 }
 
-                                long dataAddr = dataSize == 0 ? 0 : mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, dataSize, memoryTag);
-                                partitionDescriptor.addColumn(
-                                        columnName,
-                                        columnType,
-                                        columnId,
-                                        columnTop,
-                                        dataAddr,
-                                        dataSize,
-                                        auxVectorAddr,
-                                        auxVectorSize,
-                                        0,
-                                        0
-                                );
+                                final long dataAddr = dataSize > 0
+                                        ? mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, dataSize, memoryTag)
+                                        : 0;
+                                partitionDescriptor.addColumnAddr(dataAddr, dataSize);
                             } else {
-                                long mapBytes = columnRowCount * ColumnType.sizeOf(columnType);
-                                long fixedAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, mapBytes, memoryTag);
+                                final long mapBytes = columnRowCount * ColumnType.sizeOf(columnType);
+                                final long fixedAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, mapBytes, memoryTag);
                                 partitionDescriptor.addColumn(
                                         columnName,
                                         columnType,
