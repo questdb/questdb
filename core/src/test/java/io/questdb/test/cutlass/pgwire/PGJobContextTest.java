@@ -6350,43 +6350,43 @@ nodejs code:
                 );
             }
 
-                    try (Statement statement = connection.createStatement()) {
-                        statement.executeUpdate("insert into recorded_l1_data \n" +
-                                " select \n" +
-                                "     rnd_double(), \n" +
-                                "     rnd_str(), \n" +
-                                "     rnd_double(),\n" +
-                                "     rnd_double(),\n" +
-                                "     rnd_double(),\n" +
-                                "     rnd_double(),\n" +
-                                "     rnd_double(),\n" +
-                                "     rnd_double(),\n" +
-                                "     rnd_double(),\n" +
-                                "     rnd_long(),\n" +
-                                "     rnd_long(),\n" +
-                                "     rnd_long(),\n" +
-                                "     rnd_long(),\n" +
-                                "     rnd_str(),\n" +
-                                "     rnd_str(),\n" +
-                                "     rnd_long(),\n" +
-                                "     rnd_long(),\n" +
-                                "     rnd_long(),\n" +
-                                "     rnd_long(),\n" +
-                                "     rnd_str(),\n" +
-                                "     rnd_str(),\n" +
-                                "     rnd_long(),\n" +
-                                "     rnd_double(),\n" +
-                                "     rnd_double(),\n" +
-                                "     rnd_double(),\n" +
-                                "     rnd_double(),\n" +
-                                "     rnd_symbol('a','b','c'),\n" +
-                                "     rnd_long(),\n" +
-                                "     rnd_long(),\n" +
-                                "     rnd_long(),\n" +
-                                "     timestamp_sequence(0, 100000)\n" +
-                                "     from long_sequence(5000);"
-                        );
-                    }
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("insert into recorded_l1_data \n" +
+                        " select \n" +
+                        "     rnd_double(), \n" +
+                        "     rnd_str(), \n" +
+                        "     rnd_double(),\n" +
+                        "     rnd_double(),\n" +
+                        "     rnd_double(),\n" +
+                        "     rnd_double(),\n" +
+                        "     rnd_double(),\n" +
+                        "     rnd_double(),\n" +
+                        "     rnd_double(),\n" +
+                        "     rnd_long(),\n" +
+                        "     rnd_long(),\n" +
+                        "     rnd_long(),\n" +
+                        "     rnd_long(),\n" +
+                        "     rnd_str(),\n" +
+                        "     rnd_str(),\n" +
+                        "     rnd_long(),\n" +
+                        "     rnd_long(),\n" +
+                        "     rnd_long(),\n" +
+                        "     rnd_long(),\n" +
+                        "     rnd_str(),\n" +
+                        "     rnd_str(),\n" +
+                        "     rnd_long(),\n" +
+                        "     rnd_double(),\n" +
+                        "     rnd_double(),\n" +
+                        "     rnd_double(),\n" +
+                        "     rnd_double(),\n" +
+                        "     rnd_symbol('a','b','c'),\n" +
+                        "     rnd_long(),\n" +
+                        "     rnd_long(),\n" +
+                        "     rnd_long(),\n" +
+                        "     timestamp_sequence(0, 100000)\n" +
+                        "     from long_sequence(5000);"
+                );
+            }
 
             mayDrainWalQueue();
 
