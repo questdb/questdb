@@ -19,19 +19,18 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.*;
 
 public class CreateTableOperation implements TableStructure, QuietCloseable {
-    // two cast maps, one for symbol cache flag and the other for symbol capacity
-    // those values come from "cast models", the extra syntax to augment
-    // "create as select" semantic. These maps are keyed on column names
+    // augmentedColumnMetadata contains information from "cast models", the extra syntax
+    // to augment "create as select" semantic. The map is keyed on column names.
     //
-    // One thing to note about these maps is that they are only used for create-as-select,
-    // this is because column types, capacities and flags can be specified without
+    // One thing to note about this data is that it's only used for create-as-select.
+    // This is because column types, capacities, and flags can be specified without
     // extra syntax. On the other hand, create-as-select does not use columnBits.
-    // For create-as-select, we move the information from these maps into columnBits after
-    // column indexes are known. E.g. after "select" part is executed.
-    // Note that we must not hardcode "cast" parameters to the column indexes. These indexes
-    // are liable to change every time "select" is recompiled, for example in case of wildcard
-    // usage, e.g. create x as select * from y. When "y" changes, such as via drop column,
-    // column indexes will shift.
+    // For create-as-select, we move the information from this map into columnBits after
+    // column indexes are known. That is, after the "select" part is executed.
+    // Note that we must not hard-map "cast" parameters to column indices. These indices
+    // are liable to change every time "select" is recompiled, for example in case of
+    // wildcard usage, e.g. create x as select * from y. When "y" changes, such as via
+    // drop column, column indices will shift.
     private final CharSequenceObjHashMap<TableColumnMetadata> augmentedColumnMetadata = new CharSequenceObjHashMap<>();
     private final long batchO3MaxLag;
     private final long batchSize;
