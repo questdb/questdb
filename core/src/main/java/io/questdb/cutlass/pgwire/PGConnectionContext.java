@@ -1898,7 +1898,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw BadProtocolException.INSTANCE;
         }
 
-        // this check is exactly the same as the one run inside security context on every permission checks.
+        // this check is exactly the same as the one runs inside security context on every permission checks.
         // however, this will run even if the command to be executed does not require permission checks.
         // this is useful in case a disabled user intends to hammer the database with queries which do not require authorization.
         sqlExecutionContext.getSecurityContext().checkEntityEnabled();
