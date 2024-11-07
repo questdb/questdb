@@ -4079,6 +4079,11 @@ public class SqlOptimiser implements Mutable {
                 rewriteToCondenseWildcardModels(model);
             }
 
+            // if still doesn't pass, maybe it has an order by clause
+            if (!rewriteNegativeLimitGuard(model, executionContext)) {
+
+            }
+
             final QueryModel nested = model.getNestedModel();
 
             if (
