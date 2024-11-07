@@ -4258,6 +4258,7 @@ public class SqlOptimiser implements Mutable {
             nested.clearOrderBy();
 
             // bwd scan
+            nested.addOrderBy(nested.getTimestamp(), ORDER_DIRECTION_DESCENDING);
             nested.getOrderByAdvice().add(nested.getTimestamp());
             nested.getOrderByDirectionAdvice().add(ORDER_DIRECTION_DESCENDING);
             nested.setAllowPropagationOfOrderByAdvice(false); // stop ption
