@@ -33,8 +33,6 @@ public class ColumnCastModel implements Mutable {
     private int columnNamePos;
     private int columnType;
     private int columnTypePos;
-    private int indexValueBlockSize;
-    private boolean indexed;
     private boolean symbolCacheFlag;
     private int symbolCapacity;
 
@@ -62,10 +60,6 @@ public class ColumnCastModel implements Mutable {
         return columnTypePos;
     }
 
-    public int getIndexValueBlockSize() {
-        return indexValueBlockSize;
-    }
-
     public boolean getSymbolCacheFlag() {
         return symbolCacheFlag;
     }
@@ -74,20 +68,8 @@ public class ColumnCastModel implements Mutable {
         return symbolCapacity;
     }
 
-    public boolean isIndexed() {
-        return indexed;
-    }
-
     public void setColumnName(ExpressionNode columnName) {
         this.columnName = columnName;
-    }
-
-    public void setIndexValueBlockSize(int indexValueBlockSize) {
-        this.indexValueBlockSize = indexValueBlockSize;
-    }
-
-    public void setIndexed(boolean indexed) {
-        this.indexed = indexed;
     }
 
     public void setSymbolCacheFlag(boolean symbolCacheFlag) {

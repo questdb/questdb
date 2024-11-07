@@ -856,8 +856,6 @@ public class SqlParser {
                 assert capacityPosition != -1;
                 TableUtils.validateSymbolCapacityCached(true, symbolCapacity, capacityPosition);
             }
-
-            columnCastModel.setIndexed(false);
         }
 
         expectTok(lexer, ')');
@@ -955,9 +953,9 @@ public class SqlParser {
             lexer.unparseLast();
         }
         if (isCreateAsSelect) {
-            createTableOperationBuilder.setCreateAsSelectIndexFlag(columnName, columnNamePosition, true, indexValueBlockSize);
+            createTableOperationBuilder.setCreateAsSelectIndexedColumn(columnName, columnNamePosition, indexValueBlockSize);
         } else {
-            createTableOperationBuilder.setIsIndexedWithBlockSize(columnName, columnNamePosition, indexValueBlockSize);
+            createTableOperationBuilder.setIndexedColumn(columnName, columnNamePosition, indexValueBlockSize);
         }
         expectTok(lexer, ')');
     }

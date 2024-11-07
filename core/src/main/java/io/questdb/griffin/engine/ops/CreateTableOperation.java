@@ -109,7 +109,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             long batchSize,
             long batchO3MaxLag,
             RecordCursorFactory recordCursorFactory,
-            @Transient CharSequenceObjHashMap<ColumnCastModel> columnCastModeMap,
+            @Transient CharSequenceObjHashMap<ColumnCastModel> columnCastModelMap,
             @Transient CharSequenceIntHashMap createAsSelectIndexColumnNamePositions,
             @Transient CharSequenceBoolHashMap createAsSelectIndexFlags,
             @Transient CharSequenceIntHashMap createAsSelectIndexCapacities
@@ -131,50 +131,33 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         // - (symbol) column cache flag
         assert columnNames.size() == 0;
         assert columnBits.size() == 0;
-        ObjList<CharSequence> castColumnNames = columnCastModeMap.keys();
-        for (int i = 0, n = castColumnNames.size(); i < n; i++) {
-            CharSequence columnName = castColumnNames.get(i);
-            ColumnCastModel castModel = columnCastModeMap.get(columnName);
-            int index = createAsSelectIndexFlags.keyIndex(columnName);
-            if (index < 0) {
-                boolean augIndexFlag = createAsSelectIndexFlags.get(columnName);
-                int augIndexPos = createAsSelectIndexColumnNamePositions.get(columnName);
-                int augIndexValueBlockCapacity = createAsSelectIndexCapacities.get(columnName);
+        for (int i = 0, n = columnNames.size(); i < n; i++) {
+            CharSequence columnName = columnNames.get(i);
+            ColumnCastModel castModel = columnCastModelMap.get(columnName);
+            boolean hasIndexClause = createAsSelectIndexFlags.get(columnName);
+            int indexClauseCapacity = createAsSelectIndexCapacities.get(columnName);
+            int indexClausePos = createAsSelectIndexColumnNamePositions.get(columnName);
+            if (hasIndexClause) {
                 // perform some basic validation
-                if (augIndexFlag && castModel.getColumnType() != ColumnType.SYMBOL) {
-                    throw SqlException.$(augIndexPos, "index flag cannot be applied to ")
+                if (castModel != null && castModel.getColumnType() != ColumnType.SYMBOL) {
+                    throw SqlException.$(indexClausePos, "index flag cannot be applied to ")
                             .put(ColumnType.nameOf(castModel.getColumnType()));
                 }
+            }
+            if (hasIndexClause || castModel != null) {
                 String columnNameStr = Chars.toString(columnName);
                 TableColumnMetadata tcm = new TableColumnMetadata(
                         columnNameStr,
-                        castModel.getColumnType(),
-                        augIndexFlag,
-                        augIndexValueBlockCapacity,
+                        castModel != null ? castModel.getColumnType() : ColumnType.NULL,
+                        hasIndexClause,
+                        indexClauseCapacity,
                         true,
                         null,
                         -1, // writer index is irrelevant here
                         false,// dedup flag cannot be set on "create as select", not yet
-                        -1, // irrelvant
-                        castModel.getSymbolCacheFlag(),
-                        castModel.getSymbolCapacity()
-                );
-                augmentedColumnMetadata.put(columnNameStr, tcm);
-            } else {
-                // "index" clause is not used together with the "cast" clause
-                String columnNameStr = Chars.toString(columnName);
-                TableColumnMetadata tcm = new TableColumnMetadata(
-                        columnNameStr,
-                        castModel.getColumnType(),
-                        castModel.isIndexed(),
-                        castModel.getIndexValueBlockSize(),
-                        true,
-                        null,
-                        -1, // writer index is irrelevant here
-                        false, // dedup flag cannot be set on "create as select", not yet
-                        -1,
-                        castModel.getSymbolCacheFlag(),
-                        castModel.getSymbolCapacity()
+                        -1, // replacingIndex is irrelevant here
+                        castModel != null && castModel.getSymbolCacheFlag(),
+                        castModel != null ? castModel.getSymbolCapacity() : -1
                 );
                 augmentedColumnMetadata.put(columnNameStr, tcm);
             }

@@ -50,13 +50,13 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     // This list encodes column attributes from the column definition of the "create table" SQL
     // these attributes include: column type, index flag, index capacity and symbol capacity.
     // The list is populated by the SQL parser at compile time.
-    // For create-as-select SQL, parser does not populate this list. Instead the list
+    // For create-as-select SQL, parser does not populate this list. Instead, the list
     // is used at the execution time to capture the attributes of columns of the "select" SQL.
     private final LongList columnBits = new LongList();
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<String> columnNames = new ObjList<>();
-    private final CharSequenceIntHashMap createAsSelectIndexCapacities = new CharSequenceIntHashMap();
+    private final CharSequenceIntHashMap createAsSelectIndexBlockSizes = new CharSequenceIntHashMap();
     private final CharSequenceIntHashMap createAsSelectIndexColumnNamePositions = new CharSequenceIntHashMap();
     // todo: perhaps consolidate both these maps into one str-to-long?
     private final CharSequenceBoolHashMap createAsSelectIndexFlags = new CharSequenceBoolHashMap();
@@ -105,7 +105,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                     columnCastModels,
                     createAsSelectIndexColumnNamePositions,
                     createAsSelectIndexFlags,
-                    createAsSelectIndexCapacities
+                    createAsSelectIndexBlockSizes
             );
         }
 
@@ -159,7 +159,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         batchO3MaxLag = -1;
         batchSize = -1;
         createAsSelectIndexFlags.clear();
-        createAsSelectIndexCapacities.clear();
+        createAsSelectIndexBlockSizes.clear();
         createAsSelectIndexColumnNamePositions.clear();
     }
 
@@ -225,10 +225,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         this.batchSize = batchSize;
     }
 
-    public void setCreateAsSelectIndexFlag(CharSequence columnName, int columnNamePosition, boolean indexFlag, int indexValueBlockSize) {
+    public void setCreateAsSelectIndexedColumn(CharSequence columnName, int columnNamePosition, int indexValueBlockSize) {
         String columnNameStr = Chars.toString(columnName);
-        createAsSelectIndexFlags.put(columnNameStr, indexFlag);
-        createAsSelectIndexCapacities.put(columnNameStr, indexValueBlockSize);
+        createAsSelectIndexFlags.put(columnNameStr, true);
+        createAsSelectIndexBlockSizes.put(columnNameStr, indexValueBlockSize);
         createAsSelectIndexColumnNamePositions.put(columnNameStr, columnNamePosition);
     }
 
@@ -276,7 +276,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         this.ignoreIfExists = flag;
     }
 
-    public void setIsIndexedWithBlockSize(CharSequence columnName, int columnNamePosition, int indexValueBlockSize) throws SqlException {
+    public void setIndexedColumn(CharSequence columnName, int columnNamePosition, int indexValueBlockSize) throws SqlException {
         int columnIndex = getColumnIndex(columnName);
         if (columnIndex == -1) {
             throw SqlException.invalidColumn(columnNamePosition, columnName);
@@ -380,9 +380,9 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                         sink.putAscii(" nocache");
                     }
 
-                    if (m.isIndexed()) {
+                    if (createAsSelectIndexFlags.get(column)) {
                         sink.putAscii(" index capacity ");
-                        sink.put(m.getIndexValueBlockSize());
+                        sink.put(createAsSelectIndexBlockSizes.get(column));
                     }
                 }
                 sink.putAscii(')');
