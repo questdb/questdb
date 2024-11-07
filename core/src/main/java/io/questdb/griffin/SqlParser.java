@@ -629,7 +629,7 @@ public class SqlParser {
         while ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
             tok = tok(lexer, "'index' or 'cast'");
             if (isIndexKeyword(tok)) {
-                parseCreateTableIndexDef(lexer);
+                parseCreateTableIndexDef(lexer, isCreateAsSelect);
             } else if (isCastKeyword(tok)) {
                 parseCreateTableCastDef(lexer);
             } else {
@@ -939,19 +939,25 @@ public class SqlParser {
         }
     }
 
-    private void parseCreateTableIndexDef(GenericLexer lexer) throws SqlException {
+    private void parseCreateTableIndexDef(GenericLexer lexer, boolean isCreateAsSelect) throws SqlException {
         expectTok(lexer, '(');
         final CharSequence columnName = expectLiteral(lexer).token;
         final int columnNamePosition = lexer.lastTokenPosition();
 
+        int indexValueBlockSize;
         if (isCapacityKeyword(tok(lexer, "'capacity'"))) {
             int errorPosition = lexer.getPosition();
-            int indexValueBlockSize = expectInt(lexer);
+            indexValueBlockSize = expectInt(lexer);
             TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
-            createTableOperationBuilder.setCreateAsSelectIndexFlag(columnName, columnNamePosition, true, Numbers.ceilPow2(indexValueBlockSize));
+            indexValueBlockSize = Numbers.ceilPow2(indexValueBlockSize);
         } else {
-            createTableOperationBuilder.setCreateAsSelectIndexFlag(columnName, columnNamePosition, true, configuration.getIndexValueBlockSize());
+            indexValueBlockSize = configuration.getIndexValueBlockSize();
             lexer.unparseLast();
+        }
+        if (isCreateAsSelect) {
+            createTableOperationBuilder.setCreateAsSelectIndexFlag(columnName, columnNamePosition, true, indexValueBlockSize);
+        } else {
+            createTableOperationBuilder.setIsIndexedWithBlockSize(columnName, columnNamePosition, indexValueBlockSize);
         }
         expectTok(lexer, ')');
     }

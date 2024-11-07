@@ -79,8 +79,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         if (!columnNameIndexMap.put(columnName, columnNames.size())) {
             throw SqlException.duplicateColumn(columnPosition, columnName);
         }
-        // todo: columnNames need not to be strings, they can be made
-        //       strings when they are copied to the operation
+        // todo: columnNames need not be strings, they can be made strings when they are copied to the operation
         columnNames.add(Chars.toString(columnName));
         columnBits.add(
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
@@ -275,6 +274,16 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     public void setIgnoreIfExists(boolean flag) {
         this.ignoreIfExists = flag;
+    }
+
+    public void setIsIndexedWithBlockSize(CharSequence columnName, int columnNamePosition, int indexValueBlockSize) throws SqlException {
+        int columnIndex = getColumnIndex(columnName);
+        if (columnIndex == -1) {
+            throw SqlException.invalidColumn(columnNamePosition, columnName);
+        }
+        int flagsIndex = columnIndex * 2 + 1;
+        int flags = getLowAt(flagsIndex) | COLUMN_FLAG_INDEXED;
+        columnBits.setQuick(flagsIndex, Numbers.encodeLowHighInts(flags, Numbers.ceilPow2(indexValueBlockSize)));
     }
 
     public void setLikeTableName(ExpressionNode tableName) {
