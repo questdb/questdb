@@ -488,7 +488,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             return;
         }
         // we did not find 0 within message limit
-        LOG.error().$("undersized receive buffer or someone is abusing protocol").$();
+        LOG.error().$("undersized receive buffer or someone is abusing protocol [recvBufferSize=").$(recvBufferSize).$(']').$();
         throw BadProtocolException.INSTANCE;
     }
 

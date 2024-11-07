@@ -7683,6 +7683,7 @@ nodejs code:
     public void testPreparedStatementTextParams() throws Exception {
         skipOnWalRun(); // non-partitioned table
         sendBufferSize = 1024;
+        recvBufferSize = 1024;
         long modes = legacyMode ? CONN_AWARE_EXTENDED_TEXT : CONN_AWARE_ALL;
         assertWithPgServer(modes, (connection, binary, mode, port) -> {
             PreparedStatement statement = connection.prepareStatement("select x, ? as \"$1\",? as \"$2\",? as \"$3\",? as \"$4\"," +
