@@ -244,6 +244,9 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         final RecordMetadata metadata = factory.getMetadata();
         CharSequenceObjHashMap<ColumnCastModel> castModels = columnCastModels;
         ObjList<CharSequence> castColumnNames = castModels.keys();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            columnNameIndexMap.put(metadata.getColumnName(i), i);
+        }
 
         for (int i = 0, n = castColumnNames.size(); i < n; i++) {
             CharSequence columnName = castColumnNames.getQuick(i);
