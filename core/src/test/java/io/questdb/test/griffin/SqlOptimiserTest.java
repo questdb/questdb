@@ -2615,6 +2615,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteNegativeLimitHandlesExistingOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;", "Sort light\n" +
+                    "  keys: [timestamp, side desc]\n" +
+                    "    Limit lo: 3\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: trades\n");
+        });
+    }
+
+    @Test
     public void testRewriteNegativeLimitHandlesWildcards() throws Exception {
         assertMemoryLeak(() -> {
             ddl(tradesDdl);

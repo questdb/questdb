@@ -635,11 +635,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static int getOrderByDirectionOrDefault(QueryModel model, int index) {
-        IntList direction = model.getOrderByDirectionAdvice();
+        IntList direction = model.getOrderBy().size() > 0 ? model.getOrderByDirection() : model.getOrderByDirectionAdvice();
         if (index >= direction.size()) {
             return ORDER_DIRECTION_ASCENDING;
+        } else {
+            return direction.get(index);
         }
-        return model.getOrderByDirectionAdvice().getQuick(index);
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -5864,8 +5865,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private boolean isOrderByDesignatedTimestampOnly(QueryModel model) {
-        return model.getOrderByAdvice().size() == 1 && model.getTimestamp() != null &&
-                Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token);
+        ObjList<ExpressionNode> orderBy = model.getOrderBy().size() != 0 ? model.getOrderBy() : model.getOrderByAdvice();
+
+        return orderBy.size() == 1
+                && model.getTimestamp() != null
+                && Chars.equalsIgnoreCase(orderBy.getQuick(0).token,
+                model.getTimestamp().token);
     }
 
     private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {
