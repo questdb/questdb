@@ -541,6 +541,7 @@ public class FilesTest {
 
     @Test
     public void testIsDirOrSoftLinkDir() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
         final File baseDir = temporaryFolder.newFolder();
 
         setupPath(baseDir, "empty_dir/");
@@ -560,7 +561,7 @@ public class FilesTest {
         setupPath(baseDir, "link_to_link_to_nonexistent -> link_to_nonexistent");
 
         final File nonexistent = new File(baseDir, "nonexistent");
-        nonexistent.delete();
+        Assert.assertTrue(nonexistent.delete());
         Assert.assertFalse(nonexistent.exists());
 
         assertMemoryLeak(() -> {
@@ -636,13 +637,13 @@ public class FilesTest {
     }
 
     @Test
-    public void testLongFd() throws Exception {
+    public void testLongFd() {
         long unuqFd = Numbers.encodeLowHighInts(1000, -1);
         Assert.assertTrue(unuqFd < 0);
     }
 
     @Test
-    public void testLongFd2() throws Exception {
+    public void testLongFd2() {
         long unuqFd = Numbers.encodeLowHighInts(Integer.MAX_VALUE, 1000);
         Assert.assertTrue(unuqFd > 0);
     }
@@ -1374,7 +1375,7 @@ public class FilesTest {
             }
             StringSink sink = Misc.getThreadLocalSink();
             Utf8s.utf8ToUtf16(buffPtr, buffPtr + size, sink);
-            TestUtils.assertEquals(fileContent, sink.toString());
+            TestUtils.assertEquals(fileContent, sink);
         } finally {
             Files.close(fd);
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
@@ -1577,7 +1578,7 @@ public class FilesTest {
             final String targetPathString = parts[1].replaceAll("/$", "");
             final File target = new File(baseDir, targetPathString);
             final File link = new File(baseDir, parts[0]);
-            link.getParentFile().mkdirs();
+            Assert.assertTrue(link.getParentFile().mkdirs());
             try (
                     Path targetPath = new Path().of(target.getAbsolutePath());
                     Path linkPath = new Path().of(link.getAbsolutePath())
@@ -1590,13 +1591,13 @@ public class FilesTest {
 
         } else if (scenario.endsWith("/")) {
             final File file = new File(baseDir, scenario.replaceAll("/$", ""));
-            file.mkdirs();
+            Assert.assertTrue(file.mkdirs());
             Assert.assertTrue(
                     "Could not set up scenario: " + scenario,
                     file.exists());
         } else {
             final File file = new File(baseDir, scenario);
-            file.getParentFile().mkdirs();
+            Assert.assertTrue(file.getParentFile().mkdirs());
             touch(file);
             Assert.assertTrue(
                     "Could not set up scenario: " + scenario,
