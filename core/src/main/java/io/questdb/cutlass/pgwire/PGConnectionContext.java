@@ -1675,9 +1675,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // check if there is pending writer, which would be pending if there is active transaction
         // when we have writer, execution is synchronous
         TableToken tableToken = op.getTableToken();
-        if (tableToken == null) {
-            throw CairoException.critical(0).put("invalid update operation plan cached, table token is null");
-        }
         final int index = pendingWriters.keyIndex(tableToken);
         if (index < 0) {
             op.withContext(sqlExecutionContext);

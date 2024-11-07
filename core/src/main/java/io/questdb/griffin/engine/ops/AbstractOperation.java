@@ -60,7 +60,7 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
 
     @Override
     public void close() {
-        // intentionally left empty
+        this.tableToken = null;
     }
 
     @Override
@@ -97,7 +97,8 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
     }
 
     @Override
-    public @Nullable TableToken getTableToken() {
+    public @NotNull TableToken getTableToken() {
+        assert tableToken != null : "initialized operation";
         return tableToken;
     }
 

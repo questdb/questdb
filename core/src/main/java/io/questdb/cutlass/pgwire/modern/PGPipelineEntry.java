@@ -174,22 +174,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.pgResultSetColumnTypes = new IntList();
     }
 
-    public static void freePendingWriters(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters, boolean commit) {
-        try {
-            for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
-                final TableWriterAPI m = pendingWriter.value;
-                if (commit) {
-                    m.commit();
-                } else {
-                    m.rollback();
-                }
-                Misc.free(m);
-            }
-        } finally {
-            pendingWriters.clear();
-        }
-    }
-
     public void bindPortalName(CharSequence portalName) {
         portalNames.add(portalName);
     }
@@ -240,6 +224,26 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         errorMessageSink.clear();
         tai = null;
         tas = null;
+    }
+
+    public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
+        try {
+            for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
+                final TableWriterAPI w = pendingWriter.value;
+                if (w != null) {
+                    w.commit();
+                }
+                // We rely on the fact that writer will roll back itself when it is returned to the pool.
+                // The pool will also handle a case, when rollback fails. This will release the writer object
+                // fully and force next writer to load its state from disk.
+                pendingWriter.value = Misc.free(w);
+            }
+            pendingWriters.clear();
+        } catch (Throwable e) {
+            // free remaining writers
+            rollback(pendingWriters);
+            throw kaput().put(e);
+        }
     }
 
     public void compileNewSQL(
@@ -466,7 +470,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.SELECT:
                 case CompiledQuery.PSEUDO_SELECT:
                     msgExecuteSelect(
-                            sqlExecutionContext, transactionState, pendingWriters, characterStore, utf8String, binarySequenceParamsPool, taiPool, maxRecompileAttempts);
+                            sqlExecutionContext,
+                            transactionState,
+                            pendingWriters,
+                            characterStore,
+                            utf8String,
+                            binarySequenceParamsPool,
+                            taiPool,
+                            maxRecompileAttempts
+                    );
                     break;
                 case CompiledQuery.INSERT:
                     msgExecuteInsert(
@@ -518,8 +530,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.BEGIN:
                     return IN_TRANSACTION;
                 case CompiledQuery.COMMIT:
+                    commit(pendingWriters);
+                    return IMPLICIT_TRANSACTION;
                 case CompiledQuery.ROLLBACK:
-                    freePendingWriters(pendingWriters, this.sqlType == CompiledQuery.COMMIT);
+                    rollback(pendingWriters);
                     return IMPLICIT_TRANSACTION;
                 default:
                     // execute DDL that has not been parse-executed
@@ -782,6 +796,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             } catch (Throwable e) {
                 throw kaput().put(e);
             }
+        }
+    }
+
+    public void rollback(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) {
+        try {
+            for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
+                // We rely on the fact that writer will roll back itself when it is returned to the pool.
+                // The pool will also handle a case, when rollback fails. This will release the writer object
+                // fully and force next writer to load its state from disk.
+                pendingWriter.value = Misc.free(pendingWriter.value);
+            }
+        } finally {
+            pendingWriters.clear();
         }
     }
 
@@ -1255,7 +1282,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // commit implicitly if we are not in a transaction
             // this makes data inserted in the same pipeline visible to the select
             if (transactionState == IMPLICIT_TRANSACTION) {
-                freePendingWriters(pendingWriters, true);
+                commit(pendingWriters);
             }
 
             sqlExecutionContext.getCircuitBreaker().resetTimer();
@@ -1737,7 +1764,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             if (e instanceof FlyweightMessageContainer) {
                 getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
             } else {
-                e.printStackTrace();
                 String msg = e.getMessage();
                 getErrorMessageSink().put(msg != null ? msg : "no message provided (internal error)");
             }
@@ -1776,7 +1802,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outError(PGResponseSink utf8Sink, ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) {
-        freePendingWriters(pendingWriters, false);
+        rollback(pendingWriters);
         utf8Sink.resetToBookmark();
         // todo: we need to test scenario, when sync does not fit the buffer
         final int position = getErrorMessagePosition();

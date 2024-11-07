@@ -467,7 +467,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     @Test
     public void testCommitThenSelectReturnsSelectResult() throws Exception {
         // legacy code fails in quirks mode, include quirks when legacy is removed
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("COMMIT; select 3");
             assertResults(statement, hasResult, Result.ZERO, data(row(3L)));
@@ -1556,7 +1556,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     "create table test(l long, s string);" +
                             "insert into test values(1, 'a');" +
                             "insert into test values(2, 'b');" +
-                            "select * from test;");
+                            "select * from test2;");
+
 
             assertResults(statement, hasResult, Result.ZERO, count(1), count(1),
                     data(row(1L, "a"), row(2L, "b"))

@@ -1066,11 +1066,19 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
     private void msgSync() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
         if (transactionState == IMPLICIT_TRANSACTION) {
-            // implicit transacations must be committed on SYNC
-            // todo: can this throw an exception? we should handle it!
-            // todo: PGPipelineEntry.freePendingWriters() is ugly, it smells like a certain kind of pasta to me. Fix it.
-            PGPipelineEntry.freePendingWriters(pendingWriters, true);
+            // implicit transactions must be committed on SYNC
+            try {
+                if (pipelineCurrentEntry == null) {
+                    pipelineCurrentEntry = entryPool.next();
+                }
+                pipelineCurrentEntry.commit(pendingWriters);
+            } catch (BadProtocolException ignore) {
+                // the failed commit will have already labelled the pipeline entry as error
+                // the intent of the exception is to abort message processing, but this is sync.
+                // Sync cannot be aborted. This is the method that will report an error to the client
+            }
         }
+
         addPipelineEntry();
 
         // the sync0 is liable to get interrupted due to:
