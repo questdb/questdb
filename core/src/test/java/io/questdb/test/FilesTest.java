@@ -1597,7 +1597,7 @@ public class FilesTest {
                     file.exists());
         } else {
             final File file = new File(baseDir, scenario);
-            Assert.assertTrue(file.getParentFile().mkdirs());
+            Assert.assertTrue(file.getParentFile().exists() || file.getParentFile().mkdirs());
             touch(file);
             Assert.assertTrue(
                     "Could not set up scenario: " + scenario,
