@@ -68,7 +68,6 @@ public class PGCommitFailureTest extends BasePGTest {
                         return super.append(fd, buf, len);
                     }
                 };
-                connection.beginRequest();
                 connection.setAutoCommit(false);
                 connection.prepareStatement("insert into x values (1, '2021-01-01T00:00:00.000Z')").execute();
                 try {
@@ -144,8 +143,8 @@ public class PGCommitFailureTest extends BasePGTest {
                 try {
                     stmt.execute(
                             "insert into x values (1, '2021-01-01T00:00:00.000Z');" +
-                            "insert into x values (2, '2021-01-01T00:00:00.000Z');" +
-                            "select * from x;"
+                                    "insert into x values (2, '2021-01-01T00:00:00.000Z');" +
+                                    "select * from x;"
                     );
                     Assert.fail();
                 } catch (SQLException e) {
