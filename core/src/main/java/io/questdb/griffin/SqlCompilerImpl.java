@@ -2301,46 +2301,45 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
     }
 
+    private int filterApply(
+            Function filter, int functionPosition, AlterOperationBuilder changePartitionStatement, long timestamp
+    ) {
+        partitionFunctionRec.setTimestamp(timestamp);
+        if (filter.getBool(partitionFunctionRec)) {
+            changePartitionStatement.addPartitionToList(timestamp, functionPosition);
+            return 0;
+        }
+        return 1;
+    }
+
     private int filterPartitions(
-            Function function,
-            int functionPosition,
+            Function filter,
+            int filterPosition,
             TableReader reader,
             AlterOperationBuilder changePartitionStatement
     ) {
         int affectedPartitions = 0;
-        // Iterate partitions in descending order so if folders are missing on disk
-        // removePartition does not fail to determine next minTimestamp
+        // Iterate partitions in descending order, so if folders are missing on disk,
+        // removePartition does not fail to determine the next minTimestamp
         final int partitionCount = reader.getPartitionCount();
         if (partitionCount > 0) { // table may be empty
-            // perform the action on the first and last partition in the end, it's more expensive than others
-            long fistPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(0));
+            // perform the action on the first and last partition in the end, those are more expensive than others
+            long firstPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(0));
             long lastPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(partitionCount - 1));
 
             for (int partitionIndex = 1; partitionIndex < partitionCount - 1; partitionIndex++) {
                 long physicalTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
                 long logicalTimestamp = reader.getTxFile().getPartitionFloor(physicalTimestamp);
-                if (physicalTimestamp != logicalTimestamp || logicalTimestamp == fistPartition || logicalTimestamp == lastPartition) {
+                if (physicalTimestamp != logicalTimestamp || logicalTimestamp == firstPartition || logicalTimestamp == lastPartition) {
                     continue;
                 }
-                partitionFunctionRec.setTimestamp(logicalTimestamp);
-                if (function.getBool(partitionFunctionRec)) {
-                    changePartitionStatement.addPartitionToList(logicalTimestamp, functionPosition);
-                    affectedPartitions++;
-                }
+                affectedPartitions += filterApply(filter, filterPosition, changePartitionStatement, logicalTimestamp);
             }
 
             // perform the action on the first and last partition, dropping them have to read min/max timestamp of the next first/last partition
-            partitionFunctionRec.setTimestamp(fistPartition);
-            if (function.getBool(partitionFunctionRec)) {
-                changePartitionStatement.addPartitionToList(fistPartition, functionPosition);
-                affectedPartitions++;
-            }
-            if (fistPartition != lastPartition) {
-                partitionFunctionRec.setTimestamp(lastPartition);
-                if (function.getBool(partitionFunctionRec)) {
-                    changePartitionStatement.addPartitionToList(lastPartition, functionPosition);
-                    affectedPartitions++;
-                }
+            affectedPartitions += filterApply(filter, filterPosition, changePartitionStatement, firstPartition);
+            if (firstPartition != lastPartition) {
+                affectedPartitions += filterApply(filter, filterPosition, changePartitionStatement, lastPartition);
             }
         }
         return affectedPartitions;
