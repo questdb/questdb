@@ -2312,17 +2312,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // removePartition does not fail to determine next minTimestamp
         final int partitionCount = reader.getPartitionCount();
         if (partitionCount > 0) { // table may be empty
-            for (int i = partitionCount - 2; i >= -1; i--) {
-                // perform the action on the last partition in the end, it's more expensive than others
+            // perform the action on the first and last partition in the end, it's more expensive than others
+            long fistPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(0));
+            long lastPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(partitionCount - 1));
+
+            for (int i = 1; i < partitionCount - 1; i++) {
                 int partitionIndex = (i != -1) ? i : partitionCount - 1;
                 long physicalTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
                 long logicalTimestamp = reader.getTxFile().getPartitionFloor(physicalTimestamp);
-                if (physicalTimestamp != logicalTimestamp) {
+                if (physicalTimestamp != logicalTimestamp || logicalTimestamp == fistPartition || logicalTimestamp == lastPartition) {
                     continue;
                 }
                 partitionFunctionRec.setTimestamp(logicalTimestamp);
                 if (function.getBool(partitionFunctionRec)) {
                     changePartitionStatement.addPartitionToList(logicalTimestamp, functionPosition);
+                    affectedPartitions++;
+                }
+            }
+
+            // perform the action on the first and last partition, dropping them have to read min/max timestamp of the next first/last partition
+            partitionFunctionRec.setTimestamp(fistPartition);
+            if (function.getBool(partitionFunctionRec)) {
+                changePartitionStatement.addPartitionToList(fistPartition, functionPosition);
+                affectedPartitions++;
+            }
+            if (fistPartition != lastPartition) {
+                partitionFunctionRec.setTimestamp(lastPartition);
+                if (function.getBool(partitionFunctionRec)) {
+                    changePartitionStatement.addPartitionToList(lastPartition, functionPosition);
                     affectedPartitions++;
                 }
             }
