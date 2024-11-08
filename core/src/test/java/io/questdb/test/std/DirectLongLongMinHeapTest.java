@@ -51,12 +51,12 @@ public class DirectLongLongMinHeapTest {
             }
 
             DirectLongLongMinHeap.Cursor cursor = minHeap.getCursor();
-            cursor.toTop();
             for (int i = 0, n = minHeap.size(); i < n; i++) {
-                long v = oracle.poll();
+                Long v = oracle.poll();
+                Assert.assertNotNull(v);
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(v, cursor.index());
-                Assert.assertEquals(v, cursor.value());
+                Assert.assertEquals((long) v, cursor.index());
+                Assert.assertEquals((long) v, cursor.value());
             }
             Assert.assertFalse(cursor.hasNext());
         }

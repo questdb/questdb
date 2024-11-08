@@ -3097,13 +3097,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final long lo = loFunc.getLong(null);
                             final int index = listColumnFilterA.getQuick(0);
                             final int columnIndex = (index > 0 ? index : -index) - 1;
-                            // TODO(puzpuzpuz): support ASC direction
-                            if (lo > 0 && lo <= Integer.MAX_VALUE && index < 0 && metadata.getColumnType(columnIndex) == ColumnType.LONG) {
+                            if (lo > 0 && lo <= Integer.MAX_VALUE && metadata.getColumnType(columnIndex) == ColumnType.LONG) {
                                 return new LongTopKRecordCursorFactory(
                                         orderedMetadata,
                                         recordCursorFactory,
                                         columnIndex,
-                                        (int) lo
+                                        (int) lo,
+                                        index > 0
                                 );
                             }
                         }

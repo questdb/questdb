@@ -211,7 +211,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
-    public OrderedMapRecord clone() {
+    public OrderedMapVarSizeRecord clone() {
         final DirectString[] csA;
         final DirectString[] csB;
         final DirectUtf8String[] usA;

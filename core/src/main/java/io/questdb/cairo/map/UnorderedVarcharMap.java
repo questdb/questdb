@@ -29,14 +29,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.BinarySequence;
-import io.questdb.std.DirectLongLongMaxHeap;
 import io.questdb.std.Hash;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -248,15 +246,6 @@ public class UnorderedVarcharMap implements Map, Reopenable {
     @Override
     public boolean isOpen() {
         return memStart != 0;
-    }
-
-    @Override
-    public void longTopK(DirectLongLongMaxHeap maxHeap, Function recordFunction) {
-        for (long addr = memStart, lim = memStart + entrySize * size; addr < lim; addr += entrySize) {
-            record.of(addr);
-            long v = recordFunction.getLong(record);
-            maxHeap.add(addr, v);
-        }
     }
 
     @Override

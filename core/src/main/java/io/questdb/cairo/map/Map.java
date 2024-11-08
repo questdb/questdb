@@ -25,8 +25,6 @@
 package io.questdb.cairo.map;
 
 import io.questdb.cairo.Reopenable;
-import io.questdb.cairo.sql.Function;
-import io.questdb.std.DirectLongLongMaxHeap;
 import io.questdb.std.Mutable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -61,8 +59,6 @@ public interface Map extends Mutable, Closeable, Reopenable {
     }
 
     boolean isOpen();
-
-    void longTopK(DirectLongLongMaxHeap maxHeap, Function recordFunction);
 
     void merge(Map srcMap, MapValueMergeFunction mergeFunc);
 

@@ -3351,6 +3351,57 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByWithLimit10() throws Exception {
+        assertPlan(
+                "create table di (x int, y long)",
+                "select y, count(*) from di order by y desc limit 1",
+                "Long top K lo: 1\n" +
+                        "  keys: [y desc]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [y]\n" +
+                        "      values: [count(*)]\n" +
+                        "      filter: null\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testGroupByWithLimit11() throws Exception {
+        assertPlan(
+                "create table di (x int, y long)",
+                "select y, count(*) c from di order by c limit 42",
+                "Long top K lo: 42\n" +
+                        "  keys: [c asc]\n" +
+                        "    Async Group By workers: 1\n" +
+                        "      keys: [y]\n" +
+                        "      values: [count(*)]\n" +
+                        "      filter: null\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
+    public void testGroupByWithLimit12() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, false);
+        assertPlan(
+                "create table di (x int, y long)",
+                "select y, count(*) c from di order by c limit 42",
+                "Long top K lo: 42\n" +
+                        "  keys: [c asc]\n" +
+                        "    GroupBy vectorized: false\n" +
+                        "      keys: [y]\n" +
+                        "      values: [count(*)]\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: di\n"
+        );
+    }
+
+    @Test
     public void testGroupByWithLimit2() throws Exception {
         assertPlan(
                 "create table di (x int, y long)",

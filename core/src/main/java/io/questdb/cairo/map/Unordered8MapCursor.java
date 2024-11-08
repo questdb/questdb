@@ -27,7 +27,7 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.std.DirectLongLongMaxHeap;
+import io.questdb.std.DirectLongLongHeap;
 
 public final class Unordered8MapCursor implements MapRecordCursor {
     private final long entrySize;
@@ -36,9 +36,9 @@ public final class Unordered8MapCursor implements MapRecordCursor {
     private final Unordered8MapRecord recordB;
     private long address;
     private int count;
-    private long limit;
+    private long memLimit;
+    private long memStart;
     private int remaining;
-    private long topAddress;
     private long zeroKeyAddress; // set to 0 when there is no zero
 
     Unordered8MapCursor(Unordered8MapRecord record, Unordered8Map map) {
@@ -88,9 +88,22 @@ public final class Unordered8MapCursor implements MapRecordCursor {
     }
 
     @Override
-    public void longTopK(DirectLongLongMaxHeap maxHeap, Function recordFunction) {
-        // TODO(puzpuzpuz): move this method to cursor
-        map.longTopK(maxHeap, recordFunction);
+    public void longTopK(DirectLongLongHeap heap, Function recordFunction) {
+        // First, we handle zero key.
+        if (zeroKeyAddress != 0) {
+            recordA.of(zeroKeyAddress);
+            long v = recordFunction.getLong(recordA);
+            heap.add(zeroKeyAddress, v);
+        }
+
+        // Then we handle all non-zero keys.
+        for (long addr = memStart; addr < memLimit; addr += entrySize) {
+            if (!map.isZeroKey(addr)) {
+                recordA.of(addr);
+                long v = recordFunction.getLong(recordA);
+                heap.add(addr, v);
+            }
+        }
     }
 
     @Override
@@ -105,7 +118,7 @@ public final class Unordered8MapCursor implements MapRecordCursor {
 
     @Override
     public void toTop() {
-        address = topAddress;
+        address = memStart;
         remaining = count;
         if (count > 0 && (zeroKeyAddress == 0 || count > 1) && map.isZeroKey(address)) {
             skipToNonZeroKey();
@@ -115,17 +128,17 @@ public final class Unordered8MapCursor implements MapRecordCursor {
     private void skipToNonZeroKey() {
         do {
             address += entrySize;
-        } while (address < limit && map.isZeroKey(address));
+        } while (address < memLimit && map.isZeroKey(address));
     }
 
-    Unordered8MapCursor init(long address, long limit, long zeroKeyAddress, int count) {
-        this.topAddress = address;
-        this.limit = limit;
+    Unordered8MapCursor init(long memStart, long memLimit, long zeroKeyAddress, int count) {
+        this.memStart = memStart;
+        this.memLimit = memLimit;
         this.count = count;
         this.zeroKeyAddress = zeroKeyAddress;
         toTop();
-        recordA.setLimit(limit);
-        recordB.setLimit(limit);
+        recordA.setLimit(memLimit);
+        recordB.setLimit(memLimit);
         return this;
     }
 }

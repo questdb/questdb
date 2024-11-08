@@ -124,9 +124,25 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     workerCount
             );
             if (filter != null) {
-                this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, FILTER_AND_AGGREGATE, reduceTaskFactory, workerCount, PageFrameReduceTask.TYPE_GROUP_BY);
+                this.frameSequence = new PageFrameSequence<>(
+                        configuration,
+                        messageBus,
+                        atom,
+                        FILTER_AND_AGGREGATE,
+                        reduceTaskFactory,
+                        workerCount,
+                        PageFrameReduceTask.TYPE_GROUP_BY
+                );
             } else {
-                this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, AGGREGATE, reduceTaskFactory, workerCount, PageFrameReduceTask.TYPE_GROUP_BY);
+                this.frameSequence = new PageFrameSequence<>(
+                        configuration,
+                        messageBus,
+                        atom,
+                        AGGREGATE,
+                        reduceTaskFactory,
+                        workerCount,
+                        PageFrameReduceTask.TYPE_GROUP_BY
+                );
             }
             this.cursor = new AsyncGroupByRecordCursor(groupByFunctions, recordFunctions, messageBus);
             this.workerCount = workerCount;

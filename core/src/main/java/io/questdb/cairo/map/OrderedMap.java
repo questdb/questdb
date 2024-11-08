@@ -31,13 +31,11 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.DirectIntList;
-import io.questdb.std.DirectLongLongMaxHeap;
 import io.questdb.std.Hash;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
@@ -105,7 +103,6 @@ public class OrderedMap implements Map, Reopenable {
     private final long keySize;
     private final int listMemoryTag;
     private final double loadFactor;
-    private final LongTopKFunction longTopKRef;
     private final int maxResizes;
     private final MergeFunction mergeRef;
     private final OrderedMapRecord record;
@@ -239,17 +236,18 @@ public class OrderedMap implements Map, Reopenable {
 
             assert keySize + valueSize <= heapLimit - heapStart : "page size is too small to fit a single key";
             if (keySize == -1) {
-                record = new OrderedMapVarSizeRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
+                final OrderedMapVarSizeRecord varSizeRecord = new OrderedMapVarSizeRecord(valueSize, valueOffsets, value, keyTypes, valueTypes);
+                record = varSizeRecord;
+                cursor = new OrderedMapVarSizeCursor(varSizeRecord, this);
                 key = new VarSizeKey();
                 mergeRef = this::mergeVarSizeKey;
-                longTopKRef = this::longTopKVarSizeKey;
             } else {
-                record = new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, value, keyTypes, valueTypes);
+                final OrderedMapFixedSizeRecord fixedSizeRecord = new OrderedMapFixedSizeRecord(keySize, valueSize, valueOffsets, value, keyTypes, valueTypes);
+                record = fixedSizeRecord;
+                cursor = new OrderedMapFixedSizeCursor(fixedSizeRecord, this);
                 key = new FixedSizeKey();
                 mergeRef = this::mergeFixedSizeKey;
-                longTopKRef = this::longTopKFixedSizeKey;
             }
-            cursor = new OrderedMapCursor(record, this);
         } catch (Throwable th) {
             close();
             throw th;
@@ -314,11 +312,6 @@ public class OrderedMap implements Map, Reopenable {
     @Override
     public boolean isOpen() {
         return heapStart != 0;
-    }
-
-    @Override
-    public void longTopK(DirectLongLongMaxHeap maxHeap, Function recordFunction) {
-        longTopKRef.longTopK(maxHeap, recordFunction);
     }
 
     @Override
@@ -423,26 +416,6 @@ public class OrderedMap implements Map, Reopenable {
             rehash();
         }
         return valueOf(keyWriter.startAddress, keyWriter.appendAddress, true, value);
-    }
-
-    private void longTopKFixedSizeKey(DirectLongLongMaxHeap maxHeap, Function recordFunction) {
-        final long entrySize = Bytes.align8b(keySize + valueSize);
-        for (long addr = heapStart, lim = heapStart + entrySize * size; addr < lim; addr += entrySize) {
-            record.of(addr);
-            long v = recordFunction.getLong(record);
-            maxHeap.add(addr, v);
-        }
-    }
-
-    private void longTopKVarSizeKey(DirectLongLongMaxHeap maxHeap, Function recordFunction) {
-        final OrderedMapVarSizeRecord varSizeRecord = (OrderedMapVarSizeRecord) record;
-        long addr = heapStart;
-        for (int i = 0; i < size; i++) {
-            varSizeRecord.of(addr);
-            long v = recordFunction.getLong(varSizeRecord);
-            maxHeap.add(addr, v);
-            addr += Bytes.align8b(OrderedMap.VAR_KEY_HEADER_SIZE + varSizeRecord.keySize() + valueSize);
-        }
     }
 
     private void mergeFixedSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
@@ -638,11 +611,6 @@ public class OrderedMap implements Map, Reopenable {
 
     long valueSize() {
         return valueSize;
-    }
-
-    @FunctionalInterface
-    private interface LongTopKFunction {
-        void longTopK(DirectLongLongMaxHeap maxHeap, Function recordFunction);
     }
 
     @FunctionalInterface

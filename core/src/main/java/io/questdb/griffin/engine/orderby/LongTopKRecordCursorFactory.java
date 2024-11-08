@@ -37,6 +37,7 @@ import io.questdb.std.Misc;
  * Handles ORDER BY + LIMIT N on a single long column.
  */
 public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final boolean ascending;
     private final RecordCursorFactory base;
     private final int columnIndex;
     private final LongTopKRecordCursor cursor;
@@ -46,15 +47,17 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordMetadata metadata,
             RecordCursorFactory base,
             int columnIndex,
-            int lo
+            int lo,
+            boolean ascending
     ) {
         super(metadata);
         assert lo > 0;
         assert base.recordCursorSupportsLongTopK();
         this.base = base;
-        this.lo = lo;
         this.columnIndex = columnIndex;
-        this.cursor = new LongTopKRecordCursor(columnIndex, lo);
+        this.lo = lo;
+        this.ascending = ascending;
+        this.cursor = new LongTopKRecordCursor(columnIndex, lo, ascending);
     }
 
     @Override
@@ -76,8 +79,7 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public int getScanDirection() {
-        // TODO(puzpuzpuz): support ASC direction
-        return SCAN_DIRECTION_BACKWARD;
+        return ascending ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
     }
 
     @Override
@@ -96,7 +98,12 @@ public class LongTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.meta("lo").val(lo);
         sink.attr("keys").val('[');
         sink.putBaseColumnName(columnIndex);
-        sink.val(" ").val("desc");
+        sink.val(" ");
+        if (ascending) {
+            sink.val("asc");
+        } else {
+            sink.val("desc");
+        }
         sink.val(']');
         sink.child(base);
     }

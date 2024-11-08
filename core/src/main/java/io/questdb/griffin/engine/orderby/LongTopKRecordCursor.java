@@ -24,39 +24,42 @@
 
 package io.questdb.griffin.engine.orderby;
 
-import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongLongHeap;
 import io.questdb.std.DirectLongLongMaxHeap;
+import io.questdb.std.DirectLongLongMinHeap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 
-class LongTopKRecordCursor implements DelegatingRecordCursor {
+class LongTopKRecordCursor implements RecordCursor {
     private final int columnIndex;
-    private final DirectLongLongMaxHeap maxHeap;
-    private final DirectLongLongMaxHeap.Cursor rowIdCursor;
+    private final DirectLongLongHeap heap;
+    private final DirectLongLongHeap.Cursor rowIdCursor;
     private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean initialized;
     private boolean isOpen;
 
-    public LongTopKRecordCursor(int columnIndex, int lo) {
+    public LongTopKRecordCursor(int columnIndex, int lo, boolean ascending) {
         this.columnIndex = columnIndex;
         isOpen = true;
-        maxHeap = new DirectLongLongMaxHeap(lo, MemoryTag.NATIVE_DEFAULT);
-        rowIdCursor = maxHeap.getCursor();
+        heap = ascending
+                ? new DirectLongLongMinHeap(lo, MemoryTag.NATIVE_DEFAULT)
+                : new DirectLongLongMaxHeap(lo, MemoryTag.NATIVE_DEFAULT);
+        rowIdCursor = heap.getCursor();
     }
 
     @Override
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(maxHeap);
+            Misc.free(heap);
             baseCursor = Misc.free(baseCursor);
             baseRecord = null;
         }
@@ -96,7 +99,6 @@ class LongTopKRecordCursor implements DelegatingRecordCursor {
         return baseCursor.newSymbolTable(columnIndex);
     }
 
-    @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
         // assign base cursor as the first step, so that we close it in close() call
         this.baseCursor = baseCursor;
@@ -104,7 +106,7 @@ class LongTopKRecordCursor implements DelegatingRecordCursor {
 
         if (!isOpen) {
             isOpen = true;
-            maxHeap.reopen();
+            heap.reopen();
         }
 
         circuitBreaker = executionContext.getCircuitBreaker();
@@ -125,13 +127,13 @@ class LongTopKRecordCursor implements DelegatingRecordCursor {
     public void toTop() {
         rowIdCursor.toTop();
         if (!initialized) {
-            maxHeap.clear();
+            heap.clear();
             baseCursor.toTop();
         }
     }
 
     private void topK() {
-        baseCursor.longTopK(maxHeap, columnIndex);
+        baseCursor.longTopK(heap, columnIndex);
         rowIdCursor.toTop();
     }
 }

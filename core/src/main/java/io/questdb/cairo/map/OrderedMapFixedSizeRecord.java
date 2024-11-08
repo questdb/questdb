@@ -166,7 +166,7 @@ final class OrderedMapFixedSizeRecord implements OrderedMapRecord {
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
-    public OrderedMapRecord clone() {
+    public OrderedMapFixedSizeRecord clone() {
         final Long256Impl[] long256A;
         final Long256Impl[] long256B;
         final Interval[] intervals;
