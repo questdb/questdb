@@ -45,13 +45,20 @@ import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
 import static io.questdb.griffin.model.IntervalUtils.parseAndApplyIntervalEx;
 
 public class InTimestampTimestampFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "in(NV)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         boolean allConst = true;
         boolean allRuntimeConst = true;
         for (int i = 1, n = args.size(); i < n && (allConst || allRuntimeConst); i++) {
@@ -67,6 +74,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.VARCHAR:
                 case ColumnType.UNDEFINED:
                     break;
+                case ColumnType.INTERVAL:
+                    return new InTimestampIntervalFunctionFactory.Func(args.getQuick(0), args.getQuick(1));
                 default:
                     throw SqlException.position(argPositions.getQuick(i)).put("cannot compare TIMESTAMP with type ").put(ColumnType.nameOf(func.getType()));
             }
@@ -274,7 +283,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             intervals.clear();
             // This is a specific function, which accepts "in interval" as bind variable.
             // For this reason only STRING and VARCHAR bind variables are supported. Other types,
-            // such as INT, LONG etc will require two or move values to represent the interval
+            // such as INT, LONG etc. will require two or move values to represent the interval
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
@@ -288,7 +297,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 

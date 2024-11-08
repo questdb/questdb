@@ -533,7 +533,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testBetweenINowAndOneDayBefore() throws SqlException, NumericException {
-        currentMicros = IntervalUtils.parseFloorPartialTimestamp("2014-01-03T12:30:00.000000Z");
+        setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2014-01-03T12:30:00.000000Z"));
         runWhereTest("timestamp between now() and dateadd('d', -1, now())",
                 "[{lo=2014-01-02T12:30:00.000000Z, hi=2014-01-03T12:30:00.000000Z}]");
     }
@@ -696,7 +696,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testComplexNow() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         runWhereIntervalTest0(
                 "timestamp < now() and timestamp > '1970-01-01T00:00:00.000Z'",
                 "[{lo=1970-01-01T00:00:00.000001Z, hi=1970-01-01T23:59:59.999999Z}]");
@@ -704,7 +704,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testComplexNowVarchar() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         runWhereIntervalTest0(
                 "timestamp < now() and timestamp > '1970-01-01T00:00:00.000Z'::varchar",
                 "[{lo=1970-01-01T00:00:00.000001Z, hi=1970-01-01T23:59:59.999999Z}]");
@@ -712,13 +712,13 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testComplexNowWithInclusive() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         runWhereIntervalTest0("now() >= timestamp and '1970-01-01T00:00:00.000Z' <= timestamp", "[{lo=1970-01-01T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
     }
 
     @Test
     public void testComplexNowWithInclusiveVarchar() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         runWhereIntervalTest0("now() >= timestamp and '1970-01-01T00:00:00.000Z'::varchar <= timestamp", "[{lo=1970-01-01T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
     }
 
@@ -2772,7 +2772,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testNowWithNotIn() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         runWhereIntervalTest0("timestamp not between '2020-01-01T00:00:00.000000Z' and '2020-01-31T23:59:59.999999Z' and now() <= timestamp",
                 "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
                         "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
@@ -2780,7 +2780,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testNowWithNotInVarchar() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         runWhereIntervalTest0("timestamp not between '2020-01-01T00:00:00.000000Z'::varchar and '2020-01-31T23:59:59.999999Z'::varchar and now() <= timestamp",
                 "[{lo=1970-01-02T00:00:00.000000Z, hi=2019-12-31T23:59:59.999999Z}," +
                         "{lo=2020-02-01T00:00:00.000000Z, hi=294247-01-10T04:00:54.775807Z}]");
@@ -2863,7 +2863,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
         // not equivalent to: timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > '2022-03-26T19:20:52.792Z'
         // because 'systimestamp' is neither constant/runtime-constant, so the latter AND is not intrinsic and thus is out of the intervals model
         String whereExpression = "timestamp >= '2022-03-23T08:00:00.000000Z' AND timestamp < '2022-03-25T10:00:00.000000Z' AND timestamp > dateadd('d', -10, systimestamp())";
-        currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
+        setCurrentMicros(1649186452792000L); // '2022-04-05T19:20:52.792Z'
         try (RuntimeIntrinsicIntervalModel intervalModel = modelOf(whereExpression).buildIntervalModel()) {
             LongList intervals = intervalModel.calculateIntervals(sqlExecutionContext);
             Assert.assertEquals("[1648022400000000,1648202399999999]", intervals.toString());
@@ -2971,12 +2971,12 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampEpochEqualsLongConst() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         try {
             runWhereCompareToModelTest("timestamp = 1424649600000000 * 1",
                     "[{lo=2015-02-23T00:00:00.000000Z, hi=2015-02-23T00:00:00.000000Z}]");
         } finally {
-            currentMicros = -1;
+            setCurrentMicros(-1);
         }
     }
 
@@ -2994,28 +2994,28 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampEqualsFunctionOfNow() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         runWhereCompareToModelTest("timestamp = dateadd('d', 2, now())",
                 "[{lo=1970-01-04T00:00:00.000000Z, hi=1970-01-04T00:00:00.000000Z}]");
     }
 
     @Test
     public void testTimestampEqualsFunctionOfNowVarchar() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         runWhereCompareToModelTest("timestamp = dateadd('d'::varchar, 2, now())",
                 "[{lo=1970-01-04T00:00:00.000000Z, hi=1970-01-04T00:00:00.000000Z}]");
     }
 
     @Test
     public void testTimestampEqualsNow() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         runWhereCompareToModelTest("timestamp = now()",
                 "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
     }
 
     @Test
     public void testTimestampEqualsNowAndSymbolsInList() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         IntrinsicModel m = runWhereCompareToModelTest("timestamp = now() and sym in (1, 2, 3)",
                 "[{lo=1970-01-02T00:00:00.000000Z, hi=1970-01-02T00:00:00.000000Z}]");
         assertFilter(m, null);
@@ -3137,21 +3137,21 @@ public class WhereClauseParserTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampNotEqualsFunctionOfNow() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         runWhereIntervalTest0("timestamp != dateadd('d', 2, now())",
                 "[{lo=, hi=1970-01-03T23:59:59.999999Z},{lo=1970-01-04T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
 
     @Test
     public void testTimestampNotEqualsNow() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         runWhereIntervalTest0("timestamp != now()",
                 "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
     }
 
     @Test
     public void testTimestampNotEqualsNowAndSymbolsNotInList() throws Exception {
-        currentMicros = 24L * 3600 * 1000 * 1000;
+        setCurrentMicros(24L * 3600 * 1000 * 1000);
         IntrinsicModel m = runWhereIntervalTest0("timestamp != now() and sym not in (1, 2, 3)",
                 "[{lo=, hi=1970-01-01T23:59:59.999999Z},{lo=1970-01-02T00:00:00.000001Z, hi=294247-01-10T04:00:54.775807Z}]");
         assertFilter(m, null);

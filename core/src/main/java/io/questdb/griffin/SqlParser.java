@@ -456,7 +456,13 @@ public class SqlParser {
             CopyModel model = copyModelPool.next();
             model.setCancel(true);
             model.setTarget(target);
-            return model;
+
+            tok = optTok(lexer);
+            // no more tokens or ';' should indicate end of statement
+            if (tok == null || Chars.equals(tok, ';')) {
+                return model;
+            }
+            throw errUnexpected(lexer, tok);
         }
 
         if (isFromKeyword(tok)) {
@@ -1705,7 +1711,12 @@ public class SqlParser {
             lexer.unparseLast();
             final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback);
             model.setQueryModel(queryModel);
-            return model;
+            tok = optTok(lexer);
+            // no more tokens or ';' should indicate end of statement
+            if (tok == null || Chars.equals(tok, ';')) {
+                return model;
+            }
+            throw errUnexpected(lexer, tok);
         }
 
         // if not INSERT INTO SELECT, make it atomic (select returns early)
@@ -2491,8 +2502,7 @@ public class SqlParser {
         parseWithClauses(lexer, topLevelWithModel, sqlParserCallback);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
-            lexer.unparseLast();
-            return parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback);
+            return parseSelect(lexer, sqlParserCallback);
         }
 
         if (isUpdateKeyword(tok)) {
@@ -2839,17 +2849,14 @@ public class SqlParser {
     }
 
     private int toColumnType(GenericLexer lexer, CharSequence tok) throws SqlException {
-        final short type = ColumnType.tagOf(tok);
-        if (type == -1) {
-            throw SqlException.$(lexer.lastTokenPosition(), "unsupported column type: ").put(tok);
-        }
-        if (ColumnType.GEOHASH == type) {
+        final short typeTag = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
+        if (ColumnType.GEOHASH == typeTag) {
             expectTok(lexer, '(');
             final int bits = GeoHashUtil.parseGeoHashBits(lexer.lastTokenPosition(), 0, expectLiteral(lexer).token);
             expectTok(lexer, ')');
             return ColumnType.getGeoHashTypeWithBits(bits);
         }
-        return type;
+        return typeTag;
     }
 
     private @NotNull CharSequence tok(GenericLexer lexer, String expectedList) throws SqlException {

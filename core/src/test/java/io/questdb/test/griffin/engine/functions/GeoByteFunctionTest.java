@@ -46,7 +46,7 @@ public class GeoByteFunctionTest extends AbstractCairoTest {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
     };

@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.groupby.hyperloglog;
 
+import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.hyperloglog.HyperLogLog;
 import io.questdb.std.Hash;
 import io.questdb.std.IntHashSet;
@@ -48,7 +48,7 @@ public class HyperLogLogTest extends AbstractTest {
         for (int precision = 4; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+                try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                     Rnd rnd = new Rnd();
 
                     HyperLogLog hll = new HyperLogLog(finalPrecision);
@@ -72,7 +72,7 @@ public class HyperLogLogTest extends AbstractTest {
         for (int precision = 4; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+                try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                     HyperLogLog hll = new HyperLogLog(finalPrecision);
                     hll.setAllocator(allocator);
                     hll.of(0);
@@ -96,7 +96,7 @@ public class HyperLogLogTest extends AbstractTest {
     public void testFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                 IntHashSet oracle = new IntHashSet();
 
                 int precision = MIN_PRECISION + rnd.nextInt(MAX_PRECISION - MIN_PRECISION + 1);
@@ -123,7 +123,7 @@ public class HyperLogLogTest extends AbstractTest {
         for (int precision = 4; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+                try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                     HyperLogLog hll = new HyperLogLog(finalPrecision);
                     hll.setAllocator(allocator);
                     hll.of(0);
@@ -152,7 +152,7 @@ public class HyperLogLogTest extends AbstractTest {
         for (int precision = 4; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+                try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                     HyperLogLog hll = new HyperLogLog(finalPrecision);
                     hll.setAllocator(allocator);
                     hll.of(0);
@@ -180,7 +180,7 @@ public class HyperLogLogTest extends AbstractTest {
         for (int precision = 4; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+                try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                     Rnd rnd = new Rnd();
 
                     HyperLogLog expectedHll = new HyperLogLog(finalPrecision);
@@ -221,7 +221,7 @@ public class HyperLogLogTest extends AbstractTest {
         for (int precision = 11; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+                try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                     Rnd rnd = new Rnd();
 
                     HyperLogLog expectedHll = new HyperLogLog(finalPrecision);
@@ -268,7 +268,7 @@ public class HyperLogLogTest extends AbstractTest {
         for (int precision = 11; precision <= 18; precision++) {
             int finalPrecision = precision;
             assertMemoryLeak(() -> {
-                try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+                try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                     Rnd rnd = new Rnd();
 
                     HyperLogLog expectedHll = new HyperLogLog(finalPrecision);

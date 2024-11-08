@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndUUIDCFunctionFactory implements FunctionFactory {
+public class RndUuidCCFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "rnd_uuid4(i)";
@@ -48,9 +48,9 @@ public class RndUUIDCFunctionFactory implements FunctionFactory {
     }
 
     private static class RndFunction extends UuidFunction implements Function {
-        private Rnd rnd;
         private final int nanRate;
         private boolean isNull = false;
+        private Rnd rnd;
 
         public RndFunction(int nanRate) {
             this.nanRate = nanRate + 1;

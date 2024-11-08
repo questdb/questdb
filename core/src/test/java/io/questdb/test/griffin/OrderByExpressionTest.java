@@ -31,6 +31,15 @@ import org.junit.Test;
 public class OrderByExpressionTest extends AbstractCairoTest {
 
     @Test
+    public void testOrderByBinaryFails() throws Exception {
+        assertException(
+                "select b from (select rnd_bin(10, 20, 2) b from long_sequence(10)) order by b desc",
+                76,
+                "unsupported column type: BINARY"
+        );
+    }
+
+    @Test
     public void testOrderByColumnInJoinedSubquery() throws Exception {
         assertQuery(
                 "x\toth\n" +
@@ -230,6 +239,22 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                 null,
                 true,
                 true
+        );
+    }
+
+    @Test
+    public void testOrderByIntervalFails() throws Exception {
+        assertException(
+                "select i from (" +
+                        "  (select interval(100000,200000) i) " +
+                        "  union all " +
+                        "  (select interval(100000,200000) i) " +
+                        "  union all " +
+                        "  (select null::interval i)" +
+                        ") " +
+                        "order by i desc",
+                151,
+                "unsupported column type: INTERVAL"
         );
     }
 

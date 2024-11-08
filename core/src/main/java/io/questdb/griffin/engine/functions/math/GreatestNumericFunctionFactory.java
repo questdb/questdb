@@ -45,12 +45,7 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Arrays;
 
 public class GreatestNumericFunctionFactory implements FunctionFactory {
-    private final ThreadLocal<int[]> tlCounters = new ThreadLocal<int[]>() {
-        @Override
-        public int[] initialValue() {
-            return new int[ColumnType.NULL];
-        }
-    };
+    private final ThreadLocal<int[]> tlCounters = ThreadLocal.withInitial(() -> new int[ColumnType.NULL]);
 
     @Override
     public String getSignature() {

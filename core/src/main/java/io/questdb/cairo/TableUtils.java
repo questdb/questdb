@@ -674,7 +674,8 @@ public final class TableUtils {
             case ColumnType.TIMESTAMP:
             case ColumnType.LONG128:
             case ColumnType.UUID:
-                // Long128 and UUID are null when all 2 longs are NaNs
+            case ColumnType.INTERVAL:
+                // Long128, UUID, and INTERVAL are null when all 2 longs are NaNs
                 // Long256 is null when all 4 longs are NaNs
                 return Numbers.LONG_NULL;
             case ColumnType.GEOBYTE:
@@ -1543,11 +1544,6 @@ public final class TableUtils {
      */
     public static void setPathForPartition(Path path, int partitionBy, long timestamp, long nameTxn) {
         setSinkForPartition(path.slash(), partitionBy, timestamp, nameTxn);
-    }
-
-    public static void setPathTable(@NotNull Path path, @NotNull CairoConfiguration configuration, @NotNull TableToken token) {
-        path.close();
-        path.of(configuration.getRoot()).concat(token.getDirName()).trimTo(path.size());
     }
 
     /**

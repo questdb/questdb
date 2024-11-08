@@ -68,7 +68,7 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

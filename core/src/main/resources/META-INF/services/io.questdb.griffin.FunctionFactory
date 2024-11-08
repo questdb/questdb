@@ -54,6 +54,7 @@ io.questdb.griffin.engine.functions.array.IntArrayDereferenceHackFunctionFactory
 # '='
 io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqVarcharFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqIntervalFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqVarcharStrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory
@@ -238,7 +239,7 @@ io.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndUuidFunctionFactory
-io.questdb.griffin.engine.functions.rnd.RndUUIDCFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndUuidCCFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory
 io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory
 io.questdb.griffin.engine.functions.long256.LongsToLong256FunctionFactory
@@ -257,6 +258,7 @@ io.questdb.griffin.engine.functions.rnd.RndDateFunctionFactory
 io.questdb.griffin.engine.functions.rnd.ListFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndIntervalFunctionFactory
 
 # date conversion functions
 
@@ -295,8 +297,14 @@ io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory
 io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory
 io.questdb.griffin.engine.functions.date.PgPostmasterStartTimeFunctionFactory
 io.questdb.griffin.engine.functions.date.TodayFunctionFactory
+io.questdb.griffin.engine.functions.date.TodayWithTimezoneFunctionFactory
 io.questdb.griffin.engine.functions.date.TomorrowFunctionFactory
+io.questdb.griffin.engine.functions.date.TomorrowWithTimezoneFunctionFactory
 io.questdb.griffin.engine.functions.date.YesterdayFunctionFactory
+io.questdb.griffin.engine.functions.date.YesterdayWithTimezoneFunctionFactory
+io.questdb.griffin.engine.functions.date.IntervalFunctionFactory
+io.questdb.griffin.engine.functions.date.IntervalStartFunctionFactory
+io.questdb.griffin.engine.functions.date.IntervalEndFunctionFactory
 
 # cast functions
 
@@ -530,8 +538,11 @@ io.questdb.griffin.engine.functions.cast.CastVarcharToSymbolFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory
 io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory
 
-# cast GROHASH to ...
+# cast GEOHASH to ...
 io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory
+
+# cast INTERVAL to ...
+io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory
 
 # cast symbol to ...
 io.questdb.griffin.engine.functions.cast.CastSymbolToIntFunctionFactory
@@ -564,6 +575,7 @@ io.questdb.griffin.engine.functions.bool.InTimestampVarcharFunctionFactory
 io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory
 io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory
 io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory
+io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory
 
 # 'all'
 io.questdb.griffin.engine.functions.bool.AllNotEqStrFunctionFactory
@@ -572,6 +584,10 @@ io.questdb.griffin.engine.functions.bool.AllNotEqVarcharFunctionFactory
 # 'agg' group by function
 io.questdb.griffin.engine.functions.groupby.StringAggGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.StringAggVarcharGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.StringDistinctAggGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.StringDistinctAggSymbolGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.StringDistinctAggVarcharGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.RegressionInterceptFunctionFactory
 
 # 'sum' group by function
 io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunctionFactory
@@ -700,6 +716,8 @@ io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByDefaul
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByDefaultFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByFunctionFactory
+
+io.questdb.griffin.engine.functions.groupby.RegressionSlopeFunctionFactory
 
 # 'isOrdered'
 io.questdb.griffin.engine.functions.groupby.IsIPv4OrderedGroupByFunctionFactory

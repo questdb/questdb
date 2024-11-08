@@ -59,7 +59,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         iteration = 1;
-        currentMicros = 0;
+        setCurrentMicros(0);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 2);
         super.setUp();
@@ -206,8 +206,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     @Test
     public void testVacuumSync() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = 0;
-
+            setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 ddl(
                         "create table testPurge as" +
@@ -241,8 +240,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     @Test
     public void testVacuumSync2Tables() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = 0;
-
+            setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 ddl(
                         "create table testPurge1 as" +
@@ -327,8 +325,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     @Test
     public void testVacuumWhenColumnReAdded() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = 0;
-
+            setCurrentMicros(0);
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                 ddl(
                         "create table testPurge as" +
@@ -450,9 +447,9 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     private void runPurgeJob(ColumnPurgeJob purgeJob) {
         engine.releaseInactive();
-        currentMicros += 10L * iteration++;
+        setCurrentMicros(currentMicros + 10L * iteration++);
         purgeJob.run(0);
-        currentMicros += 10L * iteration++;
+        setCurrentMicros(currentMicros + 10L * iteration++);
         purgeJob.run(0);
     }
 

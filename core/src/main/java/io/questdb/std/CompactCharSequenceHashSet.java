@@ -32,6 +32,7 @@ import java.util.Arrays;
  */
 public class CompactCharSequenceHashSet implements Mutable {
     private static final int MIN_INITIAL_CAPACITY = 16;
+    private final int initialCapacity;
     private final double loadFactor;
     private int capacity;
     private int free;
@@ -51,11 +52,9 @@ public class CompactCharSequenceHashSet implements Mutable {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
 
-        free = capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
-        int len = Numbers.ceilPow2((int) (capacity / loadFactor));
-        keys = new String[len];
-        mask = len - 1;
+        this.initialCapacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
+        resetCapacity();
     }
 
     /**
@@ -106,6 +105,13 @@ public class CompactCharSequenceHashSet implements Mutable {
             return -index - 1;
         }
         return probe(key, index, hashCode);
+    }
+
+    public void resetCapacity() {
+        free = capacity = this.initialCapacity;
+        final int len = Numbers.ceilPow2((int) (capacity / loadFactor));
+        keys = new String[len];
+        mask = len - 1;
     }
 
     public int size() {

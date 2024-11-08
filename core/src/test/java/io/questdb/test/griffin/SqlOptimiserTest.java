@@ -40,13 +40,11 @@ import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
 import static org.junit.Assert.assertEquals;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
-
-    final String orderByAdviceDdl = "CREATE TABLE t (\n" +
+    private static final String orderByAdviceDdl = "CREATE TABLE t (\n" +
             "  s SYMBOL index,\n" +
             "  ts TIMESTAMP\n" +
             ") timestamp(ts) PARTITION BY DAY;";
-
-    final String orderByAdviceDml =
+    private static final String orderByAdviceDml =
             "INSERT INTO t (s, ts) VALUES" +
                     " ('a', '2023-09-01T00:00:00.000Z')," +
                     " ('a', '2023-09-01T00:10:00.000Z')," +
@@ -57,6 +55,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     " ('c', '2023-09-01T01:00:00.000Z')," +
                     " ('c', '2023-09-01T02:00:00.000Z')," +
                     " ('c', '2023-09-01T03:00:00.000Z')";
+    private static String tradesDdl = "CREATE TABLE 'trades' (\n" +
+            "  symbol SYMBOL,\n" +
+            "  side SYMBOL,\n" +
+            "  price DOUBLE,\n" +
+            "  amount DOUBLE,\n" +
+            "  timestamp TIMESTAMP\n" +
+            ") timestamp (timestamp) PARTITION BY DAY WAL;";
 
     @Test
     public void testAliasAppearsInFuncArgs1() throws Exception {
@@ -398,32 +403,46 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             ddl("create table y (x long, ts timestamp) timestamp(ts);");
             ddl("create table y1 (x long, ts timestamp) timestamp(ts);");
-            final String query = "select * from y \n" +
+            final String queryA = "select * from y \n" +
                     "inner join (select count_distinct(x) c from y1) as y1 \n" +
                     "on y.x = y1.c";
-            final QueryModel model = compileModel(query);
+            final String queryB = "select * from y \n" +
+                    "inner join (select count(distinct x) c from y1) as y1 \n" +
+                    "on y.x = y1.c";
+
+            String expectedModel = "select-choose y.x x, y.ts ts, y1.c c from (select [x, ts] from y timestamp (ts) " +
+                    "join select [c] from (select-group-by [count() c] count() c from (select-group-by x from " +
+                    "(select [x] from y1 timestamp (ts) where null != x))) y1 on y1.c = y.x)";
             assertEquals(
-                    "select-choose y.x x, y.ts ts, y1.c c from (select [x, ts] from y timestamp (ts) " +
-                            "join select [c] from (select-group-by [count() c] count() c from (select-group-by x from " +
-                            "(select [x] from y1 timestamp (ts) where null != x))) y1 on y1.c = y.x)",
-                    model.toString0()
+                    expectedModel,
+                    compileModel(queryA).toString0()
+            );
+            assertEquals(
+                    expectedModel,
+                    compileModel(queryB).toString0()
+            );
+
+            String expectedPlan = "SelectedRecord\n" +
+                    "    Hash Join\n" +
+                    "      condition: y1.c=y.x\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: y\n" +
+                    "        Hash\n" +
+                    "            Count\n" +
+                    "                Async JIT Group By workers: 1\n" +
+                    "                  keys: [x]\n" +
+                    "                  filter: x!=null\n" +
+                    "                    PageFrame\n" +
+                    "                        Row forward scan\n" +
+                    "                        Frame forward scan on: y1\n";
+            assertPlanNoLeakCheck(
+                    queryA,
+                    expectedPlan
             );
             assertPlanNoLeakCheck(
-                    query,
-                    "SelectedRecord\n" +
-                            "    Hash Join\n" +
-                            "      condition: y1.c=y.x\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: y\n" +
-                            "        Hash\n" +
-                            "            Count\n" +
-                            "                Async JIT Group By workers: 1\n" +
-                            "                  keys: [x]\n" +
-                            "                  filter: x!=null\n" +
-                            "                    PageFrame\n" +
-                            "                        Row forward scan\n" +
-                            "                        Frame forward scan on: y1\n"
+                    queryB,
+                    expectedPlan
             );
         });
     }
@@ -2561,6 +2580,86 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteNegativeLimitAvoidsJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("SELECT trades.timestamp, * FROM trades\n" +
+                    "ASOF JOIN (SELECT * from trades) trades2\n" +
+                    " LIMIT -3;", "Limit lo: -3\n" +
+                    "    SelectedRecord\n" +
+                    "        AsOf Join Fast Scan\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: trades\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteNegativeLimitHandleTimestampAndAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select timestamp ts1, timestamp ts2 from trades limit -3", "SelectedRecord\n" +
+                    "    Radix sort light\n" +
+                    "      keys: [timestamp]\n" +
+                    "        SelectedRecord\n" +
+                    "            Limit lo: 3\n" +
+                    "                PageFrame\n" +
+                    "                    Row backward scan\n" +
+                    "                    Frame backward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteNegativeLimitHandlesWildcards() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select timestamp, * from trades limit -3", "Radix sort light\n" +
+                    "  keys: [timestamp]\n" +
+                    "    SelectedRecord\n" +
+                    "        Limit lo: 3\n" +
+                    "            PageFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteNegativeLimitHandlesWildcardsManualAliasing() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3", "Radix sort light\n" +
+                    "  keys: [timestamp]\n" +
+                    "    SelectedRecord\n" +
+                    "        Limit lo: 3\n" +
+                    "            PageFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteNegativeLimitHandlesWildcardsTimestampNotFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select *, timestamp from trades limit -3", "Radix sort light\n" +
+                    "  keys: [timestamp]\n" +
+                    "    SelectedRecord\n" +
+                    "        Limit lo: 3\n" +
+                    "            PageFrame\n" +
+                    "                Row backward scan\n" +
+                    "                Frame backward scan on: trades\n");
+        });
+    }
+
+    @Test
     public void testSampleByFromToBasicWhereOptimisationBetween() throws Exception {
         assertMemoryLeak(() -> {
             ddl(SampleByTest.DDL_FROMTO);
@@ -3539,21 +3638,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testSingleCountDistinct() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y (x int, ts timestamp) timestamp(ts) partition by day;");
-            final String query = "select count_distinct(x) from y;";
-            final QueryModel model = compileModel(query);
+            final String queryA = "select count_distinct(x) from y;";
+            final String queryB = "select count(distinct x) from y;";
+            String expectedModel = "select-group-by count() count_distinct from (select-group-by x from (select [x] from y timestamp (ts) where null != x))";
             assertEquals(
-                    "select-group-by count() count_distinct from (select-group-by x from (select [x] from y timestamp (ts) where null != x))",
-                    model.toString0()
+                    expectedModel,
+                    compileModel(queryA).toString0()
+            );
+            String expectedPlan = "Count\n" +
+                    "    Async JIT Group By workers: 1\n" +
+                    "      keys: [x]\n" +
+                    "      filter: x!=null\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: y\n";
+            assertPlanNoLeakCheck(
+                    queryA,
+                    expectedPlan
             );
             assertPlanNoLeakCheck(
-                    query,
-                    "Count\n" +
-                            "    Async JIT Group By workers: 1\n" +
-                            "      keys: [x]\n" +
-                            "      filter: x!=null\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Frame forward scan on: y\n"
+                    queryB,
+                    expectedPlan
             );
         });
     }
@@ -3605,31 +3710,41 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testUnionQueryOnSingleCountDistinct() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y (x int, z int);");
-            final String query = "select count_distinct(x) from y union select count_distinct(z) from y;";
-            final QueryModel model = compileModel(query);
+            final String queryA = "select count_distinct(x) from y union select count_distinct(z) from y;";
+            final String queryB = "select count(distinct x) from y union select count_distinct(z) from y;";
+            String expectedModel = "select-group-by [count() count_distinct] count() count_distinct from (select-group-by x from (select [x] from y where null != x)) " +
+                    "union " +
+                    "select-group-by [count() count_distinct] count() count_distinct from (select-group-by z from (select [z] from y where null != z))";
             assertEquals(
-                    "select-group-by [count() count_distinct] count() count_distinct from (select-group-by x from (select [x] from y where null != x)) " +
-                            "union " +
-                            "select-group-by [count() count_distinct] count() count_distinct from (select-group-by z from (select [z] from y where null != z))",
-                    model.toString0()
+                    expectedModel,
+                    compileModel(queryA).toString0()
+            );
+            assertEquals(
+                    expectedModel,
+                    compileModel(queryB).toString0()
+            );
+            String expectedPlan = "Union\n" +
+                    "    Count\n" +
+                    "        Async JIT Group By workers: 1\n" +
+                    "          keys: [x]\n" +
+                    "          filter: x!=null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: y\n" +
+                    "    Count\n" +
+                    "        Async JIT Group By workers: 1\n" +
+                    "          keys: [z]\n" +
+                    "          filter: z!=null\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: y\n";
+            assertPlanNoLeakCheck(
+                    queryA,
+                    expectedPlan
             );
             assertPlanNoLeakCheck(
-                    query,
-                    "Union\n" +
-                            "    Count\n" +
-                            "        Async JIT Group By workers: 1\n" +
-                            "          keys: [x]\n" +
-                            "          filter: x!=null\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: y\n" +
-                            "    Count\n" +
-                            "        Async JIT Group By workers: 1\n" +
-                            "          keys: [z]\n" +
-                            "          filter: z!=null\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: y\n"
+                    queryB,
+                    expectedPlan
             );
         });
     }

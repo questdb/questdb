@@ -138,6 +138,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 return UuidColumn.newInstance(index);
             case ColumnType.IPv4:
                 return IPv4Column.newInstance(index);
+            case ColumnType.INTERVAL:
+                // we cannot use a pooled IntervalColumn instance, because it is not thread-safe
+                return new IntervalColumn(index);
             default:
                 throw SqlException.position(position)
                         .put("unsupported column type ")
@@ -496,7 +499,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         } catch (Throwable e) {
             LOG.error().$("exception in function factory: ").$(e).$();
             Misc.freeObjList(args);
-            throw SqlException.position(position).put("exception in function factory");
+            throw SqlException.position(position).put("exception in function factory: ").put(e.getMessage());
         }
 
         if (function == null) {
@@ -579,6 +582,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                         || columnType == ColumnType.UUID
                         || columnType == ColumnType.IPv4
                         || columnType == ColumnType.VARCHAR
+                        || columnType == ColumnType.INTERVAL
         ) {
             return Constants.getTypeConstant(columnType);
         }
@@ -907,6 +911,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 }
             } else if (argTypeTag == ColumnType.UUID && sigArgTypeTag == ColumnType.STRING) {
                 args.setQuick(k, new CastUuidToStrFunctionFactory.Func(arg));
+            } else if (argTypeTag == ColumnType.INTERVAL && sigArgTypeTag == ColumnType.STRING) {
+                args.setQuick(k, new CastIntervalToStrFunctionFactory.Func(arg));
             }
         }
         return checkAndCreateFunction(candidate, args, argPositions, node, configuration);

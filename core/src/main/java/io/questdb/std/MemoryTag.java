@@ -46,8 +46,7 @@ public final class MemoryTag {
     // All malloc calls should use NATIVE_* tags
     public static final int NATIVE_PATH = MMAP_PARTITION_CONVERTER + 1;
     public static final int NATIVE_DEFAULT = NATIVE_PATH + 1;
-    public static final int NATIVE_CB1 = NATIVE_DEFAULT + 1;
-    public static final int NATIVE_CB2 = NATIVE_CB1 + 1;
+    public static final int NATIVE_CB2 = NATIVE_DEFAULT + 1;
     public static final int NATIVE_CB3 = NATIVE_CB2 + 1;
     public static final int NATIVE_CB4 = NATIVE_CB3 + 1;
     public static final int NATIVE_CB5 = NATIVE_CB4 + 1;
@@ -90,7 +89,8 @@ public final class MemoryTag {
     public static final int NATIVE_INDEX_READER = NATIVE_UNORDERED_MAP + 1;
     public static final int NATIVE_TABLE_WAL_WRITER = NATIVE_INDEX_READER + 1;
     public static final int NATIVE_METADATA_READER = NATIVE_TABLE_WAL_WRITER + 1;
-    public static final int SIZE = NATIVE_METADATA_READER + 1;
+    public static final int NATIVE_BIT_SET = NATIVE_METADATA_READER + 1;
+    public static final int SIZE = NATIVE_BIT_SET + 1;
 
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
@@ -129,7 +129,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_PATH, "NATIVE_PATH");
         tagNameMap.extendAndSet(NATIVE_TABLE_READER, "NATIVE_TABLE_READER");
         tagNameMap.extendAndSet(NATIVE_TABLE_WRITER, "NATIVE_TABLE_WRITER");
-        tagNameMap.extendAndSet(NATIVE_CB1, "NATIVE_CB1");
         tagNameMap.extendAndSet(NATIVE_CB2, "NATIVE_CB2");
         tagNameMap.extendAndSet(NATIVE_CB3, "NATIVE_CB3");
         tagNameMap.extendAndSet(NATIVE_CB4, "NATIVE_CB4");
@@ -162,5 +161,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_INDEX_READER, "NATIVE_INDEX_READER");
         tagNameMap.extendAndSet(NATIVE_TABLE_WAL_WRITER, "NATIVE_TABLE_WAL_WRITER");
         tagNameMap.extendAndSet(NATIVE_METADATA_READER, "NATIVE_METADATA_READER");
+        tagNameMap.extendAndSet(NATIVE_BIT_SET, "NATIVE_BIT_SET");
     }
 }

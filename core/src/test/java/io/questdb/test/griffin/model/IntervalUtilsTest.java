@@ -63,7 +63,6 @@ public class IntervalUtilsTest {
         int intervalB = 0;
 
         while (intervalA != sizeA && intervalB != sizeB) {
-
             long aLo = getIntervalLo(a, intervalA);
             long aHi = getIntervalHi(a, intervalA);
 
@@ -79,7 +78,6 @@ public class IntervalUtilsTest {
                 // b loses
                 intervalB++;
             } else {
-
                 append(out, Math.max(aLo, bLo), Math.min(aHi, bHi));
 
                 if (aHi < bHi) {
@@ -405,10 +403,10 @@ public class IntervalUtilsTest {
         copy.add(intervals, divider, intervals.size());
         copy.add(intervals, 0, divider);
 
-        IntervalUtils.intersectInplace(intervals, divider);
+        IntervalUtils.intersectInPlace(intervals, divider);
         TestUtils.assertEquals(expected, toIntervalString(intervals, 0));
 
-        IntervalUtils.intersectInplace(copy, copy.size() - divider);
+        IntervalUtils.intersectInPlace(copy, copy.size() - divider);
         TestUtils.assertEquals(expected, toIntervalString(copy, 0));
     }
 

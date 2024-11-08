@@ -38,12 +38,12 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
      * Partition frame low and high row will be within intervals inclusive of edges.
      * Intervals themselves are pairs of microsecond time.
      *
-     * @param intervals      pairs of microsecond interval values, as in "low" and "high" inclusive of
+     * @param intervalModel  pairs of microsecond interval values, as in "low" and "high" inclusive of
      *                       edges.
      * @param timestampIndex index of timestamp column in the readr that is used by this cursor
      */
-    public IntervalFwdPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
-        super(intervals, timestampIndex);
+    public IntervalFwdPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
+        super(intervalModel, timestampIndex);
     }
 
     @Override

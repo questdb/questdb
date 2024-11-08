@@ -55,7 +55,6 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
 
     public void add(int x) {
         checkCapacity();
-        assert pos < limit;
         Unsafe.getUnsafe().putInt(pos, x);
         pos += Integer.BYTES;
     }
@@ -122,7 +121,6 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     }
 
     public void set(long p, int v) {
-        assert p >= 0 && p <= (limit - address) >> 2;
         Unsafe.getUnsafe().putInt(address + (p << 2), v);
     }
 
@@ -145,7 +143,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     }
 
     public long size() {
-        return (int) ((pos - address) >>> 2);
+        return (pos - address) >>> 2;
     }
 
     @Override

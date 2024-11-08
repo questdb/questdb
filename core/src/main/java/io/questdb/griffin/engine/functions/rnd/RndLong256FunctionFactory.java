@@ -37,7 +37,6 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 public class RndLong256FunctionFactory implements FunctionFactory {
-
     private static final String SIGNATURE = "rnd_long256()";
 
     @Override
@@ -46,12 +45,17 @@ public class RndLong256FunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new RndFunction();
     }
 
     private static class RndFunction extends Long256Function implements Function {
-
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
         private Rnd rnd;

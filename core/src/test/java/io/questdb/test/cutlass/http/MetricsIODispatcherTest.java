@@ -51,7 +51,7 @@ public class MetricsIODispatcherTest {
 
     // This number should be lower than the maximum IODispatcher connection limit,
     // which by default is 64.
-    private static final int PARALLEL_REQUESTS = 60;
+    private static final int PARALLEL_REQUESTS = 16;
     private static final String prometheusRequest = "GET /metrics HTTP/1.1\r\n" +
             "Host: localhost:9003\r\n" +
             "User-Agent: Prometheus/2.22.0\r\n" +

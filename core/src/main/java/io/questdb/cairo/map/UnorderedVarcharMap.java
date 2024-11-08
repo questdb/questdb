@@ -28,8 +28,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.std.*;
 import io.questdb.std.bytes.Bytes;
 import io.questdb.std.bytes.DirectByteSink;
@@ -167,7 +167,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             record = new UnorderedVarcharMapRecord(valueSize, valueOffsets, value, valueTypes);
             cursor = new UnorderedVarcharMapCursor(record, this);
             key = new Key();
-            allocator = new GroupByAllocatorArena(allocatorDefaultChunkSize, allocatorMaxChunkSize, false);
+            allocator = new FastGroupByAllocator(allocatorDefaultChunkSize, allocatorMaxChunkSize, false);
         } catch (Throwable th) {
             close();
             throw th;
@@ -667,6 +667,11 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
         @Override
         public void putInt(int value) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void putInterval(Interval interval) {
             throw new UnsupportedOperationException();
         }
 

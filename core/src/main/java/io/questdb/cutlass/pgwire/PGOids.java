@@ -38,6 +38,7 @@ public class PGOids {
     public static final int BINARY_TYPE_DOUBLE = (1 << 31) | ColumnType.DOUBLE;
     public static final int BINARY_TYPE_FLOAT = (1 << 31) | ColumnType.FLOAT;
     public static final int BINARY_TYPE_INT = (1 << 31) | ColumnType.INT;
+    public static final int BINARY_TYPE_INTERVAL = (1 << 31) | ColumnType.INTERVAL;
     public static final int BINARY_TYPE_LONG = (1 << 31) | ColumnType.LONG;
     public static final int BINARY_TYPE_LONG256 = (1 << 31) | ColumnType.LONG256;
     public static final int BINARY_TYPE_SHORT = (1 << 31) | ColumnType.SHORT;
@@ -146,6 +147,7 @@ public class PGOids {
         TYPE_OIDS.extendAndSet(ColumnType.UUID, PG_UUID); // UUID
         TYPE_OIDS.extendAndSet(ColumnType.IPv4, PG_VARCHAR); //IPv4
         TYPE_OIDS.extendAndSet(ColumnType.VARCHAR, PG_VARCHAR); // VARCHAR
+        TYPE_OIDS.extendAndSet(ColumnType.INTERVAL, PG_VARCHAR); // VARCHAR
 
         PG_TYPE_OIDS.add(PG_VARCHAR);
         PG_TYPE_OIDS.add(PG_TIMESTAMP);

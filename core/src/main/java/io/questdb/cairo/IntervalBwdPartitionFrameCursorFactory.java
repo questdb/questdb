@@ -33,24 +33,24 @@ import io.questdb.std.Misc;
 
 public class IntervalBwdPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
     private final IntervalBwdPartitionFrameCursor cursor;
-    private final RuntimeIntrinsicIntervalModel intervals;
+    private final RuntimeIntrinsicIntervalModel intervalModel;
 
     public IntervalBwdPartitionFrameCursorFactory(
             TableToken tableToken,
             long metadataVersion,
-            RuntimeIntrinsicIntervalModel intervals,
+            RuntimeIntrinsicIntervalModel intervalModel,
             int timestampIndex,
             GenericRecordMetadata metadata
     ) {
         super(tableToken, metadataVersion, metadata);
-        this.cursor = new IntervalBwdPartitionFrameCursor(intervals, timestampIndex);
-        this.intervals = intervals;
+        this.cursor = new IntervalBwdPartitionFrameCursor(intervalModel, timestampIndex);
+        this.intervalModel = intervalModel;
     }
 
     @Override
     public void close() {
         super.close();
-        Misc.free(intervals);
+        Misc.free(intervalModel);
     }
 
     @Override
@@ -86,6 +86,6 @@ public class IntervalBwdPartitionFrameCursorFactory extends AbstractPartitionFra
             sink.type("Interval backward scan");
         }
         super.toPlan(sink);
-        sink.attr("intervals").val(intervals);
+        sink.attr("intervals").val(intervalModel);
     }
 }

@@ -44,7 +44,7 @@ class FloatBindVariable extends FloatFunction implements ScalarFunction, Mutable
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

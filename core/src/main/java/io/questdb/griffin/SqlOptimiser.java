@@ -24,15 +24,56 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.ex.EntryLockedException;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.engine.functions.catalogue.*;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowDateStyleCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowMaxIdentifierLengthCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowParametersCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowSearchPathCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowServerVersionCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowServerVersionNumCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowStandardConformingStringsCursorFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
+import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
-import io.questdb.griffin.model.*;
-import io.questdb.std.*;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.WindowColumn;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.BoolList;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.CharSequenceIntHashMap;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.IntPriorityQueue;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -45,11 +86,11 @@ import static io.questdb.griffin.SqlKeywords.isNoneKeyword;
 import static io.questdb.griffin.model.ExpressionNode.*;
 
 public class SqlOptimiser implements Mutable {
-
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
+    private static final Log LOG = LogFactory.getLog(SqlOptimiser.class);
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_EQUAL = 8;
@@ -4030,37 +4071,24 @@ public class SqlOptimiser implements Mutable {
      * @param model            input model
      * @param executionContext execution context
      */
-    private void rewriteNegativeLimit(final QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+    private void rewriteNegativeLimit(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model != null) {
+
+            if (!rewriteNegativeLimitGuard(model, executionContext)) {
+                // try to condense potential wildcard model
+                rewriteToCondenseWildcardModels(model);
+            }
+
             final QueryModel nested = model.getNestedModel();
-            Function loFunction;
-            ObjList<ExpressionNode> orderBy;
-            long limitValue;
 
             if (
-                    model.getLimitLo() != null
-                            && model.getLimitHi() == null
-                            && model.getUnionModel() == null
-                            && model.getJoinModels().size() == 1
-                            && model.getGroupBy().size() == 0
-                            && model.getSampleBy() == null
-                            && !hasAggregateQueryColumn(model)
-                            && !model.isDistinct()
-                            && nested != null
-                            && nested.getJoinModels().size() == 1
-                            && nested.getTimestamp() != null
-                            && nested.getWhereClause() == null
-                            && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
-                            && loFunction.isConstant()
-                            && (limitValue = loFunction.getLong(null)) < 0
-                            && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
-                            && ((orderBy = nested.getOrderBy()).size() == 0 ||
-                            (
-                                    orderBy.size() == 1
-                                            && nested.isOrderByTimestamp(orderBy.getQuick(0).token)
-                            )
-                    )
+                    rewriteNegativeLimitGuard(model, executionContext)
             ) {
+                Function loFunction = getLoFunction(model.getLimitLo(), executionContext);
+                ObjList<ExpressionNode> orderBy = nested.getOrderBy();
+                assert loFunction != null; // covered by the guard
+                long limitValue = loFunction.getLong(null);
+
                 final CharacterStoreEntry characterStoreEntry = characterStore.newEntry();
                 characterStoreEntry.put(-limitValue);
                 ExpressionNode limitNode = nextLiteral(characterStoreEntry.toImmutable());
@@ -4134,6 +4162,36 @@ public class SqlOptimiser implements Mutable {
             // assign different nested model because it might need to be re-written
             rewriteNegativeLimit(nested, executionContext);
         }
+    }
+
+    private boolean rewriteNegativeLimitGuard(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final QueryModel nested = model.getNestedModel();
+        Function loFunction;
+        ObjList<ExpressionNode> orderBy;
+        long limitValue;
+        return
+                (model.getLimitLo() != null
+                        && model.getLimitHi() == null
+                        && model.getUnionModel() == null
+                        && model.getJoinModels().size() == 1
+                        && model.getGroupBy().size() == 0
+                        && model.getSampleBy() == null
+                        && !hasAggregateQueryColumn(model)
+                        && !model.isDistinct()
+                        && nested != null
+                        && nested.getJoinModels().size() == 1
+                        && nested.getTimestamp() != null
+                        && nested.getWhereClause() == null
+                        && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
+                        && loFunction.isConstant()
+                        && (limitValue = loFunction.getLong(null)) < 0
+                        && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
+                        && ((orderBy = nested.getOrderBy()).size() == 0 ||
+                        (
+                                orderBy.size() == 1
+                                        && nested.isOrderByTimestamp(orderBy.getQuick(0).token)
+                        ))
+                );
     }
 
     /**
@@ -5731,6 +5789,95 @@ public class SqlOptimiser implements Mutable {
         ObjList<QueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
             rewriteSingleFirstLastGroupBy(joinModels.getQuick(i));
+        }
+    }
+
+    /**
+     * Condenses unnecessary select-choose models generated by wildcards '*'
+     * Take: `SELECT timestamp, * FROM trades LIMIT -3;`
+     * This generates:
+     * ```
+     * select-choose timestamp, symbol, side, price, amount, timestamp timestamp1
+     * from (select-choose timestamp, symbol, side, price, amount
+     * from (trades timestamp (timestamp))) limit -(3)
+     * ```
+     * But this inner model is not required, since it is the same as the outer model,
+     * just without the extra timestamp alias.
+     *
+     * @param model
+     * @throws SqlException
+     */
+    private void rewriteToCondenseWildcardModels(QueryModel model) throws SqlException {
+
+        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                && model.getNestedModel() != null
+                && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                && model.getNestedModel().getNestedModel() != null
+                && model.getNestedModel().getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE) {
+
+            // Something like this: SELECT timestamp, * FROM trades LIMIT -3;
+            // compiles to:
+            // select-choose timestamp, symbol, side, price, amount, timestamp timestamp1
+            // from (select-choose timestamp, symbol, side, price, amount
+            // from (trades timestamp (timestamp))) limit -(3)
+            // We have this extra select choose to alias the already selected columns.
+            // We may be able to compact this
+
+            QueryModel nested = model.getNestedModel();
+            QueryModel none = nested.getNestedModel();
+
+            if (model.getLimitLo() != null
+                    && Chars.equals(model.getLimitLo().token, "-")
+                    && model.getLimitHi() == null
+                    && model.getUnionModel() == null
+                    && model.getJoinModels().size() == 1
+                    && nested.getJoinModels().size() == 1
+                    && none.getJoinModels().size() == 1
+                    && model.getGroupBy().size() == 0
+                    && nested.getGroupBy().size() == 0
+                    && none.getGroupBy().size() == 0
+                    && model.getSampleBy() == null
+                    && nested.getSampleBy() == null
+                    && !hasAggregateQueryColumn(model)
+                    && !model.isDistinct()
+                    && model.getBottomUpColumns().size() >= nested.getBottomUpColumns().size()) {
+                IntList copiedColumns = new IntList();
+
+                // since it is possible that this is a redundant model, or we can push down the extra select choose
+                for (int i = 0, n = nested.getBottomUpColumns().size(); i < n; i++) {
+                    QueryColumn nestedColumn = nested.getBottomUpColumns().get(i);
+
+                    if (!model.getColumnNameToAliasMap().contains(nestedColumn.getName())) {
+                        // if it is not part of it, then is it the same as another column?
+                        CharSequence token = nestedColumn.getAst().token;
+
+                        if (model.getColumnNameToAliasMap().contains(token)) {
+                            // we can pull up this column
+                            model.addBottomUpColumn(nestedColumn);
+                            copiedColumns.add(nested.getBottomUpColumns().size() - 1);
+                        }
+                    } else {
+                        // catch cases like
+                        // select-choose ts1, ts1 ts2 from (select-choose timestamp ts1 from (trades timestamp (timestamp))) limit -(3)
+                        // here, the outer model relies on an earlier alias, so we must reify the alias
+                        if (nestedColumn.getAlias() != null && model.getColumnNameToAliasMap().contains(nestedColumn.getAlias())) {
+                            // we must reify the alias
+                            QueryColumn aliasedCol = model.getAliasToColumnMap().get(nestedColumn.getAlias());
+                            aliasedCol.getAst().token = nestedColumn.getAst().token;
+
+                            // check for any other columns relying on it
+                            for (int j = 0, m = model.getBottomUpColumns().size(); j < m; j++) {
+                                QueryColumn modelColumn = model.getBottomUpColumns().get(j);
+
+                                if (Chars.equals(modelColumn.getAst().token, aliasedCol.getAlias())) {
+                                    modelColumn.getAst().token = aliasedCol.getAst().token;
+                                }
+                            }
+                        }
+                    }
+                }
+                model.setNestedModel(nested.getNestedModel());
+            }
         }
     }
 

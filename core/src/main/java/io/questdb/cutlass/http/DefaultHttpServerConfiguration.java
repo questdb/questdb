@@ -206,6 +206,11 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
+    public boolean preAllocateBuffers() {
+        return false;
+    }
+
+    @Override
     public boolean isQueryCacheEnabled() {
         return true;
     }

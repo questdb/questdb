@@ -1,0 +1,5 @@
+DateTime==5.5
+psycopg2-binary==2.9.9
+pytz==2024.2
+PyYAML==6.0.2
+zope.interface==7.0.3

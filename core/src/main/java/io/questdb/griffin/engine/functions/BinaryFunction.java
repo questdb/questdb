@@ -71,8 +71,8 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default boolean isReadThreadSafe() {
-        return getLeft().isReadThreadSafe() && getRight().isReadThreadSafe();
+    default boolean isThreadSafe() {
+        return getLeft().isThreadSafe() && getRight().isThreadSafe();
     }
 
     @Override

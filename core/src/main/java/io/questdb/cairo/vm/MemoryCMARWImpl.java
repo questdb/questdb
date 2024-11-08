@@ -76,6 +76,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
+    public void changeSize(long dataSize) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void close(boolean truncate, byte truncateMode) {
         if (pageAddress != 0) {
             final long truncateSize;
@@ -128,6 +133,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
 
     @Override
     public void close() {
+        // we have to clear the underling memory
+        // to ensure direct strings obtained from
+        // this memory do not segfault
+        clear();
         close(true);
     }
 

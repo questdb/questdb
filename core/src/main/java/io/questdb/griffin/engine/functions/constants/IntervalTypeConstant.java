@@ -22,31 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.groupby;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.std.Interval;
 import org.jetbrains.annotations.NotNull;
 
-public class StdDevSampleGroupByFunction extends AbstractStdDevGroupByFunction {
-
-    public StdDevSampleGroupByFunction(@NotNull Function arg) {
-        super(arg);
-    }
+public class IntervalTypeConstant extends IntervalFunction implements TypeConstant {
+    public static final IntervalTypeConstant INSTANCE = new IntervalTypeConstant();
 
     @Override
-    public double getDouble(Record rec) {
-        long count = rec.getLong(valueIndex + 2);
-        if (count - 1 > 0) {
-            double sum = rec.getDouble(valueIndex + 1);
-            double variance = sum / (count - 1);
-            return Math.sqrt(variance);
-        }
-        return Double.NaN;
-    }
-
-    @Override
-    public String getName() {
-        return "stddev_samp";
+    public @NotNull Interval getInterval(Record rec) {
+        return Interval.NULL;
     }
 }

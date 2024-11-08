@@ -34,6 +34,7 @@ import java.util.Arrays;
 public abstract class AbstractUtf8SequenceHashSet implements Mutable {
     protected static final int MIN_INITIAL_CAPACITY = 16;
     protected static final Utf8String noEntryKey = null;
+    protected final int initialCapacity;
     protected final double loadFactor;
     protected int capacity;
     protected int free;
@@ -46,9 +47,11 @@ public abstract class AbstractUtf8SequenceHashSet implements Mutable {
             throw new IllegalArgumentException("0 < loadFactor < 1");
         }
 
-        free = this.capacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
         this.loadFactor = loadFactor;
-        int len = Numbers.ceilPow2((int) (this.capacity / loadFactor));
+        this.initialCapacity = initialCapacity < MIN_INITIAL_CAPACITY ? MIN_INITIAL_CAPACITY : Numbers.ceilPow2(initialCapacity);
+        free = capacity = this.initialCapacity;
+
+        final int len = Numbers.ceilPow2((int) (capacity / loadFactor));
         keys = new Utf8String[len];
         hashCodes = new int[len];
         mask = len - 1;

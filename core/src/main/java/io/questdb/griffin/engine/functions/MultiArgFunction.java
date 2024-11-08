@@ -64,11 +64,11 @@ public interface MultiArgFunction extends Function {
     }
 
     @Override
-    default boolean isReadThreadSafe() {
+    default boolean isThreadSafe() {
         final ObjList<Function> args = getArgs();
         for (int i = 0, n = args.size(); i < n; i++) {
             final Function function = args.getQuick(i);
-            if (!function.isReadThreadSafe()) {
+            if (!function.isThreadSafe()) {
                 return false;
             }
         }

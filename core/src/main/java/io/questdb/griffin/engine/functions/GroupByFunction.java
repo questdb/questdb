@@ -67,7 +67,11 @@ public interface GroupByFunction extends Function, Mutable {
      */
     void computeNext(MapValue mapValue, Record record, long rowId);
 
-    // only makes sense for non-keyed group by
+    /**
+     * Returns true if the aggregate function's value is already calculation
+     * and further row scan is not necessary. Only makes sense for non-keyed,
+     * single-threaded group by.
+     */
     default boolean earlyExit(MapValue mapValue) {
         return false;
     }
@@ -110,7 +114,10 @@ public interface GroupByFunction extends Function, Mutable {
         throw new UnsupportedOperationException();
     }
 
-    // only makes sense for non-keyed group by
+    /**
+     * Returns true if {@link #earlyExit(MapValue)} method can be used.
+     * Only makes sense for non-keyed, single-threaded group by.
+     */
     default boolean isEarlyExitSupported() {
         return false;
     }

@@ -67,7 +67,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     @Test
     public void testWalTransactions() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z");
+            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z"));
             ddl("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
             insert("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
             insert("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
@@ -88,7 +88,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     @Test
     public void testWalTransactionsLastLine() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z");
+            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z"));
             ddl("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
             insert("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");
             insert("insert into x values ('2020-01-01T00:00:00.000000Z', 2, 3)");
@@ -107,7 +107,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
     @Test
     public void testWalTransactionsV2() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z");
+            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-11-22T19:00:53.950468Z"));
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
             ddl("create table x (ts timestamp, x int, y int) timestamp(ts) partition by DAY WAL");
             insert("insert into x values ('2020-01-01T00:00:00.000000Z', 1, 2)");

@@ -39,7 +39,6 @@ import org.junit.Test;
 import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
 public class IntrinsicModelTest {
-
     private static final StringSink sink = new StringSink();
     private final LongList a = new LongList();
     private final LongList b = new LongList();
@@ -489,7 +488,7 @@ public class IntrinsicModelTest {
     private void assertIntersect(String expected) {
         out.add(a);
         out.add(b);
-        IntervalUtils.intersectInplace(out, a.size());
+        IntervalUtils.intersectInPlace(out, a.size());
         TestUtils.assertEquals(expected, intervalToString(out));
     }
 

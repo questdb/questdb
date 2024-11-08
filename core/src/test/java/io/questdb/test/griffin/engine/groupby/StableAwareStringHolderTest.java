@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.StableAwareStringHolder;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -42,7 +42,7 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
     @Test
     public void testClearAndSet() throws Exception {
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                 StableAwareStringHolder holder = new StableAwareStringHolder();
                 holder.setAllocator(allocator);
                 holder.clearAndSet("foobar");
@@ -57,7 +57,7 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
     @Test
     public void testClearAndSetDirect() throws Exception {
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB);
                  DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16)
             ) {
                 directCharSequence.put("barbaz");
@@ -98,7 +98,7 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
     @Test
     public void testClearAndSetDirect_fuzzed() throws Exception {
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB);
                  DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16)
             ) {
                 StableAwareStringHolder holder = new StableAwareStringHolder();
@@ -131,7 +131,7 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
     public void testPutCharSequence() throws Exception {
         final int N = 1000;
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                 StableAwareStringHolder holder = new StableAwareStringHolder();
                 holder.setAllocator(allocator);
                 Assert.assertEquals(0, holder.length());

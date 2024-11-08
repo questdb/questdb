@@ -58,6 +58,12 @@ public class MemoryCMRImpl extends AbstractMemoryCR implements MemoryCMR {
     }
 
     @Override
+    public void changeSize(long dataSize) {
+        assert dataSize >= 0;
+        setSize0(dataSize);
+    }
+
+    @Override
     public void close() {
         clear();
         if (pageAddress != 0) {

@@ -171,6 +171,7 @@ public class PGJobContextTest extends BasePGTest {
     @Before
     public void setUp() {
         super.setUp();
+        selectCacheBlockCount = -1;
         sendBufferSize = 512 * (1 + bufferSizeRnd.nextInt(15));
         forceSendFragmentationChunkSize = (int) (10 + bufferSizeRnd.nextInt(Math.min(512, sendBufferSize) - 10) * bufferSizeRnd.nextDouble() * 1.2);
 
@@ -189,6 +190,50 @@ public class PGJobContextTest extends BasePGTest {
     @After
     public void tearDown() throws Exception {
         super.tearDown();
+    }
+
+    @Test
+    public void testSimpleQueryLoopThenSchemaChangeThenExtendedQuery() throws Exception {
+        // This is a regression test. The bug scenario occurred as follows:
+        // 1. A client using a simple protocol poisoned a query cache. This was due to a bug where a simple query would
+        //    never poll() from the cache, but would populate it after completion. As a result, each query execution
+        //    added a new entry to the cache.
+        // 2. A schema change invalidated all cached queries. This is expected.
+        // 3. A client using extended protocol then attempted to execute the same query. Upon receiving the PARSE message,
+        //    it consulted the query cache and found a stale query plan. This triggered a retry, but subsequent retries
+        //    also failed because they consulted the cache and found other stale plans.
+
+        selectCacheBlockCount = 100; // large cache, must me larger than 'cairo.sql.max.recompile.attempts'
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(2);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                // first poison the cache using the SIMPLE protocol
+                try (
+                        final Connection connection = getConnection(server.getPort(), true, false);
+                        final Statement statement = connection.createStatement()
+                ) {
+                    statement.execute("create table tab(ts timestamp, value double)");
+                    for (int i = 0; i < selectCacheBlockCount; i++) {
+                        statement.execute("select * from tab"); // an attempt to populate cache
+                    }
+
+                    // change the schema. if the previous SELECT queries are cached then they are all stale by now
+                    statement.execute("alter table tab add column x int");
+                }
+
+                // now run a query with an extended protocol - this consults query cache
+                try (
+                        final Connection connection = getConnection(server.getPort(), false, false);
+                        final Statement statement = connection.createStatement()
+                ) {
+                    statement.execute("select * from tab;");
+                }
+            }
+        });
     }
 
     @Test
@@ -5583,8 +5628,8 @@ nodejs code:
                                 "     rnd_long(),\n" +
                                 "     rnd_long(),\n" +
                                 "     timestamp_sequence(0, 100000)\n" +
-                                "     from long_sequence(50000)\n" +
-                                "    )");
+                                "     from long_sequence(50000);"
+                        );
                     }
 
                     mayDrainWalQueue();
@@ -7031,7 +7076,8 @@ nodejs code:
                     }
 
                     try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(now())")) {
-                        for (currentMicros = 0; currentMicros < 200 * Timestamps.HOUR_MICROS; currentMicros += Timestamps.HOUR_MICROS) {
+                        for (long micros = 0; micros < 200 * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS) {
+                            setCurrentMicros(micros);
                             statement.execute();
                         }
                     }
@@ -7062,7 +7108,8 @@ nodejs code:
                     }
 
                     try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(systimestamp())")) {
-                        for (currentMicros = 0; currentMicros < 200 * Timestamps.HOUR_MICROS; currentMicros += Timestamps.HOUR_MICROS) {
+                        for (long micros = 0; micros < 200 * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS) {
+                            setCurrentMicros(micros);
                             statement.execute();
                         }
                     }
@@ -9923,56 +9970,43 @@ create table tab as (
 
     @Test
     public void testUpdateBatch() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()) {
-                workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), true, false)
-                ) {
-                    final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR");
-                    statement.execute();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            final PreparedStatement statement = connection.prepareStatement("create table x (a long, b double, ts timestamp) timestamp(ts) partition by YEAR");
+            statement.execute();
 
-                    final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
-                            "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
-                            "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
-                            "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
-                    insert1.execute();
+            final PreparedStatement insert1 = connection.prepareStatement("insert into x values " +
+                    "(1, 2.0, '2020-06-01T00:00:02'::timestamp)," +
+                    "(2, 2.6, '2020-06-01T00:00:06'::timestamp)," +
+                    "(5, 3.0, '2020-06-01T00:00:12'::timestamp)");
+            insert1.execute();
 
-                    final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5; update x set a=3 where b>2.7; update x set a=2 where b<2.2");
-                    int numOfRowsUpdated1 = update1.executeUpdate();
+            final PreparedStatement update1 = connection.prepareStatement("update x set a=9 where b>2.5; update x set a=3 where b>2.7; update x set a=2 where b<2.2");
+            int numOfRowsUpdated1 = update1.executeUpdate();
 
-                    if (!walEnabled) {
-                        assertEquals(2, numOfRowsUpdated1);
-                    } else {
-                        // TODO: update on WAL should return 0 row count
-                        // assertEquals(0, numOfRowsUpdated1);
-                    }
+            drainWalQueue();
+            assertEquals(2, numOfRowsUpdated1);
 
-                    final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
-                            "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
-                            "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
-                    insert2.execute();
+            final PreparedStatement insert2 = connection.prepareStatement("insert into x values " +
+                    "(8, 4.0, '2020-06-01T00:00:22'::timestamp)," +
+                    "(10, 6.0, '2020-06-01T00:00:32'::timestamp)");
+            insert2.execute();
 
-                    final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0; update x set a=6 where a=2");
-                    int numOfRowsUpdated2 = update2.executeUpdate();
-                    if (!walEnabled) {
-                        assertEquals(1, numOfRowsUpdated2);
-                    }
+            final PreparedStatement update2 = connection.prepareStatement("update x set a=7 where b>5.0; update x set a=6 where a=2");
+            int numOfRowsUpdated2 = update2.executeUpdate();
+            if (!walEnabled) {
+                assertEquals(1, numOfRowsUpdated2);
+            }
 
-                    mayDrainWalQueue();
-                    final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
-                            "6,2.0,2020-06-01 00:00:02.0\n" +
-                            "9,2.6,2020-06-01 00:00:06.0\n" +
-                            "3,3.0,2020-06-01 00:00:12.0\n" +
-                            "8,4.0,2020-06-01 00:00:22.0\n" +
-                            "7,6.0,2020-06-01 00:00:32.0\n";
-                    try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expected, sink, resultSet);
-                    }
-                }
+            mayDrainWalQueue();
+            final String expected = "a[BIGINT],b[DOUBLE],ts[TIMESTAMP]\n" +
+                    "6,2.0,2020-06-01 00:00:02.0\n" +
+                    "9,2.6,2020-06-01 00:00:06.0\n" +
+                    "3,3.0,2020-06-01 00:00:12.0\n" +
+                    "8,4.0,2020-06-01 00:00:22.0\n" +
+                    "7,6.0,2020-06-01 00:00:32.0\n";
+            try (ResultSet resultSet = connection.prepareStatement("x").executeQuery()) {
+                sink.clear();
+                assertResultSet(expected, sink, resultSet);
             }
         });
     }
@@ -10198,7 +10232,7 @@ create table tab as (
     @Test
     public void testUpdateWithNowAndSystimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = 123678000L;
+            setCurrentMicros(123678000);
             try (
                     final PGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
@@ -11054,28 +11088,28 @@ create table tab as (
                     stmt.execute();
                     mayDrainWalQueue();
 
-                    try (PreparedStatement statement = connection.prepareStatement("x")) {
+                    try (PreparedStatement statement = connection.prepareStatement("select *, interval(kk*10000,(kk+1)*10000) ii from x")) {
                         for (int i = 0; i < 1_000; i++) {
                             sink.clear();
                             try (ResultSet rs = statement.executeQuery()) {
                                 // dump metadata
                                 assertResultSet(
-                                        "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[VARCHAR],v[VARCHAR]\n" +
-                                                "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49 b4 59 7e,null,W,0xc2593f82b430328d84a09f29df637e3863eb3740c80f661e9c8afa23e6ca6ca1,鉾檲\\~2\uDAC6\uDED3ڎBH뤻䰭\u008B}\n" +
-                                                "2,-10505757,true,null,0.40455469747939254,0.884,862,2015-09-17 20:47:08.536,null,-4608960730952244094,1970-01-01 00:00:09.779013,2,00000000 5f f6 46 90 c3 b3 59 8e e5 61 2f 64 0e,LYXWCKYLSU,W,0xc6dfacdd3f3c52b88b4e4831499fc2a526567f4430b46b7f78c594c496995885,null\n" +
-                                                "3,2060263242,false,L,null,0.349,869,2015-05-15 18:43:06.827,CPSW,-5439556746612026472,1970-01-01 00:00:18.669025,11,null,JSMSSUQSRLTKVVSJ,O,0x9502128cda0887fe3cdb8640c107a6927eb6d80649d1dfe38e4a7f661df6c32b,\"+zMKZ 4xL?49Mq\n" +
-                                                "4,923501161,true,E,0.8595900073631431,0.658,870,2015-06-28 03:15:43.251,PEHN,-1798101751056570485,1970-01-01 00:00:27.559037,50,00000000 34 04 23 8d d8 57 91 88 28 a5 18 93 bd,PJOXPKRG,I,0x62a2f11e8510a3e99cb8fc6467028eb0a07934b2a15de8e0550988dbaca49734,-Ь\uDA23\uDF64m\uDA30\uDEE01W씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3gX夺\uDA02\uDE66\n" +
-                                                "5,-1594425659,false,L,0.20727557301543031,0.087,871,2015-01-03 14:55:27.713,VTJW,3820631780839257855,1970-01-01 00:00:36.449049,12,00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4,GMXUKLGMXSLUQDYO,P,0x9bae41871fd934427cbab83425e7712e47bb6f42d5f825fb52319f105d14eb26,mPO=I~9)\n" +
-                                                "6,-255808425,true,G,0.28964821678040487,0.477,706,null,null,9029088579359707814,1970-01-01 00:00:45.339061,31,00000000 48 d4 41 9d fb 49 40 44 49 96 cf 2b b3 71 a7,MIGQZVKHTLQZSLQV,F,0xb21ebf27d20c0c5ba58b9151b05d33577d4456fa92fbc5b266e891b7af142fd6,l⤃堝ᢣ΄BǬ\uDB37\uDC95Qǜbȶ\u05EC˟\n" +
-                                                "7,890407955,false,E,0.0031075670450616544,0.124,366,null,HYRX,-5602486220193156045,1970-01-01 00:00:54.229073,20,null,QQUWQ,O,0xdc9aef010871b1fedfd79391d4cc2a2e7dcd37091f5dac023cc96390430d88ac,A'ò墠\n" +
-                                                "8,-795877457,false,Y,null,null,232,2015-01-25 14:54:10.798,null,-5783981180087707423,1970-01-01 00:01:03.119085,47,null,KJSMKIXEYVTUPDHH,G,0x2f872563b25ea913455b1f46fe7f40cd2337f7e6b82ebc2405c5c1b231cffa45,null\n" +
-                                                "9,-1060590724,true,H,null,0.762,268,2015-09-22 07:01:04.042,PEHN,3292156476231287573,1970-01-01 00:01:12.009097,27,00000000 c3 2f ed b0 ba 08 e0 2c ee 41 de,null,E,0x8627da676e13e34b7893e5d5f1ce706c3d5e569a2485dfb77c868671877614df,nM_a~hgMw1$c~{\n" +
-                                                "10,-116429939,false,H,null,0.404,81,null,CPSW,-8557532716763860362,1970-01-01 00:01:20.899109,22,null,YXPVKNCBWLNLRH,W,0x7959b9679660fde98cb91e95a6c70b0c689799a1912d7c5a74edb5a7633f86d1,haB]6O}(2D\n" +
-                                                "11,1926049591,true,null,null,0.734,827,2015-12-10 01:09:10.433,null,7133205196190817214,1970-01-01 00:01:29.789121,35,00000000 ac 3d 98 a0 ad 9a 5d df dc 72 d7 97 cb f6,BWVLOM,P,0x5086c740f96dbb943c3a3b7947ce8369926cbcb16e9a2f11cfab70f2d175d0d9,YC_IBut$\n" +
-                                                "12,-1108612462,false,null,0.4421551587238961,null,25,null,null,-8769824513195810344,1970-01-01 00:01:38.679133,44,null,EPGIUQ,Z,0x78cba77d5205a7df8bb0645af60f7a1fb166288cc3685d60a15d60f88f9d6d92,_-\"k[JYtuW/t]}%\n" +
-                                                "13,878060915,true,O,0.38881940598288367,0.444,628,2015-01-15 10:30:41.186,PEHN,8732050720474492412,1970-01-01 00:01:47.569145,41,00000000 88 f3 32 27 70 c8 01 b0 dc c9 3a 5b 7e,UXCDK,D,0x793ab30b4920c6775f52a6e644f22fb36dd16cf2d32f169e45f3be35eaae37a2,읈ҽ\uDA01\uDE60\n" +
-                                                "14,1510122165,false,G,null,0.360,918,2015-05-31 19:50:48.744,null,4768494777702471066,1970-01-01 00:01:56.459157,11,null,CWLFORGF,I,0xa62eec8815a4ecb2cba1f946c8072d3fbe016461a36853338c0e98b4ae768477,9y_G3>XzlGEYD\n" +
-                                                "15,-2038288432,true,N,0.06052105248562101,0.187,196,null,null,-1429876300179126818,1970-01-01 00:02:05.349169,15,00000000 81 e7 a2 16 22 35 3b 1c 9c 1d 5c,DYRODIPUNR,P,0xcfbc17960ded8623a35a624468b2006e75f5d434af616ffc9929b6a51b9efb10,Ƨ阇1(rոҊG\uD9A6\uDD42\n",
+                                        "kk[INTEGER],a[INTEGER],b[BIT],c[VARCHAR],d[DOUBLE],e[REAL],f[SMALLINT],g[TIMESTAMP],i[VARCHAR],j[BIGINT],k[TIMESTAMP],l[SMALLINT],m[BINARY],n[VARCHAR],cc[CHAR],l2[VARCHAR],v[VARCHAR],ii[VARCHAR]\n" +
+                                                "1,1569490116,false,Z,null,0.761,428,2015-05-16 20:27:48.158,VTJW,-8671107786057422727,1970-01-01 00:00:00.889001,26,00000000 68 61 26 af 19 c4 95 94 36 53 49 b4 59 7e,null,W,0xc2593f82b430328d84a09f29df637e3863eb3740c80f661e9c8afa23e6ca6ca1,鉾檲\\~2\uDAC6\uDED3ڎBH뤻䰭\u008B},('1970-01-01T00:00:00.010Z', '1970-01-01T00:00:00.020Z')\n" +
+                                                "2,-10505757,true,null,0.40455469747939254,0.884,862,2015-09-17 20:47:08.536,null,-4608960730952244094,1970-01-01 00:00:09.779013,2,00000000 5f f6 46 90 c3 b3 59 8e e5 61 2f 64 0e,LYXWCKYLSU,W,0xc6dfacdd3f3c52b88b4e4831499fc2a526567f4430b46b7f78c594c496995885,null,('1970-01-01T00:00:00.020Z', '1970-01-01T00:00:00.030Z')\n" +
+                                                "3,2060263242,false,L,null,0.349,869,2015-05-15 18:43:06.827,CPSW,-5439556746612026472,1970-01-01 00:00:18.669025,11,null,JSMSSUQSRLTKVVSJ,O,0x9502128cda0887fe3cdb8640c107a6927eb6d80649d1dfe38e4a7f661df6c32b,\"+zMKZ 4xL?49Mq,('1970-01-01T00:00:00.030Z', '1970-01-01T00:00:00.040Z')\n" +
+                                                "4,923501161,true,E,0.8595900073631431,0.658,870,2015-06-28 03:15:43.251,PEHN,-1798101751056570485,1970-01-01 00:00:27.559037,50,00000000 34 04 23 8d d8 57 91 88 28 a5 18 93 bd,PJOXPKRG,I,0x62a2f11e8510a3e99cb8fc6467028eb0a07934b2a15de8e0550988dbaca49734,-Ь\uDA23\uDF64m\uDA30\uDEE01W씌䒙\uD8F2\uDE8E>\uDAE6\uDEE3gX夺\uDA02\uDE66,('1970-01-01T00:00:00.040Z', '1970-01-01T00:00:00.050Z')\n" +
+                                                "5,-1594425659,false,L,0.20727557301543031,0.087,871,2015-01-03 14:55:27.713,VTJW,3820631780839257855,1970-01-01 00:00:36.449049,12,00000000 8a b3 14 cd 47 0b 0c 39 12 f7 05 10 f4,GMXUKLGMXSLUQDYO,P,0x9bae41871fd934427cbab83425e7712e47bb6f42d5f825fb52319f105d14eb26,mPO=I~9),('1970-01-01T00:00:00.050Z', '1970-01-01T00:00:00.060Z')\n" +
+                                                "6,-255808425,true,G,0.28964821678040487,0.477,706,null,null,9029088579359707814,1970-01-01 00:00:45.339061,31,00000000 48 d4 41 9d fb 49 40 44 49 96 cf 2b b3 71 a7,MIGQZVKHTLQZSLQV,F,0xb21ebf27d20c0c5ba58b9151b05d33577d4456fa92fbc5b266e891b7af142fd6,l⤃堝ᢣ΄BǬ\uDB37\uDC95Qǜbȶ\u05EC˟,('1970-01-01T00:00:00.060Z', '1970-01-01T00:00:00.070Z')\n" +
+                                                "7,890407955,false,E,0.0031075670450616544,0.124,366,null,HYRX,-5602486220193156045,1970-01-01 00:00:54.229073,20,null,QQUWQ,O,0xdc9aef010871b1fedfd79391d4cc2a2e7dcd37091f5dac023cc96390430d88ac,A'ò墠,('1970-01-01T00:00:00.070Z', '1970-01-01T00:00:00.080Z')\n" +
+                                                "8,-795877457,false,Y,null,null,232,2015-01-25 14:54:10.798,null,-5783981180087707423,1970-01-01 00:01:03.119085,47,null,KJSMKIXEYVTUPDHH,G,0x2f872563b25ea913455b1f46fe7f40cd2337f7e6b82ebc2405c5c1b231cffa45,null,('1970-01-01T00:00:00.080Z', '1970-01-01T00:00:00.090Z')\n" +
+                                                "9,-1060590724,true,H,null,0.762,268,2015-09-22 07:01:04.042,PEHN,3292156476231287573,1970-01-01 00:01:12.009097,27,00000000 c3 2f ed b0 ba 08 e0 2c ee 41 de,null,E,0x8627da676e13e34b7893e5d5f1ce706c3d5e569a2485dfb77c868671877614df,nM_a~hgMw1$c~{,('1970-01-01T00:00:00.090Z', '1970-01-01T00:00:00.100Z')\n" +
+                                                "10,-116429939,false,H,null,0.404,81,null,CPSW,-8557532716763860362,1970-01-01 00:01:20.899109,22,null,YXPVKNCBWLNLRH,W,0x7959b9679660fde98cb91e95a6c70b0c689799a1912d7c5a74edb5a7633f86d1,haB]6O}(2D,('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.110Z')\n" +
+                                                "11,1926049591,true,null,null,0.734,827,2015-12-10 01:09:10.433,null,7133205196190817214,1970-01-01 00:01:29.789121,35,00000000 ac 3d 98 a0 ad 9a 5d df dc 72 d7 97 cb f6,BWVLOM,P,0x5086c740f96dbb943c3a3b7947ce8369926cbcb16e9a2f11cfab70f2d175d0d9,YC_IBut$,('1970-01-01T00:00:00.110Z', '1970-01-01T00:00:00.120Z')\n" +
+                                                "12,-1108612462,false,null,0.4421551587238961,null,25,null,null,-8769824513195810344,1970-01-01 00:01:38.679133,44,null,EPGIUQ,Z,0x78cba77d5205a7df8bb0645af60f7a1fb166288cc3685d60a15d60f88f9d6d92,_-\"k[JYtuW/t]}%,('1970-01-01T00:00:00.120Z', '1970-01-01T00:00:00.130Z')\n" +
+                                                "13,878060915,true,O,0.38881940598288367,0.444,628,2015-01-15 10:30:41.186,PEHN,8732050720474492412,1970-01-01 00:01:47.569145,41,00000000 88 f3 32 27 70 c8 01 b0 dc c9 3a 5b 7e,UXCDK,D,0x793ab30b4920c6775f52a6e644f22fb36dd16cf2d32f169e45f3be35eaae37a2,읈ҽ\uDA01\uDE60,('1970-01-01T00:00:00.130Z', '1970-01-01T00:00:00.140Z')\n" +
+                                                "14,1510122165,false,G,null,0.360,918,2015-05-31 19:50:48.744,null,4768494777702471066,1970-01-01 00:01:56.459157,11,null,CWLFORGF,I,0xa62eec8815a4ecb2cba1f946c8072d3fbe016461a36853338c0e98b4ae768477,9y_G3>XzlGEYD,('1970-01-01T00:00:00.140Z', '1970-01-01T00:00:00.150Z')\n" +
+                                                "15,-2038288432,true,N,0.06052105248562101,0.187,196,null,null,-1429876300179126818,1970-01-01 00:02:05.349169,15,00000000 81 e7 a2 16 22 35 3b 1c 9c 1d 5c,DYRODIPUNR,P,0xcfbc17960ded8623a35a624468b2006e75f5d434af616ffc9929b6a51b9efb10,Ƨ阇1(rոҊG\uD9A6\uDD42,('1970-01-01T00:00:00.150Z', '1970-01-01T00:00:00.160Z')\n",
                                         sink,
                                         rs
                                 );

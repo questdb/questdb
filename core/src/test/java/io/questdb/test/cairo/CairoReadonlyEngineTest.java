@@ -44,7 +44,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
-        currentMicros = 0;
+        setCurrentMicros(0);
         roConfig = new DefaultTestCairoConfiguration(root) {
             @Override
             public boolean getAllowTableRegistrySharedWrite() {
@@ -177,7 +177,7 @@ public class CairoReadonlyEngineTest extends AbstractCairoTest {
                     );
                 }
 
-                currentMicros += 1_100_000L;
+                setCurrentMicros(1_100_000L);
                 Assert.assertEquals(
                         engine.verifyTableName(tableName),
                         roEngine.verifyTableName(tableName)

@@ -275,6 +275,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         }
     }
 
+    @Test
+    public void testDateLiteral() throws Exception {
+        serialize("adate = '2023-02-11T11:12:22'");
+        assertIR("(i64 1676113942000L)(i64 adate)(=)(ret)");
+        serialize("adate >= '2023-02-11T11:12:22'");
+        assertIR("(i64 1676113942000L)(i64 adate)(>=)(ret)");
+        serialize("adate <= '2023-02-11T11'");
+        assertIR("(i64 1676113200000L)(i64 adate)(<=)(ret)");
+        serialize("adate > '2023-02-11'");
+        assertIR("(i64 1676073600000L)(i64 adate)(>)(ret)");
+        serialize("adate < '2023-02'");
+        assertIR("(i64 1675209600000L)(i64 adate)(<)(ret)");
+        serialize("adate != '2023'");
+        assertIR("(i64 1672531200000L)(i64 adate)(<>)(ret)");
+    }
+
     @Test(expected = SqlException.class)
     public void testEmptyIn() throws Exception {
         serialize("anint IN ()");
@@ -338,36 +354,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(2, bindVarFunctions.size());
         Assert.assertEquals(ColumnType.LONG, bindVarFunctions.get(0).getType());
         Assert.assertEquals(ColumnType.INT, bindVarFunctions.get(1).getType());
-    }
-
-    @Test
-    public void testTimestampInLiteral() throws Exception {
-        serialize("atimestamp in '2020-01-01'");
-        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(ret)");
-        serialize("atimestamp in '2020-01-01;15s'");
-        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923214999999L)(i64 atimestamp)(<=)(&&)(ret)");
-        serialize("atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
-        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
-                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
-                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)(||)(||)(ret)");
-        serialize("along = 42 and atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
-        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
-                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
-                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)" +
-                "(||)(||)(i64 42L)(i64 along)(=)(&&)(ret)");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testTimestampInLiteralBindVariables() throws Exception {
-        bindVariableService.clear();
-        bindVariableService.setStr("str", "2020");
-        serialize("atimestamp in :str");
-    }
-
-    @Test
-    public void testTimestampInLiteralNull() throws Exception {
-        serialize("atimestamp in null");
-        assertIR("(i64 -9223372036854775808L)(i64 atimestamp)(>=)(i64 -9223372036854775808L)(i64 atimestamp)(<=)(&&)(ret)");
     }
 
     @Test(expected = SqlException.class)
@@ -593,6 +579,36 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(string_header astring)(i32 -1L)(<>)(ret)");
         serialize("null = astring");
         assertIR("(string_header astring)(i32 -1L)(=)(ret)");
+    }
+
+    @Test
+    public void testTimestampInLiteral() throws Exception {
+        serialize("atimestamp in '2020-01-01'");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(ret)");
+        serialize("atimestamp in '2020-01-01;15s'");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923214999999L)(i64 atimestamp)(<=)(&&)(ret)");
+        serialize("atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
+        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)(||)(||)(ret)");
+        serialize("along = 42 and atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
+        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)" +
+                "(||)(||)(i64 42L)(i64 along)(=)(&&)(ret)");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testTimestampInLiteralBindVariables() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("str", "2020");
+        serialize("atimestamp in :str");
+    }
+
+    @Test
+    public void testTimestampInLiteralNull() throws Exception {
+        serialize("atimestamp in null");
+        assertIR("(i64 -9223372036854775808L)(i64 atimestamp)(>=)(i64 -9223372036854775808L)(i64 atimestamp)(<=)(&&)(ret)");
     }
 
     @Test
@@ -826,6 +842,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
+    public void testUnsupportedStringIntComparison() throws Exception {
+        serialize("astring >= anint");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedSymbolIntComparison() throws Exception {
+        serialize("asymbol >= anint");
+    }
+
+    @Test(expected = SqlException.class)
     public void testUnsupportedTrueConstantInNumericContext() throws Exception {
         serialize("along = true");
     }
@@ -853,6 +879,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedVarcharInequality() throws Exception {
         serialize("avarchar <> avarchar2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedVarcharIntComparison() throws Exception {
+        serialize("avarchar >= anint");
     }
 
     @Test
@@ -938,7 +969,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     private static class TestIRSerializer {
-
         private final MemoryCARW irMem;
         private final RecordMetadata metadata;
         private long offset;

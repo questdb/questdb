@@ -26,6 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -48,7 +49,8 @@ public final class IntervalUtils {
             char periodType,
             int periodCount,
             short operation,
-            LongList out) {
+            LongList out
+    ) {
         addHiLoInterval(lo, hi, period, periodType, periodCount, IntervalDynamicIndicator.NONE, IntervalOperation.NONE, operation, out);
     }
 
@@ -74,12 +76,14 @@ public final class IntervalUtils {
         );
     }
 
-    public static void addHiLoInterval(long lo,
-                                       long hi,
-                                       short adjustment,
-                                       short dynamicIndicator,
-                                       short operation,
-                                       LongList out) {
+    public static void addHiLoInterval(
+            long lo,
+            long hi,
+            short adjustment,
+            short dynamicIndicator,
+            short operation,
+            LongList out
+    ) {
         addHiLoInterval(lo, hi, 0, PeriodType.NONE, 1, adjustment, dynamicIndicator, operation, out);
     }
 
@@ -111,6 +115,10 @@ public final class IntervalUtils {
                     break;
             }
         }
+    }
+
+    public static void applyInterval(Interval interval, LongList outIntervals, short intersect) {
+        addHiLoInterval(interval.getLo(), interval.getHi(), intersect, outIntervals);
     }
 
     public static void applyLastEncodedIntervalEx(LongList intervals) {
@@ -149,14 +157,11 @@ public final class IntervalUtils {
     }
 
     public static int getEncodedPeriod(LongList intervals, int index) {
-        return Numbers.decodeLowInt(
-                intervals.getQuick(index + PERIOD_COUNT_INDEX)
-        );
+        return Numbers.decodeLowInt(intervals.getQuick(index + PERIOD_COUNT_INDEX));
     }
 
     public static int getEncodedPeriodCount(LongList intervals, int index) {
-        return Numbers.decodeHighInt(
-                intervals.getQuick(index + PERIOD_COUNT_INDEX));
+        return Numbers.decodeHighInt(intervals.getQuick(index + PERIOD_COUNT_INDEX));
     }
 
     public static long getEncodedPeriodHi(LongList out, int index) {
@@ -186,7 +191,7 @@ public final class IntervalUtils {
      *
      * @param concatenatedIntervals 2 lists of intervals concatenated in 1
      */
-    public static void intersectInplace(LongList concatenatedIntervals, int dividerIndex) {
+    public static void intersectInPlace(LongList concatenatedIntervals, int dividerIndex) {
         final int sizeA = dividerIndex / 2;
         final int sizeB = sizeA + (concatenatedIntervals.size() - dividerIndex) / 2;
         int aLower = 0;
@@ -198,7 +203,6 @@ public final class IntervalUtils {
         int aUpper = sizeB;
 
         while ((aLower < sizeA || aUpper < aUpperSize) && intervalB < sizeB) {
-
             int intervalA = aUpper < aUpperSize ? aUpper : aLower;
             long aLo = concatenatedIntervals.getQuick(intervalA * 2);
             long aHi = concatenatedIntervals.getQuick(intervalA * 2 + 1);
@@ -450,7 +454,6 @@ public final class IntervalUtils {
                             int sec = Numbers.parseInt(seq, p, p += 2);
                             checkRange(sec, 0, 59);
                             if (p < lim && seq.charAt(p) == '.') {
-
                                 p++;
                                 // varlen milli and micros
                                 int micrLim = p + 6;
@@ -868,7 +871,7 @@ public final class IntervalUtils {
 
     public static void subtract(LongList intervals, int divider) {
         IntervalUtils.invert(intervals, divider);
-        IntervalUtils.intersectInplace(intervals, divider);
+        IntervalUtils.intersectInPlace(intervals, divider);
     }
 
     public static long tryParseTimestamp(CharSequence seq) throws CairoException {

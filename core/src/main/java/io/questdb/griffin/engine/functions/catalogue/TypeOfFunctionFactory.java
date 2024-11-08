@@ -97,5 +97,6 @@ public class TypeOfFunctionFactory implements FunctionFactory {
 
         TYPE_NAMES.put(IPv4, new StrConstant(nameOf(IPv4)));
         TYPE_NAMES.put(VARCHAR, new VarcharConstant(nameOf(VARCHAR)));
+        TYPE_NAMES.put(INTERVAL, new StrConstant(nameOf(INTERVAL)));
     }
 }

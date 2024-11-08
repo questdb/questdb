@@ -983,6 +983,38 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByInterval1() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "i\tcount\n" +
+                        "('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\t2\n" +
+                        "\t1\n",
+                "select i, count() from (" +
+                        "  (select interval(100000,200000) i) " +
+                        "  union all " +
+                        "  (select interval(100000,200000) i) " +
+                        "  union all " +
+                        "  (select null::interval i)" +
+                        ")"
+        ));
+    }
+
+    @Test
+    public void testGroupByInterval2() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "i\ts\tcount\n" +
+                        "('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tfoobar\t2\n" +
+                        "\t\t1\n",
+                "select i, s, count() from (" +
+                        "  (select interval(100000,200000) i, 'foobar' s) " +
+                        "  union all " +
+                        "  (select interval(100000,200000) i, 'foobar' s) " +
+                        "  union all " +
+                        "  (select null::interval i, null::string s)" +
+                        ")"
+        ));
+    }
+
+    @Test
     public void testGroupByInvalidOrderByExpression() throws Exception {
         assertException(
                 "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;",
@@ -2360,17 +2392,18 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNestedGroupByWithExplicitGroupByClause() throws Exception {
+        String expected = "url\tu_count\tcnt\tavg_m_sum\n" +
+                "RXPEHNRXGZ\t4\t4\t414.25\n" +
+                "DXYSBEOUOJ\t1\t1\t225.0\n" +
+                "SXUXIBBTGP\t2\t2\t379.5\n" +
+                "GWFFYUDEYY\t5\t5\t727.2\n" +
+                "LOFJGETJRS\t2\t2\t524.5\n" +
+                "ZSRYRFBVTM\t2\t2\t337.0\n" +
+                "VTJWCPSWHY\t1\t1\t660.0\n" +
+                "HGOOZZVDZJ\t1\t1\t540.0\n" +
+                "SHRUEDRQQU\t2\t2\t468.0\n";
         assertQuery(
-                "url\tu_count\tcnt\tavg_m_sum\n" +
-                        "RXPEHNRXGZ\t4\t4\t414.25\n" +
-                        "DXYSBEOUOJ\t1\t1\t225.0\n" +
-                        "SXUXIBBTGP\t2\t2\t379.5\n" +
-                        "GWFFYUDEYY\t5\t5\t727.2\n" +
-                        "LOFJGETJRS\t2\t2\t524.5\n" +
-                        "ZSRYRFBVTM\t2\t2\t337.0\n" +
-                        "VTJWCPSWHY\t1\t1\t660.0\n" +
-                        "HGOOZZVDZJ\t1\t1\t540.0\n" +
-                        "SHRUEDRQQU\t2\t2\t468.0\n",
+                expected,
                 "WITH x_sample AS (\n" +
                         "  SELECT id, uuid, url, sum(metric) m_sum\n" +
                         "  FROM x\n" +
@@ -2391,6 +2424,16 @@ public class GroupByTest extends AbstractCairoTest {
                 true,
                 true
         );
+        assertSql(expected,
+                "WITH x_sample AS (\n" +
+                        "  SELECT id, uuid, url, sum(metric) m_sum\n" +
+                        "  FROM x\n" +
+                        "  WHERE ts >= '1023-03-31T00:00:00' and ts <= '2023-04-02T23:59:59'\n" +
+                        "  GROUP BY id, uuid, url\n" +
+                        ")\n" +
+                        "SELECT url, count(distinct uuid) u_count, count() cnt, avg(m_sum) avg_m_sum\n" +
+                        "FROM x_sample\n" +
+                        "GROUP BY url");
     }
 
     @Test

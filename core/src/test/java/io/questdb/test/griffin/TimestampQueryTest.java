@@ -534,7 +534,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testNonContinuousPartitions() throws Exception {
-        currentMicros = 0;
+        setCurrentMicros(0);
         assertMemoryLeak(() -> {
             // Create table
             // One-hour step timestamps from epoch for 32 then skip 48 etc for 10 iterations
@@ -565,7 +565,8 @@ public class TimestampQueryTest extends AbstractCairoTest {
             // Search with 3-hour window every 22 hours
             int min = Integer.MAX_VALUE;
             int max = Integer.MIN_VALUE;
-            for (currentMicros = 0; currentMicros < end; currentMicros += 22 * hour) {
+            for (long micros = 0; micros < end; micros += 22 * hour) {
+                setCurrentMicros(micros);
                 int results = compareNowRange(
                         "select ts FROM xts WHERE ts <= dateadd('h', 2, now()) and ts >= dateadd('h', -1, now())",
                         datesArr,
@@ -582,7 +583,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testNowIsSameForAllQueryParts() throws Exception {
-        currentMicros = 0;
+        setCurrentMicros(0);
         assertMemoryLeak(() -> {
             ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
@@ -601,7 +602,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testNowPerformsBinarySearchOnTimestamp() throws Exception {
-        currentMicros = 0;
+        setCurrentMicros(0);
         assertMemoryLeak(() -> {
             // One-hour step timestamps from epoch for 2000 steps
             final int count = 200;
@@ -621,19 +622,22 @@ public class TimestampQueryTest extends AbstractCairoTest {
             compareNowRange("select * FROM xts WHERE ts >= '1970' and ts <= '2021'", datesArr, ts -> true);
 
             // Scroll now to the end
-            currentMicros = 200L * hour;
+            setCurrentMicros(200L * hour);
             compareNowRange("select ts FROM xts WHERE ts >= now() - 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros - hour);
             compareNowRange("select ts FROM xts WHERE ts >= now() + 3600 * 1000 * 1000L", datesArr, ts -> ts >= currentMicros + hour);
 
-            for (currentMicros = hour; currentMicros < count * hour; currentMicros += day) {
+            for (long micros = hour; micros < count * hour; micros += day) {
+                setCurrentMicros(micros);
                 compareNowRange("select ts FROM xts WHERE ts < now()", datesArr, ts -> ts < currentMicros);
             }
 
-            for (currentMicros = hour; currentMicros < count * hour; currentMicros += 12 * hour) {
+            for (long micros = hour; micros < count * hour; micros += 12 * hour) {
+                setCurrentMicros(micros);
                 compareNowRange("select ts FROM xts WHERE ts >= now()", datesArr, ts -> ts >= currentMicros);
             }
 
-            for (currentMicros = 0; currentMicros < count * hour + 4 * day; currentMicros += 5 * hour) {
+            for (long micros = 0; micros < count * hour + 4 * day; micros += 5 * hour) {
+                setCurrentMicros(micros);
                 compareNowRange(
                         "select ts FROM xts WHERE ts <= dateadd('d', -1, now()) and ts >= dateadd('d', -2, now())",
                         datesArr,
@@ -641,7 +645,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
                 );
             }
 
-            currentMicros = 100L * hour;
+            setCurrentMicros(100L * hour);
             compareNowRange("WITH temp AS (SELECT ts FROM xts WHERE ts > dateadd('y', -1, now())) " +
                     "SELECT ts FROM temp WHERE ts < now()", datesArr, ts -> ts < currentMicros);
         });

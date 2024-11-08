@@ -137,7 +137,7 @@ public class WalWriter implements TableWriterAPI {
         this.pathSize = path.size();
         this.metrics = metrics;
         this.open = true;
-        this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
+        this.symbolMapMem = Vm.getMARInstance(configuration);
 
         try {
             lockWal();
@@ -267,10 +267,7 @@ public class WalWriter implements TableWriterAPI {
                 final long rowsToCommit = getUncommittedRowCount();
                 lastSegmentTxn = events.appendData(currentTxnStartRowNum, segmentRowCount, txnMinTimestamp, txnMaxTimestamp, txnOutOfOrder);
                 // flush disk before getting next txn
-                final int commitMode = configuration.getCommitMode();
-                if (commitMode != CommitMode.NOSYNC) {
-                    sync(commitMode);
-                }
+                syncIfRequired();
                 final long seqTxn = getSequencerTxn();
                 LOG.info().$("committed data block [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                         .$(", segmentTxn=").$(lastSegmentTxn)
@@ -893,7 +890,7 @@ public class WalWriter implements TableWriterAPI {
     private void configureColumn(int columnIndex, int columnType) {
         final int dataColumnOffset = getDataColumnOffset(columnIndex);
         if (columnType > 0) {
-            final MemoryMA dataMem = Vm.getMAInstance(configuration.getCommitMode());
+            final MemoryMA dataMem = Vm.getMAInstance(configuration);
             final MemoryMA auxMem = createAuxColumnMem(columnType);
             columns.extendAndSet(dataColumnOffset, dataMem);
             columns.extendAndSet(dataColumnOffset + 1, auxMem);
@@ -1086,7 +1083,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private MemoryMA createAuxColumnMem(int columnType) {
-        return ColumnType.isVarSize(columnType) ? Vm.getMAInstance(configuration.getCommitMode()) : null;
+        return ColumnType.isVarSize(columnType) ? Vm.getMAInstance(configuration) : null;
     }
 
     private SegmentColumnRollSink createSegmentColumnRollSink() {
@@ -1623,15 +1620,18 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void sync(int commitMode) {
-        final boolean async = commitMode == CommitMode.ASYNC;
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            MemoryMA column = columns.getQuick(i);
-            if (column != null) {
-                column.sync(async);
+    private void syncIfRequired() {
+        int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            final boolean async = commitMode == CommitMode.ASYNC;
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                MemoryMA column = columns.getQuick(i);
+                if (column != null) {
+                    column.sync(async);
+                }
             }
+            events.sync();
         }
-        events.sync();
     }
 
     private static class ConversionSymbolMapWriter implements SymbolMapWriterLite {

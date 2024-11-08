@@ -226,6 +226,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
+    public void putInterval(Interval interval) {
+        mem.putLong128(interval.getLo(), interval.getHi());
+    }
+
+    @Override
     public void putLong(long value) {
         mem.putLong(value);
     }
@@ -339,6 +344,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     private class RecordChainRecord implements Record {
+        private final Interval interval = new Interval();
         long baseOffset;
         long fixedOffset;
 
@@ -411,6 +417,12 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
         @Override
         public int getInt(int col) {
             return mem.getInt(fixedWithColumnOffset(col));
+        }
+
+        @Override
+        public Interval getInterval(int col) {
+            final long offset = fixedWithColumnOffset(col);
+            return interval.of(mem.getLong(offset), mem.getLong(offset + Long.BYTES));
         }
 
         @Override

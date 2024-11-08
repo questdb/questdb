@@ -52,9 +52,8 @@ public class CairoTable implements Sinkable {
     }
 
     public void clear() {
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            columns.remove(i);
-        }
+        columns.clear();
+        columnOrderMap.clear();
     }
 
     public long getColumnCount() {

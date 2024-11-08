@@ -22,8 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.fuzz;
+package io.questdb.test.cutlass.pgwire;
 
-public class FuzzCairoMetadata {
+import org.junit.Test;
+
+import java.sql.PreparedStatement;
+
+public class IntervalPGTest extends BasePGTest {
+    @Test
+    public void testIntervalSelect() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement ps = connection.prepareStatement("SELECT interval(100, 200)")) {
+                assertResultSet(
+                        "interval[VARCHAR]\n" +
+                                "('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')\n",
+                        sink,
+                        ps.executeQuery()
+                );
+            }
+        });
+    }
 }
-

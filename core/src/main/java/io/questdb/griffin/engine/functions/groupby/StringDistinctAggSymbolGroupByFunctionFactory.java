@@ -24,28 +24,38 @@
 
 package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class CovarSampleGroupByFunction extends AbstractCovarGroupByFunction {
+public class StringDistinctAggSymbolGroupByFunctionFactory implements FunctionFactory {
 
-    protected CovarSampleGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
-        super(arg0, arg1);
+    @Override
+    public String getSignature() {
+        return "string_distinct_agg(Ka)";
     }
 
     @Override
-    public double getDouble(Record rec) {
-        long count = rec.getLong(valueIndex + 3);
-        if (count - 1 > 0) {
-            double sumXY = rec.getDouble(valueIndex + 2);
-            return sumXY / (count - 1);
-        }
-        return Double.NaN;
+    public boolean isGroupBy() {
+        return true;
     }
 
     @Override
-    public String getName() {
-        return "covar_samp";
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new StringDistinctAggSymbolGroupByFunction(
+                args.getQuick(0),
+                args.getQuick(1).getChar(null),
+                configuration.getCountDistinctCapacity(),
+                configuration.getCountDistinctLoadFactor()
+        );
     }
 }

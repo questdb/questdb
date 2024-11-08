@@ -33,25 +33,25 @@ import io.questdb.std.Misc;
 
 public class IntervalFwdPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
     private final IntervalFwdPartitionFrameCursor cursor;
-    private final RuntimeIntrinsicIntervalModel intervals;
+    private final RuntimeIntrinsicIntervalModel intervalModel;
     private IntervalBwdPartitionFrameCursor bwdCursor;
 
     public IntervalFwdPartitionFrameCursorFactory(
             TableToken tableToken,
             long metadataVersion,
-            RuntimeIntrinsicIntervalModel intervals,
+            RuntimeIntrinsicIntervalModel intervalModel,
             int timestampIndex,
             GenericRecordMetadata metadata
     ) {
         super(tableToken, metadataVersion, metadata);
-        this.cursor = new IntervalFwdPartitionFrameCursor(intervals, timestampIndex);
-        this.intervals = intervals;
+        this.cursor = new IntervalFwdPartitionFrameCursor(intervalModel, timestampIndex);
+        this.intervalModel = intervalModel;
     }
 
     @Override
     public void close() {
         super.close();
-        Misc.free(intervals);
+        Misc.free(intervalModel);
     }
 
     @Override
@@ -64,7 +64,7 @@ public class IntervalFwdPartitionFrameCursorFactory extends AbstractPartitionFra
             }
 
             if (bwdCursor == null) {
-                bwdCursor = new IntervalBwdPartitionFrameCursor(intervals, cursor.getTimestampIndex());
+                bwdCursor = new IntervalBwdPartitionFrameCursor(intervalModel, cursor.getTimestampIndex());
             }
             return bwdCursor.of(reader, executionContext);
         } catch (Throwable th) {
@@ -91,6 +91,6 @@ public class IntervalFwdPartitionFrameCursorFactory extends AbstractPartitionFra
             sink.type("Interval forward scan");
         }
         super.toPlan(sink);
-        sink.attr("intervals").val(intervals);
+        sink.attr("intervals").val(intervalModel);
     }
 }

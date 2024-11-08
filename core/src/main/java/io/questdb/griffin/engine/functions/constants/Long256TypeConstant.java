@@ -32,7 +32,6 @@ import io.questdb.std.Long256Impl;
 import io.questdb.std.str.CharSink;
 
 public class Long256TypeConstant extends Long256Function implements TypeConstant {
-
     public static final Long256TypeConstant INSTANCE = new Long256TypeConstant();
 
     @Override

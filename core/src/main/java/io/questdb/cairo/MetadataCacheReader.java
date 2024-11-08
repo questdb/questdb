@@ -22,28 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.date;
+package io.questdb.cairo;
 
-import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.test.AbstractCairoTest;
-import org.junit.Test;
 
-public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.Sinkable;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
-    @Test
-    public void testToday() throws Exception {
-        assertSql("cast\n" + Timestamps.floorDD(Os.currentTimeMicros()) + "\n", "select today()::long");
-    }
+public interface MetadataCacheReader extends QuietCloseable, Sinkable {
+    @Nullable
+    CairoTable getTable(@NotNull TableToken tableToken);
 
-    @Test
-    public void testTomorrow() throws Exception {
-        assertSql("cast\n" + Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1)) + "\n", "select tomorrow()::long");
-    }
+    int getTableCount();
 
-    @Test
-    public void testYesterday() throws Exception {
-        assertSql("cast\n" + Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1)) + "\n", "select yesterday()::long");
-    }
+    long getVersion();
 
+    boolean isVisibleTable(@NotNull CharSequence tableName);
+
+    long snapshot(CharSequenceObjHashMap<CairoTable> localCache, long priorVersion);
 }
+

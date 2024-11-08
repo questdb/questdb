@@ -349,7 +349,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 unregisterListenerFd();
                 listening = false;
                 closeListenFdEpochMs = timestamp + queuedConnectionTimeoutMs;
-                LOG.info().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
+                LOG.advisory().$("max connection limit reached, unregistered listener [serverFd=").$(serverFd).I$();
             }
         }
     }
@@ -377,7 +377,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 }
                 registerListenerFd();
                 listening = true;
-                LOG.info().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
+                LOG.advisory().$("below maximum connection limit, registered listener [serverFd=").$(serverFd).I$();
             }
         }
     }

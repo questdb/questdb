@@ -32,10 +32,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 
 public final class NullConstant implements ConstantFunction, ScalarFunction {
 
@@ -120,6 +122,11 @@ public final class NullConstant implements ConstantFunction, ScalarFunction {
     @Override
     public int getInt(Record rec) {
         return IntConstant.NULL.getInt(null);
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        return Interval.NULL;
     }
 
     @Override

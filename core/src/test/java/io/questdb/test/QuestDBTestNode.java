@@ -214,6 +214,7 @@ public class QuestDBTestNode {
                             -1,
                             circuitBreaker
                     );
+            sqlExecutionContext.initNow();
             bindVariableService.clear();
         }
 

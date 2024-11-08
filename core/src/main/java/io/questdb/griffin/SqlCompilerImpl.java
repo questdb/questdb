@@ -28,24 +28,88 @@ import io.questdb.MessageBus;
 import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
-import io.questdb.cairo.*;
+import io.questdb.cairo.AlterTableUtils;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultLifecycleManager;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexBuilder;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.MapWriter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableNameRegistryStore;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriterMetadata;
 import io.questdb.griffin.engine.QueryProgress;
-import io.questdb.griffin.engine.ops.*;
-import io.questdb.griffin.model.*;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.CopyCancelFactory;
+import io.questdb.griffin.engine.ops.CopyFactory;
+import io.questdb.griffin.engine.ops.InsertOperationImpl;
+import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.model.ColumnCastModel;
+import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.CreateTableModel;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExplainModel;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
-import io.questdb.std.*;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
+import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -604,12 +668,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
-        int type = ColumnType.tagOf(tok);
-        if (type == -1) {
-            throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
-        }
+        int columnType = SqlUtil.toPersistedTypeTag(tok, lexer.lastTokenPosition());
 
-        if (type == ColumnType.GEOHASH) {
+        if (columnType == ColumnType.GEOHASH) {
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null || tok.charAt(0) != '(') {
                 throw SqlException.position(lexer.getPosition()).put("missing GEOHASH precision");
@@ -628,7 +689,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.position(lexer.getPosition())
                             .put("invalid GEOHASH type literal, expected ')'");
                 }
-                type = ColumnType.getGeoHashTypeWithBits(geoHashBits);
+                columnType = ColumnType.getGeoHashTypeWithBits(geoHashBits);
             } else {
                 throw SqlException.position(lexer.lastTokenPosition())
                         .put("missing GEOHASH precision");
@@ -642,7 +703,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final boolean indexed;
 
         if (
-                ColumnType.isSymbol(type)
+                ColumnType.isSymbol(columnType)
                         && tok != null
                         && !Chars.equals(tok, ',')
                         && !Chars.equals(tok, ';')
@@ -725,7 +786,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         addColumn.addColumnToList(
                 columnName,
                 columnNamePosition,
-                type,
+                columnType,
                 Numbers.ceilPow2(symbolCapacity),
                 cache,
                 indexed,
@@ -733,7 +794,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 false
         );
         lexer.unparseLast();
-        return type;
+        return columnType;
     }
 
     private void alterTableAddColumn(
@@ -1842,7 +1903,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
-            throw SqlException.$(0, "empty query");
+            compiledQuery.ofEmpty();
+            return;
         }
 
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);
@@ -1890,7 +1952,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
 
         if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
-            engine.checkpointCreate(executionContext);
+            engine.snapshotCreate(executionContext);
             compiledQuery.ofCheckpointCreate();
         } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
             engine.checkpointRelease();
@@ -2503,32 +2565,45 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(0).put("underlying cursor is extremely volatile");
     }
 
+    private int filterApply(
+            Function filter, int functionPosition, AlterOperationBuilder changePartitionStatement, long timestamp
+    ) {
+        partitionFunctionRec.setTimestamp(timestamp);
+        if (filter.getBool(partitionFunctionRec)) {
+            changePartitionStatement.addPartitionToList(timestamp, functionPosition);
+            return 1;
+        }
+        return 0;
+    }
+
     private int filterPartitions(
-            Function function,
-            int functionPosition,
+            Function filter,
+            int filterPosition,
             TableReader reader,
             AlterOperationBuilder changePartitionStatement
     ) {
         int affectedPartitions = 0;
-        // Iterate partitions in descending order so if folders are missing on disk
-        // removePartition does not fail to determine next minTimestamp
+        // Iterate partitions in descending order, so if folders are missing on disk,
+        // removePartition does not fail to determine the next minTimestamp
         final int partitionCount = reader.getPartitionCount();
         if (partitionCount > 0) { // table may be empty
-            for (int i = partitionCount - 2; i > -1; i--) {
-                long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
-                partitionFunctionRec.setTimestamp(partitionTimestamp);
-                if (function.getBool(partitionFunctionRec)) {
-                    changePartitionStatement.addPartitionToList(partitionTimestamp, functionPosition);
-                    affectedPartitions++;
+            // perform the action on the first and last partition in the end, those are more expensive than others
+            long firstPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(0));
+            long lastPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(partitionCount - 1));
+
+            for (int partitionIndex = 1; partitionIndex < partitionCount - 1; partitionIndex++) {
+                long physicalTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+                long logicalTimestamp = reader.getTxFile().getPartitionFloor(physicalTimestamp);
+                if (physicalTimestamp != logicalTimestamp || logicalTimestamp == firstPartition || logicalTimestamp == lastPartition) {
+                    continue;
                 }
+                affectedPartitions += filterApply(filter, filterPosition, changePartitionStatement, logicalTimestamp);
             }
 
-            // do action on last partition at the end, it's more expensive than others
-            long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionCount - 1);
-            partitionFunctionRec.setTimestamp(partitionTimestamp);
-            if (function.getBool(partitionFunctionRec)) {
-                changePartitionStatement.addPartitionToList(partitionTimestamp, functionPosition);
-                affectedPartitions++;
+            // perform the action on the first and last partition, dropping them have to read min/max timestamp of the next first/last partition
+            affectedPartitions += filterApply(filter, filterPosition, changePartitionStatement, firstPartition);
+            if (firstPartition != lastPartition) {
+                affectedPartitions += filterApply(filter, filterPosition, changePartitionStatement, lastPartition);
             }
         }
         return affectedPartitions;

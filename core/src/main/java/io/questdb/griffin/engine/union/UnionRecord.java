@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.union;
 
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -143,6 +144,14 @@ public class UnionRecord extends AbstractUnionRecord {
             return recordA.getInt(col);
         }
         return recordB.getInt(col);
+    }
+
+    @Override
+    public Interval getInterval(int col) {
+        if (useA) {
+            return recordA.getInterval(col);
+        }
+        return recordB.getInterval(col);
     }
 
     @Override

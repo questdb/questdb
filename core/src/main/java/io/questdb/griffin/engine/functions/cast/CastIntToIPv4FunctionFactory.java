@@ -28,7 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -41,19 +43,33 @@ public class CastIntToIPv4FunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CastIntToIPv4Function(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final Function arg = args.getQuick(0);
+        if (arg.isConstant()) {
+            final int value = arg.getInt(null);
+            if (value == Numbers.INT_NULL) {
+                return IPv4Constant.NULL;
+            }
+            return IPv4Constant.newInstance(value);
+        }
+        return new Func(arg);
     }
 
-    private static class CastIntToIPv4Function extends AbstractCastToIPv4Function {
+    private static class Func extends AbstractCastToIPv4Function {
 
-        public CastIntToIPv4Function(Function arg) {
+        public Func(Function arg) {
             super(arg);
         }
 
         @Override
         public int getIPv4(Record rec) {
-            if (arg.getInt(rec) == Numbers.IPv4_NULL) {
+            if (arg.getInt(rec) == Numbers.INT_NULL) {
                 return Numbers.IPv4_NULL;
             }
             return arg.getInt(rec);

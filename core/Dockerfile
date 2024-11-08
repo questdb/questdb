@@ -1,6 +1,4 @@
-ARG base_image=debian:bookworm-slim
-
-FROM debian:bookworm
+FROM debian:bookworm AS builder
 ARG tag_name
 
 ENV GOSU_VERSION=1.14
@@ -44,13 +42,16 @@ RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
     ./gosu --version && \
     ./gosu nobody true
 
-FROM ${base_image}
+##############################################################################
+######################### Build for RedHat OpenShift #########################
+##############################################################################
+
+FROM registry.access.redhat.com/ubi9/ubi AS rhel
 ARG tag_name
 
 WORKDIR /app
 
-COPY --from=0 /build/questdb/core/target/questdb-*-rt-* .
-COPY --from=0 /build/questdb/core/target/gosu /usr/local/bin/gosu
+COPY --from=builder /build/questdb/core/target/questdb-*-rt-* .
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
@@ -68,6 +69,38 @@ LABEL name=QuestDB \
     maintainer=QuestDB \
     url="https://github.com/questdb/questdb"
 
+# Create questdb user and group
+RUN groupadd -g 10001 questdb && \
+    useradd -u 10001 -g 10001 -d /var/lib/questdb -M -s /sbin/nologin questdb && \
+    mkdir -p /var/lib/questdb && \
+    chown -R questdb:questdb /var/lib/questdb
+
+USER questdb
+
+WORKDIR /var/lib/questdb
+
+# Make port 9000 available to the world outside this container
+EXPOSE 9000/tcp
+EXPOSE 8812/tcp
+EXPOSE 9009/tcp
+
+ENV DO_CHOWN="false"
+ENTRYPOINT ["/docker-entrypoint.sh"]
+
+##############################################################################
+########################## General-use Docker build ##########################
+##############################################################################
+
+FROM debian:bookworm-slim AS questdb
+ARG tag_name
+
+WORKDIR /app
+
+COPY --from=builder /build/questdb/core/target/questdb-*-rt-* .
+COPY --from=builder /build/questdb/core/target/gosu /usr/local/bin/gosu
+
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
 # Create questdb user and group
 RUN groupadd -g 10001 questdb && \

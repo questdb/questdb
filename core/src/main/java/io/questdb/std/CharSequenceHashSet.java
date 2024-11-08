@@ -51,7 +51,7 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         this(initialCapacity, 0.4);
     }
 
-    private CharSequenceHashSet(int initialCapacity, double loadFactor) {
+    public CharSequenceHashSet(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
         list = new ObjList<>(free);
         clear();

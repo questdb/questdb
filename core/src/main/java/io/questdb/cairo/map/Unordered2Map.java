@@ -405,6 +405,11 @@ public class Unordered2Map implements Map, Reopenable {
         }
 
         @Override
+        public void putInterval(Interval interval) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void putLong(long value) {
             throw new UnsupportedOperationException();
         }

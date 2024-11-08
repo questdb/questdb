@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -43,7 +44,13 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         super(messageBus.getGroupByMergeShardQueue(), messageBus.getGroupByMergeShardSubSeq());
     }
 
-    public static void run(int workerId, GroupByMergeShardTask task, Sequence subSeq, long cursor) {
+    public static void run(
+            int workerId,
+            GroupByMergeShardTask task,
+            Sequence subSeq,
+            long cursor,
+            AsyncGroupByAtom stealingAtom
+    ) {
         final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
@@ -55,11 +62,9 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
 
         startedCounter.incrementAndGet();
 
-        int slotId = -1;
+        final boolean owner = stealingAtom != null && stealingAtom == atom;
+        final int slotId = atom.maybeAcquire(workerId, owner, (ExecutionCircuitBreaker) circuitBreaker);
         try {
-            if (atom.isMergeLockRequired()) {
-                slotId = atom.acquire(workerId, circuitBreaker);
-            }
             if (circuitBreaker.checkIfTripped()) {
                 return;
             }
@@ -68,9 +73,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             LOG.error().$("merge shard failed [ex=").$(e).I$();
             circuitBreaker.cancel();
         } finally {
-            if (atom.isMergeLockRequired()) {
-                atom.release(slotId);
-            }
+            atom.release(slotId);
             doneLatch.countDown();
         }
     }
@@ -78,7 +81,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
     @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final GroupByMergeShardTask task = queue.get(cursor);
-        run(workerId, task, subSeq, cursor);
+        run(workerId, task, subSeq, cursor, null);
         return true;
     }
 }

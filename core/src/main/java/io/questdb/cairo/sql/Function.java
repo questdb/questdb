@@ -31,10 +31,12 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -123,6 +125,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     int getInt(Record rec);
 
+    @NotNull
+    Interval getInterval(Record rec);
+
     long getLong(Record rec);
 
     long getLong128Hi(Record rec);
@@ -208,20 +213,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
-     * Returns true if the function and all of its children functions are thread-safe
-     * and, thus, can be called concurrently, false - otherwise. Used as a hint for
-     * parallel SQL filters runtime, thus this method makes sense only for functions
-     * that are allowed in WHERE or GROUP BY clause.
-     * <p>
-     * If the function is not read thread-safe, it gets cloned for each worker thread.
-     *
-     * @return true if the function and all of its children functions are read thread-safe
-     */
-    default boolean isReadThreadSafe() {
-        return false;
-    }
-
-    /**
      * Declares that the function will maintain its value for all the rows during
      * {@link RecordCursor} traversal. However, between cursor traversals the function
      * value is liable to change.
@@ -234,6 +225,26 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * @return true when function is runtime constant.
      */
     default boolean isRuntimeConstant() {
+        return false;
+    }
+
+    /**
+     * Returns true if the function and all of its children functions are thread-safe
+     * and, thus, can be called concurrently, false - otherwise. Used as a hint for
+     * parallel SQL execution, thus this method makes sense only for functions
+     * that are allowed in WHERE or GROUP BY clause.
+     * <p>
+     * In case of non-aggregate functions this flag means read thread-safety.
+     * For decomposable (think, parallel) aggregate functions
+     * ({@link io.questdb.griffin.engine.functions.GroupByFunction})
+     * it means write thread-safety, i.e. whether it's safe to use single function
+     * instance concurrently to aggregate across multiple threads.
+     * <p>
+     * If the function is not read thread-safe, it gets cloned for each worker thread.
+     *
+     * @return true if the function and all of its children functions are thread-safe
+     */
+    default boolean isThreadSafe() {
         return false;
     }
 
