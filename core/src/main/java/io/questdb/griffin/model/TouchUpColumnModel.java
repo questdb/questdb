@@ -97,6 +97,10 @@ public class TouchUpColumnModel implements Mutable {
         this.columnName = columnName;
     }
 
+    public void setColumnType(int columnType) {
+        this.columnType = columnType;
+    }
+
     public void setIndexed(int indexColumnPosition, int indexValueBlockSize) {
         indexedFlag = true;
         this.indexColumnPos = indexColumnPosition;

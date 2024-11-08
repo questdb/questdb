@@ -238,13 +238,8 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             int from = metadata.getColumnType(index);
             int to = touchUp.getColumnType();
             if (to == ColumnType.UNDEFINED) {
-                continue;
-            }
-            if (isCompatibleCast(from, to)) {
-                int modelColumnIndex = getColumnIndex(columnName);
-                if (!ColumnType.isSymbol(to) && isIndexed(modelColumnIndex)) {
-                    throw SqlException.$(touchUp.getColumnTypePos(), "indexes are supported only for SYMBOL columns: ").put(columnName);
-                }
+                touchUp.setColumnType(from);
+            } else if (isCompatibleCast(from, to)) {
                 typeCasts.put(index, to);
             } else {
                 throw SqlException.unsupportedCast(touchUp.getColumnTypePos(), columnName, from, to);
