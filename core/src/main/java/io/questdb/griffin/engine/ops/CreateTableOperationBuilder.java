@@ -304,6 +304,19 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         this.walEnabled = walEnabled;
     }
 
+    public void symbolCacheFlag(boolean cached) {
+        int last = columnBits.size() - 1;
+        assert last > 0;
+        assert ColumnType.isSymbol(getLowAt(last - 1));
+        int flags = getLowAt(last);
+        if (cached) {
+            flags |= COLUMN_FLAG_CACHED;
+        } else {
+            flags &= ~COLUMN_FLAG_CACHED;
+        }
+        columnBits.setQuick(last, Numbers.encodeLowHighInts(flags, getHighAt(last)));
+    }
+
     public void symbolCapacity(int capacity) {
         final int pos = columnBits.size() - 2;
         assert pos > -1;
@@ -430,19 +443,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             flags &= ~COLUMN_FLAG_INDEXED;
         }
         columnBits.setQuick(index, Numbers.encodeLowHighInts(flags, Numbers.ceilPow2(indexValueBlockSize)));
-    }
-
-    public void updateSymbolCacheFlagOfCurrentLastColumn(boolean cached) {
-        int last = columnBits.size() - 1;
-        assert last > 0;
-        assert ColumnType.isSymbol(getLowAt(last - 1));
-        int flags = getLowAt(last);
-        if (cached) {
-            flags |= COLUMN_FLAG_CACHED;
-        } else {
-            flags &= ~COLUMN_FLAG_CACHED;
-        }
-        columnBits.setQuick(last, Numbers.encodeLowHighInts(flags, getHighAt(last)));
     }
 
     private static boolean isCompatibleCast(int from, int to) {
