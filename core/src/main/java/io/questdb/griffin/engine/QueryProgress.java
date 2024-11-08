@@ -70,7 +70,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     }
 
     public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos, boolean jit) {
-        LOG.infoW()
+        LOG.info()
                 .$("fin [id=").$(sqlId)
                 .$(", sql=`").utf8(sqlText).$('`')
                 .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
@@ -88,7 +88,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             long beginNanos,
             boolean jit
     ) {
-        // Extract all the varaibles before the call to call LOG.errorW() to avoid exception
+        // Extract all the variables before the call to call LOG.errorW() to avoid exception
         // causing log sequence leaks.
         long queryTime = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
         CharSequence principal = executionContext.getSecurityContext().getPrincipal();
@@ -98,6 +98,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             final int pos = ((FlyweightMessageContainer) e).getPosition();
             final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
             final CharSequence message = ((FlyweightMessageContainer) e).getFlyweightMessage();
+            // We need guaranteed logging for errors, hence errorW() call.
             LOG.errorW()
                     .$("err")
                     .$(" [id=").$(sqlId)
@@ -141,8 +142,8 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             SqlExecutionContext executionContext,
             boolean jit
     ) {
-        if (executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe())
-            LOG.infoW()
+        if (executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe()) {
+            LOG.info()
                     .$("exe")
                     .$(" [id=").$(sqlId)
                     .$(", sql=`").utf8(sqlText).$('`')
@@ -150,6 +151,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                     .$(", cache=").$(executionContext.isCacheHit())
                     .$(", jit=").$(jit)
                     .I$();
+        }
     }
 
     @Override
