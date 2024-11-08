@@ -85,11 +85,11 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     }
 
     public CreateTableOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        tableNameExpr.token = Chars.toString(tableNameExpr.token);
         if (queryModel != null) {
             setFactory(compiler.generateSelectWithRetries(queryModel, sqlExecutionContext, false));
             return new CreateTableOperation(
-                    Chars.toString(tableNameExpr.token),
-                    tableNameExpr.position,
+                    tableNameExpr,
                     Chars.toString(volumeAlias),
                     ignoreIfExists,
                     batchSize,
@@ -108,8 +108,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                 throw SqlException.tableDoesNotExist(this.likeTableName.position, this.likeTableName.token);
             }
             return new CreateTableOperation(
-                    Chars.toString(tableNameExpr.token),
-                    tableNameExpr.position,
+                    tableNameExpr,
                     Chars.toString(volumeAlias),
                     likeTableNameToken.getTableName(),
                     likeTableName.position,
@@ -118,8 +117,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         }
 
         return new CreateTableOperation(
-                Chars.toString(tableNameExpr.token),
-                tableNameExpr.position,
+                tableNameExpr,
                 Chars.toString(volumeAlias),
                 ignoreIfExists,
                 columnNames,

@@ -11,6 +11,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.TouchUpColumnModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.*;
@@ -37,14 +38,13 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     private final LongList columnBits = new LongList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
+    private final boolean ignoreIfExists;
     private final String likeTableName;
     // position of the "like" table name in the SQL text, for error reporting
     private final int likeTableNamePosition;
-    private final String tableName;
-    private final int tableNamePosition;
+    private final ExpressionNode tableNameExpr;
     private final String volumeAlias;
     private int defaultSymbolCapacity = -1;
-    private boolean ignoreIfExists;
     private int maxUncommittedRows;
     private long o3MaxLag;
     private int partitionBy;
@@ -53,15 +53,13 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     private boolean walEnabled;
 
     public CreateTableOperation(
-            String tableName,
-            int tableNamePosition,
+            ExpressionNode tableNameExpr,
             String volumeAlias,
             String likeTableName,
             int likeTableNamePosition,
             boolean ignoreIfExists
     ) {
-        this.tableName = tableName;
-        this.tableNamePosition = tableNamePosition;
+        this.tableNameExpr = tableNameExpr;
         this.volumeAlias = volumeAlias;
         this.likeTableName = likeTableName;
         this.likeTableNamePosition = likeTableNamePosition;
@@ -72,8 +70,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     }
 
     public CreateTableOperation(
-            String tableName,
-            int tableNamePosition,
+            ExpressionNode tableNameExpr,
             String volumeAlias,
             boolean ignoreIfExists,
             ObjList<String> columnNames,
@@ -84,8 +81,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             int maxUncommittedRows,
             boolean walEnabled
     ) {
-        this.tableName = tableName;
-        this.tableNamePosition = tableNamePosition;
+        this.tableNameExpr = tableNameExpr;
         this.volumeAlias = volumeAlias;
         this.ignoreIfExists = ignoreIfExists;
         this.maxUncommittedRows = maxUncommittedRows;
@@ -104,8 +100,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     }
 
     public CreateTableOperation(
-            String tableName,
-            int tableNamePosition,
+            ExpressionNode tableNameExpr,
             String volumeAlias,
             boolean ignoreIfExists,
             long batchSize,
@@ -114,8 +109,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             RecordCursorFactory recordCursorFactory,
             @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap
     ) throws SqlException {
-        this.tableName = tableName;
-        this.tableNamePosition = tableNamePosition;
+        this.tableNameExpr = tableNameExpr;
         this.volumeAlias = volumeAlias;
         this.ignoreIfExists = ignoreIfExists;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
@@ -254,20 +248,16 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
 
     @Override
     public CharSequence getTableName() {
-        return tableName;
+        return tableNameExpr.token;
     }
 
     public int getTableNamePosition() {
-        return tableNamePosition;
+        return tableNameExpr.position;
     }
 
     @Override
     public int getTimestampIndex() {
         return timestampIndex;
-    }
-
-    public IntIntHashMap getTypeCasts() {
-        return null;
     }
 
     public CharSequence getVolumeAlias() {
