@@ -1533,6 +1533,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.bumpTruncateVersion();
 
                 columnVersionWriter.removePartition(timestamp);
+
                 columnVersionWriter.commit();
 
                 txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -4851,10 +4852,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean dropPartitionByExactTimestamp(long timestamp) {
-        final long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
-        final long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
+        final long minTimestamp = txWriter.getMinTimestamp(); // table min timestamp
+        final long maxTimestamp = txWriter.getMaxTimestamp(); // table max timestamp
 
-        timestamp = txWriter.getPartitionTimestampByTimestamp(timestamp);
         final int index = txWriter.getPartitionIndex(timestamp);
         if (index < 0) {
             LOG.error().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestamp).I$();
@@ -4888,11 +4888,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            columnVersionWriter.removePartition(timestamp);
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
+            columnVersionWriter.removePartition(timestamp);
+            columnVersionWriter.replaceInitialPartitionRecords(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
 
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -4922,13 +4923,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 nextMinTimestamp = readMinTimestamp(txWriter.getPartitionTimestampByIndex(1));
             }
 
-            columnVersionWriter.removePartition(timestamp);
-
             txWriter.beginPartitionSizeUpdate();
             txWriter.removeAttachedPartitions(timestamp);
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
             txWriter.bumpTruncateVersion();
+            columnVersionWriter.removePartition(timestamp);
 
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -7819,7 +7819,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 txWriter.removeAttachedPartitions(sourcePartition);
-                columnVersionWriter.removePartition(sourcePartition);
+                columnVersionWriter.squashPartition(targetPartition, sourcePartition);
                 partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
                 if (sourcePartition == minSplitPartitionTimestamp) {
                     minSplitPartitionTimestamp = getPartitionTimestampOrMax(targetPartitionIndex + 1);

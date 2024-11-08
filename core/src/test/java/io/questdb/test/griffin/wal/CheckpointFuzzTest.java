@@ -29,11 +29,22 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -69,11 +80,12 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0,
                 0,
                 0,
+                0,
                 1,
+                0.0,
                 0,
-                0.5,
                 0,
-                0
+                0.5
         );
 
         fuzzer.setFuzzCounts(
@@ -108,11 +120,12 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 0,
                 0,
                 0,
-                0.1,
                 0,
-                0.5,
+                0.1,
+                0.0,
+                0,
                 1,
-                0
+                0.5
         );
 
         fuzzer.setFuzzCounts(
@@ -245,10 +258,10 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 rnd.nextDouble(),
-                0.1 * rnd.nextDouble(),
-                0.01,
                 rnd.nextDouble(),
-                rnd.nextDouble()
+                0.0,
+                0.1 * rnd.nextDouble(),
+                rnd.nextDouble(), 0.01
         );
 
         fuzzer.setFuzzCounts(
