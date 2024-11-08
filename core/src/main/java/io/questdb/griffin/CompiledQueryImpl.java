@@ -223,7 +223,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     public void ofEmpty() {
-        of(EMPTY, new EmptyTableRecordCursorFactory(EmptyRecordMetadata.INSTANCE), null);
+        of(EMPTY, new EmptyTableRecordCursorFactory(EmptyRecordMetadata.INSTANCE));
     }
 
     public void ofExplain(RecordCursorFactory recordCursorFactory) {

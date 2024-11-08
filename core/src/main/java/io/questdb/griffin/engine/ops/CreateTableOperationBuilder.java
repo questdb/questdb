@@ -90,6 +90,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             setFactory(compiler.generateSelectWithRetries(queryModel, sqlExecutionContext, false));
             return new CreateTableOperation(
                     tableNameExpr,
+                    getPartitionByExpr(),
                     Chars.toString(volumeAlias),
                     ignoreIfExists,
                     timestampExpr,
@@ -111,6 +112,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             }
             return new CreateTableOperation(
                     tableNameExpr,
+                    getPartitionByExpr(),
                     Chars.toString(volumeAlias),
                     likeTableNameToken.getTableName(),
                     likeTableNameExpr.position,
@@ -120,12 +122,12 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
         return new CreateTableOperation(
                 tableNameExpr,
+                getPartitionByExpr(),
                 Chars.toString(volumeAlias),
                 ignoreIfExists,
                 columnNames,
                 columnBits,
                 timestampExpr,
-                getPartitionByExpr(),
                 o3MaxLag,
                 maxUncommittedRows,
                 walEnabled

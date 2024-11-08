@@ -295,7 +295,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, long opts) {
-                    if (Utf8s.containsAscii(name, "str2.i") && count.incrementAndGet() == 14) {
+                    if (Utf8s.containsAscii(name, "str2.i") && count.incrementAndGet() == 2) {
                         return -1;
                     }
                     return super.openRW(name, opts);

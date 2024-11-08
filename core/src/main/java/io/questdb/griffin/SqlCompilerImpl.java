@@ -49,7 +49,6 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableNameRegistryStore;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -58,6 +57,7 @@ import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -75,11 +75,13 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyFactory;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.DropOperation;
+import io.questdb.griffin.engine.ops.DropOperationBuilder;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.griffin.model.ColumnCastModel;
 import io.questdb.griffin.model.CopyModel;
-import io.questdb.griffin.model.CreateTableModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -518,7 +520,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     .put(createTableOp.getLikeTableName()).put(']');
                         }
 
-                        try (TableMetadata likeTableMetadata = executionContext.getMetadataForRead(likeTableToken)) {
+                        try (TableMetadata likeTableMetadata = executionContext.getMetadataForWrite(likeTableToken)) {
                             createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
                             tableToken = engine.createTable(
                                     executionContext.getSecurityContext(),

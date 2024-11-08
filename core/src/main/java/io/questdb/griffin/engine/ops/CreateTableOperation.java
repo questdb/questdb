@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -41,7 +40,6 @@ import io.questdb.griffin.model.TouchUpColumnModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.IntIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -83,19 +81,21 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     private int defaultSymbolCapacity = -1;
     private int maxUncommittedRows;
     private long o3MaxLag;
-    private int partitionBy = PartitionBy.NONE;
+    private int partitionBy;
     private RecordCursorFactory recordCursorFactory;
     private int timestampIndex;
     private boolean walEnabled;
 
     public CreateTableOperation(
             ExpressionNode tableNameExpr,
+            int partitionBy,
             String volumeAlias,
             String likeTableName,
             int likeTableNamePosition,
             boolean ignoreIfExists
     ) {
         this.tableNameExpr = tableNameExpr;
+        this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
         this.likeTableName = likeTableName;
         this.likeTableNamePosition = likeTableNamePosition;
@@ -111,23 +111,23 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
 
     public CreateTableOperation(
             ExpressionNode tableNameExpr,
+            int partitionBy,
             String volumeAlias,
             boolean ignoreIfExists,
             ObjList<String> columnNames,
             LongList columnBits,
             ExpressionNode timestampExpr,
-            int partitionBy,
             long o3MaxLag,
             int maxUncommittedRows,
             boolean walEnabled
     ) {
         this.tableNameExpr = tableNameExpr;
+        this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
         this.ignoreIfExists = ignoreIfExists;
         this.columnNames.addAll(columnNames);
         this.columnBits.add(columnBits);
         this.timestampExpr = timestampExpr;
-        this.partitionBy = partitionBy;
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.walEnabled = walEnabled;
@@ -143,6 +143,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
 
     public CreateTableOperation(
             ExpressionNode tableNameExpr,
+            int partitionBy,
             String volumeAlias,
             boolean ignoreIfExists,
             ExpressionNode timestampExpr,
@@ -154,6 +155,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap
     ) throws SqlException {
         this.tableNameExpr = tableNameExpr;
+        this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
         this.ignoreIfExists = ignoreIfExists;
         this.timestampExpr = timestampExpr;
