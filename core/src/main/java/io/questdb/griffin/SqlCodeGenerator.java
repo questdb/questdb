@@ -4910,7 +4910,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadata.isSymbolTableStatic(columnIndex),
                             metadata.getMetadata(columnIndex),
                             -1,
-                            metadata.isDedupKey(columnIndex),
+                            false,
                             0,
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
                             metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
