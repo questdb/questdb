@@ -239,6 +239,9 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             }
             int from = metadata.getColumnType(index);
             int to = touchUp.getColumnType();
+            if (to == ColumnType.UNDEFINED) {
+                continue;
+            }
             if (isCompatibleCase(from, to)) {
                 int modelColumnIndex = getColumnIndex(columnName);
                 if (!ColumnType.isSymbol(to) && isIndexed(modelColumnIndex)) {
