@@ -135,8 +135,9 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             if (touchUpModel.isIndexed()) {
                 // perform some basic validation
                 if (touchUpModel.getColumnType() != ColumnType.SYMBOL) {
-                    throw SqlException.$(touchUpModel.getIndexColumnPos(), "index flag cannot be applied to ")
-                            .put(ColumnType.nameOf(touchUpModel.getColumnType()));
+                    throw SqlException
+                            .$(touchUpModel.getIndexColumnPos(), "indexes are supported only for SYMBOL columns: ")
+                            .put(columnName);
                 }
             }
             String columnNameStr = Chars.toString(columnName);
@@ -241,7 +242,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     @Override
     public int getSymbolCapacity(int index) {
         int capacity = getHighAt(index * 2);
-        assert capacity != -1;
+        assert capacity != -1 : "Symbol capacity is not set";
         return capacity;
     }
 

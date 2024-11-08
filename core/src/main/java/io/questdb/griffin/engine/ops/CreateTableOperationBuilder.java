@@ -233,8 +233,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             // the only reason why columns cannot be found at this stage is
             // concurrent table modification of table structure
             if (index == -1) {
-                // Cast isn't going to go away when we reparse SQL. We must make this
-                // permanent error
                 throw SqlException.invalidColumn(touchUp.getColumnNamePos(), columnName);
             }
             int from = metadata.getColumnType(index);
