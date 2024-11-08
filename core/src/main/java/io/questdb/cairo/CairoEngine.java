@@ -1759,7 +1759,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
                             // get symbol properties
                             column.setSymbolCapacity(offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY));
-                            assert column.getSymbolCapacity() > 0;
+                            assert column.getSymbolCapacity() > 0 : "Invalid symbol capacity: " + column.getSymbolCapacity();
 
                             column.setSymbolCached(offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED));
                         }
