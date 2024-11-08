@@ -95,7 +95,6 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(ff, () -> {
             int size = rnd.nextInt(16 * 1024 * 1024);
             node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "100G");
 
             String tableName = testName.getMethodName();
             TableToken tableToken = fuzzer.createInitialTable(tableName, true, 100);

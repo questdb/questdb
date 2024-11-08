@@ -134,12 +134,6 @@ public class FuzzTransactionGenerator {
             aggregateProbability += probabilityOfDropPartition;
             boolean wantToDropPartition = !wantSomething && rndDouble < aggregateProbability;
 
-//            System.out.printf(
-//                    "  add remov renam chtyp trunc  drop\n%5s %5s %5s %5s %5s %5s\n",
-//                    wantToAddNewColumn, wantToRemoveColumn, wantToRenameColumn, wantToChangeColumnType,
-//                    wantToTruncateTable, wantToDropPartition
-//            );
-
             if (wantToRemoveColumn) {
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {

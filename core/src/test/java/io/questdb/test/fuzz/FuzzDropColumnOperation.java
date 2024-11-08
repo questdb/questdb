@@ -38,7 +38,7 @@ public class FuzzDropColumnOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
+    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
         AlterOperation alterOp = new AlterOperationBuilder().ofDropColumn(
                 0,
                 wApi.getTableToken(),

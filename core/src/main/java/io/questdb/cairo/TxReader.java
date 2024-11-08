@@ -429,10 +429,10 @@ public class TxReader implements Closeable, Mutable {
         StringSink sink = new StringSink();
         sink.put("{");
         sink.put("txn: ").put(txn);
-        sink.put(", attachedPartitions: [");
+        sink.put(", attachedPartitions: [\n");
         for (int i = 0; i < attachedPartitions.size(); i += LONGS_PER_TX_ATTACHED_PARTITION) {
             long timestamp = getPartitionTimestampByIndex(i / LONGS_PER_TX_ATTACHED_PARTITION);
-            long rowCount = getPartitionSizeByRawIndex(i);
+            long rowCount = attachedPartitions.getQuick(i + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
 
             if (i / LONGS_PER_TX_ATTACHED_PARTITION == getPartitionIndex(maxTimestamp)) {
                 rowCount = transientRowCount;
@@ -444,9 +444,9 @@ public class TxReader implements Closeable, Mutable {
             if (i > 0) {
                 sink.put(",");
             }
-            sink.put("\n{ts: ");
+            sink.put("\n{ts: '");
             TimestampFormatUtils.appendDateTime(sink, timestamp);
-            sink.put(", rowCount: ").put(rowCount);
+            sink.put("', rowCount: ").put(rowCount);
             sink.put(", nameTxn: ").put(nameTxn);
             if (isPartitionParquet(i / LONGS_PER_TX_ATTACHED_PARTITION)) {
                 sink.put(", parquetSize: ").put(parquetSize);
@@ -458,11 +458,11 @@ public class TxReader implements Closeable, Mutable {
         }
         sink.put("\n], transientRowCount: ").put(transientRowCount);
         sink.put(", fixedRowCount: ").put(fixedRowCount);
-        sink.put(", minTimestamp: ");
+        sink.put(", minTimestamp: '");
         TimestampFormatUtils.appendDateTime(sink, minTimestamp);
-        sink.put(", maxTimestamp: ");
+        sink.put("', maxTimestamp: '");
         TimestampFormatUtils.appendDateTime(sink, maxTimestamp);
-        sink.put(", dataVersion: ").put(dataVersion);
+        sink.put("', dataVersion: ").put(dataVersion);
         sink.put(", structureVersion: ").put(structureVersion);
         sink.put(", partitionTableVersion: ").put(partitionTableVersion);
         sink.put(", columnVersion: ").put(columnVersion);
@@ -470,11 +470,11 @@ public class TxReader implements Closeable, Mutable {
         sink.put(", seqTxn: ").put(seqTxn);
         sink.put(", symbolColumnCount: ").put(symbolColumnCount);
         sink.put(", lagRowCount: ").put(lagRowCount);
-        sink.put(", lagMinTimestamp: ");
+        sink.put(", lagMinTimestamp: '");
         TimestampFormatUtils.appendDateTime(sink, lagMinTimestamp);
-        sink.put(", lagMaxTimestamp: ");
+        sink.put("', lagMaxTimestamp: '");
         TimestampFormatUtils.appendDateTime(sink, lagMaxTimestamp);
-        sink.put(", lagTxnCount: ").put(lagTxnCount);
+        sink.put("', lagTxnCount: ").put(lagTxnCount);
         sink.put(", lagOrdered: ").put(lagOrdered);
         sink.put("}");
         return sink.toString();

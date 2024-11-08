@@ -311,7 +311,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 sink.put("'}");
             } else {
                 sink.put("nameTxn: ").put(columnNameTxn).put(", ");
-                sink.put("partition: ");
+                sink.put("partition: '");
                 TimestampFormatUtils.appendDateTime(sink, timestamp);
                 sink.put("', ");
                 sink.put("columnTop: ").put(columnTop).put("}");

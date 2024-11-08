@@ -1533,6 +1533,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.bumpTruncateVersion();
 
                 columnVersionWriter.removePartition(timestamp);
+
                 columnVersionWriter.commit();
 
                 txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -7834,7 +7835,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 assert txWriter.fixedRowCount >= 0;
                 txWriter.transientRowCount = newTransientRowCount;
             }
-            columnVersionWriter.replaceInitialPartitionRecords(txWriter.getLastPartitionTimestamp(), txWriter.transientRowCount);
         } finally {
             Misc.free(targetFrame);
             path.trimTo(pathSize);
@@ -8207,11 +8207,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Remove column tops for the new partition part.
                         columnVersionWriter.removeColumnTop(partitionTimestamp, column);
                     }
-//                    else {
-//                        int recordIndex = columnVersionWriter.getRecordIndex(partitionTimestamp, column);
-//                        long savedColTop = columnVersionWriter.getColumnTopByIndexOrDefault(recordIndex, partitionTimestamp, column, Long.MAX_VALUE);
-//                        assert colTop == savedColTop || (colTop == -1 && savedColTop == 0);
-//                    }
                 }
             }
         }
