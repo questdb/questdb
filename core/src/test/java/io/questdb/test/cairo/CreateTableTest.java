@@ -98,7 +98,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectIndexUnsupportedColumnType() throws Exception {
-        assertFailure(
+        assertUnsupportedIndexType(
                 "CREATE TABLE tab AS (" +
                         "SELECT x FROM long_sequence(1)" +
                         "), INDEX(x)",
@@ -108,7 +108,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectIndexUnsupportedColumnTypeAfterCast() throws Exception {
-        assertFailure(
+        assertUnsupportedIndexType(
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as STRING) x FROM long_sequence(1)" +
                         "), INDEX(x)",
@@ -118,7 +118,7 @@ public class CreateTableTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableAsSelectIndexUnsupportedColumnTypeAfterCast2() throws Exception {
-        assertFailure(
+        assertUnsupportedIndexType(
                 "CREATE TABLE tab AS (" +
                         "SELECT CAST(x as SYMBOL) x FROM long_sequence(1)" +
                         "), CAST(x as STRING), INDEX(x)",
@@ -716,18 +716,6 @@ public class CreateTableTest extends AbstractCairoTest {
         });
     }
 
-    private void assertFailure(String sql, int position) throws Exception {
-        assertMemoryLeak(() -> {
-            try {
-                ddl(sql, sqlExecutionContext);
-                fail();
-            } catch (SqlException e) {
-                assertEquals(position, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "indexes are supported only for SYMBOL columns: x");
-            }
-        });
-    }
-
     private void assertPartitionAndTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             try (TableReader reader = engine.getReader("tab")) {
@@ -749,6 +737,18 @@ public class CreateTableTest extends AbstractCairoTest {
                 if (parameters.indexBlockCapacity != null) {
                     assertEquals(parameters.indexBlockCapacity.intValue(), reader.getMetadata().getIndexValueBlockCapacity(1));
                 }
+            }
+        });
+    }
+
+    private void assertUnsupportedIndexType(String sql, int position) throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                ddl(sql, sqlExecutionContext);
+                fail();
+            } catch (SqlException e) {
+                assertEquals(position, e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "indexes are supported only for SYMBOL columns: x");
             }
         });
     }
@@ -816,4 +816,3 @@ public class CreateTableTest extends AbstractCairoTest {
         }
     }
 }
-

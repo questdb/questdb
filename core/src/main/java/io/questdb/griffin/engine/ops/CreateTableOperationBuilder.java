@@ -220,33 +220,33 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     public void setFactory(RecordCursorFactory factory) throws SqlException {
         this.recordCursorFactory = factory;
         final RecordMetadata metadata = factory.getMetadata();
-        CharSequenceObjHashMap<TouchUpColumnModel> castModels = touchUpColumnModels;
-        ObjList<CharSequence> castColumnNames = castModels.keys();
+        CharSequenceObjHashMap<TouchUpColumnModel> touchUpModels = touchUpColumnModels;
+        ObjList<CharSequence> touchUpColumnNames = touchUpModels.keys();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             columnNameIndexMap.put(metadata.getColumnName(i), i);
         }
 
-        for (int i = 0, n = castColumnNames.size(); i < n; i++) {
-            CharSequence columnName = castColumnNames.getQuick(i);
+        for (int i = 0, n = touchUpColumnNames.size(); i < n; i++) {
+            CharSequence columnName = touchUpColumnNames.getQuick(i);
             int index = metadata.getColumnIndexQuiet(columnName);
-            TouchUpColumnModel ccm = castModels.get(columnName);
+            TouchUpColumnModel touchUp = touchUpModels.get(columnName);
             // the only reason why columns cannot be found at this stage is
             // concurrent table modification of table structure
             if (index == -1) {
                 // Cast isn't going to go away when we reparse SQL. We must make this
                 // permanent error
-                throw SqlException.invalidColumn(ccm.getColumnNamePos(), columnName);
+                throw SqlException.invalidColumn(touchUp.getColumnNamePos(), columnName);
             }
             int from = metadata.getColumnType(index);
-            int to = ccm.getColumnType();
+            int to = touchUp.getColumnType();
             if (isCompatibleCase(from, to)) {
                 int modelColumnIndex = getColumnIndex(columnName);
                 if (!ColumnType.isSymbol(to) && isIndexed(modelColumnIndex)) {
-                    throw SqlException.$(ccm.getColumnTypePos(), "indexes are supported only for SYMBOL columns: ").put(columnName);
+                    throw SqlException.$(touchUp.getColumnTypePos(), "indexes are supported only for SYMBOL columns: ").put(columnName);
                 }
                 typeCasts.put(index, to);
             } else {
-                throw SqlException.unsupportedCast(ccm.getColumnTypePos(), columnName, from, to);
+                throw SqlException.unsupportedCast(touchUp.getColumnTypePos(), columnName, from, to);
             }
         }
     }
