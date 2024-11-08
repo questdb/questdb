@@ -242,7 +242,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             if (to == ColumnType.UNDEFINED) {
                 continue;
             }
-            if (isCompatibleCase(from, to)) {
+            if (isCompatibleCast(from, to)) {
                 int modelColumnIndex = getColumnIndex(columnName);
                 if (!ColumnType.isSymbol(to) && isIndexed(modelColumnIndex)) {
                     throw SqlException.$(touchUp.getColumnTypePos(), "indexes are supported only for SYMBOL columns: ").put(columnName);
@@ -447,7 +447,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         columnBits.setQuick(last, Numbers.encodeLowHighInts(flags, getHighAt(last)));
     }
 
-    private static boolean isCompatibleCase(int from, int to) {
+    private static boolean isCompatibleCast(int from, int to) {
         if (isIPv4Cast(from, to)) {
             return true;
         }
