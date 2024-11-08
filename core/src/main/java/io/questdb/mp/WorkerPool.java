@@ -209,12 +209,9 @@ public class WorkerPool implements Closeable {
         long max = workerMetrics.getMaxElapsedMicros();
         for (int i = 0, n = workers.size(); i < n; i++) {
             long elapsed = now - workers.getQuick(i).getJobStartMicros();
-            if (elapsed > 0L) {
-                if (elapsed < min) {
-                    min = elapsed;
-                } else if (elapsed > max) {
-                    max = elapsed;
-                }
+            if (elapsed > 0) {
+                min = Math.min(min, elapsed);
+                max = Math.max(max, elapsed);
             }
         }
         workerMetrics.update(min, max);
