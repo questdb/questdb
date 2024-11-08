@@ -85,7 +85,7 @@ public interface LineTcpReceiverConfiguration {
 
     NetworkFacade getNetworkFacade();
 
-    long getSymbolCacheWaitUsBeforeReload();
+    long getSymbolCacheWaitBeforeReload();
 
     LineTcpTimestampAdapter getTimestampAdapter();
 

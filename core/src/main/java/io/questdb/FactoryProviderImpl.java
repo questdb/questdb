@@ -42,19 +42,14 @@ public class FactoryProviderImpl implements FactoryProvider {
     private final DefaultWalJobFactory defaultWalJobFactory = new DefaultWalJobFactory();
     private final HttpAuthenticatorFactory httpAuthenticatorFactory;
     private final LineAuthenticatorFactory lineAuthenticatorFactory;
-    private final SecurityContextFactory securityContextFactory;
     private final PgWireAuthenticatorFactory pgWireAuthenticatorFactory;
+    private final SecurityContextFactory securityContextFactory;
 
     public FactoryProviderImpl(ServerConfiguration configuration) {
         this.lineAuthenticatorFactory = ServerMain.getLineAuthenticatorFactory(configuration);
         this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
         this.pgWireAuthenticatorFactory = new DefaultPgWireAuthenticatorFactory(configuration);
         this.httpAuthenticatorFactory = ServerMain.getHttpAuthenticatorFactory(configuration);
-    }
-
-    @Override
-    public PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
-        return pgWireAuthenticatorFactory;
     }
 
     @Override
@@ -95,6 +90,11 @@ public class FactoryProviderImpl implements FactoryProvider {
     @Override
     public @NotNull SocketFactory getPGWireSocketFactory() {
         return PlainSocketFactory.INSTANCE;
+    }
+
+    @Override
+    public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
+        return pgWireAuthenticatorFactory;
     }
 
     @Override

@@ -30,9 +30,13 @@
 #include <winbase.h>
 #include <direct.h>
 #include <stdint.h>
+#include <windows.h>
 #include "../share/files.h"
 #include "errno.h"
 #include "files.h"
+
+#include <stdio.h>
+#include <ntdef.h>
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
         (JNIEnv *e, jclass cls, jlong lpszFrom, jlong lpszTo) {
@@ -461,6 +465,10 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_softLink(JNIEnv *e, jclass cl, 
     SaveLastError();
     return -1;
 }
+
+// JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_isDir(JNIEnv *e, jclass cl, jlong lpszName) {
+//     See Rust implementation in `files.rs`.
+// }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_unlink(JNIEnv *e, jclass cl, jlong lpszSoftLink) {
     // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-deletefile
