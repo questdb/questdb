@@ -135,7 +135,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             if (touchUpModel.isIndexed()) {
                 // perform some basic validation
                 if (touchUpModel.getColumnType() != ColumnType.SYMBOL) {
-                    throw SqlException.$(touchUpModel.getIndexClausePosition(), "index flag cannot be applied to ")
+                    throw SqlException.$(touchUpModel.getIndexColumnPos(), "index flag cannot be applied to ")
                             .put(ColumnType.nameOf(touchUpModel.getColumnType()));
                 }
             }

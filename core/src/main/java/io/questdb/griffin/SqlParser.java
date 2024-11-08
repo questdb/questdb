@@ -847,17 +847,16 @@ public class SqlParser {
                 capacityPosition = -1;
             }
 
-            final boolean cached;
+            final boolean isCached;
             if (isNoCacheKeyword(tok)) {
-                cached = false;
+                isCached = false;
             } else if (isCacheKeyword(tok)) {
-                cached = true;
+                isCached = true;
             } else {
-                cached = configuration.getDefaultSymbolCacheFlag();
+                isCached = configuration.getDefaultSymbolCacheFlag();
                 lexer.unparseLast();
             }
-
-            touchUpModel.setSymbolCacheFlag(cached);
+            touchUpModel.setSymbolCacheFlag(isCached);
 
             if (cached && symbolCapacity != -1) {
                 assert capacityPosition != -1;

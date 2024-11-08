@@ -34,7 +34,7 @@ public class TouchUpColumnModel implements Mutable {
     private int columnNamePos;
     private int columnType = ColumnType.UNDEFINED;
     private int columnTypePos;
-    private int indexClausePosition;
+    private int indexColumnPos;
     private int indexValueBlockSize;
     private boolean indexedFlag;
     private boolean symbolCacheFlag;
@@ -64,8 +64,8 @@ public class TouchUpColumnModel implements Mutable {
         return columnTypePos;
     }
 
-    public int getIndexClausePosition() {
-        return indexClausePosition;
+    public int getIndexColumnPos() {
+        return indexColumnPos;
     }
 
     public int getIndexValueBlockSize() {
@@ -88,9 +88,9 @@ public class TouchUpColumnModel implements Mutable {
         this.columnName = columnName;
     }
 
-    public void setIndexed(int indexClausePosition, int indexValueBlockSize) {
+    public void setIndexed(int indexColumnPosition, int indexValueBlockSize) {
         indexedFlag = true;
-        this.indexClausePosition = indexClausePosition;
+        this.indexColumnPos = indexColumnPosition;
         this.indexValueBlockSize = indexValueBlockSize;
     }
 
