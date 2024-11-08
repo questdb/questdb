@@ -32,7 +32,17 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 public interface TableNameRegistry extends Closeable {
+    /**
+     * Table token that is used to lock table name during table drop or rename operation. It is not a valid table token and the
+     * calling code should treat it as table does not exist on queries, table already exists on "create" operations
+     * and table does not exit on "drop" operations.
+     */
     TableToken LOCKED_DROP_TOKEN = new TableToken("__locked_drop__", "__locked_drop__", Integer.MAX_VALUE - 1, false, false, false);
+    /**
+     * Table token that is used to lock table name during table creation. It is not a valid table token and the
+     * calling code should treat it as table does not exist on queries, table name reserved on "create" operations
+     * and table does not exit on "drop" operations.
+     */
     TableToken LOCKED_TOKEN = new TableToken("__locked__", "__locked__", Integer.MAX_VALUE, false, false, false);
 
     static boolean isLocked(TableToken tableToken) {
