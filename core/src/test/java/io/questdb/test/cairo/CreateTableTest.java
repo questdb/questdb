@@ -327,7 +327,7 @@ public class CreateTableTest extends AbstractCairoTest {
             }
 
             if (ref.get() != null) {
-                throw new RuntimeException(ref.get());
+                throw new RuntimeException("One or more parallel tasks failed", ref.get());
             }
         });
     }
