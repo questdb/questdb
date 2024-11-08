@@ -24,20 +24,29 @@
 
 package io.questdb.cutlass.pgwire.modern;
 
+import io.questdb.BuildInformation;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.auth.UsernamePasswordMatcher;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.BadProtocolException;
+import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.OptionsListener;
+import io.questdb.cutlass.pgwire.PGKeywords;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.Socket;
-import io.questdb.std.*;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
@@ -59,6 +68,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
     private static final byte MESSAGE_TYPE_PASSWORD_MESSAGE = 'p';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
+    private final BuildInformation buildInformation;
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
     private final int circuitBreakerId;
@@ -84,6 +94,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
 
     public CleartextPasswordPgWireAuthenticatorModern(
             PGWireConfiguration configuration,
+            BuildInformation buildInformation,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
             OptionsListener optionsListener,
@@ -103,6 +114,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
         this.circuitBreaker = circuitBreaker;
         this.optionsListener = optionsListener;
         this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
+        this.buildInformation = buildInformation;
     }
 
     @Override
@@ -309,6 +321,9 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
         prepareParams(sink, "server_version", serverVersion);
         prepareParams(sink, "integer_datetimes", "on");
         prepareParams(sink, "client_encoding", "UTF8");
+        if (!dumpNetworkTraffic && buildInformation != null) {
+            prepareParams(sink, "questdb_version", buildInformation.getSwVersion());
+        }
         prepareBackendKeyData(sink);
         prepareReadyForQuery();
     }

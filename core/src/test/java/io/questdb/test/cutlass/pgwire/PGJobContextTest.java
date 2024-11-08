@@ -7072,7 +7072,7 @@ nodejs code:
                             ") timestamp (timestamp)"
             );
             try (
-                    final IPGWireServer server = createPGServer(new Port0PGWireConfiguration());
+                    final IPGWireServer server = createPGServer(new Port0PGWireConfiguration(), true);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -8409,6 +8409,17 @@ nodejs code:
                     TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testQuestDBVersionIncludedInStatus() throws Exception {
+        skipOnWalRun(); // no table at all
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            PgConnection pgConnection = connection.unwrap(PgConnection.class);
+            String actualVersion = pgConnection.getParameterStatus("questdb_version");
+            String expectedVersion = configuration.getBuildInformation().getSwVersion();
+            Assert.assertEquals(expectedVersion, actualVersion);
         });
     }
 

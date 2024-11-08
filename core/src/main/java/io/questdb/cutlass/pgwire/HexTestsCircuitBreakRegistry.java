@@ -36,6 +36,10 @@ public final class HexTestsCircuitBreakRegistry implements CircuitBreakerRegistr
     private static final int CLIENT_ID = 63;
     private static final int SECRET = -1148479920;
 
+    private HexTestsCircuitBreakRegistry() {
+        // private
+    }
+
     @Override
     public int add(NetworkSqlExecutionCircuitBreaker cb) {
         return CLIENT_ID;

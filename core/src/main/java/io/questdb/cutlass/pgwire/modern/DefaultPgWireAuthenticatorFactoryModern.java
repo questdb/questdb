@@ -24,12 +24,15 @@
 
 package io.questdb.cutlass.pgwire.modern;
 
+import io.questdb.BuildInformation;
+import io.questdb.BuildInformationHolder;
 import io.questdb.DynamicUsernamePasswordMatcher;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.auth.UsernamePasswordMatcher;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.HexTestsCircuitBreakRegistry;
 import io.questdb.cutlass.pgwire.OptionsListener;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
@@ -37,10 +40,16 @@ import org.jetbrains.annotations.Nullable;
 
 public final class DefaultPgWireAuthenticatorFactoryModern implements PgWireAuthenticatorFactory {
     public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactoryModern(null);
+    private final BuildInformation buildInformation;
     private final ServerConfiguration serverConfiguration;
 
     public DefaultPgWireAuthenticatorFactoryModern(@Nullable ServerConfiguration serverConfiguration) {
         this.serverConfiguration = serverConfiguration;
+        if (serverConfiguration == null) {
+            buildInformation = new BuildInformationHolder();
+        } else {
+            buildInformation = serverConfiguration.getCairoConfiguration().getBuildInformation();
+        }
     }
 
     @Override
@@ -57,8 +66,14 @@ public final class DefaultPgWireAuthenticatorFactoryModern implements PgWireAuth
         // and the authenticator will be responsible for closing them.
         final UsernamePasswordMatcher matcher = new DynamicUsernamePasswordMatcher(serverConfiguration, configuration);
 
+        // HexTestsCircuitBreakRegistry implies we are either recording or replaying a hex test.
+        // In this case, we don't sends build information to the client. Build informations are volatile by nature, we
+        // only record what does not change over time.
+        BuildInformation buildInformationToUse = (registry == HexTestsCircuitBreakRegistry.INSTANCE ? null : buildInformation);
+
         return new CleartextPasswordPgWireAuthenticatorModern(
                 configuration,
+                buildInformationToUse,
                 circuitBreaker,
                 registry,
                 optionsListener,
