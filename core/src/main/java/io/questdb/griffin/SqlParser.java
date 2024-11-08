@@ -538,12 +538,13 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        createTableOperationBuilder.clear();
-        createTableOperationBuilder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
+        CreateTableOperationBuilder builder = createTableOperationBuilder;
+        builder.clear();
+        builder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
         final CharSequence tableName;
         // default to non-atomic, batched, creation
         CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch'");
-        createTableOperationBuilder.setBatchSize(configuration.getInsertModelBatchSize());
+        builder.setBatchSize(configuration.getInsertModelBatchSize());
         boolean atomicSpecified = false;
         boolean batchSpecified = false;
         boolean isCreateAsSelect = false;
@@ -551,7 +552,7 @@ public class SqlParser {
         // if it's a CREATE ATOMIC, we don't accept BATCH
         if (SqlKeywords.isAtomicKeyword(tok)) {
             atomicSpecified = true;
-            createTableOperationBuilder.setBatchSize(-1);
+            builder.setBatchSize(-1);
             expectTok(lexer, "table");
             tok = tok(lexer, "table name or 'if'");
         } else if (SqlKeywords.isBatchKeyword(tok)) {
@@ -559,7 +560,7 @@ public class SqlParser {
 
             long val = expectLong(lexer);
             if (val > 0) {
-                createTableOperationBuilder.setBatchSize(val);
+                builder.setBatchSize(val);
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "batch size must be positive integer");
             }
@@ -567,7 +568,7 @@ public class SqlParser {
             tok = tok(lexer, "table or o3MaxLag");
             if (SqlKeywords.isO3MaxLagKeyword(tok)) {
                 int pos = lexer.getPosition();
-                createTableOperationBuilder.setBatchO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
+                builder.setBatchO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
                 expectTok(lexer, "table");
             }
             tok = tok(lexer, "table name or 'if'");
@@ -579,7 +580,7 @@ public class SqlParser {
 
         if (SqlKeywords.isIfKeyword(tok)) {
             if (SqlKeywords.isNotKeyword(tok(lexer, "'not'")) && SqlKeywords.isExistsKeyword(tok(lexer, "'exists'"))) {
-                createTableOperationBuilder.setIgnoreIfExists(true);
+                builder.setIgnoreIfExists(true);
                 tableName = tok(lexer, "table name");
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
@@ -591,7 +592,7 @@ public class SqlParser {
 
         assertTableNameIsQuotedOrNotAKeyword(tableName, lexer.lastTokenPosition());
 
-        createTableOperationBuilder.setTableNameExpr(nextLiteral(
+        builder.setTableNameExpr(nextLiteral(
                 assertNoDotsAndSlashes(unquote(tableName), lexer.lastTokenPosition()), lexer.lastTokenPosition()
         ));
 
@@ -600,9 +601,9 @@ public class SqlParser {
         if (Chars.equals(tok, '(')) {
             tok = tok(lexer, "like");
             if (isLikeKeyword(tok)) {
-                createTableOperationBuilder.setBatchSize(-1);
+                builder.setBatchSize(-1);
                 parseCreateTableLikeTable(lexer);
-                return createTableOperationBuilder;
+                return builder;
             } else {
                 lexer.unparseLast();
                 parseCreateTableColumns(lexer);
@@ -616,8 +617,8 @@ public class SqlParser {
 
         // if not CREATE ... AS SELECT, make it atomic
         if (!isCreateAsSelect) {
-            createTableOperationBuilder.setBatchSize(-1);
-            createTableOperationBuilder.setBatchO3MaxLag(-1);
+            builder.setBatchSize(-1);
+            builder.setBatchO3MaxLag(-1);
 
             // if we use atomic or batch keywords, then throw an error
             if (atomicSpecified || batchSpecified) {
@@ -638,7 +639,15 @@ public class SqlParser {
 
         ExpressionNode timestamp = parseTimestamp(lexer, tok);
         if (timestamp != null) {
-            createTableOperationBuilder.setTimestampExpr(timestamp);
+            builder.setTimestampExpr(timestamp);
+            if (builder.hasColumnDefs()) {
+                int timestampIndex = builder.getColumnIndex(timestamp.token);
+                if (timestampIndex == -1) {
+                    throw SqlException.position(timestamp.position)
+                            .put("invalid designated timestamp column [name=").put(timestamp.token).put(']');
+                }
+                builder.setTimestampIndex(timestampIndex);
+            }
             tok = optTok(lexer);
         }
 
@@ -646,18 +655,18 @@ public class SqlParser {
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
-            if (createTableOperationBuilder.getTimestampExpr() == null) {
+            if (builder.getTimestampExpr() == null) {
                 throw SqlException.$(partitionBy.position, "partitioning is possible only on tables with designated timestamps");
             }
             if (PartitionBy.fromString(partitionBy.token) == -1) {
                 throw SqlException.$(partitionBy.position, "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
             }
-            createTableOperationBuilder.setPartitionByExpr(partitionBy);
+            builder.setPartitionByExpr(partitionBy);
             tok = optTok(lexer);
 
             if (tok != null) {
                 if (isWalKeyword(tok)) {
-                    if (!PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionByFromExpr())) {
+                    if (!PartitionBy.isPartitioned(builder.getPartitionByFromExpr())) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("WAL Write Mode can only be used on partitioned tables");
                     }
                     walSetting = WAL_ENABLED;
@@ -677,9 +686,9 @@ public class SqlParser {
             }
         }
         final boolean isWalEnabled = configuration.isWalSupported()
-                && PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionByFromExpr())
+                && PartitionBy.isPartitioned(builder.getPartitionByFromExpr())
                 && ((walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED);
-        createTableOperationBuilder.setWalEnabled(isWalEnabled);
+        builder.setWalEnabled(isWalEnabled);
 
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
         long o3MaxLag = configuration.getO3MaxLag();
@@ -714,8 +723,8 @@ public class SqlParser {
                 throw SqlException.position(lexer.getPosition()).put(" expected parameter after WITH");
             }
         }
-        createTableOperationBuilder.setMaxUncommittedRows(maxUncommittedRows);
-        createTableOperationBuilder.setO3MaxLag(o3MaxLag);
+        builder.setMaxUncommittedRows(maxUncommittedRows);
+        builder.setO3MaxLag(o3MaxLag);
 
         if (tok != null && isInKeyword(tok)) {
             tok = tok(lexer, "volume");
@@ -726,12 +735,12 @@ public class SqlParser {
             if (Os.isWindows()) {
                 throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
             }
-            createTableOperationBuilder.setVolumeAlias(unquote(tok));
+            builder.setVolumeAlias(unquote(tok));
             tok = optTok(lexer);
         }
 
         if (tok != null && (isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
-            if (!createTableOperationBuilder.isWalEnabled()) {
+            if (!builder.isWalEnabled()) {
                 throw SqlException.position(lexer.getPosition()).put("deduplication is possible only on WAL tables");
             }
 
@@ -756,14 +765,14 @@ public class SqlParser {
                     validateLiteral(lexer.lastTokenPosition(), tok);
                     final CharSequence columnName = unquote(tok);
 
-                    int colIndex = createTableOperationBuilder.getColumnIndex(columnName);
+                    int colIndex = builder.getColumnIndex(columnName);
                     if (colIndex < 0) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column not found [column=").put(columnName).put(']');
                     }
-                    if (colIndex == createTableOperationBuilder.getTimestampIndex()) {
+                    if (colIndex == builder.getTimestampIndex()) {
                         timestampColumnFound = true;
                     }
-                    createTableOperationBuilder.setDedupKeyFlag(colIndex);
+                    builder.setDedupKeyFlag(colIndex);
 
                     tok = optTok(lexer);
                     if (tok != null && Chars.equals(tok, ',')) {
@@ -782,8 +791,8 @@ public class SqlParser {
         }
 
         boolean expectedTok = tok == null || Chars.equals(tok, ';');
-        sqlParserCallback.createTableExt(lexer, executionContext.getSecurityContext(), createTableOperationBuilder, expectedTok ? null : tok);
-        return createTableOperationBuilder;
+        sqlParserCallback.createTableExt(lexer, executionContext.getSecurityContext(), builder, expectedTok ? null : tok);
+        return builder;
     }
 
     private void parseCreateTableAsSelect(
@@ -884,17 +893,17 @@ public class SqlParser {
                     symbolCapacity = -1;
                 }
 
-                final boolean cached;
+                final boolean cacheFlag;
                 if (isNoCacheKeyword(tok)) {
-                    cached = false;
+                    cacheFlag = false;
                 } else if (isCacheKeyword(tok)) {
-                    cached = true;
+                    cacheFlag = true;
                 } else {
-                    cached = configuration.getDefaultSymbolCacheFlag();
+                    cacheFlag = configuration.getDefaultSymbolCacheFlag();
                     lexer.unparseLast();
                 }
-                createTableOperationBuilder.updateSymbolCacheFlagOfCurrentLastColumn(cached);
-                if (cached && symbolCapacity != -1) {
+                createTableOperationBuilder.symbolCacheFlag(cacheFlag);
+                if (cacheFlag && symbolCapacity != -1) {
                     TableUtils.validateSymbolCapacityCached(true, symbolCapacity, lexer.lastTokenPosition());
                 }
                 tok = parseCreateTableInlineIndexDef(lexer);

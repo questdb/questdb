@@ -69,6 +69,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     private RecordCursorFactory recordCursorFactory;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
+    private int timestampIndex = -1;
     private CharSequence volumeAlias;
     private boolean walEnabled;
 
@@ -144,6 +145,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         touchUpColumnModels.clear();
         queryModel = null;
         timestampExpr = null;
+        timestampIndex = -1;
         partitionByExpr = null;
         likeTableNameExpr = null;
         tableNameExpr = null;
@@ -197,6 +199,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     public CharSequenceObjHashMap<TouchUpColumnModel> getTouchUpColumnModels() {
         return touchUpColumnModels;
+    }
+
+    public boolean hasColumnDefs() {
+        return columnNames.size() > 0;
     }
 
     public boolean isAtomic() {
@@ -301,6 +307,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         this.timestampExpr = expr;
     }
 
+    public void setTimestampIndex(int index) {
+        this.timestampIndex = index;
+    }
+
     public void setVolumeAlias(CharSequence volumeAlias) {
         // set if the "create table" statement contains IN VOLUME 'volumeAlias'.
         // volumePath will be resolved by the compiler
@@ -309,6 +319,19 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     public void setWalEnabled(boolean walEnabled) {
         this.walEnabled = walEnabled;
+    }
+
+    public void symbolCacheFlag(boolean cached) {
+        int last = columnBits.size() - 1;
+        assert last > 0;
+        assert ColumnType.isSymbol(getLowAt(last - 1));
+        int flags = getLowAt(last);
+        if (cached) {
+            flags |= COLUMN_FLAG_CACHED;
+        } else {
+            flags &= ~COLUMN_FLAG_CACHED;
+        }
+        columnBits.setQuick(last, Numbers.encodeLowHighInts(flags, getHighAt(last)));
     }
 
     public void symbolCapacity(int capacity) {
@@ -437,19 +460,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             flags &= ~COLUMN_FLAG_INDEXED;
         }
         columnBits.setQuick(index, Numbers.encodeLowHighInts(flags, Numbers.ceilPow2(indexValueBlockSize)));
-    }
-
-    public void updateSymbolCacheFlagOfCurrentLastColumn(boolean cached) {
-        int last = columnBits.size() - 1;
-        assert last > 0;
-        assert ColumnType.isSymbol(getLowAt(last - 1));
-        int flags = getLowAt(last);
-        if (cached) {
-            flags |= COLUMN_FLAG_CACHED;
-        } else {
-            flags &= ~COLUMN_FLAG_CACHED;
-        }
-        columnBits.setQuick(last, Numbers.encodeLowHighInts(flags, getHighAt(last)));
     }
 
     private static boolean isCompatibleCast(int from, int to) {

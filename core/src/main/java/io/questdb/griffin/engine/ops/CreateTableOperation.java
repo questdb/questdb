@@ -84,7 +84,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     private long o3MaxLag;
     private int partitionBy;
     private RecordCursorFactory recordCursorFactory;
-    private int timestampIndex;
+    private int timestampIndex = -1;
     private boolean walEnabled;
 
     public CreateTableOperation(
@@ -105,7 +105,6 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.ignoreIfExists = ignoreIfExists;
         this.timestampColumnName = null;
         this.timestampColumnNamePosition = 0;
-        this.timestampIndex = -1;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
         // we are not creating table from select
@@ -140,11 +139,11 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.maxUncommittedRows = maxUncommittedRows;
         this.walEnabled = walEnabled;
 
-        this.batchSize = 0;
-        this.batchO3MaxLag = 0;
         this.recordCursorFactory = null;
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
+        this.batchSize = 0;
+        this.batchO3MaxLag = 0;
         // we are not creating table from select
         this.sqlText = null;
     }
