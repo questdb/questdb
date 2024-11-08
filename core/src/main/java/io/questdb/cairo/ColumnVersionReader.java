@@ -300,9 +300,9 @@ public class ColumnVersionReader implements Closeable, Mutable {
             long columnTop = cachedColumnVersionList.getQuick(i + COLUMN_TOP_OFFSET);
 
             if (i > 0) {
-                sink.put(",\n");
+                sink.put(",");
             }
-            sink.put("{columnIndex: ").put(columnIndex).put(", ");
+            sink.put("\n{columnIndex: ").put(columnIndex).put(", ");
             boolean isDefaultPartition = timestamp == COL_TOP_DEFAULT_PARTITION;
             if (isDefaultPartition) {
                 sink.put("defaultNameTxn: ").put(columnNameTxn).put(", ");
@@ -317,7 +317,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 sink.put("columnTop: ").put(columnTop).put("}");
             }
         }
-        sink.put("]}");
+        sink.put("\n]}");
         return sink.toString();
     }
 

@@ -429,7 +429,7 @@ public class TxReader implements Closeable, Mutable {
         StringSink sink = new StringSink();
         sink.put("{");
         sink.put("txn: ").put(txn);
-        sink.put(", attachedPartitions: [\n");
+        sink.put(", attachedPartitions: [");
         for (int i = 0; i < attachedPartitions.size(); i += LONGS_PER_TX_ATTACHED_PARTITION) {
             long timestamp = getPartitionTimestampByIndex(i / LONGS_PER_TX_ATTACHED_PARTITION);
             long rowCount = attachedPartitions.getQuick(i + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
