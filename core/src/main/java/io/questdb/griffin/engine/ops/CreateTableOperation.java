@@ -43,6 +43,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     // position of the "like" table name in the SQL text, for error reporting
     private final int likeTableNamePosition;
     private final ExpressionNode tableNameExpr;
+    private final ExpressionNode timestampExpr;
     private final String volumeAlias;
     private int defaultSymbolCapacity = -1;
     private int maxUncommittedRows;
@@ -65,6 +66,8 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.likeTableNamePosition = likeTableNamePosition;
         this.ignoreIfExists = ignoreIfExists;
 
+        this.timestampExpr = null;
+        this.timestampIndex = -1;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
     }
@@ -75,7 +78,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             boolean ignoreIfExists,
             ObjList<String> columnNames,
             LongList columnBits,
-            int timestampIndex,
+            ExpressionNode timestampExpr,
             int partitionBy,
             long o3MaxLag,
             int maxUncommittedRows,
@@ -84,13 +87,13 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.tableNameExpr = tableNameExpr;
         this.volumeAlias = volumeAlias;
         this.ignoreIfExists = ignoreIfExists;
-        this.maxUncommittedRows = maxUncommittedRows;
-        this.o3MaxLag = o3MaxLag;
-        this.partitionBy = partitionBy;
-        this.timestampIndex = timestampIndex;
-        this.walEnabled = walEnabled;
         this.columnNames.addAll(columnNames);
         this.columnBits.add(columnBits);
+        this.timestampExpr = timestampExpr;
+        this.partitionBy = partitionBy;
+        this.o3MaxLag = o3MaxLag;
+        this.maxUncommittedRows = maxUncommittedRows;
+        this.walEnabled = walEnabled;
 
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
@@ -103,6 +106,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             ExpressionNode tableNameExpr,
             String volumeAlias,
             boolean ignoreIfExists,
+            ExpressionNode timestampExpr,
             long batchSize,
             long batchO3MaxLag,
             int defaultSymbolCapacity,
@@ -112,6 +116,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.tableNameExpr = tableNameExpr;
         this.volumeAlias = volumeAlias;
         this.ignoreIfExists = ignoreIfExists;
+        this.timestampExpr = timestampExpr;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.recordCursorFactory = recordCursorFactory;
         this.batchSize = batchSize;
@@ -335,8 +340,21 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         // in case of "create-as-select" because they don't capture any useful data
         // at SQL parse time.
         columnBits.clear();
-        timestampIndex = metadata.getTimestampIndex();
-
+        if (timestampExpr == null) {
+            this.timestampIndex = -1;
+        } else {
+            CharSequence timestampColName = timestampExpr.token;
+            timestampIndex = metadata.getColumnIndexQuiet(timestampColName);
+            if (timestampIndex == -1) {
+                throw SqlException.position(timestampExpr.position)
+                        .put("designated timestamp column doesn't exist [name=").put(timestampColName).put(']');
+            }
+            int timestampColType = metadata.getColumnType(timestampIndex);
+            if (timestampColType != ColumnType.TIMESTAMP) {
+                throw SqlException.position(timestampExpr.position)
+                        .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
+            }
+        }
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             String columnName = metadata.getColumnName(i);
             TableColumnMetadata augMeta = augmentedColumnMetadata.get(columnName);

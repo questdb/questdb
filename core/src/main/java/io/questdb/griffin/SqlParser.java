@@ -640,13 +640,7 @@ public class SqlParser {
 
         ExpressionNode timestamp = parseTimestamp(lexer, tok);
         if (timestamp != null) {
-            // ignore index, validate column
-            int timestampIdx = getCreateTableColumnIndex(timestamp.token, timestamp.position);
-            int timestampType = createTableOperationBuilder.getColumnType(timestampIdx);
-            if (timestampType != ColumnType.TIMESTAMP && timestampType != -1) { // type can be -1 for create table as select because types aren't known yet
-                throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
-            }
-            createTableOperationBuilder.setTimestamp(timestamp);
+            createTableOperationBuilder.setTimestampExpr(timestamp);
             tok = optTok(lexer);
         }
 
@@ -654,18 +648,18 @@ public class SqlParser {
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
-            if (createTableOperationBuilder.getTimestamp() == null) {
+            if (createTableOperationBuilder.getTimestampExpr() == null) {
                 throw SqlException.$(partitionBy.position, "partitioning is possible only on tables with designated timestamps");
             }
             if (PartitionBy.fromString(partitionBy.token) == -1) {
                 throw SqlException.$(partitionBy.position, "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
             }
-            createTableOperationBuilder.setPartitionBy(partitionBy);
+            createTableOperationBuilder.setPartitionByExpr(partitionBy);
             tok = optTok(lexer);
 
             if (tok != null) {
                 if (isWalKeyword(tok)) {
-                    if (!PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionBy())) {
+                    if (!PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionByExpr())) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("WAL Write Mode can only be used on partitioned tables");
                     }
                     walSetting = WAL_ENABLED;
@@ -685,7 +679,7 @@ public class SqlParser {
             }
         }
         final boolean isWalEnabled = configuration.isWalSupported()
-                && PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionBy())
+                && PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionByExpr())
                 && ((walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED);
         createTableOperationBuilder.setWalEnabled(isWalEnabled);
 
@@ -998,7 +992,7 @@ public class SqlParser {
         CharSequence tok;
         // todo: validate keyword usage
         tok = tok(lexer, "table name");
-        createTableOperationBuilder.setLikeTableName(
+        createTableOperationBuilder.setLikeTableNameExpr(
                 nextLiteral(
                         assertNoDotsAndSlashes(
                                 unquote(tok),

@@ -61,14 +61,14 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     private long batchSize = -1;
     private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
-    private ExpressionNode likeTableName;
+    private ExpressionNode likeTableNameExpr;
     private int maxUncommittedRows;
     private long o3MaxLag;
-    private ExpressionNode partitionBy;
+    private ExpressionNode partitionByExpr;
     private QueryModel queryModel;
     private RecordCursorFactory recordCursorFactory;
     private ExpressionNode tableNameExpr;
-    private ExpressionNode timestamp;
+    private ExpressionNode timestampExpr;
     private CharSequence volumeAlias;
     private boolean walEnabled;
 
@@ -92,6 +92,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                     tableNameExpr,
                     Chars.toString(volumeAlias),
                     ignoreIfExists,
+                    timestampExpr,
                     batchSize,
                     batchO3MaxLag,
                     defaultSymbolCapacity,
@@ -102,16 +103,16 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
         // create table "like" and "as select" are mutually exclusive
         // todo: write a test for the above to ensure correctness of the diagnostic message
-        if (this.likeTableName != null) {
-            TableToken likeTableNameToken = compiler.getEngine().getTableTokenIfExists(this.likeTableName.token);
+        if (this.likeTableNameExpr != null) {
+            TableToken likeTableNameToken = compiler.getEngine().getTableTokenIfExists(this.likeTableNameExpr.token);
             if (likeTableNameToken == null) {
-                throw SqlException.tableDoesNotExist(this.likeTableName.position, this.likeTableName.token);
+                throw SqlException.tableDoesNotExist(this.likeTableNameExpr.position, this.likeTableNameExpr.token);
             }
             return new CreateTableOperation(
                     tableNameExpr,
                     Chars.toString(volumeAlias),
                     likeTableNameToken.getTableName(),
-                    likeTableName.position,
+                    likeTableNameExpr.position,
                     ignoreIfExists
             );
         }
@@ -122,8 +123,8 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                 ignoreIfExists,
                 columnNames,
                 columnBits,
-                getTimestampIndex(),
-                getPartitionBy(),
+                timestampExpr,
+                getPartitionByExpr(),
                 o3MaxLag,
                 maxUncommittedRows,
                 walEnabled
@@ -135,9 +136,9 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         typeCasts.clear();
         touchUpColumnModels.clear();
         queryModel = null;
-        timestamp = null;
-        partitionBy = null;
-        likeTableName = null;
+        timestampExpr = null;
+        partitionByExpr = null;
+        likeTableNameExpr = null;
         tableNameExpr = null;
         volumeAlias = null;
         columnBits.clear();
@@ -162,8 +163,8 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         return CREATE_TABLE;
     }
 
-    public int getPartitionBy() {
-        return partitionBy == null ? PartitionBy.NONE : PartitionBy.fromString(partitionBy.token);
+    public int getPartitionByExpr() {
+        return partitionByExpr == null ? PartitionBy.NONE : PartitionBy.fromString(partitionByExpr.token);
     }
 
     public QueryModel getQueryModel() {
@@ -179,12 +180,12 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         return tableNameExpr;
     }
 
-    public ExpressionNode getTimestamp() {
-        return timestamp;
+    public ExpressionNode getTimestampExpr() {
+        return timestampExpr;
     }
 
     public int getTimestampIndex() {
-        return timestamp != null ? getColumnIndex(timestamp.token) : -1;
+        return timestampExpr != null ? getColumnIndex(timestampExpr.token) : -1;
     }
 
     public CharSequenceObjHashMap<TouchUpColumnModel> getTouchUpColumnModels() {
@@ -265,8 +266,8 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         columnBits.setQuick(flagsIndex, Numbers.encodeLowHighInts(flags, Numbers.ceilPow2(indexValueBlockSize)));
     }
 
-    public void setLikeTableName(ExpressionNode tableName) {
-        this.likeTableName = tableName;
+    public void setLikeTableNameExpr(ExpressionNode expr) {
+        this.likeTableNameExpr = expr;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {
@@ -277,20 +278,20 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         this.o3MaxLag = o3MaxLag;
     }
 
-    public void setPartitionBy(ExpressionNode partitionBy) {
-        this.partitionBy = partitionBy;
+    public void setPartitionByExpr(ExpressionNode partitionByExpr) {
+        this.partitionByExpr = partitionByExpr;
     }
 
     public void setQueryModel(QueryModel queryModel) {
         this.queryModel = queryModel;
     }
 
-    public void setTableNameExpr(ExpressionNode tableNameExpr) {
-        this.tableNameExpr = tableNameExpr;
+    public void setTableNameExpr(ExpressionNode expr) {
+        this.tableNameExpr = expr;
     }
 
-    public void setTimestamp(ExpressionNode timestamp) {
-        this.timestamp = timestamp;
+    public void setTimestampExpr(ExpressionNode expr) {
+        this.timestampExpr = expr;
     }
 
     public void setVolumeAlias(CharSequence volumeAlias) {
@@ -368,9 +369,9 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             }
         } else {
             sink.putAscii(" (");
-            if (likeTableName != null) {
+            if (likeTableNameExpr != null) {
                 sink.putAscii("like ");
-                sink.put(likeTableName.token);
+                sink.put(likeTableNameExpr.token);
             } else {
                 int count = columnNames.size();
                 for (int i = 0; i < count; i++) {
@@ -400,14 +401,14 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             sink.putAscii(')');
         }
 
-        if (getTimestamp() != null) {
+        if (getTimestampExpr() != null) {
             sink.putAscii(" timestamp(");
-            sink.put(getTimestamp().token);
+            sink.put(getTimestampExpr().token);
             sink.putAscii(')');
         }
 
-        if (partitionBy != null) {
-            sink.putAscii(" partition by ").put(partitionBy.token);
+        if (partitionByExpr != null) {
+            sink.putAscii(" partition by ").put(partitionByExpr.token);
             if (walEnabled) {
                 sink.putAscii(" wal");
             }
