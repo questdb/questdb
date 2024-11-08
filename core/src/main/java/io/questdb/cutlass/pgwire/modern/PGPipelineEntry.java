@@ -88,6 +88,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
@@ -178,21 +179,21 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         portalNames.add(portalName);
     }
 
-    public void cacheIfPossible(AssociativeCache<TypesAndSelectModern> tasCache, SimpleAssociativeCache<TypesAndInsertModern> taiCache) {
+    public void cacheIfPossible(@NotNull AssociativeCache<TypesAndSelectModern> tasCache, @Nullable SimpleAssociativeCache<TypesAndInsertModern> taiCache) {
         if (isPortal() || isPreparedStatement()) {
             // must not cache prepared statements etc; we must only cache abandoned pipeline entries (their contents)
             return;
         }
 
         if (tas != null) {
-            // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
-            tasCache.put(sqlText, tas);
-            tas = null;
             // close cursor in case it is open
             cursor = Misc.free(cursor);
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
-        } else if (tai != null) {
+            // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
+            tasCache.put(sqlText, tas);
+            tas = null;
+        } else if (tai != null && taiCache != null) {
             taiCache.put(Chars.toString(sqlText), tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             insertOp = null;

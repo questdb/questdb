@@ -537,6 +537,8 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         for (int i = 0, n = names.size(); i < n; i++) {
             PGPipelineEntry pe = cache.get(names.getQuick(i));
             pe.setStateClosed(true, isStatementClose);
+            // return the factory back to global cache in case of a select
+            pe.cacheIfPossible(tasCache, null);
             Misc.free(pe);
             entryPool.release(pe);
         }

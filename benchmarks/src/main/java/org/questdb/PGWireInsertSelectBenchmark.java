@@ -183,9 +183,11 @@ public class PGWireInsertSelectBenchmark {
                             while (rs.next()) {
                                 rs.getLong(2);
                             }
-                            selectorProgress.lazySet(taskId, i);
-                            if (System.nanoTime() > deadline) {
-                                break;
+                            if (i % INSERT_BATCH_SIZE == 0) {
+                                selectorProgress.lazySet(taskId, i);
+                                if (System.nanoTime() > deadline) {
+                                    break;
+                                }
                             }
                         }
                     } catch (Exception e) {
