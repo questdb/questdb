@@ -2316,8 +2316,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             long fistPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(0));
             long lastPartition = reader.getTxFile().getPartitionFloor(reader.getPartitionTimestampByIndex(partitionCount - 1));
 
-            for (int i = 1; i < partitionCount - 1; i++) {
-                int partitionIndex = (i != -1) ? i : partitionCount - 1;
+            for (int partitionIndex = 1; partitionIndex < partitionCount - 1; partitionIndex++) {
                 long physicalTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
                 long logicalTimestamp = reader.getTxFile().getPartitionFloor(physicalTimestamp);
                 if (physicalTimestamp != logicalTimestamp || logicalTimestamp == fistPartition || logicalTimestamp == lastPartition) {
