@@ -24,24 +24,71 @@
 
 package io.questdb.cairo;
 
-import io.questdb.*;
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
+import io.questdb.Metrics;
+import io.questdb.Telemetry;
+import io.questdb.TelemetryConfigLogger;
 import io.questdb.cairo.mig.EngineMigration;
-import io.questdb.cairo.pool.*;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
+import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.pool.ReaderPool;
+import io.questdb.cairo.pool.SequencerMetadataPool;
+import io.questdb.cairo.pool.SqlCompilerPool;
+import io.questdb.cairo.pool.TableMetadataPool;
+import io.questdb.cairo.pool.WalWriterPool;
+import io.questdb.cairo.pool.WriterPool;
+import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.AllowAllSecurityContext;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
+import io.questdb.cairo.wal.DefaultWalListener;
+import io.questdb.cairo.wal.WalDirectoryPolicy;
+import io.questdb.cairo.wal.WalListener;
+import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
-import io.questdb.griffin.*;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCache;
+import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlCompilerFactory;
+import io.questdb.griffin.SqlCompilerFactoryImpl;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.mp.Job;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.Sequence;
+import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
@@ -56,7 +103,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.lang.ThreadLocal;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.ServiceLoader;
@@ -193,6 +239,15 @@ public class CairoEngine implements Closeable, WriterSource {
     ) throws SqlException {
         CompiledQuery cc = compiler.compile(ddl, sqlExecutionContext);
         switch (cc.getType()) {
+            case CREATE_TABLE:
+            case CREATE_TABLE_AS_SELECT:
+                try (CreateTableOperation createTableOperation = cc.getCreateTableOperation()) {
+                    assert createTableOperation != null;
+                    try (OperationFuture createTableMethod = createTableOperation.execute(sqlExecutionContext, null)) {
+                        createTableMethod.await();
+                    }
+                }
+                break;
             case INSERT:
                 throw SqlException.$(0, "use insert()");
             case DROP:

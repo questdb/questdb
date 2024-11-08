@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 // todo: fuzzers!
 public class CairoMetadataCacheTest extends AbstractCairoTest {
 
-    private static String xMetaString = "MetadataCache [tableCount=1]\n" +
+    private static final String xMetaString = "MetadataCache [tableCount=1]\n" +
             "\tCairoTable [name=x, id=1, directoryName=x~, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=NONE, timestampIndex=3, timestampName=timestamp, walEnabled=false, columnCount=16]\n" +
             "\t\tCairoColumn [name=i, position=0, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
             "\t\tCairoColumn [name=sym, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=0, writerIndex=1]\n" +
@@ -55,10 +55,10 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
             "\t\tCairoColumn [name=l, position=13, type=BYTE, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=13]\n" +
             "\t\tCairoColumn [name=m, position=14, type=BINARY, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=14]\n" +
             "\t\tCairoColumn [name=n, position=15, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=15]\n";
-    private static String yMetaString = "MetadataCache [tableCount=1]\n" +
+    private static final String yMetaString = "MetadataCache [tableCount=1]\n" +
             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=1]\n" +
             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n";
-    private static String zMetaString = "MetadataCache [tableCount=1]\n" +
+    private static final String zMetaString = "MetadataCache [tableCount=1]\n" +
             "\tCairoTable [name=z, id=1, directoryName=z~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=3, timestampName=timestamp, walEnabled=true, columnCount=16]\n" +
             "\t\tCairoColumn [name=i, position=0, type=INT, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=0]\n" +
             "\t\tCairoColumn [name=sym, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=0, writerIndex=1]\n" +
@@ -84,23 +84,19 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         AtomicInteger creatorInteger = new AtomicInteger();
         AtomicInteger dropperInteger = new AtomicInteger();
 
-        Thread creatingThread = new Thread() {
-            public void run() {
-                try {
-                    fuzzConcurrentCreatesAndDropsCreatorThread(creatorInteger);
-                } catch (Exception ignore) {
-                }
+        Thread creatingThread = new Thread(() -> {
+            try {
+                fuzzConcurrentCreatesAndDropsCreatorThread(creatorInteger);
+            } catch (Exception ignore) {
             }
-        };
+        });
 
-        Thread droppingThread = new Thread() {
-            public void run() {
-                try {
-                    fuzzConcurrentCreatesAndDropsDropperThread(dropperInteger);
-                } catch (Exception ignore) {
-                }
+        Thread droppingThread = new Thread(() -> {
+            try {
+                fuzzConcurrentCreatesAndDropsDropperThread(dropperInteger);
+            } catch (Exception ignore) {
             }
-        };
+        });
 
         creatingThread.start();
         droppingThread.start();
@@ -499,21 +495,6 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         });
     }
 
-    private String createTableColumnsList(char[] table_names, String[] type_names) {
-        assert table_names.length == type_names.length;
-
-        String result = "";
-        for (int i = 0; i < table_names.length; i++) {
-            result += table_names[i];
-            result += ' ';
-            result += type_names[i];
-            if (i + 1 < table_names.length) {
-                result += ',';
-            }
-        }
-        return result;
-    }
-
     private void createX() throws SqlException {
         ddl(
                 "create table x as (" +
@@ -592,19 +573,4 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
             Thread.sleep(50);
         }
     }
-
-    private char genAlpha() {
-        char c = '\0';
-
-        while ((int) c < 97 && (int) c > 122) {
-            c = sqlExecutionContext.getRandom().nextChar();
-        }
-
-        return c;
-    }
-
-    private int genInt(int max) {
-        return sqlExecutionContext.getRandom().nextInt(max);
-    }
-
 }

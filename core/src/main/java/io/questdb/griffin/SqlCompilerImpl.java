@@ -410,6 +410,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             volumeAlias != null
                     );
 
+                    final long sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
+                    long beginNanos = configuration.getMicrosecondClock().getTicks();
                     try {
                         copyTableDataAndUnlock(
                                 executionContext.getSecurityContext(),
@@ -433,6 +435,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         engine.dropTable(path, tableToken);
                         engine.unlockTableName(tableToken);
                         throw e;
+                    } finally {
+                        // todo: jit is always false, why?
+                        QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
                     }
                 } finally {
                     executionContext.setUseSimpleCircuitBreaker(false);
@@ -2102,10 +2107,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     );
                     break;
                 case ExecutionModel.CREATE_TABLE:
-                    // todo: this is a hack, we should not be registering query here
-//                    sqlId = queryRegistry.register(sqlText, executionContext);
-                    compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel).build(this, executionContext));
-//                    createTableWithRetries(executionModel, executionContext);
+                    compiledQuery.ofCreateTable(((CreateTableOperationBuilder) executionModel).build(this, executionContext, sqlText));
                     break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);

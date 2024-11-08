@@ -1,6 +1,31 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2024 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -14,7 +39,15 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.TouchUpColumnModel;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.*;
@@ -42,13 +75,15 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     private final String likeTableName;
     // position of the "like" table name in the SQL text, for error reporting
     private final int likeTableNamePosition;
+    // this value will be non-null if the operation is a "create as select"
+    private final String sqlText;
     private final ExpressionNode tableNameExpr;
     private final ExpressionNode timestampExpr;
     private final String volumeAlias;
     private int defaultSymbolCapacity = -1;
     private int maxUncommittedRows;
     private long o3MaxLag;
-    private int partitionBy;
+    private int partitionBy = PartitionBy.NONE;
     private RecordCursorFactory recordCursorFactory;
     private int timestampIndex;
     private boolean walEnabled;
@@ -70,6 +105,8 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.timestampIndex = -1;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
+        // we are not creating table from select
+        this.sqlText = null;
     }
 
     public CreateTableOperation(
@@ -100,6 +137,8 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.recordCursorFactory = null;
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
+        // we are not creating table from select
+        this.sqlText = null;
     }
 
     public CreateTableOperation(
@@ -111,6 +150,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             long batchO3MaxLag,
             int defaultSymbolCapacity,
             RecordCursorFactory recordCursorFactory,
+            String sqlText,
             @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap
     ) throws SqlException {
         this.tableNameExpr = tableNameExpr;
@@ -124,6 +164,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
 
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
+        this.sqlText = sqlText;
 
         // This constructor is for a "create as select", column names will be scraped from the record
         // cursor at runtime. Column augmentation data comes from the following sources in the SQL:
@@ -237,6 +278,10 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
 
     public RecordCursorFactory getRecordCursorFactory() {
         return recordCursorFactory;
+    }
+
+    public String getSqlText() {
+        return sqlText;
     }
 
     @Override

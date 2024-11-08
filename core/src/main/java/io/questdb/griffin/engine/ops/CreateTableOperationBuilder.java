@@ -84,7 +84,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         );
     }
 
-    public CreateTableOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
+    public CreateTableOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
         tableNameExpr.token = Chars.toString(tableNameExpr.token);
         if (queryModel != null) {
             setFactory(compiler.generateSelectWithRetries(queryModel, sqlExecutionContext, false));
@@ -97,6 +97,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                     batchO3MaxLag,
                     defaultSymbolCapacity,
                     recordCursorFactory,
+                    Chars.toString(sqlText),
                     touchUpColumnModels
             );
         }

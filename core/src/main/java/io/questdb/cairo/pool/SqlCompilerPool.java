@@ -163,7 +163,7 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
 
         @Override
         public CairoEngine getEngine() {
-            return null;
+            return delegate.getEngine();
         }
 
         @Override
