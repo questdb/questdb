@@ -541,28 +541,34 @@ public class FilesTest {
 
     @Test
     public void testIsDirOrSoftLinkDir() throws Exception {
-        Assume.assumeFalse(Os.isWindows());
+        // Technically, the code _should_ (and is) supported on Windows too.
+        // That said it requires Admin or Developer mode enabled on Windows. It runs just fine on CI, but fails to run
+        // on most desktop machines. On Windows this is thus hidden behind an environment variable.
+        final boolean testSymlinks = !Os.isWindows() || "1".equals(System.getenv("QDB_TEST_WINDOWS_SYMLINKS"));
         final File baseDir = temporaryFolder.newFolder();
 
         setupPath(baseDir, "empty_dir/");
         setupPath(baseDir, "file");
         setupPath(baseDir, "dir_with_a_file/file");
         setupPath(baseDir, "dir_with_an_empty_dir/dir/");
-        setupPath(baseDir, "link_to_file -> file");
-        setupPath(baseDir, "link_to_empty_dir -> empty_dir/");
-        setupPath(baseDir, "link_to_dir_with_a_file -> dir_with_a_file/");
-        setupPath(baseDir, "link_to_dir_with_an_empty_dir -> dir_with_an_empty_dir/");
-        setupPath(baseDir, "nonexistent"); // deleted later
-        setupPath(baseDir, "link_to_nonexistent -> nonexistent");
-        setupPath(baseDir, "link_to_link_to_file -> link_to_file");
-        setupPath(baseDir, "link_to_link_to_empty_dir -> link_to_empty_dir");
-        setupPath(baseDir, "link_to_link_to_dir_with_a_file -> link_to_dir_with_a_file");
-        setupPath(baseDir, "link_to_link_to_dir_with_an_empty_dir -> link_to_dir_with_an_empty_dir");
-        setupPath(baseDir, "link_to_link_to_nonexistent -> link_to_nonexistent");
 
-        final File nonexistent = new File(baseDir, "nonexistent");
-        Assert.assertTrue(nonexistent.delete());
-        Assert.assertFalse(nonexistent.exists());
+        if (testSymlinks) {
+            setupPath(baseDir, "link_to_file -> file");
+            setupPath(baseDir, "link_to_empty_dir -> empty_dir/");
+            setupPath(baseDir, "link_to_dir_with_a_file -> dir_with_a_file/");
+            setupPath(baseDir, "link_to_dir_with_an_empty_dir -> dir_with_an_empty_dir/");
+            setupPath(baseDir, "nonexistent"); // deleted later
+            setupPath(baseDir, "link_to_nonexistent -> nonexistent");
+            setupPath(baseDir, "link_to_link_to_file -> link_to_file");
+            setupPath(baseDir, "link_to_link_to_empty_dir -> link_to_empty_dir");
+            setupPath(baseDir, "link_to_link_to_dir_with_a_file -> link_to_dir_with_a_file");
+            setupPath(baseDir, "link_to_link_to_dir_with_an_empty_dir -> link_to_dir_with_an_empty_dir");
+            setupPath(baseDir, "link_to_link_to_nonexistent -> link_to_nonexistent");
+
+            final File nonexistent = new File(baseDir, "nonexistent");
+            Assert.assertTrue(nonexistent.delete());
+            Assert.assertFalse(nonexistent.exists());
+        }
 
         assertMemoryLeak(() -> {
             Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "something/that/does/not/exist"));
@@ -572,16 +578,19 @@ public class FilesTest {
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_a_file/"));
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/"));
             Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "dir_with_an_empty_dir/dir/.."));
-            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_file"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_empty_dir"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_a_file"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_an_empty_dir"));
-            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_nonexistent"));
-            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_link_to_file"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_empty_dir"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_dir_with_a_file"));
-            Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_dir_with_an_empty_dir"));
-            Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_link_to_nonexistent"));
+
+            if (testSymlinks) {
+                Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_file"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_empty_dir"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_a_file"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_dir_with_an_empty_dir"));
+                Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_nonexistent"));
+                Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_link_to_file"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_empty_dir"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_dir_with_a_file"));
+                Assert.assertTrue(isDirOrSoftLinkDir(baseDir, "link_to_link_to_dir_with_an_empty_dir"));
+                Assert.assertFalse(isDirOrSoftLinkDir(baseDir, "link_to_link_to_nonexistent"));
+            }
         });
     }
 
@@ -1578,7 +1587,7 @@ public class FilesTest {
             final String targetPathString = parts[1].replaceAll("/$", "");
             final File target = new File(baseDir, targetPathString);
             final File link = new File(baseDir, parts[0]);
-            Assert.assertTrue(link.getParentFile().mkdirs());
+            Assert.assertTrue(link.getParentFile().exists() || link.getParentFile().mkdirs());
             try (
                     Path targetPath = new Path().of(target.getAbsolutePath());
                     Path linkPath = new Path().of(link.getAbsolutePath())
