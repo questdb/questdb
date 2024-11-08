@@ -138,6 +138,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         touchUpColumnModels.clear();
         queryModel = null;
         timestampExpr = null;
+        timestampIndex = -1;
         partitionByExpr = null;
         likeTableNameExpr = null;
         tableNameExpr = null;
