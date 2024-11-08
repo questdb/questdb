@@ -89,11 +89,13 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         if (queryModel != null) {
             setFactory(compiler.generateSelectWithRetries(queryModel, sqlExecutionContext, false));
             return new CreateTableOperation(
-                    tableNameExpr,
-                    getPartitionByExpr(),
+                    Chars.toString(tableNameExpr.token),
+                    tableNameExpr.position,
+                    getPartitionByFromExpr(),
                     Chars.toString(volumeAlias),
                     ignoreIfExists,
-                    timestampExpr,
+                    timestampExpr != null ? Chars.toString(timestampExpr.token) : null,
+                    timestampExpr != null ? timestampExpr.position : 0,
                     batchSize,
                     batchO3MaxLag,
                     defaultSymbolCapacity,
@@ -111,8 +113,9 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                 throw SqlException.tableDoesNotExist(this.likeTableNameExpr.position, this.likeTableNameExpr.token);
             }
             return new CreateTableOperation(
-                    tableNameExpr,
-                    getPartitionByExpr(),
+                    Chars.toString(tableNameExpr.token),
+                    tableNameExpr.position,
+                    getPartitionByFromExpr(),
                     Chars.toString(volumeAlias),
                     likeTableNameToken.getTableName(),
                     likeTableNameExpr.position,
@@ -121,13 +124,14 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         }
 
         return new CreateTableOperation(
-                tableNameExpr,
-                getPartitionByExpr(),
+                Chars.toString(tableNameExpr.token),
+                tableNameExpr.position,
+                getPartitionByFromExpr(),
                 Chars.toString(volumeAlias),
                 ignoreIfExists,
                 columnNames,
                 columnBits,
-                timestampExpr,
+                getTimestampIndex(),
                 o3MaxLag,
                 maxUncommittedRows,
                 walEnabled
@@ -166,7 +170,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         return CREATE_TABLE;
     }
 
-    public int getPartitionByExpr() {
+    public int getPartitionByFromExpr() {
         return partitionByExpr == null ? PartitionBy.NONE : PartitionBy.fromString(partitionByExpr.token);
     }
 

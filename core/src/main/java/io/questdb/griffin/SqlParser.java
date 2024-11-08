@@ -369,14 +369,6 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'zone' expected");
     }
 
-    private int getCreateTableColumnIndex(CharSequence columnName, int position) throws SqlException {
-        int index = createTableOperationBuilder.getColumnIndex(columnName);
-        if (index == -1) {
-            throw SqlException.invalidColumn(position, columnName);
-        }
-        return index;
-    }
-
     private boolean isCurrentRow(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (SqlKeywords.isCurrentKeyword(tok)) {
             tok = tok(lexer, "'row'");
@@ -665,7 +657,7 @@ public class SqlParser {
 
             if (tok != null) {
                 if (isWalKeyword(tok)) {
-                    if (!PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionByExpr())) {
+                    if (!PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionByFromExpr())) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("WAL Write Mode can only be used on partitioned tables");
                     }
                     walSetting = WAL_ENABLED;
@@ -685,7 +677,7 @@ public class SqlParser {
             }
         }
         final boolean isWalEnabled = configuration.isWalSupported()
-                && PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionByExpr())
+                && PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionByFromExpr())
                 && ((walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED);
         createTableOperationBuilder.setWalEnabled(isWalEnabled);
 

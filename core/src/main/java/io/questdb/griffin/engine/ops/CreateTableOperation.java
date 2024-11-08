@@ -35,7 +35,6 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.TouchUpColumnModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -75,8 +74,10 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     private final int likeTableNamePosition;
     // this value will be non-null if the operation is a "create as select"
     private final String sqlText;
-    private final ExpressionNode tableNameExpr;
-    private final ExpressionNode timestampExpr;
+    private final String tableName;
+    private final int tableNamePosition;
+    private final String timestampColumnName;
+    private final int timestampColumnNamePosition;
     private final String volumeAlias;
     private int defaultSymbolCapacity = -1;
     private int maxUncommittedRows;
@@ -87,21 +88,23 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     private boolean walEnabled;
 
     public CreateTableOperation(
-            ExpressionNode tableNameExpr,
+            String tableName,
+            int tableNamePosition,
             int partitionBy,
             String volumeAlias,
             String likeTableName,
             int likeTableNamePosition,
             boolean ignoreIfExists
     ) {
-        this.tableNameExpr = tableNameExpr;
+        this.tableName = tableName;
+        this.tableNamePosition = tableNamePosition;
         this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
         this.likeTableName = likeTableName;
         this.likeTableNamePosition = likeTableNamePosition;
         this.ignoreIfExists = ignoreIfExists;
-
-        this.timestampExpr = null;
+        this.timestampColumnName = null;
+        this.timestampColumnNamePosition = 0;
         this.timestampIndex = -1;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
@@ -110,24 +113,29 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     }
 
     public CreateTableOperation(
-            ExpressionNode tableNameExpr,
+            String tableName,
+            int tableNamePosition,
             int partitionBy,
             String volumeAlias,
             boolean ignoreIfExists,
             ObjList<String> columnNames,
             LongList columnBits,
-            ExpressionNode timestampExpr,
+            int timestampIndex,
             long o3MaxLag,
             int maxUncommittedRows,
             boolean walEnabled
     ) {
-        this.tableNameExpr = tableNameExpr;
+        this.tableName = tableName;
+        this.tableNamePosition = tableNamePosition;
         this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
         this.ignoreIfExists = ignoreIfExists;
         this.columnNames.addAll(columnNames);
         this.columnBits.add(columnBits);
-        this.timestampExpr = timestampExpr;
+        // this is a vanilla "create table" with fixed columns and fixed timestamp index
+        this.timestampColumnName = null;
+        this.timestampColumnNamePosition = 0;
+        this.timestampIndex = timestampIndex;
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.walEnabled = walEnabled;
@@ -142,11 +150,13 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     }
 
     public CreateTableOperation(
-            ExpressionNode tableNameExpr,
+            String tableName,
+            int tableNamePosition,
             int partitionBy,
             String volumeAlias,
             boolean ignoreIfExists,
-            ExpressionNode timestampExpr,
+            String timestampColumnName,
+            int timestampColumnNamePosition,
             long batchSize,
             long batchO3MaxLag,
             int defaultSymbolCapacity,
@@ -154,11 +164,13 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             String sqlText,
             @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap
     ) throws SqlException {
-        this.tableNameExpr = tableNameExpr;
+        this.tableName = tableName;
+        this.tableNamePosition = tableNamePosition;
         this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
         this.ignoreIfExists = ignoreIfExists;
-        this.timestampExpr = timestampExpr;
+        this.timestampColumnName = timestampColumnName;
+        this.timestampColumnNamePosition = timestampColumnNamePosition;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.recordCursorFactory = recordCursorFactory;
         this.batchSize = batchSize;
@@ -300,11 +312,11 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
 
     @Override
     public CharSequence getTableName() {
-        return tableNameExpr.token;
+        return tableName;
     }
 
     public int getTableNamePosition() {
-        return tableNameExpr.position;
+        return tableNamePosition;
     }
 
     @Override
@@ -387,18 +399,17 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         // in case of "create-as-select" because they don't capture any useful data
         // at SQL parse time.
         columnBits.clear();
-        if (timestampExpr == null) {
+        if (timestampColumnName == null) {
             this.timestampIndex = -1;
         } else {
-            CharSequence timestampColName = timestampExpr.token;
-            timestampIndex = metadata.getColumnIndexQuiet(timestampColName);
+            timestampIndex = metadata.getColumnIndexQuiet(timestampColumnName);
             if (timestampIndex == -1) {
-                throw SqlException.position(timestampExpr.position)
-                        .put("designated timestamp column doesn't exist [name=").put(timestampColName).put(']');
+                throw SqlException.position(timestampColumnNamePosition)
+                        .put("designated timestamp column doesn't exist [name=").put(timestampColumnName).put(']');
             }
             int timestampColType = metadata.getColumnType(timestampIndex);
             if (timestampColType != ColumnType.TIMESTAMP) {
-                throw SqlException.position(timestampExpr.position)
+                throw SqlException.position(timestampColumnNamePosition)
                         .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
             }
         }
