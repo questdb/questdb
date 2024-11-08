@@ -393,6 +393,10 @@ public abstract class BasePGTest extends AbstractCairoTest {
         });
     }
 
+    protected void assertWithPgServerExtendedBinaryOnly(PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
+        assertWithPgServer(Mode.EXTENDED, true, -1, runnable);
+    }
+
     protected void assertWithPgServer(
             Mode mode,
             boolean binary,

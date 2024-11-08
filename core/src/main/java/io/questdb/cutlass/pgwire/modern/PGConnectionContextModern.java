@@ -1550,6 +1550,11 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
 
         @Override
+        public long getSendBufferPtr() {
+            return sendBufferPtr;
+        }
+
+        @Override
         public long getSendBufferSize() {
             return sendBufferSize;
         }
@@ -1678,6 +1683,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 sendBufferPtr = bookmarkPtr;
                 bookmarkPtr = -1;
             }
+        }
+
+        @Override
+        public void resetToBookmark(long address) {
+            sendBufferPtr = address;
+            bookmarkPtr = -1;
         }
 
         @Override

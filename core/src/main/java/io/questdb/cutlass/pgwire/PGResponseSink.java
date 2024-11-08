@@ -58,6 +58,8 @@ public interface PGResponseSink extends Utf8Sink {
 
     void resetToBookmark();
 
+    long getSendBufferPtr();
+
     long skipInt();
 
     void checkCapacity(long size);
@@ -71,4 +73,6 @@ public interface PGResponseSink extends Utf8Sink {
     long getSendBufferSize();
 
     long getMaxBlobSize();
+
+    void resetToBookmark(long address);
 }
