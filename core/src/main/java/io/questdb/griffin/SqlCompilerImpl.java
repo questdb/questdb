@@ -2307,9 +2307,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         partitionFunctionRec.setTimestamp(timestamp);
         if (filter.getBool(partitionFunctionRec)) {
             changePartitionStatement.addPartitionToList(timestamp, functionPosition);
-            return 0;
+            return 1;
         }
-        return 1;
+        return 0;
     }
 
     private int filterPartitions(
