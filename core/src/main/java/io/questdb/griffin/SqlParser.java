@@ -541,6 +541,7 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         createTableOperationBuilder.clear();
+        createTableOperationBuilder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
         final CharSequence tableName;
         // default to non-atomic, batched, creation
         CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch'");

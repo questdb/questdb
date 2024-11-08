@@ -43,6 +43,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     private final String tableName;
     private final int tableNamePosition;
     private final String volumeAlias;
+    private int defaultSymbolCapacity = -1;
     private boolean ignoreIfExists;
     private int maxUncommittedRows;
     private long o3MaxLag;
@@ -64,6 +65,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.volumeAlias = volumeAlias;
         this.likeTableName = likeTableName;
         this.likeTableNamePosition = likeTableNamePosition;
+        this.ignoreIfExists = ignoreIfExists;
 
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
@@ -108,12 +110,15 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             boolean ignoreIfExists,
             long batchSize,
             long batchO3MaxLag,
+            int defaultSymbolCapacity,
             RecordCursorFactory recordCursorFactory,
             @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap
     ) throws SqlException {
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
         this.volumeAlias = volumeAlias;
+        this.ignoreIfExists = ignoreIfExists;
+        this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.recordCursorFactory = recordCursorFactory;
         this.batchSize = batchSize;
         this.batchO3MaxLag = batchO3MaxLag;
@@ -132,15 +137,16 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         for (int i = 0, n = touchedUpColNames.size(); i < n; i++) {
             CharSequence columnName = touchedUpColNames.get(i);
             TouchUpColumnModel touchUpModel = touchUpColumnModelMap.get(columnName);
-            if (touchUpModel.isIndexed()) {
-                // perform some basic validation
-                if (touchUpModel.getColumnType() != ColumnType.SYMBOL) {
-                    throw SqlException
-                            .$(touchUpModel.getIndexColumnPos(), "indexes are supported only for SYMBOL columns: ")
-                            .put(columnName);
-                }
+            if (touchUpModel.isIndexed() && touchUpModel.getColumnType() != ColumnType.SYMBOL) {
+                throw SqlException
+                        .$(touchUpModel.getIndexColumnPos(), "indexes are supported only for SYMBOL columns: ")
+                        .put(columnName);
             }
             String columnNameStr = Chars.toString(columnName);
+            int symbolCapacity = touchUpModel.getSymbolCapacity();
+            if (symbolCapacity == -1) {
+                symbolCapacity = defaultSymbolCapacity;
+            }
             TableColumnMetadata tcm = new TableColumnMetadata(
                     columnNameStr,
                     touchUpModel.getColumnType(),
@@ -149,10 +155,10 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
                     true,
                     null,
                     -1, // writer index is irrelevant here
-                    false,// dedup flag cannot be set on "create as select", not yet
+                    false, // dedup flag cannot be set on "create as select", not yet
                     -1, // replacingIndex is irrelevant here
                     touchUpModel.getSymbolCacheFlag(),
-                    touchUpModel.getSymbolCapacity()
+                    symbolCapacity
             );
             augmentedColumnMetadata.put(columnNameStr, tcm);
         }
@@ -360,16 +366,17 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
                 indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
             } else {
                 columnType = metadata.getColumnType(i);
-                TableColumnMetadata colMeta = metadata.getColumnMetadata(i);
-                symbolCapacity = colMeta.getSymbolCapacity();
-                symbolCacheFlag = colMeta.isSymbolCacheFlag();
-                symbolIndexed = colMeta.isSymbolIndexFlag();
-                isDedupKey = colMeta.isDedupKeyFlag();
-                indexBlockCapacity = colMeta.getIndexValueBlockCapacity();
+                symbolCapacity = defaultSymbolCapacity;
+                symbolCacheFlag = true;
+                symbolIndexed = false;
+                isDedupKey = false;
+                indexBlockCapacity = -1;
             }
 
             if (ColumnType.isNull(columnType)) {
-                throw SqlException.$(0, "cannot create NULL-type column, please use type cast, e.g. ").put(columnName).put("::").put("type");
+                throw SqlException
+                        .$(0, "cannot create NULL-type column, please use type cast, e.g. ")
+                        .put(columnName).put("::").put("type");
             }
             if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
                 throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);

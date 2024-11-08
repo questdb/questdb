@@ -59,6 +59,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     private final IntIntHashMap typeCasts = new IntIntHashMap();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
+    private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableName;
     private int maxUncommittedRows;
@@ -93,6 +94,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                     ignoreIfExists,
                     batchSize,
                     batchO3MaxLag,
+                    defaultSymbolCapacity,
                     recordCursorFactory,
                     touchUpColumnModels
             );
@@ -215,6 +217,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         int flagsIndex = index * 2 + 1;
         int flags = getLowAt(flagsIndex) | COLUMN_FLAG_DEDUP_KEY;
         columnBits.setQuick(flagsIndex, Numbers.encodeLowHighInts(flags, getHighAt(flagsIndex)));
+    }
+
+    public void setDefaultSymbolCapacity(int defaultSymbolCapacity) {
+        this.defaultSymbolCapacity = defaultSymbolCapacity;
     }
 
     public void setFactory(RecordCursorFactory factory) throws SqlException {
