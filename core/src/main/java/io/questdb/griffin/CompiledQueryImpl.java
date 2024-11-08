@@ -152,11 +152,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
-    public TableToken getTableToken() {
-        return tableToken;
-    }
-
-    @Override
     public short getType() {
         return type;
     }
