@@ -69,6 +69,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     private RecordCursorFactory recordCursorFactory;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
+    private int timestampIndex = -1;
     private CharSequence volumeAlias;
     private boolean walEnabled;
 
@@ -123,7 +124,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                 ignoreIfExists,
                 columnNames,
                 columnBits,
-                timestampExpr,
+                timestampIndex,
                 getPartitionByExpr(),
                 o3MaxLag,
                 maxUncommittedRows,
@@ -190,6 +191,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     public CharSequenceObjHashMap<TouchUpColumnModel> getTouchUpColumnModels() {
         return touchUpColumnModels;
+    }
+
+    public boolean hasColumnDefs() {
+        return columnNames.size() > 0;
     }
 
     public boolean isAtomic() {
@@ -292,6 +297,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     public void setTimestampExpr(ExpressionNode expr) {
         this.timestampExpr = expr;
+    }
+
+    public void setTimestampIndex(int index) {
+        this.timestampIndex = index;
     }
 
     public void setVolumeAlias(CharSequence volumeAlias) {

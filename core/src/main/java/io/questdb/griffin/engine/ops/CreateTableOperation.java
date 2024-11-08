@@ -50,7 +50,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
     private long o3MaxLag;
     private int partitionBy;
     private RecordCursorFactory recordCursorFactory;
-    private int timestampIndex;
+    private int timestampIndex = -1;
     private boolean walEnabled;
 
     public CreateTableOperation(
@@ -67,7 +67,6 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.ignoreIfExists = ignoreIfExists;
 
         this.timestampExpr = null;
-        this.timestampIndex = -1;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
     }
@@ -78,7 +77,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             boolean ignoreIfExists,
             ObjList<String> columnNames,
             LongList columnBits,
-            ExpressionNode timestampExpr,
+            int timestampIndex,
             int partitionBy,
             long o3MaxLag,
             int maxUncommittedRows,
@@ -89,17 +88,18 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.ignoreIfExists = ignoreIfExists;
         this.columnNames.addAll(columnNames);
         this.columnBits.add(columnBits);
-        this.timestampExpr = timestampExpr;
+        this.timestampIndex = timestampIndex;
         this.partitionBy = partitionBy;
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.walEnabled = walEnabled;
 
-        this.batchSize = 0;
-        this.batchO3MaxLag = 0;
         this.recordCursorFactory = null;
+        this.timestampExpr = null;
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
+        this.batchSize = 0;
+        this.batchO3MaxLag = 0;
     }
 
     public CreateTableOperation(

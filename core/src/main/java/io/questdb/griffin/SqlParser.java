@@ -642,6 +642,14 @@ public class SqlParser {
         ExpressionNode timestamp = parseTimestamp(lexer, tok);
         if (timestamp != null) {
             builder.setTimestampExpr(timestamp);
+            if (builder.hasColumnDefs()) {
+                int timestampIndex = builder.getColumnIndex(timestamp.token);
+                if (timestampIndex == -1) {
+                    throw SqlException.position(timestamp.position)
+                            .put("invalid designated timestamp column [name=").put(timestamp.token).put(']');
+                }
+                builder.setTimestampIndex(timestampIndex);
+            }
             tok = optTok(lexer);
         }
 
