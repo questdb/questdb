@@ -939,7 +939,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
                         "cast(x as int) i, " +
                         "x l " +
-                        "from long_sequence(100))",
+                        "from long_sequence(100)",
                 "ALTER TABLE tabBrokenTableId2 ADD COLUMN s SHORT",
                 "Detached partition metadata [table_id] is not compatible with current table metadata"
         );
@@ -960,7 +960,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         "cast(x as int) i, " +
                         "x l, " +
                         "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts " +
-                        "from long_sequence(100))",
+                        "from long_sequence(100)",
                 "ALTER TABLE tabBrokenTimestampIdx2 ADD COLUMN s SHORT",
                 "Detached partition metadata [timestamp_index] is not compatible with current table metadata"
         );
@@ -1705,7 +1705,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         "CAST(1654041600000000L AS TIMESTAMP) + x * 3455990000  ts, " +
                         "cast(x as int) i, " +
                         "x l " +
-                        "from long_sequence(100))",
+                        "from long_sequence(100)",
                 "ALTER TABLE tabBrokenIndexCapacity2 ADD COLUMN s SHORT",
                 "Detached partition metadata [table_id] is not compatible with current table metadata"
         );

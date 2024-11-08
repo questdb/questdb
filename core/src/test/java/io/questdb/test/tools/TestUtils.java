@@ -1298,7 +1298,7 @@ public final class TestUtils {
             }
         }
         insertFromSelect.append(Misc.EOL + "FROM long_sequence(").append(totalRows).append(")");
-        insertFromSelect.append(")" + Misc.EOL);
+        insertFromSelect.append(";" + Misc.EOL);
         return insertFromSelect.toString();
     }
 
