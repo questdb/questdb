@@ -32,7 +32,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.Bytes;
 
 class OrderedMapVarSizeCursor implements OrderedMapCursor {
-    private final OrderedMap map;
     private final OrderedMapVarSizeRecord recordA;
     private final OrderedMapVarSizeRecord recordB;
     private final long valueSize;
@@ -45,7 +44,6 @@ class OrderedMapVarSizeCursor implements OrderedMapCursor {
         assert map.keySize() == -1;
         this.recordA = record;
         this.recordB = record.clone();
-        this.map = map;
         this.valueSize = map.valueSize();
     }
 

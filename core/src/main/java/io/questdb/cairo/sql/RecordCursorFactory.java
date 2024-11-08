@@ -208,6 +208,9 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return false;
     }
 
+    /**
+     * Returns true when factory's record cursor supports optimized top K (ORDER BY + LIMIT N) loop.
+     */
     default boolean recordCursorSupportsLongTopK() {
         return false;
     }
