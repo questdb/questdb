@@ -4908,7 +4908,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadata.isColumnIndexed(columnIndex),
                             metadata.getIndexValueBlockCapacity(columnIndex),
                             metadata.isSymbolTableStatic(columnIndex),
-                            metadata.getMetadata(columnIndex)
+                            metadata.getMetadata(columnIndex),
+                            -1,
+                            metadata.isDedupKey(columnIndex),
+                            0,
+                            metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
+                            metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
+
                     ));
 
                     if (columnIndex == readerTimestampIndex) {

@@ -839,13 +839,13 @@ public class SqlParser {
             int capacityPosition;
             if (isCapacityKeyword(tok)) {
                 capacityPosition = lexer.getPosition();
-                touchUpModel.setSymbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
+                symbolCapacity = parseSymbolCapacity(lexer);
                 tok = tok(lexer, "'nocache', 'cache' or ')'");
             } else {
-                touchUpModel.setSymbolCapacity(configuration.getDefaultSymbolCapacity());
-                symbolCapacity = -1;
-                capacityPosition = -1;
+                capacityPosition = 0;
+                symbolCapacity = configuration.getDefaultSymbolCapacity();
             }
+            touchUpModel.setSymbolCapacity(symbolCapacity);
 
             final boolean isCached;
             if (isNoCacheKeyword(tok)) {
@@ -858,8 +858,7 @@ public class SqlParser {
             }
             touchUpModel.setSymbolCacheFlag(isCached);
 
-            if (cached && symbolCapacity != -1) {
-                assert capacityPosition != -1;
+            if (isCached) {
                 TableUtils.validateSymbolCapacityCached(true, symbolCapacity, capacityPosition);
             }
         }
