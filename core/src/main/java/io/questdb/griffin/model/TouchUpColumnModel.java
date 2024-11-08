@@ -32,7 +32,7 @@ public class TouchUpColumnModel implements Mutable {
     public static final ObjectFactory<TouchUpColumnModel> FACTORY = TouchUpColumnModel::new;
     private ExpressionNode columnName;
     private int columnNamePos;
-    private int columnType = ColumnType.UNDEFINED;
+    private int columnType;
     private int columnTypePos;
     private int indexColumnPos;
     private int indexValueBlockSize;
@@ -41,11 +41,20 @@ public class TouchUpColumnModel implements Mutable {
     private int symbolCapacity;
 
     private TouchUpColumnModel() {
+        clear();
     }
 
     @Override
     public void clear() {
-        symbolCapacity = 0;
+        columnName = null;
+        columnNamePos = -1;
+        columnType = ColumnType.UNDEFINED;
+        columnTypePos = -1;
+        indexColumnPos = -1;
+        indexValueBlockSize = -1;
+        indexedFlag = false;
+        symbolCacheFlag = false;
+        symbolCapacity = -1;
     }
 
     public ExpressionNode getColumnName() {
