@@ -443,6 +443,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                 columnVersion,
                 truncateVersion
         );
+        prevPartitionTableVersion = partitionTableVersion;
         storeSymbolCounts(symbolCountProviders);
         finishABHeader(writeBaseOffset, symbolColumnCount * Long.BYTES, 0, CommitMode.NOSYNC);
     }
