@@ -183,7 +183,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected void runFuzz(Rnd rnd) throws Exception {
-        assertMemoryLeak(() -> {
+        assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);

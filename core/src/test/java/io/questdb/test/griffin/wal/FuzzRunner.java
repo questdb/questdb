@@ -50,6 +50,7 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
@@ -89,6 +90,7 @@ public class FuzzRunner {
     private CairoEngine engine;
     private double equalTsRowsProb;
     private int fuzzRowCount;
+    private int ioAllocationFailureCount;
     private boolean isO3;
     private double notSetProb;
     private double nullSetProb;
@@ -424,15 +426,19 @@ public class FuzzRunner {
         }
     }
 
+    public FilesFacade getFileFacade() {
+        return engine.getConfiguration().getFilesFacade();
+    }
+
     public int getTransactionCount() {
         return transactionCount;
     }
 
     public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
-        setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1);
+        setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1, 0);
     }
 
-    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount, int parallelWalCount) {
+    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount, int parallelWalCount, int ioAllocationFailureCount) {
         this.isO3 = isO3;
         this.fuzzRowCount = fuzzRowCount;
         this.transactionCount = transactionCount;
@@ -442,6 +448,7 @@ public class FuzzRunner {
         this.initialRowCount = initialRowCount;
         this.partitionCount = partitionCount;
         this.parallelWalCount = parallelWalCount;
+        this.ioAllocationFailureCount = ioAllocationFailureCount;
     }
 
     public void setFuzzProbabilities(
