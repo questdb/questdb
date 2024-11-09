@@ -24,7 +24,17 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -37,15 +47,20 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.*;
 
-public class WalTableListFunctionFactory implements FunctionFactory {
-    private static final Log LOG = LogFactory.getLog(WalTableListFunctionFactory.class);
+public class WalTablesFunctionFactory implements FunctionFactory {
+    private static final Log LOG = LogFactory.getLog(WalTablesFunctionFactory.class);
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "wal_tables()";
     private static final int errorMessageColumn;
@@ -75,7 +90,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new WalTableListCursorFactory(configuration, sqlExecutionContext)) {
+        return new CursorFunction(new WalTablesRecordCursorFactory(configuration, sqlExecutionContext)) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -83,24 +98,22 @@ public class WalTableListFunctionFactory implements FunctionFactory {
         };
     }
 
-    private static class WalTableListCursorFactory extends AbstractRecordCursorFactory {
-        private final TableListRecordCursor cursor;
+    private static class WalTablesRecordCursorFactory extends AbstractRecordCursorFactory {
+        private final CairoEngine engine;
         private final FilesFacade ff;
-        private final SqlExecutionContext sqlExecutionContext;
-        private CairoEngine engine;
-        private Path rootPath;
+        private final TxReader txReader;
+        private WalTablesRecordCursor cursor;
 
-        public WalTableListCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        public WalTablesRecordCursorFactory(CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
             super(METADATA);
             this.ff = configuration.getFilesFacade();
-            this.rootPath = new Path().of(configuration.getRoot());
-            this.sqlExecutionContext = sqlExecutionContext;
-            this.cursor = new TableListRecordCursor();
+            this.cursor = new WalTablesRecordCursor();
+            this.engine = sqlExecutionContext.getCairoEngine();
+            this.txReader = new TxReader(ff);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            engine = executionContext.getCairoEngine();
             cursor.toTop();
             return cursor;
         }
@@ -117,19 +130,18 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
         @Override
         protected void _close() {
-            this.rootPath = Misc.free(this.rootPath);
+            cursor = Misc.free(cursor);
         }
 
-        private class TableListRecordCursor implements RecordCursor {
+        private class WalTablesRecordCursor implements RecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
-            private final TxReader txReader = new TxReader(ff);
             private int tableIndex = -1;
 
             @Override
             public void close() {
                 tableIndex = -1;
-                txReader.close();
+                txReader.clear();
             }
 
             @Override
@@ -241,6 +253,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
                 private boolean switchTo(final TableToken tableToken) {
                     try {
+                        Path rootPath = Path.getThreadLocal(engine.getConfiguration().getRoot());
                         tableName = tableToken.getTableName();
                         final int rootLen = rootPath.size();
                         rootPath.concat(tableToken).concat(SEQ_DIR);
@@ -275,7 +288,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         txReader.ofRO(rootPath.$(), PartitionBy.NONE);
                         rootPath.trimTo(rootLen);
 
-                        final CairoEngine engine = sqlExecutionContext.getCairoEngine();
                         final MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
                         final long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
                         TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
@@ -297,7 +309,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("name", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));
         nameColumn = metadata.getColumnCount() - 1;
         metadata.add(new TableColumnMetadata("suspended", ColumnType.BOOLEAN));
         suspendedColumn = metadata.getColumnCount() - 1;

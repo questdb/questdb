@@ -43,7 +43,11 @@ import org.junit.Assert;
 import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 
 import static org.junit.Assert.*;
 
@@ -84,7 +88,7 @@ abstract class AbstractAlterTableSetTypeRestartTest extends AbstractBootstrapTes
     static void checkSuspended(String tableName) throws SQLException {
         try (
                 final Connection connection = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
-                final PreparedStatement stmt = connection.prepareStatement("select name, suspended from wal_tables()")
+                final PreparedStatement stmt = connection.prepareStatement("select table_name, suspended from wal_tables()")
         ) {
             final ResultSet rs = stmt.executeQuery();
             if (rs.next()) {

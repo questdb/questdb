@@ -98,8 +98,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             rowCount = assertRowCount(1010, rowCount);
 
             // Check that the partition is not split
-            assertSql("name\n" +
-                    "2020-02-03\n", "select name from table_partitions('x')");
+            assertSql("partition_name\n" +
+                    "2020-02-03\n", "select partition_name from table_partitions('x')");
 
             // Split at 2020-02-03T01
             insert(
@@ -115,9 +115,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             );
 
             // Check that the partition is split
-            assertSql("name\tnumRows\n" +
+            assertSql("partition_name\tnumRows\n" +
                     "2020-02-03\t809\n" +
-                    "2020-02-03T000000-000001\t211\n", "select name,numRows from table_partitions('x')");
+                    "2020-02-03T000000-000001\t211\n", "select partition_name,numRows from table_partitions('x')");
 
             assertRowCount(211, rowCount);
         });
@@ -161,8 +161,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
-            assertSql("minTimestamp\tnumRows\tname\n" +
+            String partitionsSql = "select minTimestamp, numRows, partition_name from table_partitions('x')";
+            assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                     "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
                     "2020-02-04T20:01:00.000000Z\t319\t2020-02-04T200000-000001\n", partitionsSql);
 
@@ -178,7 +178,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
 
                 // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
-                assertSql("minTimestamp\tnumRows\tname\n" +
+                assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                         "2020-02-04T00:00:00.000000Z\t1081\t2020-02-04\n" +
                         "2020-02-04T18:01:00.000000Z\t170\t2020-02-04T180000-000001\n" +
                         "2020-02-04T20:01:00.000000Z\t319\t2020-02-04T200000-000001\n", partitionsSql);
@@ -193,7 +193,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            assertSql("minTimestamp\tnumRows\tname\n" +
+            assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                     "2020-02-04T00:00:00.000000Z\t1301\t2020-02-04\n" +
                     "2020-02-04T20:01:00.000000Z\t319\t2020-02-04T200000-000001\n", partitionsSql);
 
@@ -206,7 +206,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            assertSql("minTimestamp\tnumRows\tname\n" +
+            assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                     "2020-02-04T00:00:00.000000Z\t1301\t2020-02-04\n" +
                     "2020-02-04T20:01:00.000000Z\t369\t2020-02-04T200000-000001\n", partitionsSql);
 
@@ -220,7 +220,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     sqlExecutionContext
             );
 
-            assertSql("minTimestamp\tnumRows\tname\n" +
+            assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                     "2020-02-04T00:00:00.000000Z\t1670\t2020-02-04\n" +
                     "2020-02-05T01:01:15.000000Z\t50\t2020-02-05\n", partitionsSql);
 
@@ -271,8 +271,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             rowCount = assertRowCount(319 * 2, rowCount);
 
-            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
-            assertSql("minTimestamp\tnumRows\tname\n" +
+            String partitionsSql = "select minTimestamp, numRows, partition_name from table_partitions('x')";
+            assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                     "2020-02-04T00:00:00.000000Z\t1520\t2020-02-04\n", partitionsSql);
 
             // Append in order to check last partition opened for writing correctly.
@@ -283,7 +283,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " from long_sequence(200)"
             );
 
-            assertSql("minTimestamp\tnumRows\tname\n" +
+            assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                     "2020-02-04T00:00:00.000000Z\t1720\t2020-02-04\n", partitionsSql);
 
             assertRowCount(200, rowCount);
@@ -560,8 +560,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot copy data");
             }
 
-            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
-            assertSql("minTimestamp\tnumRows\tname\n" +
+            String partitionsSql = "select minTimestamp, numRows, partition_name from table_partitions('x')";
+            assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                     "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
                     "2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001\n" +
                     "2020-02-05T00:00:00.000000Z\t720\t2020-02-05\n", partitionsSql);
@@ -580,7 +580,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot copy data");
             }
 
-            assertSql("minTimestamp\tnumRows\tname\n" +
+            assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                     "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
                     "2020-02-04T20:01:00.000000Z\t639\t2020-02-04T200000-000001\n" +
                     "2020-02-05T00:00:00.000000Z\t720\t2020-02-05\n", partitionsSql);
@@ -594,7 +594,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " from long_sequence(200)"
             );
 
-            assertSql("minTimestamp\tnumRows\tname\n" +
+            assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                     "2020-02-04T00:00:00.000000Z\t2040\t2020-02-04\n" +
                     "2020-02-05T00:00:00.000000Z\t720\t2020-02-05\n", partitionsSql);
 
@@ -650,22 +650,22 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                         true
                 );
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, "y where sym = '5' order by ts", "x where sym = '5'", LOG);
-                assertSql("name\tminTimestamp\n" +
+                assertSql("partition_name\tminTimestamp\n" +
                         "2020-02-03\t2020-02-03T13:00:00.000000Z\n" +
                         "2020-02-04\t2020-02-04T00:00:00.000000Z\n" +
                         "2020-02-04T230000-000001\t2020-02-04T23:01:00.000000Z\n" +
-                        "2020-02-05\t2020-02-05T00:00:00.000000Z\n", "select name, minTimestamp from table_partitions('x')"
+                        "2020-02-05\t2020-02-05T00:00:00.000000Z\n", "select partition_name, minTimestamp from table_partitions('x')"
                 );
             }
 
             // Another reader, should allow to squash partitions
             try (TableReader ignore = getReader("x")) {
                 insert("insert into x(ts) values('2020-02-06')");
-                assertSql("name\tminTimestamp\n" +
+                assertSql("partition_name\tminTimestamp\n" +
                         "2020-02-03\t2020-02-03T13:00:00.000000Z\n" +
                         "2020-02-04\t2020-02-04T00:00:00.000000Z\n" +
                         "2020-02-05\t2020-02-05T00:00:00.000000Z\n" +
-                        "2020-02-06\t2020-02-06T00:00:00.000000Z\n", "select name, minTimestamp from table_partitions('x')");
+                        "2020-02-06\t2020-02-06T00:00:00.000000Z\n", "select partition_name, minTimestamp from table_partitions('x')");
             }
 
             TestUtils.assertIndexBlockCapacity(engine, "x", "sym");
@@ -701,7 +701,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     " rnd_str(5,16,2) as str," +
                     " rnd_varchar(1,40,5) as varc1," +
                     " rnd_varchar(1, 1,5) as varc2,";
-            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
+            String partitionsSql = "select minTimestamp, numRows, partition_name from table_partitions('x')";
 
             // Prevent squashing
             try (TableReader ignore = getReader("x")) {
@@ -712,7 +712,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                                 " from long_sequence(200)"
                 );
 
-                assertSql("minTimestamp\tnumRows\tname\n" +
+                assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                         "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
                         "2020-02-04T20:01:00.000000Z\t319\t2020-02-04T200000-000001\n", partitionsSql);
             }
@@ -727,7 +727,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             " from long_sequence(200)"
             );
 
-            assertSql("minTimestamp\tnumRows\tname\n" +
+            assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                     "2020-02-04T00:00:00.000000Z\t1720\t2020-02-04\n", partitionsSql);
 
         });
@@ -817,8 +817,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             compile("alter table x squash partitions");
             drainWalQueue();
 
-            String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
-            assertSql("minTimestamp\tnumRows\tname\n" +
+            String partitionsSql = "select minTimestamp, numRows, partition_name from table_partitions('x')";
+            assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                     "2020-02-04T20:01:00.000000Z\t200\t2020-02-04\n" +
                     "2020-02-05T18:01:00.000000Z\t200\t2020-02-05\n", partitionsSql);
 
@@ -864,8 +864,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 );
                 drainWalQueue();
 
-                String partitionsSql = "select minTimestamp, numRows, name from table_partitions('x')";
-                assertSql("minTimestamp\tnumRows\tname\n" +
+                String partitionsSql = "select minTimestamp, numRows, partition_name from table_partitions('x')";
+                assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                         "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
                         "2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001\n" +
                         "2020-02-05T00:00:00.000000Z\t1320\t2020-02-05\n", partitionsSql);
@@ -878,7 +878,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 // Partition "2020-02-04" cannot be squashed with the new update because it's locked by the reader
-                assertSql("minTimestamp\tnumRows\tname\n" +
+                assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                         "2020-02-04T00:00:00.000000Z\t1201\t2020-02-04\n" +
                         "2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001\n" +
                         "2020-02-05T00:00:00.000000Z\t1081\t2020-02-05\n" +
@@ -888,7 +888,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 compile("alter table x squash partitions");
 
                 drainWalQueue();
-                assertSql("minTimestamp\tnumRows\tname\n" +
+                assertSql("minTimestamp\tnumRows\tpartition_name\n" +
                         "2020-02-04T00:00:00.000000Z\t1640\t2020-02-04\n" +
                         "2020-02-05T00:00:00.000000Z\t1370\t2020-02-05\n", partitionsSql);
 

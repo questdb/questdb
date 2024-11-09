@@ -25,7 +25,12 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -34,24 +39,50 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
-import io.questdb.griffin.*;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.SuspendEvent;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.*;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Ignore;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
@@ -69,10 +100,26 @@ import org.postgresql.util.PSQLException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.Date;
-import java.sql.*;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.sql.Types;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.GregorianCalendar;
+import java.util.List;
+import java.util.Properties;
+import java.util.TimeZone;
+import java.util.UUID;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -190,50 +237,6 @@ public class PGJobContextTest extends BasePGTest {
     @After
     public void tearDown() throws Exception {
         super.tearDown();
-    }
-
-    @Test
-    public void testSimpleQueryLoopThenSchemaChangeThenExtendedQuery() throws Exception {
-        // This is a regression test. The bug scenario occurred as follows:
-        // 1. A client using a simple protocol poisoned a query cache. This was due to a bug where a simple query would
-        //    never poll() from the cache, but would populate it after completion. As a result, each query execution
-        //    added a new entry to the cache.
-        // 2. A schema change invalidated all cached queries. This is expected.
-        // 3. A client using extended protocol then attempted to execute the same query. Upon receiving the PARSE message,
-        //    it consulted the query cache and found a stale query plan. This triggered a retry, but subsequent retries
-        //    also failed because they consulted the cache and found other stale plans.
-
-        selectCacheBlockCount = 100; // large cache, must me larger than 'cairo.sql.max.recompile.attempts'
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-
-                // first poison the cache using the SIMPLE protocol
-                try (
-                        final Connection connection = getConnection(server.getPort(), true, false);
-                        final Statement statement = connection.createStatement()
-                ) {
-                    statement.execute("create table tab(ts timestamp, value double)");
-                    for (int i = 0; i < selectCacheBlockCount; i++) {
-                        statement.execute("select * from tab"); // an attempt to populate cache
-                    }
-
-                    // change the schema. if the previous SELECT queries are cached then they are all stale by now
-                    statement.execute("alter table tab add column x int");
-                }
-
-                // now run a query with an extended protocol - this consults query cache
-                try (
-                        final Connection connection = getConnection(server.getPort(), false, false);
-                        final Statement statement = connection.createStatement()
-                ) {
-                    statement.execute("select * from tab;");
-                }
-            }
-        });
     }
 
     @Test
@@ -1790,28 +1793,6 @@ if __name__ == "__main__":
         });
     }
 
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
-
     @Test
     public void testBatchInsertWithTransaction() throws Exception {
         skipOnWalRun(); // Non-partitioned
@@ -1929,6 +1910,28 @@ if __name__ == "__main__":
             assertResultSet(expected, sink, rs4);
         });
     }
+
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
 
     @Test
     public void testBindVariableDropLastPartitionListByMonthHigherPrecision() throws Exception {
@@ -3559,49 +3562,49 @@ if __name__ == "__main__":
 
     @Test
     public void testFetchTablePartitions() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (PreparedStatement stmt = connection.prepareStatement("create table if not exists t1 as " +
-                    "(" +
-                    "select dateadd('h', x::int, '2023-03-23T00:00:00.000000Z') as ts  " +
-                    "from long_sequence(30)" +
-                    ") " +
-                    "timestamp(ts) partition by day")) {
-                stmt.execute();
-                mayDrainWalQueue();
-            }
+        assertWithPgServer(
+                CONN_AWARE_ALL,
+                (connection, binary, mode, port) -> {
+                    drop("drop table if exists t1");
+                    try (PreparedStatement stmt = connection.prepareStatement("create table if not exists t1 as " +
+                            "(" +
+                            "select dateadd('h', x::int, '2023-03-23T00:00:00.000000Z') as ts  " +
+                            "from long_sequence(30)" +
+                            ") " +
+                            "timestamp(ts) partition by day")) {
+                        stmt.execute();
+                        mayDrainWalQueue();
+                    }
 
-            try (PreparedStatement stmt = connection.prepareStatement("SELECT * FROM table_partitions('t1')")) {
-                ResultSet resultSet = stmt.executeQuery();
-
-                resultSet.next();
-                assertEquals(0, resultSet.getLong(1));
-                assertEquals("DAY", resultSet.getString(2));
-                assertEquals("2023-03-23", resultSet.getString(3));
-                assertTrue(resultSet.getString(4).startsWith("2023-03-23 01:00:00"));
-                assertTrue(resultSet.getString(5).startsWith("2023-03-23 23:00:00"));
-                assertEquals(23L, resultSet.getLong(6));
-                //skip disk sizes as there's a race
-                assertFalse(resultSet.getBoolean(9));
-                assertFalse(resultSet.getBoolean(10));
-                assertTrue(resultSet.getBoolean(11));
-                assertFalse(resultSet.getBoolean(12));
-                assertFalse(resultSet.getBoolean(13));
-
-                resultSet.next();
-                assertEquals(1, resultSet.getLong(1));
-                assertEquals("DAY", resultSet.getString(2));
-                assertEquals("2023-03-24", resultSet.getString(3));
-                assertTrue(resultSet.getString(4).startsWith("2023-03-24 00:00:00"));
-                assertTrue(resultSet.getString(5).startsWith("2023-03-24 06:00:00"));
-                assertEquals(7L, resultSet.getLong(6));
-                //skip disk sizes as there's a race
-                assertFalse(resultSet.getBoolean(9));
-                assertTrue(resultSet.getBoolean(10));
-                assertTrue(resultSet.getBoolean(11));
-                assertFalse(resultSet.getBoolean(12));
-                assertFalse(resultSet.getBoolean(13));
-            }
-        });
+                    // do not select size, because it fluctuates
+                    try (PreparedStatement stmt = connection.prepareStatement(
+                            "SELECT " +
+                                    "partition_index," +
+                                    "partitionby," +
+                                    "partition_name," +
+                                    "partition_name_txn," +
+                                    "minTimestamp," +
+                                    "maxTimestamp," +
+                                    "numRows," +
+                                    "readonly," +
+                                    "active," +
+                                    "attached," +
+                                    "detached," +
+                                    "attachable," +
+                                    "parquet," +
+                                    "parquetFileSize," +
+                                    " FROM table_partitions('t1')"
+                    )) {
+                        ResultSet resultSet = stmt.executeQuery();
+                        assertResultSet(
+                                "partition_index[INTEGER],partitionby[VARCHAR],partition_name[VARCHAR],partition_name_txn[BIGINT],minTimestamp[TIMESTAMP],maxTimestamp[TIMESTAMP],numRows[BIGINT],readonly[BIT],active[BIT],attached[BIT],detached[BIT],attachable[BIT],parquet[BIT],parquetFileSize[BIGINT]\n" +
+                                        "0,DAY,2023-03-23,-1,2023-03-23 01:00:00.0,2023-03-23 23:00:00.0,23,false,false,true,false,false,false,-1\n" +
+                                        "1,DAY,2023-03-24,-1,2023-03-24 00:00:00.0,2023-03-24 06:00:00.0,7,false,true,true,false,false,false,-1\n",
+                                sink,
+                                resultSet
+                        );
+                    }
+                });
     }
 
     @Test
@@ -8708,6 +8711,50 @@ create table tab as (
                         // a new query, with this connection, which does not lock the table.
                         connection.prepareStatement("select 1").execute();
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSimpleQueryLoopThenSchemaChangeThenExtendedQuery() throws Exception {
+        // This is a regression test. The bug scenario occurred as follows:
+        // 1. A client using a simple protocol poisoned a query cache. This was due to a bug where a simple query would
+        //    never poll() from the cache, but would populate it after completion. As a result, each query execution
+        //    added a new entry to the cache.
+        // 2. A schema change invalidated all cached queries. This is expected.
+        // 3. A client using extended protocol then attempted to execute the same query. Upon receiving the PARSE message,
+        //    it consulted the query cache and found a stale query plan. This triggered a retry, but subsequent retries
+        //    also failed because they consulted the cache and found other stale plans.
+
+        selectCacheBlockCount = 100; // large cache, must me larger than 'cairo.sql.max.recompile.attempts'
+        assertMemoryLeak(() -> {
+            try (
+                    final PGWireServer server = createPGServer(2);
+                    final WorkerPool workerPool = server.getWorkerPool()
+            ) {
+                workerPool.start(LOG);
+
+                // first poison the cache using the SIMPLE protocol
+                try (
+                        final Connection connection = getConnection(server.getPort(), true, false);
+                        final Statement statement = connection.createStatement()
+                ) {
+                    statement.execute("create table tab(ts timestamp, value double)");
+                    for (int i = 0; i < selectCacheBlockCount; i++) {
+                        statement.execute("select * from tab"); // an attempt to populate cache
+                    }
+
+                    // change the schema. if the previous SELECT queries are cached then they are all stale by now
+                    statement.execute("alter table tab add column x int");
+                }
+
+                // now run a query with an extended protocol - this consults query cache
+                try (
+                        final Connection connection = getConnection(server.getPort(), false, false);
+                        final Statement statement = connection.createStatement()
+                ) {
+                    statement.execute("select * from tab;");
                 }
             }
         });

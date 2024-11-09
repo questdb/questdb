@@ -19,7 +19,7 @@ select wait_wal_table('size_control');
 
 # check dedup data
 query TIT
-select name, numRows, diskSize
+select partition_name, numRows, diskSize
 from table_partitions('size_control');
 ----
 2022-02-24T00   3600    153693
@@ -38,7 +38,7 @@ select wait_wal_table('size_control');
 
 # check dedup data
 query TIT
-select name, numRows, diskSize
+select partition_name, numRows, diskSize
 from table_partitions('size_control');
 ----
 2022-02-24T00   3600    153693

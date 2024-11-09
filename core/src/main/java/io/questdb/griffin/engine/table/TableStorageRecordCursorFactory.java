@@ -219,7 +219,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("tableName", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("partitionCount", ColumnType.LONG));
