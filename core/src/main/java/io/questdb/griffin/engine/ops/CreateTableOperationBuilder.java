@@ -98,22 +98,20 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         if (queryModel != null) {
             setFactory(compiler.generateSelectWithRetries(queryModel, sqlExecutionContext, false));
             return new CreateTableOperation(
+                    Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
-                    getPartitionByFromExpr(),
-                    Chars.toString(volumeAlias),
-                    ignoreIfExists,
+                    ignoreIfExists, getPartitionByFromExpr(),
                     timestampExpr != null ? Chars.toString(timestampExpr.token) : null,
-                    timestampExpr != null ? timestampExpr.position : 0,
-                    batchSize,
-                    batchO3MaxLag,
+                    timestampExpr != null ? timestampExpr.position : 0, Chars.toString(volumeAlias),
+                    walEnabled,
                     defaultSymbolCapacity,
-                    recordCursorFactory,
-                    Chars.toString(sqlText),
-                    touchUpColumnModels,
-                    o3MaxLag,
                     maxUncommittedRows,
-                    walEnabled
+                    o3MaxLag,
+                    recordCursorFactory,
+                    touchUpColumnModels,
+                    batchSize,
+                    batchO3MaxLag
             );
         }
 
@@ -317,9 +315,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         this.timestampExpr = expr;
     }
 
-    public void setTimestampIndex(int index) {
-    }
-
     public void setVolumeAlias(CharSequence volumeAlias) {
         // set if the "create table" statement contains IN VOLUME 'volumeAlias'.
         // volumePath will be resolved by the compiler
@@ -370,39 +365,36 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             sink.putAscii(" as (");
             getQueryModel().toSink(sink);
             sink.putAscii(')');
-            for (int i = 0, n = columnNames.size(); i < n; i++) {
-                if (isIndexed(i)) {
-                    sink.putAscii(", index(");
-                    sink.put(columnNames.getQuick(i));
-                    sink.putAscii(" capacity ");
-                    sink.put(getHighAt(i * 2 + 1));
-                    sink.putAscii(')');
-                }
-            }
             final ObjList<CharSequence> castColumns = getTouchUpColumnModels().keys();
             for (int i = 0, n = castColumns.size(); i < n; i++) {
                 final CharSequence column = castColumns.getQuick(i);
                 final TouchUpColumnModel m = getTouchUpColumnModels().get(column);
                 final int type = m.getColumnType();
-                sink.putAscii(", cast(");
-                sink.put(column);
-                sink.putAscii(" as ");
-                sink.put(ColumnType.nameOf(type));
-                sink.putAscii(':');
-                sink.put(m.getColumnTypePos());
-                if (ColumnType.isSymbol(type)) {
-                    sink.putAscii(" capacity ");
-                    sink.put(m.getSymbolCapacity());
-                    if (m.getSymbolCacheFlag()) {
-                        sink.putAscii(" cache");
-                    } else {
-                        sink.putAscii(" nocache");
-                    }
+                if (type > 0) {
+                    sink.putAscii(", cast(");
+                    sink.put(column);
+                    sink.putAscii(" as ");
+                    sink.put(ColumnType.nameOf(type));
+                    sink.putAscii(':');
+                    sink.put(m.getColumnTypePos());
 
-                    if (m.isIndexed()) {
-                        sink.putAscii(" index capacity ");
-                        sink.put(m.getIndexValueBlockSize());
+                    if (ColumnType.isSymbol(type)) {
+                        sink.putAscii(" capacity ");
+                        sink.put(m.getSymbolCapacity());
+                        if (m.getSymbolCacheFlag()) {
+                            sink.putAscii(" cache");
+                        } else {
+                            sink.putAscii(" nocache");
+                        }
+                        if (m.isIndexed()) {
+                            sink.putAscii(" index capacity ");
+                            sink.put(m.getIndexValueBlockSize());
+                        }
                     }
+                } else if (m.isIndexed()) {
+                    sink.putAscii(", index(").put(column);
+                    sink.putAscii(" capacity ");
+                    sink.put(m.getIndexValueBlockSize());
                 }
                 sink.putAscii(')');
             }

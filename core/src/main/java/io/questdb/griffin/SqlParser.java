@@ -31,8 +31,29 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
-import io.questdb.griffin.model.*;
-import io.questdb.std.*;
+import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExplainModel;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.InsertModel;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RenameTableModel;
+import io.questdb.griffin.model.TouchUpColumnModel;
+import io.questdb.griffin.model.WindowColumn;
+import io.questdb.griffin.model.WithClauseModel;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
+import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -646,7 +667,13 @@ public class SqlParser {
                     throw SqlException.position(timestamp.position)
                             .put("invalid designated timestamp column [name=").put(timestamp.token).put(']');
                 }
-                builder.setTimestampIndex(timestampIndex);
+                if (builder.getColumnType(timestampIndex) != ColumnType.TIMESTAMP) {
+                    throw SqlException
+                            .position(timestamp.position)
+                            .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(builder.getColumnType(timestampIndex)))
+                            .put(", columnName=").put(timestamp.token)
+                            .put(']');
+                }
             }
             tok = optTok(lexer);
         }
@@ -943,6 +970,23 @@ public class SqlParser {
         expectTok(lexer, '(');
         final ExpressionNode columnName = expectLiteral(lexer);
         final int columnNamePosition = lexer.lastTokenPosition();
+
+        if (createTableOperationBuilder.hasColumnDefs()) {
+            // this is index definition for static "create table" e.g. NOT "create as select"
+            // we can validate column name and type
+            int columnIndex = createTableOperationBuilder.getColumnIndex(columnName.token);
+            if (columnIndex == -1) {
+                throw SqlException.invalidColumn(columnNamePosition, columnName.token);
+            }
+
+            if (createTableOperationBuilder.getColumnType(columnIndex) != ColumnType.SYMBOL) {
+                throw SqlException
+                        .position(columnNamePosition)
+                        .put("indexes are supported only for SYMBOL columns [columnName=").put(columnName.token)
+                        .put(", columnType=").put(ColumnType.nameOf(createTableOperationBuilder.getColumnType(columnIndex)))
+                        .put(']');
+            }
+        }
 
         int indexValueBlockSize;
         if (isCapacityKeyword(tok(lexer, "'capacity'"))) {

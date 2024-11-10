@@ -55,7 +55,7 @@ public interface MetadataCacheWriter extends QuietCloseable {
      *
      * @param token The table token for the table to read metadata.
      */
-    void hydrateTable(@NotNull TableToken token);
+    void hydrateTable(@NotNull TableToken token, boolean throwError);
 
     /**
      * Updates the metadata cache with new entry, which content is provided by

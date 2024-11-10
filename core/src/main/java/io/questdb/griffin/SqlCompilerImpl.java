@@ -566,6 +566,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // todo: jit is always false, why?
             QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
         } catch (Throwable e) {
+            if (e instanceof CairoException) {
+                ((CairoException) e).position(createTableOp.getTableNamePosition());
+            }
             // todo: jit is always false, why?
             QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
             throw e;

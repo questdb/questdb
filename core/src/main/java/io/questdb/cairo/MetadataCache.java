@@ -31,7 +31,16 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
@@ -80,7 +89,7 @@ public class MetadataCache implements QuietCloseable {
             for (int i = 0, n = tableTokens.size(); i < n; i++) {
                 // acquire a write lock for each table
                 try (MetadataCacheWriter ignore = writeLock()) {
-                    hydrateTable0(tableTokens.getQuick(i));
+                    hydrateTable0(tableTokens.getQuick(i), false);
                 }
             }
 
@@ -123,7 +132,7 @@ public class MetadataCache implements QuietCloseable {
         return cacheWriter;
     }
 
-    private void hydrateTable0(@NotNull TableToken token) {
+    private void hydrateTable0(@NotNull TableToken token, boolean throwError) {
 
         Path path = Path.getThreadLocal(engine.getConfiguration().getRoot());
 
@@ -247,6 +256,9 @@ public class MetadataCache implements QuietCloseable {
                 }
             } finally {
                 log.I$();
+            }
+            if (throwError) {
+                throw e;
             }
         } finally {
             Misc.free(metaMem);
@@ -418,7 +430,7 @@ public class MetadataCache implements QuietCloseable {
             }
 
             for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                hydrateTable(tableTokens.getQuick(i));
+                hydrateTable(tableTokens.getQuick(i), false);
             }
         }
 
@@ -431,11 +443,11 @@ public class MetadataCache implements QuietCloseable {
             if (token == null) {
                 throw TableReferenceOutOfDateException.of(tableName);
             }
-            hydrateTable(token);
+            hydrateTable(token, true);
         }
 
         /**
-         * @see MetadataCacheWriter#hydrateTable(TableToken)
+         * @see MetadataCacheWriter#hydrateTable(TableToken, boolean)
          */
         @Override
         public void hydrateTable(@NotNull TableWriterMetadata tableMetadata) {
@@ -519,14 +531,14 @@ public class MetadataCache implements QuietCloseable {
         }
 
         @Override
-        public void hydrateTable(@NotNull TableToken token) {
-            hydrateTable0(token);
+        public void hydrateTable(@NotNull TableToken token, boolean throwError) {
+            hydrateTable0(token, throwError);
         }
 
         @Override
         public void renameTable(@NotNull TableToken fromTableToken, @NotNull TableToken toTableToken) {
             dropTable(fromTableToken);
-            hydrateTable(toTableToken);
+            hydrateTable(toTableToken, true);
         }
     }
 }

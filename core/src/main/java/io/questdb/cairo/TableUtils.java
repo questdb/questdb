@@ -28,10 +28,23 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryMW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
@@ -41,9 +54,24 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.O3PartitionPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -315,28 +343,6 @@ public final class TableUtils {
             throw SqlException.$(tableNameExpr.position, "function must return CURSOR");
         }
         return function;
-    }
-
-    public static void createTable(
-            CairoConfiguration configuration,
-            MemoryMARW memory,
-            Path path,
-            TableStructure structure,
-            int tableId,
-            CharSequence dirName
-    ) {
-        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId, dirName);
-    }
-
-    public static void createTable(
-            CairoConfiguration configuration,
-            TableStructure structure,
-            int tableId,
-            CharSequence dirName
-    ) {
-        try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
-            createTable(configuration, mem, path, structure, ColumnType.VERSION, tableId, dirName);
-        }
     }
 
     public static void createTable(
@@ -981,7 +987,7 @@ public final class TableUtils {
         long alignedExtraLen = offset - alignedOffset;
         long mapAddr = rw ?
                 mapRWNoAlloc(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag) :
-                mapRO(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag);
+                TableUtils.mapRO(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag);
         ff.madvise(mapAddr, size + alignedExtraLen, rw ? Files.POSIX_MADV_RANDOM : Files.POSIX_MADV_SEQUENTIAL);
         return mapAddr + alignedExtraLen;
     }
@@ -993,7 +999,16 @@ public final class TableUtils {
     }
 
     public static long mapRO(FilesFacade ff, long fd, long size, int memoryTag) {
-        return mapRO(ff, fd, size, 0, memoryTag);
+        return TableUtils.mapRO(ff, fd, size, 0, memoryTag);
+    }
+
+    public static long mapRO(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
+        final long fd = openRO(ff, path, log);
+        try {
+            return mapRO(ff, fd, size, memoryTag);
+        } finally {
+            ff.close(fd);
+        }
     }
 
     /**
@@ -1023,15 +1038,6 @@ public final class TableUtils {
                     .put(']');
         }
         return address;
-    }
-
-    public static long mapRO(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
-        final long fd = openRO(ff, path, log);
-        try {
-            return mapRO(ff, fd, size, memoryTag);
-        } finally {
-            ff.close(fd);
-        }
     }
 
     public static long mapRW(FilesFacade ff, long fd, long size, int memoryTag) {

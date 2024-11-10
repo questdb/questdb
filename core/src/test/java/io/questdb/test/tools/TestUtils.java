@@ -40,6 +40,7 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -1026,6 +1027,32 @@ public final class TestUtils {
     ) {
         try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
             TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
+        }
+    }
+
+    public static TableToken createTable(
+            CairoEngine engine,
+            MemoryMARW memory,
+            Path path,
+            TableStructure structure,
+            int tableId,
+            CharSequence tableName
+    ) {
+        TableToken token = engine.lockTableName(tableName, false);
+        path.of(engine.getConfiguration().getRoot()).concat(token);
+        TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
+        engine.registerTableToken(token);
+        return token;
+    }
+
+    public static void createTable(
+            CairoConfiguration configuration,
+            TableStructure structure,
+            int tableId,
+            CharSequence dirName
+    ) {
+        try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
+            TableUtils.createTable(configuration, mem, path, structure, ColumnType.VERSION, tableId, dirName);
         }
     }
 

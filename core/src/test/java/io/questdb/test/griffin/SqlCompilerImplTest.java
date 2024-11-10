@@ -25,7 +25,17 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -39,7 +49,19 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -48,7 +70,12 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
@@ -4667,10 +4694,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
                 ) {
 
-                    compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
-                    compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
+                    ddl(compiler, "create table x (a INT, b INT)", sqlExecutionContext);
+                    ddl(compiler, "create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
                     // we need to pass the engine here, so the global test context won't do
-                    compiler.compile("insert into x select * from y", sqlExecutionContext);
+                    insert(compiler, "insert into x select * from y", sqlExecutionContext);
 
                     TestUtils.assertSql(
                             compiler,
@@ -6369,29 +6396,29 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompilerWrapper compiler = new SqlCompilerWrapper(engine)) {
                 try {
-                    compiler.compile("alter altar", sqlExecutionContext);
+                    ddl(compiler, "alter altar", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.unknownAlterStatementCalled);
                 }
 
                 try {
-                    compiler.compile("show something", sqlExecutionContext);
+                    select(compiler, "show something", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.parseShowSqlCalled);
                 }
 
-                ddl("create table ka(a int)", sqlExecutionContext);
-            try {
-                compiler.compile("drop table ka boom zoom", sqlExecutionContext);
-                Assert.fail();
-            } catch (Exception e) {
-                Assert.assertTrue(compiler.compileDropExtCalled);
+                ddl(compiler, "create table ka(a int)", sqlExecutionContext);
+                try {
+                    ddl(compiler, "drop table ka boom zoom", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertTrue(compiler.compileDropExtCalled);
                 }
 
                 try {
-                    compiler.compile("drop something", sqlExecutionContext);
+                    ddl(compiler, "drop something", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.compileDropExtCalled);
@@ -6399,14 +6426,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
                 try {
                     // when table doesn't exist "dropTableCalled" should not be triggered
-                engine.drop("drop table hopp", sqlExecutionContext);
+                    ddl(compiler, "drop table hopp");
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertFalse(compiler.dropTableCalled);
-            }
+                }
 
                 try {
-                    compiler.compile("create table tab (i int)", sqlExecutionContext);
+                    ddl(compiler, "create table tab (i int)", sqlExecutionContext);
                     compiler.compile("alter table tab drop column i boom zoom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
@@ -6414,7 +6441,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
 
                 try {
-                    compiler.compile("create table tab2 (i int)", sqlExecutionContext);
+                    ddl(compiler, "create table tab2 (i int)", sqlExecutionContext);
                     compiler.compile("alter table tab add column i2 int zoom boom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
@@ -6422,7 +6449,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
 
                 try {
-                    compiler.compile("create table tab3 (i int) foobar", sqlExecutionContext);
+                    ddl(compiler, "create table tab3 (i int) foobar", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.createTableSuffixCalled);
@@ -6630,7 +6657,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                compiler.compile(sql, sqlExecutionContext);
+                ddl(compiler, sql, sqlExecutionContext);
                 Assert.assertTrue(fiddler.isHappy());
                 try (TableReader reader = engine.getReader("Y")) {
                     sink.clear();
@@ -6760,12 +6787,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     static class SqlCompilerWrapper extends SqlCompilerImpl {
         boolean addColumnSuffixCalled;
+        boolean compileDropExtCalled;
         boolean createTableSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
         boolean unknownDropColumnSuffixCalled;
-        boolean compileDropExtCalled;
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
@@ -6778,12 +6805,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
-            parseShowSqlCalled = true;
-            return super.parseShowSql(lexer, model, tok, expressionNodePool);
-        }
-
-        @Override
         public void dropTable(
                 SqlExecutionContext executionContext,
                 CharSequence tableName,
@@ -6792,6 +6813,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         ) throws SqlException {
             dropTableCalled = true;
             super.dropTable(executionContext, tableName, tableNamePosition, flags);
+        }
+
+        @Override
+        public int parseShowSql(GenericLexer lexer, QueryModel model, CharSequence tok, ObjectPool<ExpressionNode> expressionNodePool) throws SqlException {
+            parseShowSqlCalled = true;
+            return super.parseShowSql(lexer, model, tok, expressionNodePool);
         }
 
         @Override
@@ -6812,15 +6839,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void unknownDropColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
-            unknownDropColumnSuffixCalled = true;
-            super.unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
-        }
-
-        @Override
         protected void compileDropExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
             compileDropExtCalled = true;
             super.compileDropExt(executionContext, tok);
+        }
+
+        @Override
+        protected void unknownDropColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
+            unknownDropColumnSuffixCalled = true;
+            super.unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
         }
     }
 }

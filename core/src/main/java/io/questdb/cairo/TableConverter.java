@@ -129,7 +129,7 @@ public class TableConverter {
                                 convertedTables.add(token);
 
                                 try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                                    metadataRW.hydrateTable(token);
+                                    metadataRW.hydrateTable(token, true);
                                 }
                             }
 

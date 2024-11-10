@@ -26,7 +26,22 @@ package io.questdb.test.cairo;
 
 import io.questdb.Metrics;
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
@@ -40,20 +55,33 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.*;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -211,7 +239,7 @@ public class TableWriterTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, "testAddColumnConcurrentWithDataUpdates", PartitionBy.NONE);
             model.timestamp();
             tableToken = registerTableName(model.getTableName());
-            TableUtils.createTable(
+            TestUtils.createTable(
                     configuration,
                     model,
                     tableId,
@@ -2132,9 +2160,9 @@ public class TableWriterTest extends AbstractCairoTest {
                     .col("b", ColumnType.STRING)
                     .col("c", ColumnType.STRING).indexed(true, 1024)
                     .timestamp();
-            AbstractCairoTest.create(model);
 
             try {
+                AbstractCairoTest.create(model);
                 newOffPoolWriter(configuration, "x", metrics).close();
                 Assert.fail();
             } catch (CairoException e) {

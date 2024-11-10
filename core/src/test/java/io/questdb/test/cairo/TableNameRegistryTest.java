@@ -24,7 +24,17 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableConverter;
+import io.questdb.cairo.TableFlagResolverImpl;
+import io.questdb.cairo.TableNameRegistry;
+import io.questdb.cairo.TableNameRegistryRO;
+import io.questdb.cairo.TableNameRegistryRW;
+import io.questdb.cairo.TableNameRegistryStore;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -34,7 +44,17 @@ import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.BitSet;
+import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -274,9 +294,9 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                             // Add table
                             String tableName = "tab" + iteration;
                             TableToken tableToken = rw.lockTableName(tableName, tableName, iteration, true);
+                            TestUtils.createTable(tm, configuration, ColumnType.VERSION, iteration, tableToken);
                             rw.registerName(tableToken);
                             addedTables.add(iteration);
-                            TestUtils.createTable(tm, configuration, ColumnType.VERSION, iteration, tableToken);
                         } else if (addedTables.size() > 0) {
                             // Remove table
                             int tableId = addedTables.getLast();

@@ -128,7 +128,7 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
                 if (!tableToken.isSystem()) {
                     try {
                         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                            metadataRW.hydrateTable(tableTokens.getQuick(i));
+                            metadataRW.hydrateTable(tableTokens.getQuick(i), true);
                         }
                     } catch (CairoException ex) {
                         LOG.error().$("could not hydrate metadata [table=").$(tableToken).I$();

@@ -247,7 +247,12 @@ public class CairoEngine implements Closeable, WriterSource {
                 insert(compiler, ddl, sqlExecutionContext);
                 break;
             case DROP:
-                throw SqlException.$(0, "use drop()");
+                try (OperationFuture fut = cc.execute(eventSubSeq)) {
+                    if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
+                        throw SqlException.$(0, "drop table timeout");
+                    }
+                }
+                break;
             case SELECT:
                 throw SqlException.$(0, "use select()");
             default:
@@ -1429,14 +1434,18 @@ public class CairoEngine implements Closeable, WriterSource {
                         if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
                         }
+
+                        tableNameRegistry.registerName(tableToken);
                         tableCreated = true;
+                    } catch (Throwable e) {
+                        keepLock = false;
+                        throw e;
                     } finally {
                         if (!keepLock) {
                             unlockTableUnsafe(tableToken, null, tableCreated);
                             LOG.info().$("unlocked [table=`").$(tableToken).$("`]").$();
                         }
                     }
-                    tableNameRegistry.registerName(tableToken);
                 } else {
                     if (!ifNotExists) {
                         throw EntryUnavailableException.instance(lockedReason);

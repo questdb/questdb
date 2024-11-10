@@ -4386,7 +4386,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Linux requires the mmap offset to be page aligned
                         final long alignedOffset = Files.floorPageSize(colAuxMemOffset);
                         alignedExtraLen = colAuxMemOffset - alignedOffset;
-                        colAuxMemAddr = mapRO(ff, colAuxMem.getFd(), colAuxMemRequiredSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
+                        colAuxMemAddr = TableUtils.mapRO(ff, colAuxMem.getFd(), colAuxMemRequiredSize + alignedExtraLen, alignedOffset, MemoryTag.MMAP_TABLE_WRITER);
                     }
 
                     colDataOffset = columnTypeDriver.getDataVectorOffset(colAuxMemAddr + alignedExtraLen, 0);

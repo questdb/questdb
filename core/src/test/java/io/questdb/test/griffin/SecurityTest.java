@@ -28,8 +28,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -41,7 +44,11 @@ import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -409,7 +416,21 @@ public class SecurityTest extends AbstractCairoTest {
     public void testCreateTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertExceptionNoLeakCheck("create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
+                try (SqlCompiler compiler = memoryRestrictedEngine.getSqlCompiler()) {
+                    compiler.setFullFatJoins(false);
+                    CompiledQuery cq = compiler.compile("create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
+                    if (cq.getRecordCursorFactory() != null) {
+                        try (
+                                RecordCursorFactory factory = cq.getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(readOnlyExecutionContext)
+                        ) {
+                            cursor.hasNext();
+                        }
+                    } else {
+                        ddl(compiler, "create table balances(cust_id int, ccy symbol, balance double)", readOnlyExecutionContext);
+                    }
+                }
+                Assert.fail();
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }

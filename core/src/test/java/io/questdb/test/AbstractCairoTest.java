@@ -43,7 +43,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -601,9 +600,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     cursor.hasNext();
                 }
             } else {
-                try (OperationFuture future = cq.execute(sqlExecutionContext, null, false)) {
-                    future.await();
-                }
+                ddl(compiler, sql, sqlExecutionContext);
             }
         }
         Assert.fail();
@@ -1611,6 +1608,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return engine.select(selectSql, sqlExecutionContext);
     }
 
+    protected static RecordCursorFactory select(SqlCompiler compiler, CharSequence selectSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return CairoEngine.select(compiler, selectSql, sqlExecutionContext);
+    }
+
     protected static RecordCursorFactory select(CharSequence selectSql) throws SqlException {
         return select(selectSql, sqlExecutionContext);
     }
@@ -1995,17 +1996,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected TableToken createPopulateTable(int tableId, TableModel tableModel, int insertIterations, int totalRowsPerIteration, String startDate, int partitionCount) throws NumericException, SqlException {
-        TableToken tableToken = registerTableName(tableModel.getTableName());
         try (
                 MemoryMARW mem = Vm.getMARWInstance();
-                Path path = new Path().of(configuration.getRoot()).concat(tableToken)
+                Path path = new Path()
         ) {
-            TableUtils.createTable(configuration, mem, path, tableModel, tableId, tableToken.getDirName());
+            TableToken token = TestUtils.createTable(engine, mem, path, tableModel, tableId, tableModel.getTableName());
             for (int i = 0; i < insertIterations; i++) {
                 insert(TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount));
             }
+            return token;
         }
-        return tableToken;
     }
 
     protected ExplainPlanFactory getPlanFactory(CharSequence query) throws SqlException {

@@ -146,23 +146,48 @@ public class CreateTableOperation implements TableStructure, Operation {
         this.sqlText = null;
     }
 
+    /**
+     * Constructs operation for "create as select" only.The following considerations should be met:
+     * - model validation must be dynamic, the operation is re-runnable and "select" part of the SQL is non-constant
+     * - some column types and type attributes can be overridden
+     * - data copy operation is involved and batching parameters must be provided
+     *
+     * @param sqlText                     text of the SQL, that includes "create table..."
+     * @param tableName                   name of the table to be created
+     * @param tableNamePosition           the position of table name in user's input, it is used for error reporting
+     * @param ignoreIfExists              "if exists" flag, table won't be created silently if it exists already
+     * @param partitionBy                 partition type
+     * @param timestampColumnName         designated timestamp column name
+     * @param timestampColumnNamePosition designated timestamp column name in user's input
+     * @param volumeAlias                 the name of the "volume" where table is created, volumes are use to create table on different physical disks
+     * @param walEnabled                  WAL flag
+     * @param defaultSymbolCapacity       the default symbol capacity value, usually comes from the configuration
+     * @param maxUncommittedRows          max uncommitted rows for non-WAL tables, this is written to table's metadata to be used by ingress protocols
+     * @param o3MaxLag                    o3 commit lag, another performance optimisation parameter for non-WAL tables.
+     * @param recordCursorFactory         the factory for the "select" part of the "create as select" SQL
+     * @param touchUpColumnModelMap       maps that contains type casts and additional index flags
+     * @param batchSize                   number of rows in commit batch when data is moved from the select into the
+     *                                    new table. Special value of -1 means "atomic" commit. This corresponds to "batch" keyword on the SQL.
+     * @param batchO3MaxLag               lag windows in rows, which helps timestamp ordering code to smooth out timestamp jitter
+     * @throws SqlException is throw in case of validation errors
+     */
     public CreateTableOperation(
+            String sqlText,
             String tableName,
             int tableNamePosition,
-            int partitionBy,
-            String volumeAlias,
             boolean ignoreIfExists,
+            int partitionBy,
             String timestampColumnName,
             int timestampColumnNamePosition,
-            long batchSize,
-            long batchO3MaxLag,
+            String volumeAlias,
+            boolean walEnabled,
             int defaultSymbolCapacity,
-            RecordCursorFactory recordCursorFactory,
-            String sqlText,
-            @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap,
-            long o3MaxLag,
             int maxUncommittedRows,
-            boolean walEnabled
+            long o3MaxLag,
+            RecordCursorFactory recordCursorFactory,
+            @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap,
+            long batchSize,
+            long batchO3MaxLag
     ) throws SqlException {
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;

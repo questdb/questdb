@@ -96,7 +96,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         }
         dirNameToTableTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(tableToken);
+            metadataRW.hydrateTable(tableToken, true);
         }
     }
 

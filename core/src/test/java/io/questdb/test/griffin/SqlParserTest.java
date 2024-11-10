@@ -25,7 +25,11 @@
 package io.questdb.test.griffin;
 
 import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -1931,7 +1935,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexDef() throws SqlException {
         assertCreateTable(
-                "create batch 1000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), index(c capacity 512), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache)",
+                "create batch 1000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache index capacity 512)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity 300)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -2502,7 +2506,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR",
                 60,
-                "indexes are supported only for SYMBOL columns: b"
+                "indexes are supported only for SYMBOL columns [columnName=b, columnType=BYTE]"
         );
     }
 
@@ -2578,7 +2582,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(zyz) " +
                         "partition by YEAR",
                 112,
-                "Invalid column"
+                "invalid designated timestamp column [name=zyz]"
         );
     }
 
@@ -4939,7 +4943,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE TABLE ts_test ( close_date date ) timestamp(close_date);",
                 51,
-                "TIMESTAMP column expected [actual=DATE]"
+                "TIMESTAMP column expected [actual=DATE, columnName=close_date]"
         );
     }
 
