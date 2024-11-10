@@ -42,6 +42,7 @@ import io.questdb.cutlass.http.HttpResponseSink;
 import io.questdb.cutlass.text.Utf8Exception;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -110,6 +111,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private long executeStartNanos;
     private boolean explain = false;
     private boolean noMeta = false;
+    // Operation is stored here to be retried
+    private Operation operation;
+    // todo: remove
     private OperationFuture operationFuture;
     private boolean pausedQuery = false;
     private boolean queryCacheable = false;
@@ -312,6 +316,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void setContainsSecret(boolean containsSecret) {
         this.containsSecret = containsSecret;
+    }
+
+    public void setOperation(Operation operation) {
+        this.operation = operation;
     }
 
     public void setOperationFuture(OperationFuture fut) {

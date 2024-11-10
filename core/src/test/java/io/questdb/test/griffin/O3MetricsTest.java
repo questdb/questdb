@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.test.tools.TestUtils;
@@ -45,7 +44,7 @@ public class O3MetricsTest extends AbstractO3Test {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 8;
 
-            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
@@ -80,7 +79,7 @@ public class O3MetricsTest extends AbstractO3Test {
     public void testInsertMiddleEmptyPartition() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 2;
-            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
@@ -141,7 +140,7 @@ public class O3MetricsTest extends AbstractO3Test {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 8;
 
-            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
@@ -179,7 +178,7 @@ public class O3MetricsTest extends AbstractO3Test {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 8;
 
-            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
@@ -216,7 +215,7 @@ public class O3MetricsTest extends AbstractO3Test {
     public void testInsertRowsAfterEachPartition() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 24;
-            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
@@ -295,7 +294,7 @@ public class O3MetricsTest extends AbstractO3Test {
     public void testInsertRowsBeforePartition() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 2;
-            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount);
 
             try (TableWriter w = TestUtils.getWriter(engine, "x")) {
                 TableWriter.Row r;
@@ -327,7 +326,7 @@ public class O3MetricsTest extends AbstractO3Test {
     public void testWithO3MaxLag() throws Exception {
         executeVanillaWithMetrics((engine, compiler, sqlExecutionContext) -> {
             final long initRowCount = 2;
-            setupBasicTable(engine, compiler, sqlExecutionContext, initRowCount);
+            setupBasicTable(engine, sqlExecutionContext, initRowCount);
 
             Metrics metrics = engine.getMetrics();
 
@@ -390,7 +389,6 @@ public class O3MetricsTest extends AbstractO3Test {
      */
     private static void setupBasicTable(
             CairoEngine engine,
-            SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext,
             long rowCount
     ) throws SqlException {
@@ -404,7 +402,7 @@ public class O3MetricsTest extends AbstractO3Test {
                         ") timestamp(ts) partition by DAY",
                 MICROS_IN_HOUR,
                 rowCount);
-        compiler.compile(createTableSql, sqlExecutionContext);
+        engine.ddl(createTableSql, sqlExecutionContext);
 
         Metrics metrics = engine.getMetrics();
         Assert.assertEquals(rowCount, metrics.tableWriter().getCommittedRows());

@@ -42,8 +42,8 @@ import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.TextException;
 import io.questdb.cutlass.text.TextLoadWarning;
 import io.questdb.cutlass.text.TextLoader;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -3396,7 +3396,7 @@ public class TextLoaderTest extends AbstractCairoTest {
         });
     }
 
-    private void assertTimestampAsLong(String nominatedTimestamp, String expectedMeta) throws Exception {
+    private void assertTimestampAsLong(String designatedTimestamp, String expectedMeta) throws Exception {
         final TextConfiguration textConfiguration = new DefaultTextConfiguration() {
             @Override
             public int getTextAnalysisMaxLines() {
@@ -3410,11 +3410,12 @@ public class TextLoaderTest extends AbstractCairoTest {
                 return textConfiguration;
             }
         };
-        try (CairoEngine engine = new CairoEngine(configuration)) {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compile("create table test(StrSym symbol, ts timestamp) " + nominatedTimestamp, sqlExecutionContext);
-                engine.releaseAllWriters();
-            }
+        try (
+                CairoEngine engine = new CairoEngine(configuration);
+                SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
+        ) {
+            engine.ddl("create table test(StrSym symbol, ts timestamp) " + designatedTimestamp, sqlExecutionContext);
+            engine.releaseAllWriters();
 
             assertNoLeak(
                     engine,

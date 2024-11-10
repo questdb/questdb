@@ -407,21 +407,24 @@ public class TimeFrameRecordCursorTest extends AbstractCairoTest {
     public void testTimeFrameBoundariesSplitPartitions() throws Exception {
         executeWithPool((engine, compiler, executionContext) -> {
             // produce split partition
-            compiler.compile(
+            ddl(
+                    compiler,
                     "create table x as (" +
                             "  select timestamp_sequence('2020-02-03T13', 60*1000000L) ts " +
                             "  from long_sequence(60*24*2+300)" +
                             ") timestamp (ts) partition by DAY",
                     executionContext
             );
-            compiler.compile(
+            ddl(
+                    compiler,
                     "create table z as (" +
                             "  select timestamp_sequence('2020-02-05T17:01', 60*1000000L) ts " +
                             "  from long_sequence(50)" +
                             ")",
                     executionContext
             );
-            compiler.compile(
+            ddl(
+                    compiler,
                     "create table y as (select * from x union all select * from z)",
                     executionContext
             );

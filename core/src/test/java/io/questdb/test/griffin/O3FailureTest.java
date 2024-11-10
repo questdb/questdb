@@ -24,7 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -601,7 +607,7 @@ public class O3FailureTest extends AbstractO3Test {
                     Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testFixedColumnCopyPrefixFails";
-                    compiler.compile(
+                    engine.ddl(
                             "create atomic table " + tableName + " as ( " +
                                     "select " +
                                     "x, " +
@@ -942,7 +948,7 @@ public class O3FailureTest extends AbstractO3Test {
                     Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
 
                     String tableName = "testVarColumnCopyPrefixFails";
-                    compiler.compile(
+                    engine.ddl(
                             "create atomic table " + tableName + " as ( " +
                                     "select " +
                                     "'" + strColVal + "' as str, " +
@@ -1037,8 +1043,8 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
-        compiler.compile("create atomic table y as (x union all append)", sqlExecutionContext);
-        compiler.compile("insert atomic into x select * from append", sqlExecutionContext);
+        engine.ddl("create atomic table y as (x union all append)", sqlExecutionContext);
+        engine.ddl("insert atomic into x select * from append", sqlExecutionContext);
 
         assertO3DataConsistencyStableSort(
                 engine,
@@ -1135,7 +1141,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -1657,7 +1663,7 @@ public class O3FailureTest extends AbstractO3Test {
             w.addColumn("v", ColumnType.DOUBLE);
 
             // stash copy of X, in case X is corrupt
-            compiler.compile("create atomic table y as (select * from x)", executionContext);
+            engine.ddl("create atomic table y as (select * from x)", executionContext);
 
             testAllocateFailsAtO3OpenColumnAppendRows(w);
 
@@ -1730,7 +1736,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -1744,7 +1750,7 @@ public class O3FailureTest extends AbstractO3Test {
         try (TableWriter w = TestUtils.getWriter(engine, "x")) {
 
             // stash copy of X, in case X is corrupt
-            compiler.compile("create atomic table y as (select * from x)", executionContext);
+            engine.ddl("create atomic table y as (select * from x)", executionContext);
 
             TableWriter.Row row;
             // this row goes into a non-recent partition
@@ -1781,12 +1787,12 @@ public class O3FailureTest extends AbstractO3Test {
                 LOG
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table z as (select rnd_int() i, rnd_long() j, timestamp_sequence(549900000000L-4000000L, 10) ts from long_sequence(3000000))",
                 executionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "insert atomic into x select * from z",
                 executionContext
         );
@@ -1836,7 +1842,7 @@ public class O3FailureTest extends AbstractO3Test {
         // |           |   | (narrow) |      |   data  |
         // |           |   +----------+      +---------+
         // +-----------+
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -1881,7 +1887,7 @@ public class O3FailureTest extends AbstractO3Test {
         engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
 
 
-        compiler.compile(
+        engine.ddl(
                 "insert into x " +
                         "select" +
                         " 2 as commit," +
@@ -1924,7 +1930,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table append as (" +
                         "select" +
                         " 3 as commit," +
@@ -1971,15 +1977,15 @@ public class O3FailureTest extends AbstractO3Test {
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
 
         try {
-            compiler.compile("insert atomic into x select * from append", sqlExecutionContext);
+            engine.ddl("insert atomic into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
 
         assertXCountAndMax(engine, compiler, sqlExecutionContext, expectedMaxTimestamp);
 
-        compiler.compile("create atomic table y as (x union all append)", sqlExecutionContext);
-        compiler.compile("insert atomic into x select * from append", sqlExecutionContext);
+        engine.ddl("create atomic table y as (x union all append)", sqlExecutionContext);
+        engine.ddl("insert atomic into x select * from append", sqlExecutionContext);
 
         assertO3DataConsistencyStableSort(
                 engine,
@@ -1995,7 +2001,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -2041,7 +2047,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         engine.ddl("create table w as (select * from x)", sqlExecutionContext);
 
-        compiler.compile(
+        engine.ddl(
                 "create table append1 as (" +
                         "select" +
                         " 1 as commit," +
@@ -2085,7 +2091,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table append2 as (" +
                         "select" +
                         " 2 as commit," +
@@ -2133,7 +2139,7 @@ public class O3FailureTest extends AbstractO3Test {
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
 
         try {
-            compiler.compile("insert into x select * from append2", sqlExecutionContext);
+            engine.ddl("insert into x select * from append2", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
@@ -2155,7 +2161,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2198,7 +2204,7 @@ public class O3FailureTest extends AbstractO3Test {
         engine.ddl("alter table x add column v13 varchar", executionContext);
         engine.ddl("alter table x add column v14 varchar", executionContext);
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2244,7 +2250,7 @@ public class O3FailureTest extends AbstractO3Test {
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, executionContext);
 
         try {
-            compiler.compile("insert into x select * from append", executionContext);
+            engine.ddl("insert into x select * from append", executionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
@@ -2269,7 +2275,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -2313,7 +2319,7 @@ public class O3FailureTest extends AbstractO3Test {
         engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
         engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
 
-        compiler.compile(
+        engine.ddl(
                 "insert atomic into x " +
                         "select" +
                         " 1 as commit," +
@@ -2356,7 +2362,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table append as (" +
                         "select" +
                         " 2 as commit," +
@@ -2402,7 +2408,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
         try {
-            compiler.compile("insert atomic into x select * from append", sqlExecutionContext);
+            engine.ddl("insert atomic into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignore) {
         }
@@ -2424,7 +2430,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -2470,7 +2476,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         engine.ddl("create table w as (select * from x)", sqlExecutionContext);
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table append1 as (" +
                         "select" +
                         " 1 as commit," +
@@ -2514,7 +2520,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table append2 as (" +
                         "select" +
                         " 2 as commit," +
@@ -2563,7 +2569,7 @@ public class O3FailureTest extends AbstractO3Test {
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
 
         try {
-            compiler.compile("insert atomic into x select * from append2", sqlExecutionContext);
+            engine.ddl("insert atomic into x select * from append2", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
@@ -2585,7 +2591,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2628,7 +2634,7 @@ public class O3FailureTest extends AbstractO3Test {
         engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
         engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2675,7 +2681,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         for (int i = 0; i < 10; i++) {
             try {
-                compiler.compile("insert atomic into x select * from append", sqlExecutionContext);
+                engine.ddl("insert atomic into x select * from append", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -2704,7 +2710,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
         o3MemMaxPages = 1;
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2716,7 +2722,7 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "insert atomic into x " +
                         "select" +
                         " cast(x as int) i," +
@@ -2734,7 +2740,7 @@ public class O3FailureTest extends AbstractO3Test {
         engine.releaseInactive();
 
         o3MemMaxPages = Integer.MAX_VALUE;
-        compiler.compile("ALTER TABLE x RESUME WAL", executionContext);
+        engine.ddl("ALTER TABLE x RESUME WAL", executionContext);
 
         drainWalQueue(engine);
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
@@ -2757,7 +2763,7 @@ public class O3FailureTest extends AbstractO3Test {
     ) throws SqlException {
         o3MemMaxPages = 1;
         cairoCommitLatency = Long.MAX_VALUE;
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2771,7 +2777,7 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "insert atomic into x " +
                         "select" +
                         " cast(x as int) i," +
@@ -2791,7 +2797,7 @@ public class O3FailureTest extends AbstractO3Test {
         engine.releaseInactive();
 
         o3MemMaxPages = Integer.MAX_VALUE;
-        compiler.compile("ALTER TABLE x RESUME WAL", executionContext);
+        engine.ddl("ALTER TABLE x RESUME WAL", executionContext);
 
         drainWalQueue(engine);
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
@@ -2814,7 +2820,7 @@ public class O3FailureTest extends AbstractO3Test {
     ) throws SqlException {
         o3MemMaxPages = 1;
         // create table with roughly 2AM data
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2826,7 +2832,7 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         try {
-            compiler.compile(
+            engine.ddl(
                     "insert atomic into x " +
                             "select" +
                             " cast(x as int) i," +
@@ -2842,7 +2848,7 @@ public class O3FailureTest extends AbstractO3Test {
             TestUtils.assertContains(ex.getFlyweightMessage(), "commit failed");
         }
 
-        compiler.compile(
+        engine.ddl(
                 "insert atomic into x " +
                         "select -2, -2, CAST('2020-02-24T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)" +
                         "union all select -2, -2, CAST('2020-02-25T00:00:00.000000Z' as TIMESTAMP) from long_sequence(1)",
@@ -2868,7 +2874,7 @@ public class O3FailureTest extends AbstractO3Test {
     ) throws SqlException {
         o3MemMaxPages = 1;
         // create table with roughly 2AM data
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2879,7 +2885,7 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "insert atomic into x " +
                         "select" +
                         " cast(x as int) i," +
@@ -2891,7 +2897,7 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "insert atomic into x " +
                         "select" +
                         " cast(x as int) i," +
@@ -2910,7 +2916,7 @@ public class O3FailureTest extends AbstractO3Test {
         engine.releaseInactive();
         o3MemMaxPages = Integer.MAX_VALUE;
 
-        compiler.compile("ALTER TABLE x RESUME WAL", executionContext);
+        engine.ddl("ALTER TABLE x RESUME WAL", executionContext);
         drainWalQueue(engine);
 
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
@@ -2931,7 +2937,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i, " +
@@ -2943,7 +2949,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table top as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2958,7 +2964,7 @@ public class O3FailureTest extends AbstractO3Test {
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
 
         try {
-            compiler.compile("insert atomic into x select * from top", sqlExecutionContext);
+            engine.ddl("insert atomic into x select * from top", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ex) {
             Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
@@ -2982,7 +2988,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i, " +
@@ -2994,7 +3000,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table top as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3009,7 +3015,7 @@ public class O3FailureTest extends AbstractO3Test {
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
 
         try {
-            compiler.compile("insert atomic into x select * from top", sqlExecutionContext);
+            engine.ddl("insert atomic into x select * from top", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ex) {
             Chars.contains(ex.getFlyweightMessage(), "timestamps before 1970-01-01");
@@ -3034,7 +3040,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext,
             AtomicBoolean restoreDiskSpace
     ) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -3070,7 +3076,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         // create table with 1AM data
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table 1am as (" +
                         "select" +
                         " 2 as commit," +
@@ -3098,7 +3104,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table tail as (" +
                         "select" +
                         " 3 as commit," +
@@ -3127,17 +3133,17 @@ public class O3FailureTest extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        compiler.compile("create atomic table y as (x union all 1am union all tail)", sqlExecutionContext);
+        engine.ddl("create atomic table y as (x union all 1am union all tail)", sqlExecutionContext);
 
         try {
-            compiler.compile("insert atomic into x select * from 1am", sqlExecutionContext);
+            engine.ddl("insert atomic into x select * from 1am", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignore) {
             // ignore "no disk space left" error and keep going
         }
 
         try {
-            compiler.compile("insert atomic into x select * from tail", sqlExecutionContext);
+            engine.ddl("insert atomic into x select * from tail", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignore) {
         }
@@ -3156,8 +3162,8 @@ public class O3FailureTest extends AbstractO3Test {
         TestUtils.assertEquals(sink, sink2);
 
         // now perform two OOO inserts
-        compiler.compile("insert atomic into x select * from 1am", sqlExecutionContext);
-        compiler.compile("insert atomic into x select * from tail", sqlExecutionContext);
+        engine.ddl("insert atomic into x select * from 1am", sqlExecutionContext);
+        engine.ddl("insert atomic into x select * from tail", sqlExecutionContext);
 
         engine.print("y order by ts, commit", sink, sqlExecutionContext);
         engine.print("x", sink2, sqlExecutionContext);
@@ -3171,7 +3177,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " rnd_str(5,16,2) i," +
@@ -3197,9 +3203,9 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("create atomic table x1 as (x) timestamp(ts) partition by DAY", executionContext);
+        engine.ddl("create atomic table x1 as (x) timestamp(ts) partition by DAY", executionContext);
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table y as (" +
                         "select" +
                         " rnd_str(5,16,2) i," +
@@ -3225,7 +3231,7 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile("create table y1 as (y) timestamp(ts) partition by DAY", executionContext);
+        engine.ddl("create table y1 as (y) timestamp(ts) partition by DAY", executionContext);
 
         // create another compiler to be used by second pool
         try (SqlCompiler compiler2 = engine.getSqlCompiler()) {
@@ -3244,7 +3250,7 @@ public class O3FailureTest extends AbstractO3Test {
                             try {
                                 toRun = false;
                                 barrier.await();
-                                compiler.compile("insert atomic into x select * from y", executionContext);
+                                engine.ddl("insert atomic into x select * from y", executionContext);
                             } catch (Throwable e) {
                                 //noinspection CallToPrintStackTrace
                                 e.printStackTrace();
@@ -3299,7 +3305,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3326,7 +3332,7 @@ public class O3FailureTest extends AbstractO3Test {
                 executionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3357,7 +3363,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         for (int i = 0; i < 10; i++) {
             try {
-                compiler.compile("insert atomic into x select * from append", executionContext);
+                engine.ddl("insert atomic into x select * from append", executionContext);
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -3385,7 +3391,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3412,7 +3418,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3442,7 +3448,7 @@ public class O3FailureTest extends AbstractO3Test {
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
 
         try {
-            compiler.compile("insert atomic into x select * from append", sqlExecutionContext);
+            engine.ddl("insert atomic into x select * from append", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
@@ -3465,7 +3471,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3494,7 +3500,7 @@ public class O3FailureTest extends AbstractO3Test {
 
         // create table with 1AM data
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table top as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3524,7 +3530,7 @@ public class O3FailureTest extends AbstractO3Test {
         final String expectedMaxTimestamp = prepareCountAndMaxTimestampSinks(compiler, sqlExecutionContext);
 
         try {
-            compiler.compile("insert atomic into x select * from top", sqlExecutionContext);
+            engine.ddl("insert atomic into x select * from top", sqlExecutionContext);
             Assert.fail();
         } catch (CairoException ignored) {
         }
@@ -3548,7 +3554,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create atomic table x as (" +
                         "select" +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -3559,7 +3565,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create atomic table append as (" +
                         "select" +
                         " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -3570,7 +3576,7 @@ public class O3FailureTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("insert atomic into x select * from append", sqlExecutionContext);
+        engine.ddl("insert atomic into x select * from append", sqlExecutionContext);
         assertO3DataConsistency(
                 engine,
                 compiler,
@@ -3588,7 +3594,7 @@ public class O3FailureTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create table x (ts timestamp, block_nr long) timestamp (ts) partition by DAY",
                 sqlExecutionContext
         );
@@ -3638,9 +3644,9 @@ public class O3FailureTest extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
 
-        compiler.compile("create table x (f symbol index, a string, b string, c string, d string, vc1 varchar, vc2 varchar, e symbol index, g int, t timestamp) timestamp (t) partition by DAY", executionContext);
+        engine.ddl("create table x (f symbol index, a string, b string, c string, d string, vc1 varchar, vc2 varchar, e symbol index, g int, t timestamp) timestamp (t) partition by DAY", executionContext);
         // max timestamp should be 100_000
-        compiler.compile("insert atomic into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_varchar(1,40,1), rnd_varchar(1,1,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
+        engine.ddl("insert atomic into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_varchar(1,40,1), rnd_varchar(1,1,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
 
         String[] symbols = new String[]{"ppp", "wrre", "0ppd", "l22z", "wwe32", "pps", "oop2", "00kk"};
         final int symbolLen = symbols.length;

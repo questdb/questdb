@@ -873,16 +873,27 @@ public final class TestUtils {
             SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, TableModel tableModel,
             int totalRows, String startDate, int partitionCount
     ) throws NumericException, SqlException {
-        createPopulateTable(tableModel.getTableName(), compiler, sqlExecutionContext,
-                tableModel, totalRows, startDate, partitionCount);
+        createPopulateTable(
+                tableModel.getTableName(),
+                compiler,
+                sqlExecutionContext,
+                tableModel,
+                totalRows,
+                startDate,
+                partitionCount
+        );
     }
 
     public static void createPopulateTable(
             CharSequence tableName, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
             TableModel tableModel, int totalRows, String startDate, int partitionCount
     ) throws NumericException, SqlException {
-        compiler.compile(createPopulateTableStmt(tableName, tableModel, totalRows, startDate, partitionCount),
-                sqlExecutionContext);
+        CairoEngine.ddl(
+                compiler,
+                createPopulateTableStmt(tableName, tableModel, totalRows, startDate, partitionCount),
+                sqlExecutionContext,
+                null
+        );
     }
 
     public static String createPopulateTableStmt(

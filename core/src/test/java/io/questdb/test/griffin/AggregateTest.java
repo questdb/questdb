@@ -1301,7 +1301,7 @@ public class AggregateTest extends AbstractCairoTest {
         };
 
         executeWithPool(4, 16, rostiAllocFacade, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(1000))", sqlExecutionContext);
+            engine.ddl("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(1000))", sqlExecutionContext);
             long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
             try {
                 assertQueryNoLeakCheck(
@@ -1823,7 +1823,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create table tab as " +
                         "( select cast(x as int) i, " +
                         "x as l, " +
@@ -1862,7 +1862,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     private static void runGroupByTest(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        compiler.compile("create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1000000))", sqlExecutionContext);
+        engine.ddl("create table tab as  (select cast(x as int) x1, cast(x as date) dt from long_sequence(1000000))", sqlExecutionContext);
         snapshotMemoryUsage();
         CompiledQuery query = compiler.compile("select count(*) cnt from (select x1, count(*), count(*) from tab group by x1)", sqlExecutionContext);
 
@@ -1881,7 +1881,7 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     private static void runGroupByWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create table tab as " +
                         "( select cast(x as int) i, " +
                         "x as l, " +

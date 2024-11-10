@@ -1212,7 +1212,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             boolean sizeCanBeVariable
     ) throws Exception {
         if (ddl != null) {
-            compile(ddl);
+            ddl(ddl);
             if (configuration.getWalEnabledDefault()) {
                 drainWalQueue();
             }
@@ -1527,7 +1527,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             assertVariableColumns(factory, sqlExecutionContext);
 
             if (ddl2 != null) {
-                compile(ddl2);
+                ddl(ddl2);
                 if (configuration.getWalEnabledDefault()) {
                     drainWalQueue();
                 }

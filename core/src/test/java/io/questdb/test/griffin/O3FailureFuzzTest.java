@@ -242,7 +242,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        compiler.compile(
+        engine.ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -269,7 +269,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile(
+        engine.ddl(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -301,7 +301,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         for (int i = 0; i < 20; i++) {
             try {
                 reset(failCounter, engine);
-                compiler.compile("insert into x select * from append", sqlExecutionContext);
+                engine.ddl("insert into x select * from append", sqlExecutionContext);
                 return;
             } catch (CairoException ignored) {
             } catch (CairoError e) {
@@ -331,7 +331,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        compiler.compile(
+        engine.ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -360,7 +360,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
         // all records but one is appended to middle partition
         // last record is prepended to the last partition
-        compiler.compile(
+        engine.ddl(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -392,7 +392,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         for (int i = 0; i < 20; i++) {
             try {
                 reset(failCounter, engine);
-                compiler.compile("insert into x select * from append", sqlExecutionContext);
+                engine.ddl("insert into x select * from append", sqlExecutionContext);
                 return;
             } catch (CairoException ignored) {
             } catch (CairoError e) {
@@ -405,7 +405,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
         // all records but one is appended to middle partition
         // last record is prepended to the last partition
-        compiler.compile(
+        engine.ddl(
                 "create table append2 as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -456,7 +456,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        compiler.compile(
+        engine.ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -485,7 +485,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
 
         // all records but one is appended to middle partition
         // last record is prepended to the last partition
-        compiler.compile(
+        engine.ddl(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -517,7 +517,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         for (int i = 0; i < 20; i++) {
             try {
                 reset(failCounter, engine);
-                compiler.compile("insert into x select * from append", sqlExecutionContext);
+                engine.ddl("insert into x select * from append", sqlExecutionContext);
                 return;
             } catch (CairoException ignored) {
             } catch (CairoError e) {

@@ -3696,7 +3696,8 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
                 try {
-                    compiler.compile(
+                    ddl(
+                            compiler,
                             "create table x as " +
                                     "(" +
                                     "select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 100000000000) k from" +

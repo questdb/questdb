@@ -431,97 +431,110 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @Override
     public void execute(final CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
-        // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
-        final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
-        if (createTableOp.ignoreIfExists() && status == TableUtils.TABLE_EXISTS) {
-            createTableOp.updateOperationFutureTableToken(executionContext.getTableTokenIfExists(createTableOp.getTableName()));
-        } else if (status == TableUtils.TABLE_EXISTS) {
-            throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
-        } else {
-            // create table (...) ... in volume volumeAlias;
-            CharSequence volumeAlias = createTableOp.getVolumeAlias();
-            if (volumeAlias != null) {
-                CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
-                if (volumePath != null) {
-                    if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                        throw CairoException.critical(0).put("not a valid path for volume [alias=")
-                                .put(volumeAlias).put(", path=").put(path).put(']');
-                    }
-                } else {
-                    throw SqlException.position(0).put("volume alias is not allowed [alias=")
-                            .put(volumeAlias).put(']');
-                }
-            }
+        final long sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
+        long beginNanos = configuration.getMicrosecondClock().getTicks();
+        QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
+        try {
 
-            final TableToken tableToken;
-            if (createTableOp.getRecordCursorFactory() != null) {
-                this.insertCount = -1;
-                int position = createTableOp.getTableNamePosition();
-                executionContext.setUseSimpleCircuitBreaker(true);
-                final RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
-                try (final RecordCursor cursor = factory.getCursor(executionContext)) {
-                    typeCast.clear();
-                    final RecordMetadata metadata = factory.getMetadata();
-                    createTableOp.validateAndUpdateMetadataFromSelect(metadata);
-                    boolean keepLock = !createTableOp.isWalEnabled();
-
-                    // todo: test create table if exists with select
-                    tableToken = engine.createTable(
-                            executionContext.getSecurityContext(),
-                            mem,
-                            path,
-                            createTableOp.ignoreIfExists(),
-                            createTableOp,
-                            keepLock,
-                            volumeAlias != null
-                    );
-
-                    final long sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
-                    long beginNanos = configuration.getMicrosecondClock().getTicks();
-                    try {
-                        copyTableDataAndUnlock(
-                                executionContext.getSecurityContext(),
-                                tableToken,
-                                createTableOp.isWalEnabled(),
-                                cursor,
-                                metadata,
-                                createTableOp.getBatchSize(),
-                                createTableOp.getBatchO3MaxLag(),
-                                executionContext.getCircuitBreaker()
-                        );
-                    } catch (CairoException e) {
-                        e.position(position);
-                        LogRecord record = LOG.error()
-                                .$("could not create table as select [message=").$(e.getFlyweightMessage());
-                        if (!e.isCancellation()) {
-                            record.$(", errno=").$(e.getErrno());
-                        }
-                        record.I$();
-
-                        engine.dropTable(path, tableToken);
-                        engine.unlockTableName(tableToken);
-                        throw e;
-                    } finally {
-                        // todo: jit is always false, why?
-                        QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
-                    }
-                } finally {
-                    executionContext.setUseSimpleCircuitBreaker(false);
-                }
-                createTableOp.updateOperationFutureTableToken(tableToken);
-                createTableOp.updateOperationFutureAffectedRowsCount(insertCount);
+            // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
+            final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
+            if (createTableOp.ignoreIfExists() && status == TableUtils.TABLE_EXISTS) {
+                createTableOp.updateOperationFutureTableToken(executionContext.getTableTokenIfExists(createTableOp.getTableName()));
+            } else if (status == TableUtils.TABLE_EXISTS) {
+                throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
             } else {
-                try {
-                    if (createTableOp.getLikeTableName() != null) {
-                        TableToken likeTableToken = executionContext.getTableTokenIfExists(createTableOp.getLikeTableName());
-                        if (likeTableToken == null) {
-                            throw SqlException
-                                    .$(createTableOp.getLikeTableNamePosition(), "table does not exist [table=")
-                                    .put(createTableOp.getLikeTableName()).put(']');
+                // create table (...) ... in volume volumeAlias;
+                CharSequence volumeAlias = createTableOp.getVolumeAlias();
+                if (volumeAlias != null) {
+                    CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
+                    if (volumePath != null) {
+                        if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
+                            throw CairoException.critical(0).put("not a valid path for volume [alias=")
+                                    .put(volumeAlias).put(", path=").put(path).put(']');
                         }
+                    } else {
+                        throw SqlException.position(0).put("volume alias is not allowed [alias=")
+                                .put(volumeAlias).put(']');
+                    }
+                }
 
-                        try (TableMetadata likeTableMetadata = executionContext.getMetadataForWrite(likeTableToken)) {
-                            createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
+                final TableToken tableToken;
+                if (createTableOp.getRecordCursorFactory() != null) {
+                    this.insertCount = -1;
+                    int position = createTableOp.getTableNamePosition();
+                    executionContext.setUseSimpleCircuitBreaker(true);
+                    final RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
+                    try (final RecordCursor cursor = factory.getCursor(executionContext)) {
+                        typeCast.clear();
+                        final RecordMetadata metadata = factory.getMetadata();
+                        createTableOp.validateAndUpdateMetadataFromSelect(metadata);
+                        boolean keepLock = !createTableOp.isWalEnabled();
+
+                        // todo: test create table if exists with select
+                        tableToken = engine.createTable(
+                                executionContext.getSecurityContext(),
+                                mem,
+                                path,
+                                createTableOp.ignoreIfExists(),
+                                createTableOp,
+                                keepLock,
+                                volumeAlias != null
+                        );
+
+                        try {
+                            copyTableDataAndUnlock(
+                                    executionContext.getSecurityContext(),
+                                    tableToken,
+                                    createTableOp.isWalEnabled(),
+                                    cursor,
+                                    metadata,
+                                    createTableOp.getBatchSize(),
+                                    createTableOp.getBatchO3MaxLag(),
+                                    executionContext.getCircuitBreaker()
+                            );
+                        } catch (CairoException e) {
+                            e.position(position);
+                            LogRecord record = LOG.error()
+                                    .$("could not create table as select [message=").$(e.getFlyweightMessage());
+                            if (!e.isCancellation()) {
+                                record.$(", errno=").$(e.getErrno());
+                            }
+                            record.I$();
+                            engine.dropTable(path, tableToken);
+                            engine.unlockTableName(tableToken);
+                            throw e;
+                        } finally {
+                            queryRegistry.unregister(sqlId, executionContext);
+                        }
+                    } finally {
+                        executionContext.setUseSimpleCircuitBreaker(false);
+                    }
+                    createTableOp.updateOperationFutureTableToken(tableToken);
+                    createTableOp.updateOperationFutureAffectedRowsCount(insertCount);
+                } else {
+                    try {
+                        if (createTableOp.getLikeTableName() != null) {
+                            TableToken likeTableToken = executionContext.getTableTokenIfExists(createTableOp.getLikeTableName());
+                            if (likeTableToken == null) {
+                                throw SqlException
+                                        .$(createTableOp.getLikeTableNamePosition(), "table does not exist [table=")
+                                        .put(createTableOp.getLikeTableName()).put(']');
+                            }
+
+                            //
+                            try (TableMetadata likeTableMetadata = executionContext.getCairoEngine().getTableMetadata(likeTableToken)) {
+                                createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
+                                tableToken = engine.createTable(
+                                        executionContext.getSecurityContext(),
+                                        mem,
+                                        path,
+                                        createTableOp.ignoreIfExists(),
+                                        createTableOp,
+                                        false,
+                                        volumeAlias != null
+                                );
+                            }
+                        } else {
                             tableToken = engine.createTable(
                                     executionContext.getSecurityContext(),
                                     mem,
@@ -532,34 +545,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     volumeAlias != null
                             );
                         }
-                    } else {
-                        tableToken = engine.createTable(
-                                executionContext.getSecurityContext(),
-                                mem,
-                                path,
-                                createTableOp.ignoreIfExists(),
-                                createTableOp,
-                                false,
-                                volumeAlias != null
-                        );
+                        createTableOp.updateOperationFutureTableToken(tableToken);
+                    } catch (EntryUnavailableException e) {
+                        throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
+                    } catch (CairoException e) {
+                        if (e.isAuthorizationError() || e.isCancellation()) {
+                            // No point printing stack trace for authorization or cancellation errors
+                            LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
+                        } else {
+                            LOG.error().$("could not create table [error=").$((Throwable) e).I$();
+                        }
+                        if (e.isInterruption()) {
+                            throw e;
+                        }
+                        throw SqlException.$(createTableOp.getTableNamePosition(), "Could not create table, ")
+                                .put(e.getFlyweightMessage());
                     }
-                    createTableOp.updateOperationFutureTableToken(tableToken);
-                } catch (EntryUnavailableException e) {
-                    throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
-                } catch (CairoException e) {
-                    if (e.isAuthorizationError() || e.isCancellation()) {
-                        // No point printing stack trace for authorization or cancellation errors
-                        LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
-                    } else {
-                        LOG.error().$("could not create table [error=").$((Throwable) e).I$();
-                    }
-                    if (e.isInterruption()) {
-                        throw e;
-                    }
-                    throw SqlException.$(createTableOp.getTableNamePosition(), "Could not create table, ")
-                            .put(e.getFlyweightMessage());
                 }
             }
+            // todo: jit is always false, why?
+            QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
+        } catch (Throwable e) {
+            // todo: jit is always false, why?
+            QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
+            throw e;
         }
     }
 

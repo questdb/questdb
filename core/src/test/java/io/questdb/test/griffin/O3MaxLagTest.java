@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriter.Row;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -34,7 +38,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TableModel;
@@ -212,7 +220,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             for (int length = 2; length <= dates.length; length++) {
                 String tableName = "lll" + length;
                 LOG.info().$("========= LENGTH ").$(length).$(" ================").$();
-                compiler.compile("create table " + tableName + "( " +
+                engine.ddl("create table " + tableName + "( " +
                         "ts timestamp" +
                         ") timestamp(ts) partition by DAY " +
                         " WITH maxUncommittedRows=1, o3MaxLag=120s", sqlExecutionContext);
@@ -361,8 +369,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                             0,
                             new Rnd()
                     );
-                    compiler.compile("drop table x", sqlExecutionContext);
-                    compiler.compile("drop table y", sqlExecutionContext);
+                    engine.drop("drop table x", sqlExecutionContext);
+                    engine.drop("drop table y", sqlExecutionContext);
                 }
         );
     }
@@ -609,10 +617,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(" + nTotalRows + ")" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where  i<=" + nInitialStateRows + " order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
         LOG.info().$("committed initial state").$();
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=" + nInitialStateRows, sink);
@@ -689,10 +697,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY WITH maxUncommittedRows=100, o3MaxLag=10s";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -729,10 +737,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -777,10 +785,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -824,11 +832,11 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
         sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -871,10 +879,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -932,11 +940,11 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
         sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -980,11 +988,11 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
         sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -1025,11 +1033,11 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(150)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
         sql = "create table y as (select * from x) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -1058,7 +1066,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(50)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         // "x2" us is overlapping "x1" timestamp is offset by 2us to prevent nondeterministic
         //        // behaviour of ordering identical timestamp values
@@ -1083,7 +1091,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(50)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x1 order by f";
@@ -1129,10 +1137,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -1176,10 +1184,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where (i<=50 or i>=100) and i<=250 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where (i<=50 or i>=100) and i<=250", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -1217,10 +1225,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=490 order by ts asc) timestamp(ts) partition by DAY";
-        compiler.compile(sql, sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=490", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -1247,7 +1255,7 @@ public class O3MaxLagTest extends AbstractO3Test {
     ) throws SqlException, NumericException {
         // Day 1 '1970-01-01'
         int appendCount = iteration / 2;
-        compiler.compile(
+        engine.ddl(
                 "create table x as (" +
                         "select" +
                         " 'aa' as str," +
@@ -1311,7 +1319,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 "count\n" +
                         aaCount + "\n"
         );
-        compiler.compile("create table y as (select * from x where str = 'aa')", sqlExecutionContext);
+        engine.ddl("create table y as (select * from x where str = 'aa')", sqlExecutionContext);
 
         try (TableWriter tw = TestUtils.getWriter(engine, "x")) {
             int halfCount = appendCount / 2;

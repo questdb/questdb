@@ -130,8 +130,8 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                 " from long_sequence(" + nTotalRows + ")" +
                 ") timestamp (ts) partition by HOUR";
 
-        compiler.compile(sql, sqlExecutionContext);
-        compiler.compile("create table y as (select * from x) timestamp (ts) partition by HOUR", sqlExecutionContext);
+        engine.ddl(sql, sqlExecutionContext);
+        engine.ddl("create table y as (select * from x) timestamp (ts) partition by HOUR", sqlExecutionContext);
         TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
 
         final int partitionIndex;

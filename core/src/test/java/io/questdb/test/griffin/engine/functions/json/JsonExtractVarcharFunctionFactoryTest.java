@@ -313,7 +313,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                 .withTelemetry(false);
 
         try (TestHttpClient httpClient = new TestHttpClient()) {
-            http.run(engine -> {
+            http.run((engine, sqlExecutionContext) -> {
                 engine.ddl("create table json_test as (select " + json + "::varchar text)", sqlExecutionContext);
                 httpClient.assertGet(
                         "{\"query\":\"select json_extract(text, '.path') from json_test\",\"columns\":[{\"name\":\"json_extract\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[\"0.0000000000000000000000000001\"]],\"count\":1}",

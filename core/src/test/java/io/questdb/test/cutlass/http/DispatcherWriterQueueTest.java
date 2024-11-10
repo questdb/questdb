@@ -352,8 +352,8 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 null,
                 -1L,
                 3,
-                URLEncoder.encode("update x set x=1 where s = 'a'", StandardCharsets.UTF_8.toString()),
-                URLEncoder.encode("update x set x=10 where s = 'b'", StandardCharsets.UTF_8.toString())
+                URLEncoder.encode("update x set x=1 where s = 'a'", StandardCharsets.UTF_8),
+                URLEncoder.encode("update x set x=10 where s = 'b'", StandardCharsets.UTF_8)
         );
     }
 
@@ -390,7 +390,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 null,
                 1000,
                 0,
-                URLEncoder.encode("update x set x=1 from tables()", StandardCharsets.UTF_8.toString())
+                URLEncoder.encode("update x set x=1 from tables()", StandardCharsets.UTF_8)
         );
     }
 
@@ -426,7 +426,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             SOCountDownLatch waitToDisconnect,
             final String... httpAlterQueries
     ) throws Exception {
-        queryTestBuilder.run((engine) -> {
+        queryTestBuilder.run((engine, sqlExecutionContext) -> {
             TableWriter writer = null;
             try {
                 String tableName = "x";
@@ -532,7 +532,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             int updatedCount,
             final String... httpUpdateQueries
     ) throws Exception {
-        queryTestBuilder.run((engine) -> {
+        queryTestBuilder.run((engine, sqlExecutionContext) -> {
             TableWriter writer = null;
             try {
                 String tableName = "x";
@@ -661,7 +661,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 errorHeader,
                 statementTimeout,
                 updatedCount,
-                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8.toString())
+                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8)
         );
     }
 

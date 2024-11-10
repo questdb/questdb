@@ -36,7 +36,16 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.TouchUpColumnModel;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -69,7 +78,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     private RecordCursorFactory recordCursorFactory;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
-    private int timestampIndex = -1;
     private CharSequence volumeAlias;
     private boolean walEnabled;
 
@@ -102,7 +110,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                     defaultSymbolCapacity,
                     recordCursorFactory,
                     Chars.toString(sqlText),
-                    touchUpColumnModels
+                    touchUpColumnModels,
+                    o3MaxLag,
+                    maxUncommittedRows,
+                    walEnabled
             );
         }
 
@@ -145,7 +156,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         touchUpColumnModels.clear();
         queryModel = null;
         timestampExpr = null;
-        timestampIndex = -1;
         partitionByExpr = null;
         likeTableNameExpr = null;
         tableNameExpr = null;
@@ -308,7 +318,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     }
 
     public void setTimestampIndex(int index) {
-        this.timestampIndex = index;
     }
 
     public void setVolumeAlias(CharSequence volumeAlias) {

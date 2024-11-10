@@ -64,6 +64,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlTimeoutException;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -2307,8 +2308,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 isEmptyQuery = true;
                 break;
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                try (
+                        Operation op = cq.getCreateTableOperation();
+                        OperationFuture fut = op.execute(sqlExecutionContext, tempSequence)
+                ) {
+                    fut.await();
+                    rowCount = fut.getAffectedRowsCount();
+                }
                 queryTag = TAG_CTAS;
-                rowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.EXPLAIN:
                 // explain results should not be cached
@@ -2380,6 +2387,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             case CompiledQuery.CREATE_USER:
                 queryTag = TAG_CREATE_ROLE;
                 queryContainsSecret = sqlExecutionContext.containsSecret();
+                break;
+            case CompiledQuery.CREATE_TABLE:
+                try (
+                        Operation op = cq.getCreateTableOperation();
+                        OperationFuture fut = op.execute(sqlExecutionContext, tempSequence)
+                ) {
+                    fut.await();
+                }
+                queryTag = TAG_OK;
                 break;
             case CompiledQuery.ALTER:
             case CompiledQuery.DROP:

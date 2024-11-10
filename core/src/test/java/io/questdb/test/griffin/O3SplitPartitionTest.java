@@ -114,7 +114,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testDoubleSplitSamePartitionAtSameTransaction() throws Exception {
         executeWithPool(workerCount,
                 (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext executionContext) -> {
-                    compiler.compile(
+                    engine.ddl(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -133,7 +133,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     engine.ddl("alter table x add column kv1 varchar", executionContext);
                     engine.ddl("alter table x add column kv2 varchar", executionContext);
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table y as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -151,7 +151,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -169,7 +169,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table zz (" +
                                     "i int," +
                                     "j long," +
@@ -186,13 +186,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "insert into zz select * from x union all select * from y union all select * from z",
                             executionContext
                     );
 
-                    compiler.compile("insert into x select * from y", executionContext);
-                    compiler.compile("insert into x select * from z", executionContext);
+                    engine.ddl("insert into x select * from y", executionContext);
+                    engine.ddl("insert into x select * from z", executionContext);
 
                     assertX(compiler, executionContext, "zz");
                     assertIndex(compiler, executionContext, "sym = '5'");
@@ -205,7 +205,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
         executeWithPool(workerCount, (engine, compiler, sqlExecutionContext) -> {
             partitionO3SplitThreshold = 5;
 
-            compiler.compile(
+            engine.ddl(
                     "CREATE TABLE monthly_col_top(" +
                             "ts timestamp, metric SYMBOL, diagnostic SYMBOL, sensorChannel SYMBOL" +
                             ") timestamp(ts) partition by MONTH",
@@ -308,7 +308,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     @Test
     public void testSplitLastPartition() throws Exception {
         executeWithPool(workerCount, (engine, compiler, executionContext) -> {
-            compiler.compile(
+            engine.ddl(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -319,7 +319,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     executionContext
             );
 
-            compiler.compile(
+            engine.ddl(
                     "create table z as (" +
                             "select" +
                             " cast(x as int) * 1000000 i," +
@@ -329,12 +329,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     executionContext
             );
 
-            compiler.compile(
+            engine.ddl(
                     "create table y as (select * from x union all select * from z)",
                     executionContext
             );
 
-            compiler.compile("insert into x select * from z", executionContext);
+            engine.ddl("insert into x select * from z", executionContext);
 
             TestUtils.assertEquals(
                     compiler,
@@ -349,7 +349,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitLastPartitionWithColumnTop() throws Exception {
         executeWithPool(workerCount,
                 (engine, compiler, executionContext) -> {
-                    compiler.compile(
+                    engine.ddl(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -363,7 +363,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table zz (" +
                                     "i int," +
                                     "j long," +
@@ -380,7 +380,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -392,9 +392,9 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     " from long_sequence(100))",
                             executionContext
                     );
-                    compiler.compile("insert into zz(i,j,str,v1,v2,ts) select i,j,str,v1,v2,ts from x", executionContext);
-                    compiler.compile("insert into zz(i,j,str,v1,v2,ts) select i,j,str,v1,v2,ts from z", executionContext);
-                    compiler.compile("insert into x(i,j,str,v1,v2,ts) select i,j,str,v1,v2,ts from z", executionContext);
+                    engine.ddl("insert into zz(i,j,str,v1,v2,ts) select i,j,str,v1,v2,ts from x", executionContext);
+                    engine.ddl("insert into zz(i,j,str,v1,v2,ts) select i,j,str,v1,v2,ts from z", executionContext);
+                    engine.ddl("insert into x(i,j,str,v1,v2,ts) select i,j,str,v1,v2,ts from z", executionContext);
 
                     engine.ddl("alter table x add column k int", executionContext);
                     engine.ddl("alter table x add column ks string", executionContext);
@@ -402,7 +402,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     engine.ddl("alter table x add column kv2 varchar", executionContext);
                     engine.ddl("alter table x add column sym symbol index ", executionContext);
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z2 as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -420,8 +420,8 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile("insert into zz select * from z2", executionContext);
-                    compiler.compile("insert into x select * from z2", executionContext);
+                    engine.ddl("insert into zz select * from z2", executionContext);
+                    engine.ddl("insert into x select * from z2", executionContext);
 
                     assertX(compiler, executionContext, "zz");
                     assertIndex(compiler, executionContext, "sym = '5'");
@@ -441,7 +441,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitMidPartition() throws Exception {
         executeWithPool(workerCount,
                 (engine, compiler, executionContext) -> {
-                    compiler.compile(
+                    engine.ddl(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -455,7 +455,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -468,12 +468,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table y as (select * from x union all select * from z)",
                             executionContext
                     );
 
-                    compiler.compile("insert into x select * from z", executionContext);
+                    engine.ddl("insert into x select * from z", executionContext);
 
                     TestUtils.assertEquals(
                             compiler,
@@ -489,7 +489,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
         executeWithPool(workerCount,
                 (engine, compiler, executionContext) -> {
                     FilesFacade ff = FilesFacadeImpl.INSTANCE;
-                    compiler.compile(
+                    engine.ddl(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -513,7 +513,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     engine.releaseInactive();
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -524,12 +524,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table y as (select * from x union all select * from z)",
                             executionContext
                     );
 
-                    compiler.compile("insert into x select * from z", executionContext);
+                    engine.ddl("insert into x select * from z", executionContext);
 
                     TestUtils.assertEquals(
                             compiler,
@@ -545,7 +545,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
         executeWithPool(workerCount,
                 (engine, compiler, executionContext) -> {
                     FilesFacade ff = FilesFacadeImpl.INSTANCE;
-                    compiler.compile(
+                    engine.ddl(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -580,7 +580,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
 
                     engine.releaseInactive();
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -592,12 +592,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table y as (select * from x union all select * from z)",
                             executionContext
                     );
 
-                    compiler.compile("insert into x select * from z", executionContext);
+                    engine.ddl("insert into x select * from z", executionContext);
 
                     TestUtils.assertEquals(
                             compiler,
@@ -612,7 +612,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitOverrunLastPartition() throws Exception {
         executeWithPool(workerCount,
                 (engine, compiler, executionContext) -> {
-                    compiler.compile(
+                    engine.ddl(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -626,7 +626,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -639,12 +639,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table y as (select * from x union all select * from z)",
                             executionContext
                     );
 
-                    compiler.compile("insert into x select * from z", executionContext);
+                    engine.ddl("insert into x select * from z", executionContext);
 
                     TestUtils.assertEquals(
                             compiler,
@@ -659,7 +659,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitPartitionWithColumnTop() throws Exception {
         executeWithPool(workerCount,
                 (engine, compiler, executionContext) -> {
-                    compiler.compile(
+                    engine.ddl(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -677,7 +677,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     engine.ddl("alter table x add column kv1 varchar", executionContext);
                     engine.ddl("alter table x add column kv2 varchar", executionContext);
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -694,12 +694,12 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table y as (select * from x union all select * from z)",
                             executionContext
                     );
 
-                    compiler.compile("insert into x select * from z", executionContext);
+                    engine.ddl("insert into x select * from z", executionContext);
 
                     assertX(compiler, executionContext, "y");
                 });
@@ -709,7 +709,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitPartitionWithColumnTopResultsInSplitWithColumnTop() throws Exception {
         executeWithPool(workerCount,
                 (engine, compiler, executionContext) -> {
-                    compiler.compile(
+                    engine.ddl(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -727,7 +727,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     engine.ddl("alter table x add column kv1 varchar", executionContext);
                     engine.ddl("alter table x add column kv2 varchar", executionContext);
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table y as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -744,7 +744,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -761,7 +761,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table zz as (select * from x union all select * from y union all select * from z)",
                             executionContext
                     );
@@ -777,7 +777,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitPartitionWithColumnTopResultsInSplitWithColumnTop2() throws Exception {
         executeWithPool(workerCount,
                 (engine, compiler, executionContext) -> {
-                    compiler.compile(
+                    engine.ddl(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -795,7 +795,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     engine.ddl("alter table x add column kv1 varchar", executionContext);
                     engine.ddl("alter table x add column kv2 varchar", executionContext);
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table y as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -812,7 +812,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -829,13 +829,13 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table zz as (select * from x union all select * from y union all select * from z)",
                             executionContext
                     );
 
-                    compiler.compile("insert into x select * from y", executionContext);
-                    compiler.compile("insert into x select * from z", executionContext);
+                    engine.ddl("insert into x select * from y", executionContext);
+                    engine.ddl("insert into x select * from z", executionContext);
 
                     assertX(compiler, executionContext, "zz");
                 });
@@ -845,7 +845,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitSquashMidPartitionWithDedupSameRowCount() throws Exception {
         executeWithPool(workerCount,
                 (engine, compiler, executionContext) -> {
-                    compiler.compile(
+                    engine.ddl(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -868,7 +868,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             "-1987920\t2020-02-04T00:00:00.000000Z\t\n" +
                             "-1942590\t2020-02-05T00:00:00.000000Z\t\n");
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -882,7 +882,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile("insert into x select * from z", executionContext);
+                    engine.ddl("insert into x select * from z", executionContext);
 
                     drainWalQueue(engine);
 
@@ -897,7 +897,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
     public void testSplitSquashMidPartitionWithDedupSameRowCountVarchar() throws Exception {
         executeWithPool(workerCount,
                 (engine, compiler, executionContext) -> {
-                    compiler.compile(
+                    engine.ddl(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -920,7 +920,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             "-1987920\t2020-02-04T00:00:00.000000Z\t\n" +
                             "-1942590\t2020-02-05T00:00:00.000000Z\t\n");
 
-                    compiler.compile(
+                    engine.ddl(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -934,7 +934,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                             executionContext
                     );
 
-                    compiler.compile("insert into x select * from z", executionContext);
+                    engine.ddl("insert into x select * from z", executionContext);
 
                     drainWalQueue(engine);
 

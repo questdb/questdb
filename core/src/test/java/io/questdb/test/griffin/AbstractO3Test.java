@@ -186,7 +186,7 @@ public class AbstractO3Test extends AbstractTest {
             final String o3InsertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
-        compiler.compile(referenceTableDDL, sqlExecutionContext);
+        engine.ddl(referenceTableDDL, sqlExecutionContext);
 
         compiler.compile(o3InsertSQL, sqlExecutionContext);
 

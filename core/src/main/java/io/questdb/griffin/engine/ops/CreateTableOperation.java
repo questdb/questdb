@@ -43,13 +43,12 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.*;
 
-public class CreateTableOperation implements TableStructure, QuietCloseable {
+public class CreateTableOperation implements TableStructure, Operation {
     // augmentedColumnMetadata contains information from "cast models", the extra syntax
     // to augment "create as select" semantic. The map is keyed on column names.
     //
@@ -138,7 +137,6 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.walEnabled = walEnabled;
-
         this.recordCursorFactory = null;
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
@@ -161,7 +159,10 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
             int defaultSymbolCapacity,
             RecordCursorFactory recordCursorFactory,
             String sqlText,
-            @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap
+            @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap,
+            long o3MaxLag,
+            int maxUncommittedRows,
+            boolean walEnabled
     ) throws SqlException {
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
@@ -174,10 +175,12 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         this.recordCursorFactory = recordCursorFactory;
         this.batchSize = batchSize;
         this.batchO3MaxLag = batchO3MaxLag;
-
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
         this.sqlText = sqlText;
+        this.o3MaxLag = o3MaxLag;
+        this.maxUncommittedRows = maxUncommittedRows;
+        this.walEnabled = walEnabled;
 
         // This constructor is for a "create as select", column names will be scraped from the record
         // cursor at runtime. Column augmentation data comes from the following sources in the SQL:
@@ -222,6 +225,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         recordCursorFactory = Misc.free(recordCursorFactory);
     }
 
+    @Override
     public OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
             compiler.execute(this, sqlExecutionContext);
@@ -399,7 +403,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
         // at SQL parse time.
         columnBits.clear();
         if (timestampColumnName == null) {
-            this.timestampIndex = -1;
+            this.timestampIndex = metadata.getTimestampIndex();
         } else {
             timestampIndex = metadata.getColumnIndexQuiet(timestampColumnName);
             if (timestampIndex == -1) {
@@ -435,7 +439,7 @@ public class CreateTableOperation implements TableStructure, QuietCloseable {
                 symbolCacheFlag = true;
                 symbolIndexed = false;
                 isDedupKey = false;
-                indexBlockCapacity = -1;
+                indexBlockCapacity = 0;
             }
 
             if (ColumnType.isNull(columnType)) {

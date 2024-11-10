@@ -25,20 +25,42 @@
 package io.questdb.test.cutlass.text;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
-import io.questdb.cutlass.text.*;
+import io.questdb.cutlass.text.Atomicity;
+import io.questdb.cutlass.text.CopyJob;
+import io.questdb.cutlass.text.CopyRequestJob;
+import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.cutlass.text.ParallelCsvFileImporter.PartitionInfo;
+import io.questdb.cutlass.text.TextImportException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.IOURing;
+import io.questdb.std.IOURingFacade;
+import io.questdb.std.IOURingFacadeImpl;
+import io.questdb.std.IOURingImpl;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -48,10 +70,18 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Ignore;
+import org.junit.Test;
 
 import java.io.File;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class ParallelCsvFileImporterTest extends AbstractCairoTest {
@@ -166,22 +196,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportAllTypesWithGaps() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table alltypes (\n" +
-                    "  bo boolean,\n" +
-                    "  by byte,\n" +
-                    "  sh short,\n" +
-                    "  ch char,\n" +
-                    "  in_ int,\n" +
-                    "  lo long,\n" +
-                    "  dat date, \n" +
-                    "  tstmp timestamp, \n" +
-                    "  ft float,\n" +
-                    "  db double,\n" +
-                    "  str string,\n" +
-                    "  sym symbol,\n" +
-                    "  l256 long256," +
-                    "  ge geohash(20b)" +
-                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+            ddl(compiler,
+                    "create table alltypes (\n" +
+                            "  bo boolean,\n" +
+                            "  by byte,\n" +
+                            "  sh short,\n" +
+                            "  ch char,\n" +
+                            "  in_ int,\n" +
+                            "  lo long,\n" +
+                            "  dat date, \n" +
+                            "  tstmp timestamp, \n" +
+                            "  ft float,\n" +
+                            "  db double,\n" +
+                            "  str string,\n" +
+                            "  sym symbol,\n" +
+                            "  l256 long256," +
+                            "  ge geohash(20b)" +
+                            ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("alltypes", "test-alltypes-with-gaps.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true, null);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -207,22 +238,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportAllTypesWithGapsIndexed() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table alltypes (\n" +
-                    "  bo boolean,\n" +
-                    "  by byte,\n" +
-                    "  sh short,\n" +
-                    "  ch char,\n" +
-                    "  in_ int,\n" +
-                    "  lo long,\n" +
-                    "  dat date, \n" +
-                    "  tstmp timestamp, \n" +
-                    "  ft float,\n" +
-                    "  db double,\n" +
-                    "  str string,\n" +
-                    "  sym symbol index capacity 64,\n" +
-                    "  l256 long256," +
-                    "  ge geohash(20b)" +
-                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+            ddl(compiler,
+                    "create table alltypes (\n" +
+                            "  bo boolean,\n" +
+                            "  by byte,\n" +
+                            "  sh short,\n" +
+                            "  ch char,\n" +
+                            "  in_ int,\n" +
+                            "  lo long,\n" +
+                            "  dat date, \n" +
+                            "  tstmp timestamp, \n" +
+                            "  ft float,\n" +
+                            "  db double,\n" +
+                            "  str string,\n" +
+                            "  sym symbol index capacity 64,\n" +
+                            "  l256 long256," +
+                            "  ge geohash(20b)" +
+                            ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("alltypes", "test-alltypes-with-gaps.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -445,11 +477,12 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportCsvWithLongTsIntoExistingTable() throws Exception {
         executeWithPool(3, 16, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("CREATE TABLE reading (\n" +
-                    "  readingTypeId SYMBOL,\n" +
-                    "  value FLOAT,\n" +
-                    "  readingDate TIMESTAMP\n" +
-                    ") timestamp (readingDate) PARTITION BY DAY;", sqlExecutionContext);
+            ddl(compiler,
+                    "CREATE TABLE reading (\n" +
+                            "  readingTypeId SYMBOL,\n" +
+                            "  value FLOAT,\n" +
+                            "  readingDate TIMESTAMP\n" +
+                            ") timestamp (readingDate) PARTITION BY DAY;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("reading", "test-quotes-rawts.csv", 1, -1, (byte) ',', null, null, true, null);
@@ -470,7 +503,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportCsvWithMissingAndReorderedSymbolColumns() throws Exception {
         executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab2 (other symbol, txt symbol, line symbol, ts timestamp, d symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            ddl(compiler, "create table tab2 (other symbol, txt symbol, line symbol, ts timestamp, d symbol) timestamp(ts) partition by MONTH;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.setMinChunkSize(1);
@@ -722,7 +755,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileFailsWhenImportingTextIntoBinaryColumn() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab36 ( ts timestamp, line string, d double, description binary ) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl(compiler, "create table tab36 ( ts timestamp, line string, d double, description binary ) timestamp(ts) partition by day;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab36", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
@@ -871,7 +904,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileFailsWhenTimestampColumnIsMissingInInputFile() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab37 ( tstmp timestamp, line string, d double, description string ) timestamp(tstmp) partition by day;", sqlExecutionContext);
+            ddl(compiler, "create table tab37 ( tstmp timestamp, line string, d double, description string ) timestamp(tstmp) partition by day;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab37", "test-quotes-big.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
@@ -968,7 +1001,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileSetsDateColumnToNullIfCsvStructureCheckCantDetectACommonFormat() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab38 ( line string, ts timestamp, d date, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl(compiler, "create table tab38 ( line string, ts timestamp, d date, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab38", "test-quotes-small.csv", 1, PartitionBy.DAY, (byte) ',', "ts", null, true);
@@ -988,7 +1021,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileSkipsLinesLongerThan65kChars() throws Exception {
         executeWithPool(8, 4, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab ( ts timestamp, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            ddl(compiler, "create table tab ( ts timestamp, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.setMinChunkSize(10);
@@ -1007,7 +1040,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWhenImportingAfterColumnWasRecreated() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab62 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl(compiler, "create table tab62 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
             ddl(compiler, "alter table tab62 drop column line;", sqlExecutionContext);
             ddl(compiler, "alter table tab62 add column line symbol;", sqlExecutionContext);
 
@@ -1025,7 +1058,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWhenImportingAfterColumnWasRecreatedNoHeader() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab44 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl(compiler, "create table tab44 ( line string, ts timestamp, d double, txt string ) timestamp(ts) partition by day;", sqlExecutionContext);
             ddl(compiler, "alter table tab44 drop column txt;", sqlExecutionContext);
             ddl(compiler, "alter table tab44 add column txt symbol;", sqlExecutionContext);
 
@@ -1060,7 +1093,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithHeaderButInputPartitionByNotMatchingTargetTables() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab45 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by DAY;", sqlExecutionContext);
+            ddl(compiler, "create table tab45 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by DAY;", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab45", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) -1, "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1097,7 +1130,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithHeaderButPartitionByNotSpecifiedAndTargetTableIsNotPartitioned() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab46 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
+            ddl(compiler, "create table tab46 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab46", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1124,7 +1157,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithHeaderButTargetTableIsNotPartitioned2() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab47 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
+            ddl(compiler, "create table tab47 ( ts timestamp, s string, d double, i int ) timestamp(ts);", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab47", "test-quotes-big.csv", 1, -1, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1143,7 +1176,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithHeaderIntoExistingTableFailsBecauseInputColumnCountIsLargerThanTables() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab59 ( line string, ts timestamp, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            ddl(compiler, "create table tab59 ( line string, ts timestamp, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab59", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1157,7 +1190,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithHeaderIntoExistingTableWhenInputColumnCountIsSmallerThanTablesSucceedsAndInsertsNullIntoMissingColumns() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab58 ( line string, ts timestamp, d double, description string, i int, l long ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            ddl(compiler, "create table tab58 ( line string, ts timestamp, d double, description string, i int, l long ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab58", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1241,7 +1274,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithNoHeaderIntoExistingTableFailsBecauseTsPositionInTableIsDifferentFromFile() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab53 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl(compiler, "create table tab53 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab53", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', null, null, false);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1255,7 +1288,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportFileWithNoHeaderIntoExistingTableSucceedsBecauseTsPositionInTableIsSameAsInFile() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab57 ( s string, ts timestamp, d double, s2 string ) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl(compiler, "create table tab57 ( s string, ts timestamp, d double, s2 string ) timestamp(ts) partition by day;", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab57", "test-noheader.csv", 1, PartitionBy.DAY, (byte) ',', null, null, false);
                 importer.process(AllowAllSecurityContext.INSTANCE);
@@ -1372,7 +1405,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportIntoNonEmptyTableReturnsError() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab52 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
+            ddl(compiler, "create table tab52 ( ts timestamp, s string, d double, i int ) timestamp(ts) partition by day;", sqlExecutionContext);
             compiler.compile("insert into tab52 select cast(x as timestamp), 'a', x, x from long_sequence(10);", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
@@ -1602,7 +1635,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportWithSkipAllAtomicityFailsWhenNonTimestampColumnCantBeParsedAtDataImportPhase() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab ( ts timestamp, line string, description double, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            ddl(compiler, "create table tab ( ts timestamp, line string, description double, d double ) timestamp(ts) partition by MONTH;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab", "test-quotes-big.csv", 1, PartitionBy.MONTH, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_ALL);
@@ -1665,7 +1698,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             // the StrSym should be 'symbol' and DoubleCol should be 'double'
             // we intentionally create these columns with a wrong type so the ParallelCsvFileImporter fails to parse these columns
             // the subsequent assert checks no row was imported - as the atomicity level is set to SKIP_ROW
-            compiler.compile("create table tab23 (StrSym int, Int symbol,Int_Col int, DoubleCol int,IsoDate timestamp,Fmt1Date timestamp,Fmt2Date date,Phone string,boolean boolean,long long) timestamp(IsoDate) partition by MONTH;", sqlExecutionContext);
+            ddl(compiler, "create table tab23 (StrSym int, Int symbol,Int_Col int, DoubleCol int,IsoDate timestamp,Fmt1Date timestamp,Fmt2Date date,Phone string,boolean boolean,long long) timestamp(IsoDate) partition by MONTH;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("tab23", "test-import.csv", 1, PartitionBy.MONTH, (byte) ',', "IsoDate", "yyyy-MM-ddTHH:mm:ss.SSSZ", false, null, Atomicity.SKIP_ROW);
@@ -1680,22 +1713,23 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     @Test
     public void testImportWithSkipRowAtomicityImportsOnlyRowsWithNoParseErrors() throws Exception {
         executeWithPool(4, 8, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table alltypes (\n" +
-                    "  bo boolean,\n" +
-                    "  by byte,\n" +
-                    "  sh short,\n" +
-                    "  ch char,\n" +
-                    "  in_ int,\n" +
-                    "  lo long,\n" +
-                    "  dat date, \n" +
-                    "  tstmp timestamp, \n" +
-                    "  ft float,\n" +
-                    "  db double,\n" +
-                    "  str string,\n" +
-                    "  sym symbol,\n" +
-                    "  l256 long256," +
-                    "  ge geohash(20b)" +
-                    ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+            ddl(compiler,
+                    "create table alltypes (\n" +
+                            "  bo boolean,\n" +
+                            "  by byte,\n" +
+                            "  sh short,\n" +
+                            "  ch char,\n" +
+                            "  in_ int,\n" +
+                            "  lo long,\n" +
+                            "  dat date, \n" +
+                            "  tstmp timestamp, \n" +
+                            "  ft float,\n" +
+                            "  db double,\n" +
+                            "  str string,\n" +
+                            "  sym symbol,\n" +
+                            "  l256 long256," +
+                            "  ge geohash(20b)" +
+                            ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.of("alltypes", "test-errors.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true, null, Atomicity.SKIP_ROW);
@@ -2415,7 +2449,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab21 ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            ddl(compiler, "create table tab21 ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.setMinChunkSize(1);
@@ -2449,7 +2483,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
         };
 
         executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table tab20 ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
+            ddl(compiler, "create table tab20 ( line symbol, ts timestamp, d double, description string) timestamp(ts) partition by MONTH;", sqlExecutionContext);
 
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.setMinChunkSize(1);
@@ -2554,7 +2588,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
     private void assertImportFailsInPhase(String tableName, FilesFacade brokenFf, String phase) throws Exception {
         executeWithPool(4, 8, brokenFf, (CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) -> {
-            compiler.compile("create table " + tableName + " ( line symbol index, ts timestamp, d double, description string) timestamp(ts) partition by YEAR;", sqlExecutionContext);
+            ddl(compiler, "create table " + tableName + " ( line symbol index, ts timestamp, d double, description string) timestamp(ts) partition by YEAR;", sqlExecutionContext);
             try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
                 importer.setMinChunkSize(1);
                 importer.of(tableName, "test-quotes-big.csv", 1, PartitionBy.YEAR, (byte) ',', "ts", "yyyy-MM-ddTHH:mm:ss.SSSSSSZ", true);
@@ -2638,23 +2672,24 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     }
 
     private void importAllIntoExisting(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException, TextImportException {
-        compiler.compile("create table alltypes (\n" +
-                "  bo boolean,\n" +
-                "  by byte,\n" +
-                "  sh short,\n" +
-                "  ch char,\n" +
-                "  in_ int,\n" +
-                "  lo long,\n" +
-                "  dat date, \n" +
-                "  tstmp timestamp, \n" +
-                "  ft float,\n" +
-                "  db double,\n" +
-                "  str string,\n" +
-                "  sym symbol,\n" +
-                "  l256 long256," +
-                "  ge geohash(20b)," +
-                "  uid uuid" +
-                ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
+        ddl(compiler,
+                "create table alltypes (\n" +
+                        "  bo boolean,\n" +
+                        "  by byte,\n" +
+                        "  sh short,\n" +
+                        "  ch char,\n" +
+                        "  in_ int,\n" +
+                        "  lo long,\n" +
+                        "  dat date, \n" +
+                        "  tstmp timestamp, \n" +
+                        "  ft float,\n" +
+                        "  db double,\n" +
+                        "  str string,\n" +
+                        "  sym symbol,\n" +
+                        "  l256 long256," +
+                        "  ge geohash(20b)," +
+                        "  uid uuid" +
+                        ") timestamp(tstmp) partition by DAY;", sqlExecutionContext);
         try (ParallelCsvFileImporter importer = new ParallelCsvFileImporter(engine, sqlExecutionContext.getWorkerCount())) {
             importer.of("alltypes", "test-alltypes.csv", 1, PartitionBy.DAY, (byte) ',', "tstmp", "yyyy-MM-ddTHH:mm:ss.SSSUUUZ", true);
             importer.process(AllowAllSecurityContext.INSTANCE);
@@ -2839,7 +2874,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     private void testStatusLogCleanup(int daysToKeep) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             String backlogTableName = configuration.getSystemTableNamePrefix() + "text_import_log";
-            compiler.compile("create table \"" + backlogTableName + "\" as " +
+            ddl(compiler, "create table \"" + backlogTableName + "\" as " +
                     "(" +
                     "select" +
                     " timestamp_sequence(0, 100000000000) ts," +

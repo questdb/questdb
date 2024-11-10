@@ -1464,7 +1464,7 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testPositiveLatLon() throws Exception {
         assertMemoryLeak(() -> {
-            select("create table tab (lat double, lon double, k timestamp)");
+            ddl("create table tab (lat double, lon double, k timestamp)");
 
             try (TableWriter w = getWriter("tab")) {
                 double latDegree = 1;

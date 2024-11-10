@@ -626,7 +626,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestBySymbolManyDistinctValues() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol(10000, 1, 15, 1000) s, " +
