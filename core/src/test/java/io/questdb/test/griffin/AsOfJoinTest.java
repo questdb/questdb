@@ -240,7 +240,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 "(select a.seq hi, b.seq lo from test a lt join test b) where lo != null",
                 "create table test(seq long, ts timestamp) timestamp(ts)",
                 null,
-                "insert into test select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(30)) where rnd<0.9999)",
+                "insert into test select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(30)) where rnd<0.9999",
                 expected,
                 false
         );

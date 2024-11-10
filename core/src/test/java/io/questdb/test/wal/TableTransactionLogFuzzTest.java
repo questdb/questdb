@@ -73,13 +73,13 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
                 path.of(root).concat("v1");
                 ff.mkdir(path.$(), configuration.getMkDirMode());
-                TableTransactionLogV1 v1 = new TableTransactionLogV1(ff);
+                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
                 v1.create(path.of(root).concat("v1"), 65897);
                 v1.open(path);
 
                 path.of(root).concat("v2");
                 ff.mkdir(path.$(), configuration.getMkDirMode());
-                TableTransactionLogV2 v2 = new TableTransactionLogV2(ff, chunkTransactionCount, configuration.getMkDirMode());
+                TableTransactionLogV2 v2 = new TableTransactionLogV2(configuration, chunkTransactionCount);
                 v2.create(path, 65897);
                 v2.open(path);
 

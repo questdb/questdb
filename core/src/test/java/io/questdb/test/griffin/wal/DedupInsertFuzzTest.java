@@ -298,10 +298,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.1 * rnd.nextDouble(),
                 0,
                 rnd.nextDouble(),
+                0.0,
                 rnd.nextDouble(),
-                0.1 * rnd.nextDouble(),
                 0.5,
                 0.0,
+                0.1 * rnd.nextDouble(),
                 0.0
         );
 
@@ -330,10 +331,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0.1 * rnd.nextDouble(),
                 0,
                 rnd.nextDouble(),
-                rnd.nextDouble(),
-                0.1 * rnd.nextDouble(),
+                0.0, rnd.nextDouble(),
                 0.5,
                 0.0,
+                0.1 * rnd.nextDouble(),
                 0.0
         );
 
@@ -363,10 +364,11 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
+                rnd.nextDouble(),
+                0.0,
+                0.0,
                 0.1 * rnd.nextDouble(),
-                0.0,
-                0.0,
-                rnd.nextDouble()
+                0.0
         );
 
         setFuzzCounts(

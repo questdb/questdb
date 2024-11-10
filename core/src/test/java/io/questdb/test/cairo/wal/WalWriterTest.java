@@ -931,7 +931,7 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcurrentAddRemoveColumn_DifferentColNamePerThread() throws Exception {
+    public void testConcurrentAddRemoveColumnDifferentColNamePerThread() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();
             TableToken tableToken = createTable(testName.getMethodName());
@@ -991,7 +991,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             if (!errors.isEmpty()) {
                 for (Throwable th : errors.values()) {
-                    th.printStackTrace();
+                    th.printStackTrace(System.out);
                 }
                 Assert.fail("Write failed");
             }
@@ -1135,7 +1135,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             if (!errors.isEmpty()) {
                 for (Throwable th : errors.values()) {
-                    th.printStackTrace();
+                    th.printStackTrace(System.out);
                 }
                 Assert.fail("Write failed");
             }
@@ -1469,26 +1469,21 @@ public class WalWriterTest extends AbstractCairoTest {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                try {
-                    throw new RuntimeException("Test failure");
-                } catch (Exception e) {
-                    final StackTraceElement[] stackTrace = e.getStackTrace();
-                    if (stackTrace[2].getClassName().endsWith("TableTransactionLog") && stackTrace[2].getMethodName().equals("openFileRO")) {
-                        return -1;
-                    }
+                if (Chars.endsWith(name.asAsciiCharSequence(), "_txnlog.meta.d")) {
+                    return -1;
                 }
                 return TestFilesFacadeImpl.INSTANCE.openRO(name);
             }
         };
 
         assertMemoryLeak(ff, () -> {
-            TableToken tableToken = createTable(testName.getMethodName());
+            final TableToken tableToken = createTable(testName.getMethodName());
 
             try (WalWriter walWriter1 = engine.getWalWriter(tableToken)) {
                 try (WalWriter walWriter2 = engine.getWalWriter(tableToken)) {
                     addColumn(walWriter1, "c", ColumnType.INT);
                     addColumn(walWriter2, "d", ColumnType.INT);
-                    assertExceptionNoLeakCheck("Exception expected");
+                    Assert.fail("Exception expected");
                 } catch (Exception e) {
                     // this exception will be handled in ILP/PG/HTTP
                     assertTrue(e.getMessage().contains("could not open"));

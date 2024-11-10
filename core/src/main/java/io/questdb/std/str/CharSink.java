@@ -208,6 +208,11 @@ public interface CharSink<T extends CharSink<?>> {
         return (T) this;
     }
 
+    default T putQuoted(@NotNull Utf8Sequence cs) {
+        putAscii('\"').put(cs).putAscii('\"');
+        return (T) this;
+    }
+
     default CharSink putSize(long bytes) {
         long b = bytes == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bytes);
         return b < 1024L ? put(bytes).put(' ').put('B')
