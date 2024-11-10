@@ -886,8 +886,13 @@ public final class TestUtils {
     }
 
     public static void createPopulateTable(
-            CharSequence tableName, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
-            TableModel tableModel, int totalRows, String startDate, int partitionCount
+            CharSequence tableName,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException, SqlException {
         CairoEngine.ddl(
                 compiler,
@@ -1043,17 +1048,6 @@ public final class TestUtils {
         TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
         return token;
-    }
-
-    public static void createTable(
-            CairoConfiguration configuration,
-            TableStructure structure,
-            int tableId,
-            CharSequence dirName
-    ) {
-        try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
-            TableUtils.createTable(configuration, mem, path, structure, ColumnType.VERSION, tableId, dirName);
-        }
     }
 
     public static void createTestPath(CharSequence root) {

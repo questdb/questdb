@@ -49,6 +49,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -235,23 +236,19 @@ public class TableWriterTest extends AbstractCairoTest {
             // Reduce disk space by for the test run.
             setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1 << 20); // 1MB
 
-            TableToken tableToken;
             TableModel model = new TableModel(configuration, "testAddColumnConcurrentWithDataUpdates", PartitionBy.NONE);
             model.timestamp();
-            tableToken = registerTableName(model.getTableName());
-            TestUtils.createTable(
-                    configuration,
-                    model,
-                    tableId,
-                    tableToken.getDirName()
-            );
+            TableToken token;
+            try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
+                token = TestUtils.createTable(engine, mem, path, model, tableId, model.getTableName());
+            }
 
             // Write data in a loop getting writer in and out of pool
             Thread writeDataThread = new Thread(() -> {
                 TestUtils.await(barrier);
                 int i = 0;
                 while (columnsAdded.get() < totalColAddCount && exceptions.isEmpty()) {
-                    try (TableWriter writer = getWriter(tableToken)) {
+                    try (TableWriter writer = getWriter(token)) {
                         TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
                         row.append();
                         writer.commit();
@@ -274,10 +271,10 @@ public class TableWriterTest extends AbstractCairoTest {
                         alterOperationBuilder.clear();
                         String columnName = "col" + i;
                         alterOperationBuilder
-                                .ofAddColumn(0, tableToken, tableId)
+                                .ofAddColumn(0, token, tableId)
                                 .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
                         AlterOperation alterOp = alterOperationBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, alterOp)) {
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(token, alterOp)) {
                             if (writer != null) {
                                 writer.publishAsyncWriterCommand(alterOp);
                             }
@@ -304,7 +301,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
             Assert.assertTrue(insertCount.get() > 0);
 
-            try (TableReader rdr = getReader(tableToken)) {
+            try (TableReader rdr = getReader(token)) {
                 Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
             }
 
