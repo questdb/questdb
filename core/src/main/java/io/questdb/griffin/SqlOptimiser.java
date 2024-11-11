@@ -84,8 +84,7 @@ import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.isNoneKeyword;
 import static io.questdb.griffin.model.ExpressionNode.*;
-import static io.questdb.griffin.model.QueryModel.ORDER_DIRECTION_ASCENDING;
-import static io.questdb.griffin.model.QueryModel.ORDER_DIRECTION_DESCENDING;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_AND = 2;
@@ -3579,6 +3578,44 @@ public class SqlOptimiser implements Mutable {
         optimiseOrderBy(jm1, orderByMnemonic);
     }
 
+    /**
+     * For a query like this: SELECT a, b, c from x ORDER BY a DESC, b DESC LIMIT 100
+     * The limit is on the outer select-choose, and not the select-none.
+     * This means that we fail to specialise the query whereas we would automatically
+     * perform this push down in the case of neative limits.
+     *
+     * @param model
+     */
+    private void pushLimitFromChooseToNone(QueryModel model) {
+        if (model == null) {
+            return;
+        }
+
+        if (
+                model.getSelectModelType() == SELECT_MODEL_CHOOSE
+                        && model.getNestedModel() != null
+                        && model.getNestedModel().getSelectModelType() == SELECT_MODEL_NONE
+                        && model.getNestedModel().getOrderBy().size() > 0
+                        && model.getNestedModel().getWhereClause() == null
+                        && model.getLimitLo() != null
+                        && model.getLimitHi() == null) {
+
+            QueryModel nested = model.getNestedModel();
+            nested.setLimit(model.getLimitLo(), null);
+            model.setLimit(null, null);
+
+            if (nested.getOrderByAdvice().size() == 0) {
+                for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                    nested.getOrderByAdvice().add(nested.getOrderBy().get(i));
+                    nested.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
+                }
+                nested.setAllowPropagationOfOrderByAdvice(false);
+            }
+        } else {
+            pushLimitFromChooseToNone(model.getNestedModel());
+        }
+    }
+
     private ExpressionNode pushOperationOutsideAgg(ExpressionNode agg, ExpressionNode op, ExpressionNode column, ExpressionNode constant, QueryModel model) {
         final QueryColumn qc = checkSimpleIntegerColumn(column, model);
         if (qc == null) {
@@ -4086,6 +4123,7 @@ public class SqlOptimiser implements Mutable {
                 rewriteNegativeLimitWithOrderBy(model);
             }
 
+
             final QueryModel nested = model.getNestedModel();
 
             if (
@@ -4271,7 +4309,7 @@ public class SqlOptimiser implements Mutable {
 
             // copy the integral part i.e if its -3, the 3
             nested.setLimit(model.getLimitLo().rhs, null);
-            
+
             // remove limit from outer
             model.setLimit(null, null);
         }
@@ -6308,6 +6346,7 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
+            pushLimitFromChooseToNone(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);

@@ -62,6 +62,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             "  amount DOUBLE,\n" +
             "  timestamp TIMESTAMP\n" +
             ") timestamp (timestamp) PARTITION BY DAY WAL;";
+    private static String tripsDdl = "\n" +
+            "CREATE TABLE 'trips' (\n" +
+            "  cab_type SYMBOL capacity 12,\n" +
+            "  vendor_id SYMBOL capacity 8,\n" +
+            "  pickup_datetime TIMESTAMP\n" +
+            ") timestamp (pickup_datetime) PARTITION BY MONTH WAL;";
 
     @Test
     public void testAliasAppearsInFuncArgs1() throws Exception {
@@ -1898,6 +1904,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "order by ts desc",
                     "ts"
             );
+        });
+    }
+
+    @Test
+    public void testPushDownLimitFromChooseToNone() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tripsDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select cab_type, vendor_id, pickup_datetime from trips \n" +
+                    "order by pickup_datetime desc, cab_type desc limit 100;", "Sort light lo: 100 partiallySorted: true\n" +
+                    "  keys: [pickup_datetime desc, cab_type desc]\n" +
+                    "    PageFrame\n" +
+                    "        Row backward scan\n" +
+                    "        Frame backward scan on: trips\n");
         });
     }
 
