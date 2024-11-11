@@ -60,7 +60,7 @@ public class CountFunctionFactoryHelper {
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES;
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
-    static Function newCountWindowFunction(AbstractWindowFunctionFactory factory,
+    static Function newCountWindowFunction(AbsWindowFunctionFactory factory,
                                            int position,
                                            ObjList<Function> args,
                                            IntList argPositions,
@@ -130,7 +130,7 @@ public class CountFunctionFactoryHelper {
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
 
-                        // moving count over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                        // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                         return new CountOverPartitionRangeFrameFunction(
                                 map,
                                 partitionByRecord,
@@ -232,7 +232,7 @@ public class CountFunctionFactoryHelper {
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
-                    // moving count over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                    // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                     return new CountOverRangeFrameFunction(
                             rowsLo,
                             rowsHi,
@@ -308,11 +308,11 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
-    // handles count(arg) over (partition by x)
+    // handles count(avg) over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
     static class CountOverPartitionFunction extends BasePartitionedLongWindowFunction {
 
@@ -362,7 +362,7 @@ public class CountFunctionFactoryHelper {
         }
     }
 
-    // Handles count(arg) over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
+    // Handles count(avg) over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
     public static class CountOverPartitionRangeFrameFunction extends BasePartitionedLongWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES;
@@ -376,7 +376,6 @@ public class CountFunctionFactoryHelper {
         private final int timestampIndex;
         private final IsRecordNotNull isNotNullFunc;
         private long count;
-        private final AbstractWindowFunctionFactory.RingBufferDesc memoryDesc = new AbstractWindowFunctionFactory.RingBufferDesc();
 
         public CountOverPartitionRangeFrameFunction(
                 Map map,
@@ -480,12 +479,42 @@ public class CountFunctionFactoryHelper {
                 firstIdx = newFirstIdx;
 
                 if (isNotNullFunc.isNotNull(arg, record)) {
-                    if (size == capacity) { // buffer full
-                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
-                        AbstractWindowFunctionFactory.expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
-                        capacity = memoryDesc.capacity;
-                        startOffset = memoryDesc.startOffset;
-                        firstIdx = memoryDesc.firstIdx;
+                    if (size == capacity) {
+                        capacity <<= 1;
+
+                        long oldAddress = memory.getPageAddress(0) + startOffset;
+                        long newAddress = -1;
+
+                        // try to find matching block in free list
+                        for (int i = 0, n = freeList.size(); i < n; i += 2) {
+                            if (freeList.getQuick(i) == capacity) {
+                                newAddress = memory.getPageAddress(0) + freeList.getQuick(i + 1);
+                                // replace block info with ours
+                                freeList.setQuick(i, size);
+                                freeList.setQuick(i + 1, startOffset);
+                                break;
+                            }
+                        }
+
+                        if (newAddress == -1) {
+                            newAddress = memory.appendAddressFor(capacity * RECORD_SIZE);
+                            // call above can end up resizing and thus changing memory start address
+                            oldAddress = memory.getPageAddress(0) + startOffset;
+                            freeList.add(size, startOffset);
+                        }
+
+                        if (firstIdx == 0) {
+                            Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
+                        } else {
+                            firstIdx %= size;
+                            //we can't simply copy because that'd leave a gap in the middle
+                            long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
+                            Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
+                            Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
+                            firstIdx = 0;
+                        }
+
+                        startOffset = newAddress - memory.getPageAddress(0);
                     }
 
                     // add ts element to buffer
@@ -595,7 +624,7 @@ public class CountFunctionFactoryHelper {
         }
     }
 
-    // handles count(arg) over (partition by x [order by o] rows between y and z)
+    // handles count(avg) over (partition by x [order by o] rows between y and z)
     public static class CountOverPartitionRowsFrameFunction extends BasePartitionedLongWindowFunction {
 
         //number of values we need to keep to compute over frame
@@ -605,7 +634,7 @@ public class CountFunctionFactoryHelper {
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        // holds fixed-size ring buffers of boolean values
+        // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
         private final IsRecordNotNull isRecordNotNull;
         protected long count;
@@ -760,7 +789,7 @@ public class CountFunctionFactoryHelper {
         }
     }
 
-    // Handles count(arg) over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
+    // Handles count(avg) over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
     public static class CountOverRangeFrameFunction extends BaseLongWindowFunction implements Reopenable {
         private static final int RECORD_SIZE = Long.BYTES;
         private final boolean frameLoBounded;
@@ -952,7 +981,7 @@ public class CountFunctionFactoryHelper {
         }
     }
 
-    // Handles count(arg) over ([order by o] rows between y and z); there's no partition by.
+    // Handles count(avg) over ([order by o] rows between y and z); there's no partition by.
     public static class CountOverRowsFrameFunction extends BaseLongWindowFunction implements Reopenable {
         private final MemoryARW buffer;
         private final int bufferSize;

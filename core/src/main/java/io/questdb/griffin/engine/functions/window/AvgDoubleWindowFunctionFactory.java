@@ -42,9 +42,11 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.IntList;
@@ -56,7 +58,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
+public class AvgDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
 
     public static final ArrayColumnTypes AVG_COLUMN_TYPES;
     public static final ArrayColumnTypes AVG_OVER_PARTITION_RANGE_COLUMN_TYPES;
@@ -407,7 +409,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final int timestampIndex;
         protected double sum;
         private double avg;
-        private final RingBufferDesc memoryDesc = new RingBufferDesc();
 
         public AvgOverPartitionRangeFrameFunction(
                 Map map,
@@ -530,11 +531,41 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 // add new element if not null
                 if (Numbers.isFinite(d)) {
                     if (size == capacity) { //buffer full
-                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
-                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
-                        capacity = memoryDesc.capacity;
-                        startOffset = memoryDesc.startOffset;
-                        firstIdx = memoryDesc.firstIdx;
+                        capacity <<= 1;
+
+                        long oldAddress = memory.getPageAddress(0) + startOffset;
+                        long newAddress = -1;
+
+                        // try to find matching block in free list
+                        for (int i = 0, n = freeList.size(); i < n; i += 2) {
+                            if (freeList.getQuick(i) == capacity) {
+                                newAddress = memory.getPageAddress(0) + freeList.getQuick(i + 1);
+                                // replace block info with ours
+                                freeList.setQuick(i, size);
+                                freeList.setQuick(i + 1, startOffset);
+                                break;
+                            }
+                        }
+
+                        if (newAddress == -1) {
+                            newAddress = memory.appendAddressFor(capacity * RECORD_SIZE);
+                            // call above can end up resizing and thus changing memory start address
+                            oldAddress = memory.getPageAddress(0) + startOffset;
+                            freeList.add(size, startOffset);
+                        }
+
+                        if (firstIdx == 0) {
+                            Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
+                        } else {
+                            firstIdx %= size;
+                            //we can't simply copy because that'd leave a gap in the middle
+                            long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
+                            Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
+                            Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
+                            firstIdx = 0;
+                        }
+
+                        startOffset = newAddress - memory.getPageAddress(0);
                     }
 
                     // add element to buffer

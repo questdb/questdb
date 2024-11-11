@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.*;
 
-public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
+public class SumDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
 
     private static final String NAME = "sum";
     private static final String SIGNATURE = NAME + "(D)";
