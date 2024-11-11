@@ -381,7 +381,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static TableToken create(TableModel model) {
-        return TestUtils.create(model, engine);
+        return TestUtils.createTable(engine, model);
     }
 
     public static boolean doubleEquals(double a, double b, double epsilon) {
@@ -1321,7 +1321,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static TableToken createTable(TableModel model) {
-        return TestUtils.create(model, engine);
+        return TestUtils.createTable(engine, model);
     }
 
     protected static ApplyWal2TableJob createWalApplyJob(QuestDBTestNode node) {

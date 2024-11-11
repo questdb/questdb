@@ -575,11 +575,11 @@ public class CairoEngineTest extends AbstractCairoTest {
 
     private TableToken createX(CairoEngine engine) {
         TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).col("a", ColumnType.INT);
-        return TestUtils.create(model, engine);
+        return TestUtils.createTable(engine, model);
     }
 
     private TableToken createY(CairoEngine engine) {
         TableModel model = new TableModel(configuration, "y", PartitionBy.NONE).col("b", ColumnType.INT);
-        return TestUtils.create(model, engine);
+        return TestUtils.createTable(engine, model);
     }
 }

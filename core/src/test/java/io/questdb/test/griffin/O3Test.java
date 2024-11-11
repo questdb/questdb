@@ -106,7 +106,7 @@ public class O3Test extends AbstractO3Test {
                     .timestamp()
                     .col("supplier", ColumnType.SYMBOL);
 
-            TestUtils.create(model, engine);
+            TestUtils.createTable(engine, model);
 
             AtomicInteger errorCount = new AtomicInteger();
             short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};

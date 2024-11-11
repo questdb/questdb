@@ -27,7 +27,13 @@ package io.questdb.cairo.pool;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.*;
+import io.questdb.griffin.BatchCallback;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.ExpressionParserListener;
+import io.questdb.griffin.QueryBuilder;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -161,6 +167,10 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
             return delegate.generateSelectWithRetries(queryModel, executionContext, generateProgressLogger);
         }
 
+        public SqlCompiler getDelegate() {
+            return delegate;
+        }
+
         @Override
         public CairoEngine getEngine() {
             return delegate.getEngine();
@@ -225,10 +235,6 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public void updateTableToken(TableToken tableToken) {
             this.tableToken = tableToken;
-        }
-
-        public SqlCompiler getDelegate() {
-            return delegate;
         }
     }
 }

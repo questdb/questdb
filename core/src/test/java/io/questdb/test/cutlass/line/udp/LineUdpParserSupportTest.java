@@ -323,11 +323,11 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
                 });
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
-                    TestUtils.create(model
+                    TestUtils.createTable(engine, model
                                     .col(targetColumnName, columnType)
                                     .col(locationColumnName, ColumnType.getGeoHashTypeWithBits(30))
-                                    .timestamp(),
-                            engine);
+                                    .timestamp()
+                    );
                     receiver.start();
                     try (AbstractLineSender sender = createLineProtoSender()) {
                         senderConsumer.accept(sender);

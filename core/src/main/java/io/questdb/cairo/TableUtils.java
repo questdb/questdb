@@ -781,7 +781,13 @@ public final class TableUtils {
         return timestampIndex;
     }
 
-    public static void handleMetadataLoadException(CharSequence tableName, long deadline, CairoException ex, MillisecondClock millisecondClock, long spinLockTimeout) {
+    public static void handleMetadataLoadException(
+            CharSequence tableName,
+            long deadline,
+            CairoException ex,
+            MillisecondClock millisecondClock,
+            long spinLockTimeout
+    ) {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
         if (ex.errnoReadPathDoesNotExist()) {
             if (millisecondClock.getTicks() < deadline) {

@@ -8557,7 +8557,7 @@ public class IODispatcherTest extends AbstractTest {
     private static void createTestTable(CairoEngine engine) {
         TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE);
         model.col("j", ColumnType.SYMBOL);
-        TestUtils.create(model, engine);
+        TestUtils.createTable(engine, model);
 
         try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("y"), engine)) {
             for (int i = 0; i < 20; i++) {
@@ -8893,7 +8893,7 @@ public class IODispatcherTest extends AbstractTest {
                     TableModel model = new TableModel(configuration, tableName, partitionBy)
                             .timestamp("ts")
                             .col("int", ColumnType.INT);
-                    TestUtils.create(model, engine);
+                    TestUtils.createTable(engine, model);
                 }
         );
 

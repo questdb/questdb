@@ -256,7 +256,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // Pre-create a partitioned table, so we can wait until it's created.
             TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY);
             m.timestamp("ts").wal();
-            TestUtils.create(m, engine);
+            TestUtils.createTable(engine, m);
 
             // Send non-partitioned table rows before the partitioned table ones.
             final String lineData = tableNonPartitioned + " windspeed=2.0 631150000000000000\n" +
@@ -1357,7 +1357,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         if (walEnabled) {
             m.wal();
         }
-        TestUtils.create(m, engine);
+        TestUtils.createTable(engine, m);
 
         engine.releaseInactive();
         runInContext((receiver) -> {
@@ -1410,7 +1410,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 m.wal();
             }
-            TestUtils.create(m, engine);
+            TestUtils.createTable(engine, m);
 
             sendLinger(lineData, "table_a");
 
@@ -1537,7 +1537,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 m.wal();
             }
-            TestUtils.create(m, engine);
+            TestUtils.createTable(engine, m);
 
             send(lineData, "messages");
             String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +

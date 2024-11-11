@@ -58,6 +58,7 @@ import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
@@ -9380,11 +9381,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTableNameCannotOpen() throws Exception {
+        TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
+        AtomicInteger failureCountDown = new AtomicInteger(tableModels.length + 1);
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
-                    return -1;
+                    if (failureCountDown.decrementAndGet() <= 0) {
+                        return -1;
+                    }
                 }
                 return super.openRO(name);
             }
@@ -9398,7 +9403,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
             @Override
             public long getSpinLockTimeout() {
-                return 1000;
+                return 50;
             }
         };
 
@@ -9407,11 +9412,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     CairoEngine engine = new CairoEngine(configuration, Metrics.disabled());
                     SqlCompiler compiler = engine.getSqlCompiler()
             ) {
-                TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
                 try {
-                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
+                    try (
+                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(
+                            engine,
+                            sqlExecutionContext.getWorkerCount(),
+                            sqlExecutionContext.getSharedWorkerCount())
+                    ) {
                         for (int i = 0, n = tableModels.length; i < n; i++) {
-                            TestUtils.create(tableModels[i], engine);
+                            TestUtils.createTable(engine, tableModels[i]);
                         }
                         compiler.compile("select * from tab", ctx);
                         Assert.fail("Exception expected");

@@ -745,7 +745,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
     private void createTable(String tableName) {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
         model.timestamp();
-        TestUtils.create(model, engine);
+        TestUtils.createTable(engine, model);
     }
 
     private static class Holder implements Mutable {

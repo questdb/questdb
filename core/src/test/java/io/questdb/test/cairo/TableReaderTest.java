@@ -2400,7 +2400,7 @@ public class TableReaderTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, openPartitionsLimit);
 
         TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).col("i", ColumnType.INT).timestamp();
-        TestUtils.create(model, engine);
+        TestUtils.createTable(engine, model);
 
         try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
             for (int i = 0; i < rows; i++) {

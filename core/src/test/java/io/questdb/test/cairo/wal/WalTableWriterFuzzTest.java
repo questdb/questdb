@@ -1019,7 +1019,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
         AtomicReference<TableToken> tableToken = new AtomicReference<>();
         // tableName is WAL enabled
         final TableModel model = createTableModel(tableName).wal();
-        forEachNode(node -> tableToken.set(TestUtils.create(model, node.getEngine()))
+        forEachNode(node -> tableToken.set(TestUtils.createTable(node.getEngine(), model))
         );
 
         // tableCopyName is not WAL enabled

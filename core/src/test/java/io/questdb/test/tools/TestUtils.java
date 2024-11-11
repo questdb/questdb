@@ -856,20 +856,6 @@ public final class TestUtils {
         }
     }
 
-    public static TableToken create(TableModel model, CairoEngine engine) {
-        int tableId = (int) engine.getTableIdGenerator().getNextId();
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, model.isWalEnabled());
-        if (tableToken == null) {
-            throw new RuntimeException("table already exists: " + model.getTableName());
-        }
-        createTable(model, engine.getConfiguration(), ColumnType.VERSION, tableId, tableToken);
-        engine.registerTableToken(tableToken);
-        if (model.isWalEnabled()) {
-            engine.getTableSequencerAPI().registerTable(tableId, model, tableToken);
-        }
-        return tableToken;
-    }
-
     public static void createPopulateTable(
             SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, TableModel tableModel,
             int totalRows, String startDate, int partitionCount
@@ -1027,11 +1013,25 @@ public final class TestUtils {
                 );
     }
 
+    public static TableToken createTable(CairoEngine engine, TableStructure structure) {
+        return createTable(engine, structure, (int) engine.getTableIdGenerator().getNextId());
+    }
+
     public static void createTable(
-            TableModel model, CairoConfiguration configuration, int tableVersion, int tableId, TableToken tableToken
+            TableModel model,
+            CairoConfiguration configuration,
+            int tableVersion,
+            int tableId,
+            TableToken tableToken
     ) {
         try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
             TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
+        }
+    }
+
+    public static TableToken createTable(CairoEngine engine, TableStructure structure, int tableId) {
+        try (MemoryMARW mem = Vm.getMARWInstance(); Path path = new Path()) {
+            return TestUtils.createTable(engine, mem, path, structure, tableId, structure.getTableName());
         }
     }
 
@@ -1043,7 +1043,7 @@ public final class TestUtils {
             int tableId,
             CharSequence tableName
     ) {
-        TableToken token = engine.lockTableName(tableName, false);
+        TableToken token = engine.lockTableName(tableName, structure.isWalEnabled());
         path.of(engine.getConfiguration().getRoot()).concat(token);
         TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);

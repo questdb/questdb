@@ -169,7 +169,7 @@ public class AlterWalTableLineTcpReceiverTest extends AbstractLineTcpReceiverTes
             tm.col("watts", ColumnType.LONG);
             tm.timestamp();
             tm.wal();
-            TableToken ignored = TestUtils.create(tm, engine);
+            TableToken ignored = TestUtils.createTable(engine, tm);
 
             try (TableWriterAPI writer = getTableWriterAPI("plug")) {
                 TableWriter.Row row = writer.newRow(day1 / 1000);
