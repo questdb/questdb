@@ -991,6 +991,10 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.CountSymbolWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
