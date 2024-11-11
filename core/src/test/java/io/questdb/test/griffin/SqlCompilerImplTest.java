@@ -5689,7 +5689,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testReindexSyntaxCheckSemicolon() throws Exception {
         assertMemoryLeak(() -> {
-            compile(
+            ddl(
                     "create table xxx as (" +
                             "select " +
                             "rnd_symbol('A', 'B', 'C') as sym1," +
