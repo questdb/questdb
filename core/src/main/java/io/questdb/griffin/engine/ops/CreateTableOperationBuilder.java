@@ -36,20 +36,18 @@ import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sinkable {
     public static final ObjectFactory<CreateTableOperationBuilder> FACTORY = CreateTableOperationBuilder::new;
@@ -57,12 +55,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     static final int COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
     static final int COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
     private static final IntList castGroups = new IntList();
-    // This list encodes column attributes from the column definition of the "create table" SQL
-    // these attributes include: column type, index flag, index capacity and symbol capacity.
-    // The list is populated by the SQL parser at compile time.
-    // For create-as-select SQL, parser does not populate this list. Instead, the list
-    // is used at the execution time to capture the attributes of columns of the "select" SQL.
-    private final LongList columnBits = new LongList();
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> columnModels = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
@@ -82,25 +74,13 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     private CharSequence volumeAlias;
     private boolean walEnabled;
 
-    public void addColumn(int columnPosition, CharSequence columnName, int columnType, int symbolCapacity) throws SqlException {
+    public void addColumnModel(CharSequence columnName, CreateTableColumnModel model) throws SqlException {
         if (columnModels.get(columnName) != null) {
-            throw SqlException.duplicateColumn(columnPosition, columnName);
+            throw SqlException.duplicateColumn(model.getColumnNamePos(), columnName);
         }
-
+        columnNameIndexMap.put(columnName, columnModels.size());
+        columnModels.put(columnName, model);
         columnNames.add(columnName);
-        columnBits.add(
-                Numbers.encodeLowHighInts(columnType, symbolCapacity),
-                Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0)
-        );
-    }
-
-    public void addDedupColumn(CharSequence dedupColName, int position) throws SqlException {
-        columnModels.get(dedupColName);
-        if (dedupColumnNames.contains(dedupColName)) {
-            throw SqlException.duplicateColumn(position, dedupColName);
-        }
-        dedupColumnNames.add(dedupColName);
-        dedupColumnPositions.add(position);
     }
 
     public CreateTableOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
@@ -150,7 +130,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                 Chars.toString(volumeAlias),
                 ignoreIfExists,
                 columnNames,
-                columnBits,
+                columnModels,
                 getTimestampIndex(),
                 o3MaxLag,
                 maxUncommittedRows,
@@ -162,7 +142,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     public void clear() {
         batchO3MaxLag = -1;
         batchSize = -1;
-        columnBits.clear();
         columnNameIndexMap.clear();
         columnNames.clear();
         ignoreIfExists = false;
@@ -181,12 +160,8 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         return columnNameIndexMap.get(columnName);
     }
 
-    public CharSequenceObjHashMap<CreateTableColumnModel> getColumnModels() {
-        return columnModels;
-    }
-
-    public int getColumnType(int columnIndex) {
-        return getLowAt(columnIndex * 2);
+    public @Nullable CreateTableColumnModel getColumnModel(CharSequence columnName) {
+        return columnModels.get(columnName);
     }
 
     @Override
@@ -219,16 +194,8 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         return timestampExpr != null ? getColumnIndex(timestampExpr.token) : -1;
     }
 
-    public boolean hasColumnDefs() {
-        return columnNames.size() > 0;
-    }
-
     public boolean isAtomic() {
         return batchSize == -1;
-    }
-
-    public boolean isIndexed(int index) {
-        return (getLowAt(index * 2 + 1) & COLUMN_FLAG_INDEXED) != 0;
     }
 
     public boolean isWalEnabled() {
@@ -243,12 +210,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         this.batchSize = batchSize;
     }
 
-    public void setDedupKeyFlag(int index) {
-        int flagsIndex = index * 2 + 1;
-        int flags = getLowAt(flagsIndex) | COLUMN_FLAG_DEDUP_KEY;
-        columnBits.setQuick(flagsIndex, Numbers.encodeLowHighInts(flags, getHighAt(flagsIndex)));
-    }
-
     public void setDefaultSymbolCapacity(int defaultSymbolCapacity) {
         this.defaultSymbolCapacity = defaultSymbolCapacity;
     }
@@ -256,8 +217,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     public void setFactory(RecordCursorFactory factory) throws SqlException {
         this.recordCursorFactory = factory;
         final RecordMetadata metadata = factory.getMetadata();
-        CharSequenceObjHashMap<CreateTableColumnModel> touchUpModels = columnModels;
-        ObjList<CharSequence> touchUpColumnNames = touchUpModels.keys();
+        ObjList<CharSequence> touchUpColumnNames = columnModels.keys();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             columnNameIndexMap.put(metadata.getColumnName(i), i);
         }
@@ -265,7 +225,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         for (int i = 0, n = touchUpColumnNames.size(); i < n; i++) {
             CharSequence columnName = touchUpColumnNames.getQuick(i);
             int index = metadata.getColumnIndexQuiet(columnName);
-            CreateTableColumnModel touchUp = touchUpModels.get(columnName);
+            CreateTableColumnModel touchUp = columnModels.get(columnName);
             // the only reason why columns cannot be found at this stage is
             // concurrent table modification of table structure
             if (index == -1) {
@@ -285,16 +245,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     public void setIgnoreIfExists(boolean flag) {
         this.ignoreIfExists = flag;
-    }
-
-    public void setIndexedColumn(CharSequence columnName, int columnNamePosition, int indexValueBlockSize) throws SqlException {
-        int columnIndex = getColumnIndex(columnName);
-        if (columnIndex == -1) {
-            throw SqlException.invalidColumn(columnNamePosition, columnName);
-        }
-        int flagsIndex = columnIndex * 2 + 1;
-        int flags = getLowAt(flagsIndex) | COLUMN_FLAG_INDEXED;
-        columnBits.setQuick(flagsIndex, Numbers.encodeLowHighInts(flags, Numbers.ceilPow2(indexValueBlockSize)));
     }
 
     public void setLikeTableNameExpr(ExpressionNode expr) {
@@ -335,27 +285,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         this.walEnabled = walEnabled;
     }
 
-    public void symbolCacheFlag(boolean cached) {
-        int last = columnBits.size() - 1;
-        assert last > 0;
-        assert ColumnType.isSymbol(getLowAt(last - 1));
-        int flags = getLowAt(last);
-        if (cached) {
-            flags |= COLUMN_FLAG_CACHED;
-        } else {
-            flags &= ~COLUMN_FLAG_CACHED;
-        }
-        columnBits.setQuick(last, Numbers.encodeLowHighInts(flags, getHighAt(last)));
-    }
-
-    public void symbolCapacity(int capacity) {
-        final int pos = columnBits.size() - 2;
-        assert pos > -1;
-        final int type = getLowAt(pos);
-        assert ColumnType.isSymbol(type);
-        columnBits.setQuick(pos, Numbers.encodeLowHighInts(type, capacity));
-    }
-
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("create");
@@ -375,36 +304,25 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             sink.putAscii(" as (");
             getQueryModel().toSink(sink);
             sink.putAscii(')');
-            final ObjList<CharSequence> castColumns = getColumnModels().keys();
+            final ObjList<CharSequence> castColumns = columnModels.keys();
             for (int i = 0, n = castColumns.size(); i < n; i++) {
                 final CharSequence column = castColumns.getQuick(i);
-                final CreateTableColumnModel m = getColumnModels().get(column);
-                final int type = m.getColumnType();
+                final CreateTableColumnModel model = columnModels.get(column);
+                final int type = model.getColumnType();
                 if (type > 0) {
                     sink.putAscii(", cast(");
                     sink.put(column);
                     sink.putAscii(" as ");
                     sink.put(ColumnType.nameOf(type));
                     sink.putAscii(':');
-                    sink.put(m.getColumnTypePos());
-
+                    sink.put(model.getColumnTypePos());
                     if (ColumnType.isSymbol(type)) {
-                        sink.putAscii(" capacity ");
-                        sink.put(m.getSymbolCapacity());
-                        if (m.getSymbolCacheFlag()) {
-                            sink.putAscii(" cache");
-                        } else {
-                            sink.putAscii(" nocache");
-                        }
-                        if (m.isIndexed()) {
-                            sink.putAscii(" index capacity ");
-                            sink.put(m.getIndexValueBlockSize());
-                        }
+                        symbolClauseToSink(sink, model);
                     }
-                } else if (m.isIndexed()) {
+                } else if (model.isIndexed()) {
                     sink.putAscii(", index(").put(column);
                     sink.putAscii(" capacity ");
-                    sink.put(m.getIndexValueBlockSize());
+                    sink.put(model.getIndexValueBlockSize());
                 }
                 sink.putAscii(')');
             }
@@ -419,58 +337,32 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                     if (i > 0) {
                         sink.putAscii(", ");
                     }
-                    sink.put(columnNames.getQuick(i));
+                    CharSequence columnName = columnNames.getQuick(i);
+                    CreateTableColumnModel model = columnModels.get(columnName);
+                    sink.put(columnName);
                     sink.putAscii(' ');
-                    sink.put(ColumnType.nameOf(getLowAt(i * 2)));
-
-                    if (ColumnType.isSymbol(getLowAt(i * 2))) {
-                        sink.putAscii(" capacity ");
-                        sink.put(getHighAt(i * 2));
-                        if ((getLowAt(i * 2 + 1) & COLUMN_FLAG_CACHED) != 0) {
-                            sink.putAscii(" cache");
-                        } else {
-                            sink.putAscii(" nocache");
-                        }
-                    }
-
-                    if (isIndexed(i)) {
-                        sink.putAscii(" index capacity ");
-                        sink.put(getHighAt(i * 2 + 1));
+                    sink.put(ColumnType.nameOf(model.getColumnType()));
+                    if (ColumnType.isSymbol(model.getColumnType())) {
+                        symbolClauseToSink(sink, model);
                     }
                 }
             }
             sink.putAscii(')');
         }
-
         if (getTimestampExpr() != null) {
             sink.putAscii(" timestamp(");
             sink.put(getTimestampExpr().token);
             sink.putAscii(')');
         }
-
         if (partitionByExpr != null) {
             sink.putAscii(" partition by ").put(partitionByExpr.token);
             if (walEnabled) {
                 sink.putAscii(" wal");
             }
         }
-
         if (volumeAlias != null) {
             sink.putAscii(" in volume '").put(volumeAlias).putAscii('\'');
         }
-    }
-
-    public void updateIndexFlagOfCurrentLastColumn(boolean indexFlag, int indexValueBlockSize) {
-        int index = columnBits.size() - 1;
-        assert index > 0;
-        int flags = getLowAt(index);
-        if (indexFlag) {
-            assert indexValueBlockSize > 1;
-            flags |= COLUMN_FLAG_INDEXED;
-        } else {
-            flags &= ~COLUMN_FLAG_INDEXED;
-        }
-        columnBits.setQuick(index, Numbers.encodeLowHighInts(flags, Numbers.ceilPow2(indexValueBlockSize)));
     }
 
     private static boolean isCompatibleCast(int from, int to) {
@@ -484,12 +376,18 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         return (from == ColumnType.STRING && to == ColumnType.IPv4) || (from == ColumnType.VARCHAR && to == ColumnType.IPv4);
     }
 
-    private int getHighAt(int index) {
-        return Numbers.decodeHighInt(columnBits.getQuick(index));
-    }
-
-    private int getLowAt(int index) {
-        return Numbers.decodeLowInt(columnBits.getQuick(index));
+    private static void symbolClauseToSink(@NotNull CharSink<?> sink, CreateTableColumnModel model) {
+        sink.putAscii(" capacity ");
+        sink.put(model.getSymbolCapacity());
+        if (model.getSymbolCacheFlag()) {
+            sink.putAscii(" cache");
+        } else {
+            sink.putAscii(" nocache");
+        }
+        if (model.isIndexed()) {
+            sink.putAscii(" index capacity ");
+            sink.put(model.getIndexValueBlockSize());
+        }
     }
 
     static {

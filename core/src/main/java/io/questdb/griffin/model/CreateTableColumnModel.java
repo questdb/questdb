@@ -107,10 +107,14 @@ public class CreateTableColumnModel implements Mutable {
         this.columnType = columnType;
     }
 
-    public void setIndexed(int indexColumnPosition, int indexValueBlockSize) {
-        indexedFlag = true;
+    public void setIndexed(boolean indexedFlag, int indexColumnPosition, int indexValueBlockSize) {
+        this.indexedFlag = indexedFlag;
         this.indexColumnPos = indexColumnPosition;
         this.indexValueBlockSize = indexValueBlockSize;
+    }
+
+    public void setIsDedupKey() {
+        dedupKeyFlag = true;
     }
 
     public void setSymbolCacheFlag(boolean symbolCacheFlag) {
