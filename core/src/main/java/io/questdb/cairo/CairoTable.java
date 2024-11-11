@@ -32,9 +32,9 @@ import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 public class CairoTable implements Sinkable {
-    public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-    public IntList columnOrderMap = new IntList();
-    public ObjList<CairoColumn> columns = new ObjList<>();
+    public LowerCaseCharSequenceIntHashMap columnNameIndexMap;
+    public IntList columnOrderMap;
+    public ObjList<CairoColumn> columns;
     private boolean isDedup;
     private boolean isSoftLink;
     private int maxUncommittedRows;
@@ -47,8 +47,13 @@ public class CairoTable implements Sinkable {
     public CairoTable() {
     }
 
-    public CairoTable(@NotNull TableToken token) {
+    public CairoTable(@NotNull TableToken token, boolean flat) {
         this.setTableToken(token);
+        if (!flat) {
+            columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+            columnOrderMap = new IntList();
+            columns = new ObjList<>();
+        }
     }
 
     public void clear() {

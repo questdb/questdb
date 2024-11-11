@@ -146,7 +146,7 @@ public class MetadataCache implements QuietCloseable {
                 .trimTo(path.size());
 
         // create table to work with
-        CairoTable table = new CairoTable(token);
+        CairoTable table = new CairoTable(token, false);
 
         try {
             // open metadata
@@ -452,7 +452,7 @@ public class MetadataCache implements QuietCloseable {
         @Override
         public void hydrateTable(@NotNull TableWriterMetadata tableMetadata) {
             final TableToken tableToken = tableMetadata.getTableToken();
-            final CairoTable table = new CairoTable(tableToken);
+            final CairoTable table = new CairoTable(tableToken, false);
             final long metadataVersion = tableMetadata.getMetadataVersion();
             table.setMetadataVersion(metadataVersion);
 
@@ -537,8 +537,23 @@ public class MetadataCache implements QuietCloseable {
 
         @Override
         public void renameTable(@NotNull TableToken fromTableToken, @NotNull TableToken toTableToken) {
-            dropTable(fromTableToken);
-            hydrateTable(toTableToken, true);
+            String tableName = fromTableToken.getTableName();
+            final int index = tableMap.keyIndex(tableName);
+            CairoTable fromTab = tableMap.valueAt(index);
+            tableMap.removeAt(index);
+            CairoTable toTab = new CairoTable(toTableToken, true);
+            toTab.setMetadataVersion(fromTab.getMetadataVersion());
+            toTab.setPartitionBy(fromTab.getPartitionBy());
+            toTab.setMaxUncommittedRows(fromTab.getMaxUncommittedRows());
+            toTab.setO3MaxLag(fromTab.getO3MaxLag());
+            toTab.setTimestampIndex(fromTab.getTimestampIndex());
+            toTab.setIsSoftLink(fromTab.getIsSoftLink());
+            toTab.setIsDedup(fromTab.getIsDedup());
+            toTab.columnOrderMap = fromTab.columnOrderMap;
+            toTab.columns = fromTab.columns;
+            toTab.columnNameIndexMap = fromTab.columnNameIndexMap;
+            toTab.setTimestampIndex(fromTab.getTimestampIndex());
+            tableMap.put(toTableToken.getTableName(), toTab);
         }
     }
 }

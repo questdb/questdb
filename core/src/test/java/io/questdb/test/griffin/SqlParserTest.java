@@ -34,7 +34,6 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowColumn;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
@@ -9378,7 +9377,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
 
         AtomicInteger failureCountDown = new AtomicInteger(tableModels.length + 1);
-        final FilesFacade ff = new TestFilesFacadeImpl() {
+
+        AbstractCairoTest.ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
@@ -9389,8 +9389,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 return super.openRO(name);
             }
         };
-
-        AbstractCairoTest.ff = ff;
         AbstractCairoTest.spinLockTimeout = 50;
         assertMemoryLeak(() -> {
             try {
