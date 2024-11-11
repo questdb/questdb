@@ -390,6 +390,17 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'zone' expected");
     }
 
+    private @NotNull TouchUpColumnModel getOrCreateTouchUpColumnModel(ExpressionNode columnName) {
+        CharSequenceObjHashMap<TouchUpColumnModel> touchUpModels = createTableOperationBuilder.getTouchUpColumnModels();
+        TouchUpColumnModel touchUpModel = touchUpModels.get(columnName.token);
+        if (touchUpModel == null) {
+            touchUpModel = createTableTouchUpColumnModelPool.next();
+            touchUpModel.setColumnNamePos(columnName.position);
+            touchUpModels.put(columnName.token, touchUpModel);
+        }
+        return touchUpModel;
+    }
+
     private boolean isCurrentRow(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (SqlKeywords.isCurrentKeyword(tok)) {
             tok = tok(lexer, "'row'");
@@ -846,14 +857,9 @@ public class SqlParser {
         expectTok(lexer, '(');
         final ExpressionNode columnName = expectLiteral(lexer);
 
-        CharSequenceObjHashMap<TouchUpColumnModel> touchUpModels = createTableOperationBuilder.getTouchUpColumnModels();
-        TouchUpColumnModel touchUpModel = touchUpModels.get(columnName.token);
-        if (touchUpModel == null) {
-            touchUpModel = createTableTouchUpColumnModelPool.next();
-            touchUpModel.setColumnName(columnName);
-            touchUpModels.put(columnName.token, touchUpModel);
-        } else if (touchUpModel.getColumnType() != ColumnType.UNDEFINED) {
-            throw SqlException.$(touchUpModel.getColumnName().position, "duplicate cast");
+        TouchUpColumnModel touchUpModel = getOrCreateTouchUpColumnModel(columnName);
+        if (touchUpModel.getColumnType() != ColumnType.UNDEFINED) {
+            throw SqlException.$(touchUpModel.getColumnNamePos(), "duplicate cast");
         }
         expectTok(lexer, "as");
 
@@ -999,14 +1005,9 @@ public class SqlParser {
             lexer.unparseLast();
         }
         if (isCreateAsSelect) {
-            CharSequenceObjHashMap<TouchUpColumnModel> touchUpModels = createTableOperationBuilder.getTouchUpColumnModels();
-            TouchUpColumnModel touchUpModel = touchUpModels.get(columnName.token);
-            if (touchUpModel == null) {
-                touchUpModel = createTableTouchUpColumnModelPool.next();
-                touchUpModel.setColumnName(columnName);
-                touchUpModels.put(columnName.token, touchUpModel);
-            } else if (touchUpModel.isIndexed()) {
-                throw SqlException.$(touchUpModel.getColumnName().position, "duplicate index");
+            TouchUpColumnModel touchUpModel = getOrCreateTouchUpColumnModel(columnName);
+            if (touchUpModel.isIndexed()) {
+                throw SqlException.$(touchUpModel.getColumnNamePos(), "duplicate index");
             }
             touchUpModel.setIndexed(columnNamePosition, indexValueBlockSize);
         } else {
