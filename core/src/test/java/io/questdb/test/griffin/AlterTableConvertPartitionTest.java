@@ -45,8 +45,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0");
 
             assertPartitionExists(tableName, "2024-06-10.8");
-            assertPartitionExists(tableName, "2024-06-11.7");
-            assertPartitionExists(tableName, "2024-06-12.6");
+            assertPartitionExists(tableName, "2024-06-11.6");
+            assertPartitionExists(tableName, "2024-06-12.7");
             assertPartitionExists(tableName, "2024-06-15.9");
         });
     }
@@ -170,8 +170,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0 and timestamp < '2024-06-15'");
 
             assertPartitionExists(tableName, "2024-06-10.10");
-            assertPartitionExists(tableName, "2024-06-11.9");
-            assertPartitionExists(tableName, "2024-06-12.8");
+            assertPartitionExists(tableName, "2024-06-11.8");
+            assertPartitionExists(tableName, "2024-06-12.9");
 
             assertPartitionDoesntExists(tableName, "2024-06-15.3");
         });
@@ -212,25 +212,22 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     private void assertPartitionDoesntExists(String tableName, String partition) {
-        assertPartitionExists0(tableName, true, partition);
+        assertPartitionOnDisk0(tableName, false, partition);
     }
 
     private void assertPartitionExists(String tableName, String partition) {
-        assertPartitionExists0(tableName, false, partition);
+        assertPartitionOnDisk0(tableName, true, partition);
     }
 
-    private void assertPartitionExists0(String tableName, boolean rev, String partition) {
+    private void assertPartitionOnDisk0(String tableName, boolean exists, String partition) {
         Path path = Path.getThreadLocal(configuration.getRoot());
-        path.concat(engine.getTableTokenIfExists(tableName).getDirName());
-        int tablePathLen = path.size();
-
-        path.trimTo(tablePathLen);
+        path.concat(engine.verifyTableName(tableName));
         path.concat(partition).concat("data.parquet");
 
-        if (rev) {
-            Assert.assertFalse(ff.exists(path.$()));
-        } else {
+        if (exists) {
             Assert.assertTrue(ff.exists(path.$()));
+        } else {
+            Assert.assertFalse(ff.exists(path.$()));
         }
     }
 
