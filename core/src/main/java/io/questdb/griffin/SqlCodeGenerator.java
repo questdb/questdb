@@ -222,6 +222,7 @@ import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory
 import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.FwdPageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
@@ -236,7 +237,6 @@ import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.PageFrameFwdRowCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
@@ -5186,6 +5186,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         model.setWhereClause(withinExtracted);
 
         boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
+
+        // Either this: `ORDER BY timestamp DESC`
+        // Or this: `ORDER BY timestamp DESC, side DESC LIMIT 3`
+        // In the latter case, we would like to generate a partially sorted cursor in `generateOrderBy`
+        // So we need to return a bwd scan here first.
+        boolean orderByStartsWithDescDesignatedTimestampAndLimited = isOrderByStartingWithDescDesignatedTimestampAndLimited(model);
+
         if (withinExtracted != null) {
             CharSequence preferredKeyColumn = null;
             if (latestByColumnCount == 1) {
@@ -5259,7 +5266,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean intervalHitsOnlyOnePartition;
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                if (orderDescendingByDesignatedTimestampOnly) {
+                if (orderDescendingByDesignatedTimestampOnly || orderByStartsWithDescDesignatedTimestampAndLimited) {
                     dfcFactory = new IntervalBwdPartitionFrameCursorFactory(
                             tableToken,
                             model.getMetadataVersion(),
@@ -5278,7 +5285,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
-                if (orderDescendingByDesignatedTimestampOnly) {
+                if (orderDescendingByDesignatedTimestampOnly || orderByStartsWithDescDesignatedTimestampAndLimited
+                ) {
                     dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 } else {
                     dfcFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
@@ -5568,10 +5576,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             RowCursorFactory rowFactory;
-            if (orderDescendingByDesignatedTimestampOnly) {
+            if (orderDescendingByDesignatedTimestampOnly || orderByStartsWithDescDesignatedTimestampAndLimited) {
                 rowFactory = new BwdPageFrameRowCursorFactory();
             } else {
-                rowFactory = new PageFrameFwdRowCursorFactory();
+                rowFactory = new FwdPageFrameRowCursorFactory();
             }
 
             model.setWhereClause(intrinsicModel.filter);
@@ -5597,12 +5605,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             AbstractPartitionFrameCursorFactory cursorFactory;
             RowCursorFactory rowCursorFactory;
 
-            if (orderDescendingByDesignatedTimestampOnly) {
+            if (orderDescendingByDesignatedTimestampOnly || orderByStartsWithDescDesignatedTimestampAndLimited) {
                 cursorFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdPageFrameRowCursorFactory();
             } else {
                 cursorFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
-                rowCursorFactory = new PageFrameFwdRowCursorFactory();
+                rowCursorFactory = new FwdPageFrameRowCursorFactory();
             }
 
             return new PageFrameRecordCursorFactory(
@@ -5869,6 +5877,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && model.getTimestamp() != null
                 && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token,
                 model.getTimestamp().token);
+    }
+
+    private boolean isOrderByStartingWithDescDesignatedTimestampAndLimited(QueryModel model) {
+        return model.getOrderByAdvice().size() > 1
+                && model.getTimestamp() != null
+                && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token,
+                model.getTimestamp().token)
+                && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, "-");
     }
 
     private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {

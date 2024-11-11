@@ -4238,7 +4238,7 @@ public class SqlOptimiser implements Mutable {
             // we want to perform this conversion
             // SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3
             // becomes
-            // SELECT timestamp, side FROM (SELECT timestamp, side from TRADES ORDER BY timestamp DESC LIMIT 3) ORDER BY timestamp ASC, side DESC
+            // SELECT timestamp, side FROM (SELECT timestamp, side from TRADES ORDER BY timestamp DESC, side DESC LIMIT 3) ORDER BY timestamp ASC, side DESC
             // Essentially, we push down a limited reverse scan, and then sort the data afterwards.
 
 
@@ -4253,21 +4253,27 @@ public class SqlOptimiser implements Mutable {
                 model.getOrderByAdvice().remove(i);
                 model.getOrderByDirectionAdvice().remove(i);
             }
+            // reverse the scan
+            nested.getOrderByDirection().set(0, ORDER_DIRECTION_DESCENDING);
 
-            // remove from old model
-            nested.clearOrderBy();
+            if (nested.getOrderByAdvice().size() == 0) {
+                for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                    nested.getOrderByAdvice().add(nested.getOrderBy().get(i));
+                    nested.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
+                }
+            } else {
+                // assume already filled
+                nested.getOrderByDirectionAdvice().set(0, ORDER_DIRECTION_DESCENDING);
+            }
 
-            // bwd scan
-            nested.addOrderBy(nested.getTimestamp(), ORDER_DIRECTION_DESCENDING);
-            nested.getOrderByAdvice().add(nested.getTimestamp());
-            nested.getOrderByDirectionAdvice().add(ORDER_DIRECTION_DESCENDING);
-            nested.setAllowPropagationOfOrderByAdvice(false); // stop ption
 
-            // copy limit across
-            nested.moveLimitFrom(model);
+            nested.setAllowPropagationOfOrderByAdvice(false); // stop propagation
 
             // copy the integral part i.e if its -3, the 3
-            nested.setLimit(nested.getLimitLo().rhs, null);
+            nested.setLimit(model.getLimitLo().rhs, null);
+            
+            // remove limit from outer
+            model.setLimit(null, null);
         }
     }
 
