@@ -756,7 +756,8 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                         "ALTER TABLE tango RENAME COLUMN x TO y",
                         "ALTER TABLE tango RENAME COLUMN y TO x",
                         "query table",
-                        "Invalid column: y", () -> {
+                        "Invalid column: y",
+                        () -> {
                             ResultSet rs = s.executeQuery();
                             int rowCount = 0;
                             while (rs.next()) {
@@ -1211,11 +1212,11 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     private void assertMessageMatches(Exception e, String expectedRegex) {
-        String message = e.getMessage();
-        assertTrue(
-                String.format("Exception message doesn't match regex '%s'. Actual message: '%s'", expectedRegex, message),
-                Pattern.compile(expectedRegex).matcher(message).find()
-        );
+        String exceptionMessage = e.getMessage();
+        if (!Pattern.compile(expectedRegex).matcher(exceptionMessage).find()) {
+            String assertMessage = String.format("Exception message doesn't match regex '%s'. Actual message: '%s'", expectedRegex, exceptionMessage);
+            throw new AssertionError(assertMessage, e);
+        }
     }
 
     private void executeStatementWhileConcurrentlyChangingSchema(
