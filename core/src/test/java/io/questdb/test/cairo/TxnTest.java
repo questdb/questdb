@@ -110,6 +110,35 @@ public class TxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testToString() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            assertMemoryLeak(() -> {
+
+                String tableName = "txntest";
+                TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
+                model.timestamp();
+                AbstractCairoTest.create(model);
+
+                try (Path path = new Path()) {
+                    TableToken tableToken = engine.verifyTableName(tableName);
+                    path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$();
+                    int testPartitionCount = 2;
+                    try (TxWriter txWriter = new TxWriter(ff, configuration).ofRW(path.$(), PartitionBy.DAY)) {
+                        for (int i = 0; i < testPartitionCount; i++) {
+                            txWriter.updatePartitionSizeByTimestamp(i * Timestamps.DAY_MICROS, i + 1);
+                        }
+                        TestUtils.assertContains(txWriter.toString(), "[\n" +
+                                "{ts: '1970-01-01T00:00:00.000Z', rowCount: 1, nameTxn: -1},\n" +
+                                "{ts: '1970-01-02T00:00:00.000Z', rowCount: 2, nameTxn: -1}\n" +
+                                "]");
+                    }
+                }
+            });
+        });
+    }
+
+    @Test
     public void testTxReadTruncateConcurrent() throws Throwable {
         TestUtils.assertMemoryLeak(() -> {
             int readerThreads = 2;
