@@ -48,7 +48,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 
-public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFactory {
+public class CountConstWindowFunctionFactory extends AbsWindowFunctionFactory {
     public static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((arg, record) -> true);
 
     @Override
@@ -118,7 +118,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
 
-                        // moving count over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                        // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                         return new CountFunctionFactoryHelper.CountOverPartitionRangeFrameFunction(
                                 map,
                                 partitionByRecord,
@@ -212,7 +212,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
-                    // moving count over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                    // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                     return new CountFunctionFactoryHelper.CountOverRangeFrameFunction(
                             rowsLo,
                             rowsHi,
