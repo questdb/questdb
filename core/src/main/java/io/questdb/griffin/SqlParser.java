@@ -1031,23 +1031,23 @@ public class SqlParser {
                 continue;
             }
 
-            CharSequence immutableTok = GenericLexer.immutableOf(tok);
-            expectTok(lexer, ':');
-            expectTok(lexer, '=');
+            lexer.unparseLast();
 
-            tok = tok(lexer, "constant value");
 
             ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+
+            lexer.restart();
+            while (lexer.getPosition() <= expr.position) {
+                lexer.next();
+            }
 
             if (expr == null) {
                 throw SqlException.$((lexer.lastTokenPosition()), "empty declaration");
             }
 
-            model.getDecls().put(immutableTok, expr);
+//            model.getDecls().put(immutableTok, expr);
 
         }
-
-        lexer.unparseLast();
     }
 
     private QueryModel parseDml(

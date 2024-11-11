@@ -48,6 +48,7 @@ public class ExpressionParser {
     private static final int BRANCH_CAST_AS = 11;
     private static final int BRANCH_COMMA = 1;
     private static final int BRANCH_CONSTANT = 4;
+    private static final int BRANCH_DECLARATION = 20;
     private static final int BRANCH_DOT = 12;
     private static final int BRANCH_DOT_DEREFERENCE = 17;
     private static final int BRANCH_GEOHASH = 18;
@@ -60,6 +61,7 @@ public class ExpressionParser {
     private static final int BRANCH_RIGHT_BRACKET = 16;
     private static final int BRANCH_RIGHT_PARENTHESIS = 3;
     private static final int BRANCH_TIMESTAMP_ZONE = 19;
+    private static final int BRANCH_VARIABLE_BIND = 21;
     private static final int IDX_ELSE = 2;
     private static final int IDX_THEN = 1;
     private static final int IDX_WHEN = 0;
@@ -241,6 +243,7 @@ public class ExpressionParser {
             int castAsCount = 0;
             int castBraceCount = 0;
             int betweenStartCaseCount = 0;
+            boolean parsedDeclaration = false;
 
             ExpressionNode node;
             CharSequence tok;
@@ -255,6 +258,19 @@ public class ExpressionParser {
                 boolean processDefaultBranch = false;
                 final int lastPos = lexer.lastTokenPosition();
                 switch (thisChar) {
+//                    case '@':
+//                        parsedDeclaration = true;
+                    // declaration
+//                        opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lexer.lastTokenPosition()));
+//                        thisBranch = BRANCH_DECLARATION;
+//                        break;
+//                    case ':':
+//                        if (prevBranch == BRANCH_DECLARATION) {
+//                            processDefaultBranch = true;
+//                            break;
+//                        } else {
+//                            throw SqlException.$(lexer.lastTokenPosition(), "expected variable bind `:=`");
+//                        }
                     case '-':
                     case '+':
                         // floating-point literals in scientific notation (e.g. 1e-10, 1e+10) separated in several tokens by lexer ('1e', '-', '10') - so we need to glue them together
@@ -871,6 +887,19 @@ public class ExpressionParser {
                                                     lastPos
                                             )
                                     );
+
+                                    if (prevBranch == BRANCH_VARIABLE_BIND) {
+                                        // should be a variable name, bind op, and constant on stack
+                                        ExpressionNode var, op, c;
+                                        c = opStack.pop();
+                                        op = opStack.pop();
+                                        var = opStack.pop();
+                                        op.lhs = var;
+                                        op.rhs = c;
+                                        op.paramCount = 2;
+                                        opStack.push(op);
+                                        break OUT;
+                                    }
                                     break;
                                 }
                             }
@@ -1045,6 +1074,10 @@ public class ExpressionParser {
                     if ((op = activeRegistry.map.get(tok)) != null) {
 
                         thisBranch = BRANCH_OPERATOR;
+
+                        if (thisChar == '@') {
+                            parsedDeclaration = true;
+                        }
 
                         if (thisChar == '-' || thisChar == '~') {
                             assert prevBranch != BRANCH_BETWEEN_START; // BRANCH_BETWEEN_START will be processed as default branch, so prevBranch must be BRANCH_OPERATOR in this case
