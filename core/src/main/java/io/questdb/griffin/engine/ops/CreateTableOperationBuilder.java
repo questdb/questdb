@@ -63,7 +63,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     // is used at the execution time to capture the attributes of columns of the "select" SQL.
     private final LongList columnBits = new LongList();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-    private final ObjList<String> columnNames = new ObjList<>();
+    private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModels = new CharSequenceObjHashMap<>();
     private final IntIntHashMap typeCasts = new IntIntHashMap();
     private long batchO3MaxLag = -1;
@@ -86,7 +86,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             throw SqlException.duplicateColumn(columnPosition, columnName);
         }
         // todo: columnNames need not be strings, they can be made strings when they are copied to the operation
-        columnNames.add(Chars.toString(columnName));
+        columnNames.add(columnName);
         columnBits.add(
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
                 Numbers.encodeLowHighInts(COLUMN_FLAG_CACHED, 0)

@@ -65,7 +65,7 @@ public class CreateTableOperation implements TableStructure, Operation {
     private final long batchO3MaxLag;
     private final long batchSize;
     private final LongList columnBits = new LongList();
-    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final ObjList<String> columnNames = new ObjList<>();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
     private final boolean ignoreIfExists;
     private final String likeTableName;
@@ -116,7 +116,7 @@ public class CreateTableOperation implements TableStructure, Operation {
             int partitionBy,
             String volumeAlias,
             boolean ignoreIfExists,
-            ObjList<String> columnNames,
+            @Transient ObjList<CharSequence> columnNames,
             LongList columnBits,
             int timestampIndex,
             long o3MaxLag,
@@ -128,7 +128,9 @@ public class CreateTableOperation implements TableStructure, Operation {
         this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
         this.ignoreIfExists = ignoreIfExists;
-        this.columnNames.addAll(columnNames);
+        for (int n = columnNames.size(), i = 0; i < n; i++) {
+            this.columnNames.add(Chars.toString(columnNames.get(i)));
+        }
         this.columnBits.add(columnBits);
         // this is a vanilla "create table" with fixed columns and fixed timestamp index
         this.timestampColumnName = null;
