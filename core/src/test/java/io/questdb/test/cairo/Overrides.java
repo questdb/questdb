@@ -24,7 +24,13 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.*;
+import io.questdb.BuildInformationHolder;
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
+import io.questdb.FreeOnExit;
+import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
+import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.json.JsonException;
@@ -58,6 +64,7 @@ public class Overrides {
     private boolean mangleTableDirNames = true;
     private CairoConfiguration propsConfig;
     private RostiAllocFacade rostiAllocFacade = null;
+    private long spinLockTimeout = 50;
 
     public Overrides() {
         resetToDefaultTestProperties(defaultProperties);
@@ -77,10 +84,6 @@ public class Overrides {
         } else {
             return getDefaultConfiguration(root);
         }
-    }
-
-    public long getCurrentMicros() {
-        return currentMicros;
     }
 
     public Map<String, String> getEnv() {
@@ -107,6 +110,10 @@ public class Overrides {
         return rostiAllocFacade;
     }
 
+    public long getSpinLockTimeout() {
+        return spinLockTimeout;
+    }
+
     public MicrosecondClock getTestMicrosClock() {
         return testMicrosClock;
     }
@@ -130,6 +137,7 @@ public class Overrides {
         isHiddenTelemetryTable = false;
         properties.clear();
         changed = true;
+        spinLockTimeout = 50;
     }
 
     public void setCurrentMicros(long currentMicros) {

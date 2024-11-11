@@ -154,6 +154,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static FilesFacade ff;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
+    protected static long spinLockTimeout = 50;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static MessageBus messageBus;
     protected static Metrics metrics;

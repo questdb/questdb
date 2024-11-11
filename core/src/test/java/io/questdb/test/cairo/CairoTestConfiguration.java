@@ -31,7 +31,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import org.jetbrains.annotations.NotNull;
@@ -50,6 +54,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
         this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + TableUtils.CHECKPOINT_DIRECTORY;
         this.telemetryConfiguration = telemetryConfiguration;
         this.overrides = overrides;
+    }
+
+    @Override
+    public @NotNull CharSequence getCheckpointRoot() {
+        return snapshotRoot;
     }
 
     @Override
@@ -115,8 +124,8 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public @NotNull CharSequence getCheckpointRoot() {
-        return snapshotRoot;
+    public long getSpinLockTimeout() {
+        return overrides != null ? overrides.getSpinLockTimeout() : super.getSpinLockTimeout();
     }
 
     @Override

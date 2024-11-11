@@ -1043,10 +1043,16 @@ public final class TestUtils {
             int tableId,
             CharSequence tableName
     ) {
-        TableToken token = engine.lockTableName(tableName, structure.isWalEnabled());
+        TableToken token = engine.lockTableName(tableName, tableId, structure.isWalEnabled());
+        if (token == null) {
+            throw new RuntimeException("table already exists: " + tableName);
+        }
         path.of(engine.getConfiguration().getRoot()).concat(token);
         TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
+        if (structure.isWalEnabled()) {
+            engine.getTableSequencerAPI().registerTable(tableId, structure, token);
+        }
         return token;
     }
 

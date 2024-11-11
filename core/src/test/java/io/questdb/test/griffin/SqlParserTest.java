@@ -24,15 +24,11 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.Metrics;
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryColumn;
@@ -46,11 +42,9 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Ignore;
@@ -9382,6 +9376,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testTableNameCannotOpen() throws Exception {
         TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
+
         AtomicInteger failureCountDown = new AtomicInteger(tableModels.length + 1);
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -9395,47 +9390,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
             }
         };
 
-        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-            @Override
-            public @NotNull FilesFacade getFilesFacade() {
-                return ff;
-            }
-
-            @Override
-            public long getSpinLockTimeout() {
-                return 50;
-            }
-        };
-
+        AbstractCairoTest.ff = ff;
+        AbstractCairoTest.spinLockTimeout = 50;
         assertMemoryLeak(() -> {
-            try (
-                    CairoEngine engine = new CairoEngine(configuration, Metrics.disabled());
-                    SqlCompiler compiler = engine.getSqlCompiler()
-            ) {
+            try {
                 try {
-                    try (
-                            SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(
-                            engine,
-                            sqlExecutionContext.getWorkerCount(),
-                            sqlExecutionContext.getSharedWorkerCount())
-                    ) {
-                        for (int i = 0, n = tableModels.length; i < n; i++) {
-                            TestUtils.createTable(engine, tableModels[i]);
-                        }
-                        compiler.compile("select * from tab", ctx);
-                        Assert.fail("Exception expected");
-                    } catch (SqlException e) {
-                        Assert.assertEquals(14, e.getPosition());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                    for (int i = 0, n = tableModels.length; i < n; i++) {
+                        TestUtils.createTable(engine, tableModels[i]);
                     }
-                } finally {
-                    try (Path path = new Path()) {
-                        for (int i = 0, n = tableModels.length; i < n; i++) {
-                            TableModel tableModel = tableModels[i];
-                            TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                            path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                            Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
-                        }
+                    engine.select("select * from tab", sqlExecutionContext);
+                    Assert.fail("Exception expected");
+                } catch (SqlException e) {
+                    Assert.assertEquals(14, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                }
+            } finally {
+                try (Path path = new Path()) {
+                    for (int i = 0, n = tableModels.length; i < n; i++) {
+                        TableModel tableModel = tableModels[i];
+                        TableToken tableToken = engine.verifyTableName(tableModel.getName());
+                        path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                        Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
                     }
                 }
             }

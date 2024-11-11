@@ -123,6 +123,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                 throw SqlException.tableDoesNotExist(this.likeTableNameExpr.position, this.likeTableNameExpr.token);
             }
             return new CreateTableOperation(
+                    Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
                     getPartitionByFromExpr(),
@@ -134,6 +135,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         }
 
         return new CreateTableOperation(
+                Chars.toString(sqlText),
                 Chars.toString(tableNameExpr.token),
                 tableNameExpr.position,
                 getPartitionByFromExpr(),

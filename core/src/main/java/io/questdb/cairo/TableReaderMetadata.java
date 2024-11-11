@@ -370,9 +370,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     public void load() {
-        final long timeout = configuration.getSpinLockTimeout();
+        final long spinLockTimeout = configuration.getSpinLockTimeout();
         final MillisecondClock millisecondClock = configuration.getMillisecondClock();
-        long deadline = configuration.getMillisecondClock().getTicks() + timeout;
+        long deadline = configuration.getMillisecondClock().getTicks() + spinLockTimeout;
         this.path.trimTo(plen).concat(TableUtils.META_FILE_NAME);
         boolean existenceChecked = false;
         while (true) {
@@ -388,7 +388,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                     path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
                 }
                 existenceChecked = true;
-                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, millisecondClock, timeout);
+                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, millisecondClock, spinLockTimeout);
             }
         }
     }

@@ -87,6 +87,7 @@ public class CreateTableOperation implements TableStructure, Operation {
     private boolean walEnabled;
 
     public CreateTableOperation(
+            String sqlText,
             String tableName,
             int tableNamePosition,
             int partitionBy,
@@ -95,6 +96,7 @@ public class CreateTableOperation implements TableStructure, Operation {
             int likeTableNamePosition,
             boolean ignoreIfExists
     ) {
+        this.sqlText = sqlText;
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
         this.partitionBy = partitionBy;
@@ -106,11 +108,10 @@ public class CreateTableOperation implements TableStructure, Operation {
         this.timestampColumnNamePosition = 0;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
-        // we are not creating table from select
-        this.sqlText = null;
     }
 
     public CreateTableOperation(
+            String sqlText,
             String tableName,
             int tableNamePosition,
             int partitionBy,
@@ -123,6 +124,7 @@ public class CreateTableOperation implements TableStructure, Operation {
             int maxUncommittedRows,
             boolean walEnabled
     ) {
+        this.sqlText = sqlText;
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
         this.partitionBy = partitionBy;
@@ -142,8 +144,6 @@ public class CreateTableOperation implements TableStructure, Operation {
         this.likeTableNamePosition = -1;
         this.batchSize = 0;
         this.batchO3MaxLag = 0;
-        // we are not creating table from select
-        this.sqlText = null;
     }
 
     /**

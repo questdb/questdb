@@ -44,6 +44,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableNameRegistryStore;
@@ -1929,9 +1930,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             try {
                 // we cannot log start of the executor SQL because we do not know if it
                 // contains secrets or not.
+
                 executor.execute(executionContext, sqlText);
                 // executor might decide that SQL contains secret, otherwise we're logging it
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy ** " : sqlText;
+                QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos, executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED);
             } catch (Throwable e) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is
                 // that before parsing secrets the executor will notify the execution context. In that, even if
@@ -1943,7 +1946,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         this.sqlText,
                         executionContext,
                         beginNanos,
-                        false
+                        executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED
                 );
                 throw e;
             }
