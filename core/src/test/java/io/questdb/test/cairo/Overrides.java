@@ -216,14 +216,13 @@ public class Overrides {
         properties.setProperty(PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CIRCUIT_BREAKER_THROTTLE.getPropertyPath(), "5");
         properties.setProperty(PropertyKey.QUERY_TIMEOUT_SEC.getPropertyPath(), "0");
-        properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
+        properties.setProperty(PropertyKey.CAIRO_SQL_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_COLUMN_INDEXER_QUEUE_CAPACITY.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY.getPropertyPath(), "64");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER.getPropertyPath(), "2");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY.getPropertyPath(), "10");
         properties.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_TASK_POOL_CAPACITY.getPropertyPath(), "64");
         properties.setProperty(PropertyKey.CAIRO_SQL_COPY_MODEL_POOL_CAPACITY.getPropertyPath(), "16");
-        properties.setProperty(PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_POOL_CAPACITY.getPropertyPath(), "32");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE.getPropertyPath(), "2097152");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE.getPropertyPath(), "16384");
         properties.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE.getPropertyPath(), "1048576");

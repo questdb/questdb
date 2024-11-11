@@ -28,37 +28,35 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 
-public class TouchUpColumnModel implements Mutable {
-    public static final ObjectFactory<TouchUpColumnModel> FACTORY = TouchUpColumnModel::new;
-    private ExpressionNode columnName;
+public class CreateTableColumnModel implements Mutable {
+    public static final ObjectFactory<CreateTableColumnModel> FACTORY = CreateTableColumnModel::new;
     private int columnNamePos;
     private int columnType;
     private int columnTypePos;
+    private int dedupColumnPos;
+    private boolean dedupKeyFlag;
     private int indexColumnPos;
     private int indexValueBlockSize;
     private boolean indexedFlag;
     private boolean symbolCacheFlag;
     private int symbolCapacity;
 
-    private TouchUpColumnModel() {
+    private CreateTableColumnModel() {
         clear();
     }
 
     @Override
     public void clear() {
-        columnName = null;
         columnNamePos = -1;
         columnType = ColumnType.UNDEFINED;
         columnTypePos = -1;
+        dedupKeyFlag = false;
+        dedupColumnPos = -1;
         indexColumnPos = -1;
         indexValueBlockSize = -1;
         indexedFlag = false;
         symbolCacheFlag = false;
         symbolCapacity = -1;
-    }
-
-    public ExpressionNode getColumnName() {
-        return columnName;
     }
 
     public int getColumnNamePos() {
@@ -71,6 +69,10 @@ public class TouchUpColumnModel implements Mutable {
 
     public int getColumnTypePos() {
         return columnTypePos;
+    }
+
+    public int getDedupColumnPos() {
+        return dedupColumnPos;
     }
 
     public int getIndexColumnPos() {
@@ -89,22 +91,30 @@ public class TouchUpColumnModel implements Mutable {
         return symbolCapacity;
     }
 
+    public boolean isDedupKey() {
+        return dedupKeyFlag;
+    }
+
     public boolean isIndexed() {
         return indexedFlag;
     }
 
-    public void setColumnName(ExpressionNode columnName) {
-        this.columnName = columnName;
+    public void setColumnNamePos(int columnNamePos) {
+        this.columnNamePos = columnNamePos;
     }
 
     public void setColumnType(int columnType) {
         this.columnType = columnType;
     }
 
-    public void setIndexed(int indexColumnPosition, int indexValueBlockSize) {
-        indexedFlag = true;
+    public void setIndexed(boolean indexedFlag, int indexColumnPosition, int indexValueBlockSize) {
+        this.indexedFlag = indexedFlag;
         this.indexColumnPos = indexColumnPosition;
         this.indexValueBlockSize = indexValueBlockSize;
+    }
+
+    public void setIsDedupKey() {
+        dedupKeyFlag = true;
     }
 
     public void setSymbolCacheFlag(boolean symbolCacheFlag) {
@@ -115,9 +125,8 @@ public class TouchUpColumnModel implements Mutable {
         this.symbolCapacity = symbolCapacity;
     }
 
-    public void setType(int columnType, int columnNamePos, int columnTypePos) {
+    public void setType(int columnType, int columnTypePos) {
         this.columnType = columnType;
-        this.columnNamePos = columnNamePos;
         this.columnTypePos = columnTypePos;
     }
 }

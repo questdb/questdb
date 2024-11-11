@@ -35,11 +35,12 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.TouchUpColumnModel;
+import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -61,11 +62,13 @@ public class CreateTableOperation implements TableStructure, Operation {
     // are liable to change every time "select" is recompiled, for example in case of
     // wildcard usage, e.g. create x as select * from y. When "y" changes, such as via
     // drop column, column indices will shift.
-    private final CharSequenceObjHashMap<TableColumnMetadata> augmentedColumnMetadata = new CharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augmentedColumnMetadata = new LowerCaseCharSequenceObjHashMap<>();
     private final long batchO3MaxLag;
     private final long batchSize;
+    private final LowerCaseCharSequenceIntHashMap colNameToDedupClausePos = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceIntHashMap colNameToIndexClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LongList columnBits = new LongList();
-    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final ObjList<String> columnNames = new ObjList<>();
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
     private final boolean ignoreIfExists;
     private final String likeTableName;
@@ -117,8 +120,8 @@ public class CreateTableOperation implements TableStructure, Operation {
             int partitionBy,
             String volumeAlias,
             boolean ignoreIfExists,
-            ObjList<String> columnNames,
-            LongList columnBits,
+            @Transient ObjList<CharSequence> columnNames,
+            @Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
             int timestampIndex,
             long o3MaxLag,
             int maxUncommittedRows,
@@ -130,8 +133,13 @@ public class CreateTableOperation implements TableStructure, Operation {
         this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
         this.ignoreIfExists = ignoreIfExists;
-        this.columnNames.addAll(columnNames);
-        this.columnBits.add(columnBits);
+        for (int i = 0, n = columnNames.size(); i < n; i++) {
+            CharSequence colName = columnNames.get(i);
+            this.columnNames.add(Chars.toString(colName));
+            CreateTableColumnModel model = createColumnModelMap.get(colName);
+            addColumnBits(model.getColumnType(), model.getSymbolCacheFlag(), model.getSymbolCapacity(),
+                    model.isIndexed(), model.getIndexValueBlockSize(), model.isDedupKey());
+        }
         // this is a vanilla "create table" with fixed columns and fixed timestamp index
         this.timestampColumnName = null;
         this.timestampColumnNamePosition = 0;
@@ -147,7 +155,7 @@ public class CreateTableOperation implements TableStructure, Operation {
     }
 
     /**
-     * Constructs operation for "create as select" only.The following considerations should be met:
+     * Constructs operation for "create as select" only. The following considerations should be met:
      * - model validation must be dynamic, the operation is re-runnable and "select" part of the SQL is non-constant
      * - some column types and type attributes can be overridden
      * - data copy operation is involved and batching parameters must be provided
@@ -165,7 +173,7 @@ public class CreateTableOperation implements TableStructure, Operation {
      * @param maxUncommittedRows          max uncommitted rows for non-WAL tables, this is written to table's metadata to be used by ingress protocols
      * @param o3MaxLag                    o3 commit lag, another performance optimisation parameter for non-WAL tables.
      * @param recordCursorFactory         the factory for the "select" part of the "create as select" SQL
-     * @param touchUpColumnModelMap       maps that contains type casts and additional index flags
+     * @param createColumnModelMap        maps that contains type casts and additional index flags
      * @param batchSize                   number of rows in commit batch when data is moved from the select into the
      *                                    new table. Special value of -1 means "atomic" commit. This corresponds to "batch" keyword on the SQL.
      * @param batchO3MaxLag               lag windows in rows, which helps timestamp ordering code to smooth out timestamp jitter
@@ -185,7 +193,7 @@ public class CreateTableOperation implements TableStructure, Operation {
             int maxUncommittedRows,
             long o3MaxLag,
             RecordCursorFactory recordCursorFactory,
-            @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap,
+            @Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
             long batchSize,
             long batchO3MaxLag
     ) throws SqlException {
@@ -214,31 +222,37 @@ public class CreateTableOperation implements TableStructure, Operation {
         // - (symbol) column cache flag
         assert columnNames.size() == 0;
         assert columnBits.size() == 0;
-        ObjList<CharSequence> touchedUpColNames = touchUpColumnModelMap.keys();
-        for (int i = 0, n = touchedUpColNames.size(); i < n; i++) {
-            CharSequence columnName = touchedUpColNames.get(i);
-            TouchUpColumnModel touchUpModel = touchUpColumnModelMap.get(columnName);
-            if (touchUpModel.isIndexed() && touchUpModel.getColumnType() != ColumnType.SYMBOL) {
+        ObjList<CharSequence> colNames = createColumnModelMap.keys();
+        for (int i = 0, n = colNames.size(); i < n; i++) {
+            CharSequence columnName = colNames.get(i);
+            CreateTableColumnModel model = createColumnModelMap.get(columnName);
+            if (model.isIndexed() && model.getColumnType() != ColumnType.SYMBOL) {
                 throw SqlException
-                        .$(touchUpModel.getIndexColumnPos(), "indexes are supported only for SYMBOL columns: ")
+                        .$(model.getIndexColumnPos(), "indexes are supported only for SYMBOL columns: ")
                         .put(columnName);
             }
             String columnNameStr = Chars.toString(columnName);
-            int symbolCapacity = touchUpModel.getSymbolCapacity();
+            int symbolCapacity = model.getSymbolCapacity();
             if (symbolCapacity == -1) {
                 symbolCapacity = defaultSymbolCapacity;
             }
+            if (model.isDedupKey()) {
+                colNameToDedupClausePos.put(columnName, model.getDedupColumnPos());
+            }
+            if (model.isIndexed()) {
+                colNameToIndexClausePos.put(columnName, model.getIndexColumnPos());
+            }
             TableColumnMetadata tcm = new TableColumnMetadata(
                     columnNameStr,
-                    touchUpModel.getColumnType(),
-                    touchUpModel.isIndexed(),
-                    touchUpModel.getIndexValueBlockSize(),
+                    model.getColumnType(),
+                    model.isIndexed(),
+                    model.getIndexValueBlockSize(),
                     true,
                     null,
                     -1, // writer index is irrelevant here
-                    false, // dedup flag cannot be set on "create as select", not yet
+                    model.isDedupKey(),
                     -1, // replacingIndex is irrelevant here
-                    touchUpModel.getSymbolCacheFlag(),
+                    model.getSymbolCacheFlag(),
                     symbolCapacity
             );
             augmentedColumnMetadata.put(columnNameStr, tcm);
@@ -385,19 +399,9 @@ public class CreateTableOperation implements TableStructure, Operation {
         columnBits.clear();
         for (int i = 0; i < likeTableMetadata.getColumnCount(); i++) {
             TableColumnMetadata colMeta = likeTableMetadata.getColumnMetadata(i);
-            int columnType = colMeta.getColumnType();
-            boolean isIndexed = colMeta.isSymbolIndexFlag();
-            boolean isCached = colMeta.isSymbolCacheFlag();
-            boolean isDedupKey = colMeta.isDedupKeyFlag();
-            int symbolCapacity = colMeta.getSymbolCapacity();
-            int indexBlockCapacity = colMeta.getIndexValueBlockCapacity();
-            int flags = (isCached ? COLUMN_FLAG_CACHED : 0) | (isIndexed ? COLUMN_FLAG_INDEXED : 0) |
-                    (isDedupKey ? COLUMN_FLAG_DEDUP_KEY : 0);
+            addColumnBits(colMeta.getColumnType(), colMeta.isSymbolCacheFlag(), colMeta.getSymbolCapacity(),
+                    colMeta.isSymbolIndexFlag(), colMeta.getIndexValueBlockCapacity(), colMeta.isDedupKeyFlag());
             columnNames.add(colMeta.getColumnName());
-            columnBits.add(
-                    Numbers.encodeLowHighInts(columnType, symbolCapacity),
-                    Numbers.encodeLowHighInts(flags, indexBlockCapacity)
-            );
         }
     }
 
@@ -428,7 +432,7 @@ public class CreateTableOperation implements TableStructure, Operation {
         // at SQL parse time.
         columnBits.clear();
         if (timestampColumnName == null) {
-            this.timestampIndex = metadata.getTimestampIndex();
+            timestampIndex = metadata.getTimestampIndex();
         } else {
             timestampIndex = metadata.getColumnIndexQuiet(timestampColumnName);
             if (timestampIndex == -1) {
@@ -441,6 +445,24 @@ public class CreateTableOperation implements TableStructure, Operation {
                         .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
             }
         }
+        ObjList<CharSequence> indexColNames = colNameToIndexClausePos.keys();
+        for (int i = 0, n = indexColNames.size(); i < n; i++) {
+            CharSequence indexedColName = indexColNames.get(i);
+            if (metadata.getColumnIndexQuiet(indexedColName) < 0) {
+                throw SqlException.position(colNameToIndexClausePos.get(indexedColName))
+                        .put("INDEX column doesn't exist [column=").put(indexedColName).put(']');
+            }
+        }
+        ObjList<CharSequence> dedupColNames = colNameToIndexClausePos.keys();
+        for (int i = 0, n = dedupColNames.size(); i < n; i++) {
+            CharSequence dedupColName = dedupColNames.get(i);
+            if (metadata.getColumnIndexQuiet(dedupColName) < 0) {
+                throw SqlException.position(colNameToDedupClausePos.get(dedupColName))
+                        .put("DEDUP column doesn't exist [column=").put(dedupColName).put(']');
+            }
+        }
+        boolean hasDedup = false;
+        boolean isTimestampDeduped = false;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             String columnName = metadata.getColumnName(i);
             TableColumnMetadata augMeta = augmentedColumnMetadata.get(columnName);
@@ -475,15 +497,39 @@ public class CreateTableOperation implements TableStructure, Operation {
             if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
                 throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
             }
-
+            if (isDedupKey) {
+                hasDedup = true;
+                if (i == timestampIndex) {
+                    isTimestampDeduped = true;
+                }
+            }
             columnNames.add(columnName);
-            int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0) | (symbolIndexed ? COLUMN_FLAG_INDEXED : 0) |
-                    (isDedupKey ? COLUMN_FLAG_DEDUP_KEY : 0);
-            columnBits.add(
-                    Numbers.encodeLowHighInts(columnType, symbolCapacity),
-                    Numbers.encodeLowHighInts(flags, indexBlockCapacity)
-            );
+            addColumnBits(columnType, symbolCacheFlag, symbolCapacity, symbolIndexed, indexBlockCapacity, isDedupKey);
         }
+        if (hasDedup && !isTimestampDeduped) {
+            // Report the error's position in SQL as the position of the first column in the DEDUP list
+            int firstDedupColumnPos = Integer.MAX_VALUE;
+            for (int i = 0, n = dedupColNames.size(); i < n; i++) {
+                int dedupColPos = colNameToDedupClausePos.get(dedupColNames.get(i));
+                if (firstDedupColumnPos > dedupColPos) {
+                    firstDedupColumnPos = dedupColPos;
+                }
+            }
+            throw SqlException.position(firstDedupColumnPos)
+                    .put("deduplicate key list must include dedicated timestamp column");
+        }
+    }
+
+    private void addColumnBits(
+            int columnType, boolean symbolCacheFlag, int symbolCapacity,
+            boolean indexFlag, int indexBlockCapacity, boolean dedupFlag
+    ) {
+        int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0) | (indexFlag ? COLUMN_FLAG_INDEXED : 0) |
+                (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0);
+        columnBits.add(
+                Numbers.encodeLowHighInts(columnType, symbolCapacity),
+                Numbers.encodeLowHighInts(flags, indexBlockCapacity)
+        );
     }
 
     private int getHighAt(int index) {
