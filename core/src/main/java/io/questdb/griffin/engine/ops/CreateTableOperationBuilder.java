@@ -93,6 +93,15 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         );
     }
 
+    public void addDedupColumn(CharSequence dedupColName, int position) throws SqlException {
+        touchUpColumnModels.get(dedupColName);
+        if (dedupColumnNames.contains(dedupColName)) {
+            throw SqlException.duplicateColumn(position, dedupColName);
+        }
+        dedupColumnNames.add(dedupColName);
+        dedupColumnPositions.add(position);
+    }
+
     public CreateTableOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
         tableNameExpr.token = Chars.toString(tableNameExpr.token);
         if (queryModel != null) {
@@ -150,21 +159,21 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     @Override
     public void clear() {
-        typeCasts.clear();
-        touchUpColumnModels.clear();
-        queryModel = null;
-        timestampExpr = null;
-        partitionByExpr = null;
-        likeTableNameExpr = null;
-        tableNameExpr = null;
-        volumeAlias = null;
-        columnBits.clear();
-        columnNames.clear();
-        columnNameIndexMap.clear();
-        ignoreIfExists = false;
-        o3MaxLag = -1;
         batchO3MaxLag = -1;
         batchSize = -1;
+        columnBits.clear();
+        columnNameIndexMap.clear();
+        columnNames.clear();
+        ignoreIfExists = false;
+        likeTableNameExpr = null;
+        o3MaxLag = -1;
+        partitionByExpr = null;
+        queryModel = null;
+        tableNameExpr = null;
+        timestampExpr = null;
+        touchUpColumnModels.clear();
+        typeCasts.clear();
+        volumeAlias = null;
     }
 
     public int getColumnIndex(CharSequence columnName) {

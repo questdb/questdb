@@ -803,9 +803,11 @@ public class SqlParser {
                     validateLiteral(lexer.lastTokenPosition(), tok);
                     final CharSequence columnName = unquote(tok);
 
+                    builder.addDedupColumn(tok, lexer.lastTokenPosition());
                     int colIndex = builder.getColumnIndex(columnName);
-                    if (colIndex < 0) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column not found [column=").put(columnName).put(']');
+                    if (colIndex < 0 && !isCreateAsSelect) {
+                        throw SqlException.position(lexer.lastTokenPosition())
+                                .put("deduplicate key column not found [column=").put(columnName).put(']');
                     }
                     if (colIndex == builder.getTimestampIndex()) {
                         timestampColumnFound = true;
@@ -818,7 +820,7 @@ public class SqlParser {
                     }
                 }
 
-                if (!timestampColumnFound) {
+                if (!timestampColumnFound && !isCreateAsSelect) {
                     throw SqlException.position(columnListPos).put("deduplicate key list must include dedicated timestamp column");
                 }
 
@@ -865,7 +867,7 @@ public class SqlParser {
 
         final ExpressionNode columnType = expectLiteral(lexer);
         final int type = toColumnType(lexer, columnType.token);
-        touchUpModel.setType(type, columnName.position, columnType.position);
+        touchUpModel.setType(type, columnType.position);
 
         if (ColumnType.isSymbol(type)) {
             CharSequence tok = tok(lexer, "'capacity', 'nocache', 'cache' or ')'");

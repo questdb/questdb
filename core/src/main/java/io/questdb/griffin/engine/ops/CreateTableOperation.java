@@ -149,7 +149,7 @@ public class CreateTableOperation implements TableStructure, Operation {
     }
 
     /**
-     * Constructs operation for "create as select" only.The following considerations should be met:
+     * Constructs operation for "create as select" only. The following considerations should be met:
      * - model validation must be dynamic, the operation is re-runnable and "select" part of the SQL is non-constant
      * - some column types and type attributes can be overridden
      * - data copy operation is involved and batching parameters must be provided
@@ -238,7 +238,7 @@ public class CreateTableOperation implements TableStructure, Operation {
                     true,
                     null,
                     -1, // writer index is irrelevant here
-                    false, // dedup flag cannot be set on "create as select", not yet
+                    touchUpModel.isDedupKey(),
                     -1, // replacingIndex is irrelevant here
                     touchUpModel.getSymbolCacheFlag(),
                     symbolCapacity
@@ -485,6 +485,25 @@ public class CreateTableOperation implements TableStructure, Operation {
                     Numbers.encodeLowHighInts(columnType, symbolCapacity),
                     Numbers.encodeLowHighInts(flags, indexBlockCapacity)
             );
+
+            if (dedupColumnNames.size() > 0) {
+                boolean timestampDedupColFound = false;
+                for (int j = 0, m = dedupColumnNames.size(); j < m; j++) {
+                    String dedupColName = dedupColumnNames.get(j);
+                    int dedupColIndex = columnNames.indexOf(dedupColName);
+                    if (dedupColIndex < 0) {
+                        throw SqlException.position(dedupColumnPositions.get(j))
+                                .put("deduplicate key column not found [column=").put(dedupColName).put(']');
+                    }
+                    if (dedupColIndex == timestampIndex) {
+                        timestampDedupColFound = true;
+                    }
+                }
+                if (!timestampDedupColFound) {
+                    throw SqlException.position(dedupColumnPositions.get(0))
+                            .put("deduplicate key list must include dedicated timestamp column");
+                }
+            }
         }
     }
 
