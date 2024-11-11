@@ -35,7 +35,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.TouchUpColumnModel;
+import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
@@ -187,7 +187,7 @@ public class CreateTableOperation implements TableStructure, Operation {
             int maxUncommittedRows,
             long o3MaxLag,
             RecordCursorFactory recordCursorFactory,
-            @Transient CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModelMap,
+            @Transient CharSequenceObjHashMap<CreateTableColumnModel> touchUpColumnModelMap,
             long batchSize,
             long batchO3MaxLag
     ) throws SqlException {
@@ -219,7 +219,7 @@ public class CreateTableOperation implements TableStructure, Operation {
         ObjList<CharSequence> touchedUpColNames = touchUpColumnModelMap.keys();
         for (int i = 0, n = touchedUpColNames.size(); i < n; i++) {
             CharSequence columnName = touchedUpColNames.get(i);
-            TouchUpColumnModel touchUpModel = touchUpColumnModelMap.get(columnName);
+            CreateTableColumnModel touchUpModel = touchUpColumnModelMap.get(columnName);
             if (touchUpModel.isIndexed() && touchUpModel.getColumnType() != ColumnType.SYMBOL) {
                 throw SqlException
                         .$(touchUpModel.getIndexColumnPos(), "indexes are supported only for SYMBOL columns: ")

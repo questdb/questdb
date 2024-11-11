@@ -28,8 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjectFactory;
 
-public class TouchUpColumnModel implements Mutable {
-    public static final ObjectFactory<TouchUpColumnModel> FACTORY = TouchUpColumnModel::new;
+public class CreateTableColumnModel implements Mutable {
+    public static final ObjectFactory<CreateTableColumnModel> FACTORY = CreateTableColumnModel::new;
     private int columnNamePos;
     private int columnType;
     private int columnTypePos;
@@ -41,7 +41,7 @@ public class TouchUpColumnModel implements Mutable {
     private boolean symbolCacheFlag;
     private int symbolCapacity;
 
-    private TouchUpColumnModel() {
+    private CreateTableColumnModel() {
         clear();
     }
 

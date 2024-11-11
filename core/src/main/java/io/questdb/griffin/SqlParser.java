@@ -32,6 +32,7 @@ import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -39,7 +40,6 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
-import io.questdb.griffin.model.TouchUpColumnModel;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WithClauseModel;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -79,8 +79,8 @@ public class SqlParser {
     private final CharSequence column;
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
+    private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
     private final CreateTableOperationBuilder createTableOperationBuilder = new CreateTableOperationBuilder();
-    private final ObjectPool<TouchUpColumnModel> createTableTouchUpColumnModelPool;
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -118,7 +118,7 @@ public class SqlParser {
         this.queryColumnPool = queryColumnPool;
         this.expressionTreeBuilder = new ExpressionTreeBuilder();
         this.windowColumnPool = new ObjectPool<>(WindowColumn.FACTORY, configuration.getWindowColumnPoolCapacity());
-        this.createTableTouchUpColumnModelPool = new ObjectPool<>(TouchUpColumnModel.FACTORY, configuration.getColumnCastModelPoolCapacity());
+        this.createTableColumnModelPool = new ObjectPool<>(CreateTableColumnModel.FACTORY, configuration.getCreateTableColumnModelPoolCapacity());
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertModelPoolCapacity());
@@ -252,6 +252,19 @@ public class SqlParser {
             characterStoreEntry.put(digit);
         }
         return characterStoreEntry.toImmutable();
+    }
+
+    private @NotNull CreateTableColumnModel ensureCreateColumnModel(CharSequence columnName, int columnNamePos) {
+        CharSequenceObjHashMap<CreateTableColumnModel> touchUpModels = createTableOperationBuilder.getColumnModels();
+        CreateTableColumnModel touchUpModel = touchUpModels.get(columnName);
+        if (touchUpModel != null) {
+            return touchUpModel;
+        }
+        try {
+            return newCreateColumnModel(columnName, columnNamePos);
+        } catch (SqlException e) {
+            throw new AssertionError("createColumnModel should never fail here", e);
+        }
     }
 
     private void expectBy(GenericLexer lexer) throws SqlException {
@@ -390,17 +403,6 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'zone' expected");
     }
 
-    private @NotNull TouchUpColumnModel getOrCreateTouchUpColumnModel(ExpressionNode columnName) {
-        CharSequenceObjHashMap<TouchUpColumnModel> touchUpModels = createTableOperationBuilder.getTouchUpColumnModels();
-        TouchUpColumnModel touchUpModel = touchUpModels.get(columnName.token);
-        if (touchUpModel == null) {
-            touchUpModel = createTableTouchUpColumnModelPool.next();
-            touchUpModel.setColumnNamePos(columnName.position);
-            touchUpModels.put(columnName.token, touchUpModel);
-        }
-        return touchUpModel;
-    }
-
     private boolean isCurrentRow(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (SqlKeywords.isCurrentKeyword(tok)) {
             tok = tok(lexer, "'row'");
@@ -435,6 +437,17 @@ public class SqlParser {
         // this can never be null in its current contexts
         // every time this function is called is after lexer.unparse(), which ensures non-null token.
         return expressionNodePool.next().of(ExpressionNode.LITERAL, unquote(name), 0, position);
+    }
+
+    private @NotNull CreateTableColumnModel newCreateColumnModel(CharSequence columnName, int columnNamePos) throws SqlException {
+        CharSequenceObjHashMap<CreateTableColumnModel> touchUpModels = createTableOperationBuilder.getColumnModels();
+        if (touchUpModels.get(columnName) != null) {
+            throw SqlException.duplicateColumn(columnNamePos, columnName);
+        }
+        CreateTableColumnModel touchUpModel = createTableColumnModelPool.next();
+        touchUpModel.setColumnNamePos(columnNamePos);
+        touchUpModels.put(columnName, touchUpModel);
+        return touchUpModel;
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -859,7 +872,7 @@ public class SqlParser {
         expectTok(lexer, '(');
         final ExpressionNode columnName = expectLiteral(lexer);
 
-        TouchUpColumnModel touchUpModel = getOrCreateTouchUpColumnModel(columnName);
+        CreateTableColumnModel touchUpModel = ensureCreateColumnModel(columnName.token, columnName.position);
         if (touchUpModel.getColumnType() != ColumnType.UNDEFINED) {
             throw SqlException.$(touchUpModel.getColumnNamePos(), "duplicate cast");
         }
@@ -914,7 +927,9 @@ public class SqlParser {
                 throw SqlException.$(columnPosition, " new column name contains invalid characters");
             }
 
-            createTableOperationBuilder.addColumn(columnPosition, columnName, columnType, configuration.getDefaultSymbolCapacity());
+            CreateTableColumnModel model = newCreateColumnModel(columnName, columnPosition);
+            model.setColumnType(columnType);
+            model.setSymbolCapacity(configuration.getDefaultSymbolCapacity());
 
             if (ColumnType.isSymbol(columnType)) {
                 tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
@@ -1007,7 +1022,7 @@ public class SqlParser {
             lexer.unparseLast();
         }
         if (isCreateAsSelect) {
-            TouchUpColumnModel touchUpModel = getOrCreateTouchUpColumnModel(columnName);
+            CreateTableColumnModel touchUpModel = ensureCreateColumnModel(columnName);
             if (touchUpModel.isIndexed()) {
                 throw SqlException.$(touchUpModel.getColumnNamePos(), "duplicate index");
             }
@@ -2960,7 +2975,7 @@ public class SqlParser {
         expressionNodePool.clear();
         windowColumnPool.clear();
         createTableOperationBuilder.clear();
-        createTableTouchUpColumnModelPool.clear();
+        createTableColumnModelPool.clear();
         renameTableModelPool.clear();
         withClauseModelPool.clear();
         subQueryMode = false;

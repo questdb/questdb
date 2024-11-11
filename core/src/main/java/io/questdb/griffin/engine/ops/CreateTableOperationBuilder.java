@@ -32,16 +32,17 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.TouchUpColumnModel;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -62,9 +63,9 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     // For create-as-select SQL, parser does not populate this list. Instead, the list
     // is used at the execution time to capture the attributes of columns of the "select" SQL.
     private final LongList columnBits = new LongList();
+    private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> columnModels = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private final CharSequenceObjHashMap<TouchUpColumnModel> touchUpColumnModels = new CharSequenceObjHashMap<>();
     private final IntIntHashMap typeCasts = new IntIntHashMap();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
@@ -82,10 +83,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     private boolean walEnabled;
 
     public void addColumn(int columnPosition, CharSequence columnName, int columnType, int symbolCapacity) throws SqlException {
-        if (!columnNameIndexMap.put(columnName, columnNames.size())) {
+        if (columnModels.get(columnName) != null) {
             throw SqlException.duplicateColumn(columnPosition, columnName);
         }
-        // todo: columnNames need not be strings, they can be made strings when they are copied to the operation
+
         columnNames.add(columnName);
         columnBits.add(
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
@@ -94,7 +95,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     }
 
     public void addDedupColumn(CharSequence dedupColName, int position) throws SqlException {
-        touchUpColumnModels.get(dedupColName);
+        columnModels.get(dedupColName);
         if (dedupColumnNames.contains(dedupColName)) {
             throw SqlException.duplicateColumn(position, dedupColName);
         }
@@ -118,7 +119,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
                     maxUncommittedRows,
                     o3MaxLag,
                     recordCursorFactory,
-                    touchUpColumnModels,
+                    columnModels,
                     batchSize,
                     batchO3MaxLag
             );
@@ -171,13 +172,17 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         queryModel = null;
         tableNameExpr = null;
         timestampExpr = null;
-        touchUpColumnModels.clear();
+        columnModels.clear();
         typeCasts.clear();
         volumeAlias = null;
     }
 
     public int getColumnIndex(CharSequence columnName) {
         return columnNameIndexMap.get(columnName);
+    }
+
+    public CharSequenceObjHashMap<CreateTableColumnModel> getColumnModels() {
+        return columnModels;
     }
 
     public int getColumnType(int columnIndex) {
@@ -212,10 +217,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     public int getTimestampIndex() {
         return timestampExpr != null ? getColumnIndex(timestampExpr.token) : -1;
-    }
-
-    public CharSequenceObjHashMap<TouchUpColumnModel> getTouchUpColumnModels() {
-        return touchUpColumnModels;
     }
 
     public boolean hasColumnDefs() {
@@ -255,7 +256,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     public void setFactory(RecordCursorFactory factory) throws SqlException {
         this.recordCursorFactory = factory;
         final RecordMetadata metadata = factory.getMetadata();
-        CharSequenceObjHashMap<TouchUpColumnModel> touchUpModels = touchUpColumnModels;
+        CharSequenceObjHashMap<CreateTableColumnModel> touchUpModels = columnModels;
         ObjList<CharSequence> touchUpColumnNames = touchUpModels.keys();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             columnNameIndexMap.put(metadata.getColumnName(i), i);
@@ -264,7 +265,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         for (int i = 0, n = touchUpColumnNames.size(); i < n; i++) {
             CharSequence columnName = touchUpColumnNames.getQuick(i);
             int index = metadata.getColumnIndexQuiet(columnName);
-            TouchUpColumnModel touchUp = touchUpModels.get(columnName);
+            CreateTableColumnModel touchUp = touchUpModels.get(columnName);
             // the only reason why columns cannot be found at this stage is
             // concurrent table modification of table structure
             if (index == -1) {
@@ -374,10 +375,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             sink.putAscii(" as (");
             getQueryModel().toSink(sink);
             sink.putAscii(')');
-            final ObjList<CharSequence> castColumns = getTouchUpColumnModels().keys();
+            final ObjList<CharSequence> castColumns = getColumnModels().keys();
             for (int i = 0, n = castColumns.size(); i < n; i++) {
                 final CharSequence column = castColumns.getQuick(i);
-                final TouchUpColumnModel m = getTouchUpColumnModels().get(column);
+                final CreateTableColumnModel m = getColumnModels().get(column);
                 final int type = m.getColumnType();
                 if (type > 0) {
                     sink.putAscii(", cast(");
