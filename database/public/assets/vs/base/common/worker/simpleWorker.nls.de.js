@@ -1,0 +1,2 @@
+/*! For license information please see simpleWorker.nls.de.js.LICENSE.txt */
+define("vs/base/common/worker/simpleWorker.nls.de",{"vs/base/common/platform":["_"],"vs/editor/common/languages":["Array","Boolescher Wert","Klasse","Konstante","Konstruktor","Enumeration","Enumerationsmember","Ereignis","Feld","Datei","Funktion","Schnittstelle","Schlüssel","Methode","Modul","Namespace","NULL","Zahl","Objekt","Operator","Paket","Eigenschaft","Zeichenfolge","Struktur","Typparameter","Variable","{0} ({1})"]});
