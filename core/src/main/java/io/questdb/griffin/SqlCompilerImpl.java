@@ -464,8 +464,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     this.insertCount = -1;
                     int position = createTableOp.getTableNamePosition();
                     executionContext.setUseSimpleCircuitBreaker(true);
-                    final RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
-                    try (final RecordCursor cursor = factory.getCursor(executionContext)) {
+                    RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
+                    RecordCursor newCursor;
+                    for (int retryCount = 0; ; retryCount++) {
+                        try {
+                            newCursor = factory.getCursor(executionContext);
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            if (retryCount == maxRecompileAttempts) {
+                                throw SqlException.$(0, e.getFlyweightMessage());
+                            }
+                            lexer.of(createTableOp.getSelectText());
+                            clear();
+                            compileInner(executionContext, createTableOp.getSelectText());
+                            factory = this.compiledQuery.getRecordCursorFactory();
+                            LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        }
+                    }
+                    try (RecordCursor cursor = newCursor) {
                         typeCast.clear();
                         final RecordMetadata metadata = factory.getMetadata();
                         createTableOp.validateAndUpdateMetadataFromSelect(metadata);
