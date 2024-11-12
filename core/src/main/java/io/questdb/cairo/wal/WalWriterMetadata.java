@@ -109,8 +109,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 columnType,
                 symbolCapacity,
                 symbolIsCached,
-                columnIndexed,
-                indexValueBlockCapacity,
                 isDedupKey
         );
     }
@@ -118,8 +116,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     public void addColumn(
             CharSequence columnName,
             int columnType,
-            boolean columnIndexed,
-            int indexValueBlockCapacity,
             boolean isDedupKey,
             boolean symbolIsCached,
             int symbolCapacity
@@ -129,8 +125,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 columnType,
                 symbolCapacity,
                 symbolIsCached,
-                columnIndexed,
-                indexValueBlockCapacity,
                 isDedupKey
         );
         structureVersion++;
@@ -171,7 +165,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
-    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    public void enableDeduplicationWithUpsertKeys() {
         structureVersion++;
     }
 
@@ -233,21 +227,22 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
             boolean isDedupKey
     ) {
         final String name = columnName.toString();
         if (columnType > 0) {
             columnNameIndexMap.put(name, columnMetadata.size());
         }
+        // sequencer metadata is servicing WALs, and it does not have
+        // information about symbol indexing and index storage parameters
+        // therefore we ignore the incoming parameters and assume defaults
         columnMetadata.add(
                 new TableColumnMetadata(
                         name,
                         columnType,
-                        isIndexed,
-                        indexValueBlockCapacity,
-                        true,
+                        false,
+                        0,
+                        false,
                         null,
                         columnMetadata.size(),
                         isDedupKey,

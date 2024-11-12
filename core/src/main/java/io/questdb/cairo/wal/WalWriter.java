@@ -1876,8 +1876,6 @@ public class WalWriter implements TableWriterAPI {
                     metadata.addColumn(
                             columnName,
                             columnType,
-                            isIndexed,
-                            indexValueBlockCapacity,
                             isDedupKey,
                             symbolCacheFlag,
                             symbolCapacity
@@ -2013,7 +2011,7 @@ public class WalWriter implements TableWriterAPI {
 
         @Override
         public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
-            metadata.enableDeduplicationWithUpsertKeys(columnsIndexes);
+            metadata.enableDeduplicationWithUpsertKeys();
         }
 
         @Override

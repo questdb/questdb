@@ -72,8 +72,12 @@ public class TableSequencerImpl implements TableSequencer {
     private TableToken tableToken;
 
     TableSequencerImpl(
-            TableSequencerAPI pool, CairoEngine engine, TableToken tableToken,
-            SeqTxnTracker txnTracker, int tableId, @Nullable TableStructure tableStruct
+            TableSequencerAPI pool,
+            CairoEngine engine,
+            TableToken tableToken,
+            SeqTxnTracker txnTracker,
+            int tableId,
+            @Nullable TableStructure tableStruct
     ) {
         this.pool = pool;
         this.engine = engine;
