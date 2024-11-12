@@ -66,6 +66,7 @@ public class CreateTableOperation implements TableStructure, Operation {
     private final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augmentedColumnMetadata = new LowerCaseCharSequenceObjHashMap<>();
     private final long batchO3MaxLag;
     private final long batchSize;
+    private final LowerCaseCharSequenceIntHashMap colNameToCastClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToDedupClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToIndexClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LongList columnBits = new LongList();
@@ -75,7 +76,7 @@ public class CreateTableOperation implements TableStructure, Operation {
     private final String likeTableName;
     // position of the "like" table name in the SQL text, for error reporting
     private final int likeTableNamePosition;
-    // this value will be non-null if the operation is a "create as select"
+    private final String selectText;
     private final String sqlText;
     private final String tableName;
     private final int tableNamePosition;
@@ -108,6 +109,8 @@ public class CreateTableOperation implements TableStructure, Operation {
         this.likeTableName = likeTableName;
         this.likeTableNamePosition = likeTableNamePosition;
         this.ignoreIfExists = ignoreIfExists;
+
+        this.selectText = null;
         this.timestampColumnName = null;
         this.timestampColumnNamePosition = 0;
         this.batchSize = 0;
@@ -154,6 +157,8 @@ public class CreateTableOperation implements TableStructure, Operation {
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.walEnabled = walEnabled;
+
+        this.selectText = null;
         this.recordCursorFactory = null;
         this.likeTableName = null;
         this.likeTableNamePosition = -1;
@@ -169,6 +174,7 @@ public class CreateTableOperation implements TableStructure, Operation {
      *
      * @param sqlText                     text of the SQL, that includes "create table..."
      * @param tableName                   name of the table to be created
+     * @param selectText                  text of the nested AS SELECT statement
      * @param tableNamePosition           the position of table name in user's input, it is used for error reporting
      * @param ignoreIfExists              "if exists" flag, table won't be created silently if it exists already
      * @param partitionBy                 partition type
@@ -189,6 +195,7 @@ public class CreateTableOperation implements TableStructure, Operation {
     public CreateTableOperation(
             String sqlText,
             String tableName,
+            String selectText,
             int tableNamePosition,
             boolean ignoreIfExists,
             int partitionBy,
@@ -204,7 +211,9 @@ public class CreateTableOperation implements TableStructure, Operation {
             long batchSize,
             long batchO3MaxLag
     ) throws SqlException {
+        this.sqlText = sqlText;
         this.tableName = tableName;
+        this.selectText = selectText;
         this.tableNamePosition = tableNamePosition;
         this.partitionBy = partitionBy;
         this.volumeAlias = volumeAlias;
@@ -215,12 +224,12 @@ public class CreateTableOperation implements TableStructure, Operation {
         this.recordCursorFactory = recordCursorFactory;
         this.batchSize = batchSize;
         this.batchO3MaxLag = batchO3MaxLag;
-        this.likeTableName = null;
-        this.likeTableNamePosition = -1;
-        this.sqlText = sqlText;
         this.o3MaxLag = o3MaxLag;
         this.maxUncommittedRows = maxUncommittedRows;
         this.walEnabled = walEnabled;
+
+        this.likeTableName = null;
+        this.likeTableNamePosition = -1;
 
         // This constructor is for a "create as select", column names will be scraped from the record
         // cursor at runtime. Column augmentation data comes from the following sources in the SQL:
@@ -248,6 +257,9 @@ public class CreateTableOperation implements TableStructure, Operation {
             }
             if (model.isIndexed()) {
                 colNameToIndexClausePos.put(columnName, model.getIndexColumnPos());
+            }
+            if (model.getColumnType() != ColumnType.UNDEFINED) {
+                colNameToCastClausePos.put(columnName, model.getColumnNamePos());
             }
             TableColumnMetadata tcm = new TableColumnMetadata(
                     columnNameStr,
@@ -337,6 +349,10 @@ public class CreateTableOperation implements TableStructure, Operation {
 
     public RecordCursorFactory getRecordCursorFactory() {
         return recordCursorFactory;
+    }
+
+    public String getSelectText() {
+        return selectText;
     }
 
     public String getSqlText() {
@@ -452,6 +468,14 @@ public class CreateTableOperation implements TableStructure, Operation {
             if (timestampColType != ColumnType.TIMESTAMP) {
                 throw SqlException.position(timestampColumnNamePosition)
                         .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
+            }
+        }
+        ObjList<CharSequence> castColNames = colNameToCastClausePos.keys();
+        for (int i = 0, n = castColNames.size(); i < n; i++) {
+            CharSequence castColName = castColNames.get(i);
+            if (metadata.getColumnIndexQuiet(castColName) < 0) {
+                throw SqlException.position(colNameToCastClausePos.get(castColName))
+                        .put("CAST column doesn't exist [column=").put(castColName).put(']');
             }
         }
         ObjList<CharSequence> indexColNames = colNameToIndexClausePos.keys();

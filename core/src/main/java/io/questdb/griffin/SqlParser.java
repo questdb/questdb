@@ -866,13 +866,12 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         expectTok(lexer, '(');
-        QueryModel queryModel = optimiser.optimise(
-                parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback),
-                executionContext,
-                sqlParserCallback
-        );
-        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
-        assert columns.size() > 0;
+        int startOfSelect = lexer.getPosition();
+        QueryModel selectModel = parseDml(lexer, null, startOfSelect, true, sqlParserCallback);
+        int endOfSelect = lexer.getPosition() - 1;
+        createTableOperationBuilder.setSelectText(lexer.getContent().subSequence(startOfSelect, endOfSelect));
+        QueryModel queryModel = optimiser.optimise(selectModel, executionContext, sqlParserCallback);
+        assert queryModel.getBottomUpColumns().size() > 0 : "parsing resulted in zero columns";
         createTableOperationBuilder.setQueryModel(queryModel);
         expectTok(lexer, ')');
     }

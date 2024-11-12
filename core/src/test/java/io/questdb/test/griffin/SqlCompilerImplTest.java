@@ -3181,7 +3181,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(43, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: b");
+                TestUtils.assertContains(e.getFlyweightMessage(), "CAST column doesn't exist [column=b]");
             }
         });
     }

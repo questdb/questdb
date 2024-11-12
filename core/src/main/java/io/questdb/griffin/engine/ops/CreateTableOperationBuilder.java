@@ -69,6 +69,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     private ExpressionNode partitionByExpr;
     private QueryModel queryModel;
     private RecordCursorFactory recordCursorFactory;
+    private CharSequence selectText;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private CharSequence volumeAlias;
@@ -90,6 +91,7 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             return new CreateTableOperation(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
+                    Chars.toString(selectText),
                     tableNameExpr.position,
                     ignoreIfExists, getPartitionByFromExpr(),
                     timestampExpr != null ? Chars.toString(timestampExpr.token) : null,
@@ -267,6 +269,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
 
     public void setQueryModel(QueryModel queryModel) {
         this.queryModel = queryModel;
+    }
+
+    public void setSelectText(CharSequence selectText) {
+        this.selectText = selectText;
     }
 
     public void setTableNameExpr(ExpressionNode expr) {

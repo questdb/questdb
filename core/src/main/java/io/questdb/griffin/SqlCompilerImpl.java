@@ -409,7 +409,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return generateSelectOneShot(queryModel, executionContext, generateProgressLogger);
             } catch (TableReferenceOutOfDateException e) {
                 if (--remainingRetries < 0) {
-                    throw SqlException.$(0, e.getFlyweightMessage());
+                    throw SqlException.$(0, "underlying cursor is extremely volatile");
                 }
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
                 clear();
@@ -2384,21 +2384,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    private void executeCreateTable(CreateTableOperation op, SqlExecutionContext executionContext) throws SqlException {
-        final long sqlId = queryRegistry.register(op.getSqlText(), executionContext);
+    private void executeCreateTable(CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
+        final long sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
         long beginNanos = configuration.getMicrosecondClock().getTicks();
-        QueryProgress.logStart(sqlId, op.getSqlText(), executionContext, false);
+        QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
         try {
 
             // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
-            final int status = executionContext.getTableStatus(path, op.getTableName());
-            if (op.ignoreIfExists() && status == TableUtils.TABLE_EXISTS) {
-                op.updateOperationFutureTableToken(executionContext.getTableTokenIfExists(op.getTableName()));
+            final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
+            if (createTableOp.ignoreIfExists() && status == TableUtils.TABLE_EXISTS) {
+                createTableOp.updateOperationFutureTableToken(executionContext.getTableTokenIfExists(createTableOp.getTableName()));
             } else if (status == TableUtils.TABLE_EXISTS) {
-                throw SqlException.$(op.getTableNamePosition(), "table already exists");
+                throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
             } else {
                 // create table (...) ... in volume volumeAlias;
-                CharSequence volumeAlias = op.getVolumeAlias();
+                CharSequence volumeAlias = createTableOp.getVolumeAlias();
                 if (volumeAlias != null) {
                     CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
                     if (volumePath != null) {
@@ -2413,24 +2413,40 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
 
                 final TableToken tableToken;
-                if (op.getRecordCursorFactory() != null) {
+                if (createTableOp.getRecordCursorFactory() != null) {
                     this.insertCount = -1;
-                    int position = op.getTableNamePosition();
+                    int position = createTableOp.getTableNamePosition();
                     executionContext.setUseSimpleCircuitBreaker(true);
-                    final RecordCursorFactory factory = op.getRecordCursorFactory();
-                    try (final RecordCursor cursor = factory.getCursor(executionContext)) {
+                    RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
+                    RecordCursor newCursor;
+                    for (int retryCount = 0; ; retryCount++) {
+                        try {
+                            newCursor = factory.getCursor(executionContext);
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            if (retryCount == maxRecompileAttempts) {
+                                throw SqlException.$(0, e.getFlyweightMessage());
+                            }
+                            lexer.of(createTableOp.getSelectText());
+                            clear();
+                            compileInner(executionContext, createTableOp.getSelectText());
+                            factory = this.compiledQuery.getRecordCursorFactory();
+                            LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        }
+                    }
+                    try (RecordCursor cursor = newCursor) {
                         typeCast.clear();
                         final RecordMetadata metadata = factory.getMetadata();
-                        op.validateAndUpdateMetadataFromSelect(metadata);
-                        boolean keepLock = !op.isWalEnabled();
+                        createTableOp.validateAndUpdateMetadataFromSelect(metadata);
+                        boolean keepLock = !createTableOp.isWalEnabled();
 
                         // todo: test create table if exists with select
                         tableToken = engine.createTable(
                                 executionContext.getSecurityContext(),
                                 mem,
                                 path,
-                                op.ignoreIfExists(),
-                                op,
+                                createTableOp.ignoreIfExists(),
+                                createTableOp,
                                 keepLock,
                                 volumeAlias != null
                         );
@@ -2439,11 +2455,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             copyTableDataAndUnlock(
                                     executionContext.getSecurityContext(),
                                     tableToken,
-                                    op.isWalEnabled(),
+                                    createTableOp.isWalEnabled(),
                                     cursor,
                                     metadata,
-                                    op.getBatchSize(),
-                                    op.getBatchO3MaxLag(),
+                                    createTableOp.getBatchSize(),
+                                    createTableOp.getBatchO3MaxLag(),
                                     executionContext.getCircuitBreaker()
                             );
                         } catch (CairoException e) {
@@ -2463,27 +2479,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } finally {
                         executionContext.setUseSimpleCircuitBreaker(false);
                     }
-                    op.updateOperationFutureTableToken(tableToken);
-                    op.updateOperationFutureAffectedRowsCount(insertCount);
+                    createTableOp.updateOperationFutureTableToken(tableToken);
+                    createTableOp.updateOperationFutureAffectedRowsCount(insertCount);
                 } else {
                     try {
-                        if (op.getLikeTableName() != null) {
-                            TableToken likeTableToken = executionContext.getTableTokenIfExists(op.getLikeTableName());
+                        if (createTableOp.getLikeTableName() != null) {
+                            TableToken likeTableToken = executionContext.getTableTokenIfExists(createTableOp.getLikeTableName());
                             if (likeTableToken == null) {
                                 throw SqlException
-                                        .$(op.getLikeTableNamePosition(), "table does not exist [table=")
-                                        .put(op.getLikeTableName()).put(']');
+                                        .$(createTableOp.getLikeTableNamePosition(), "table does not exist [table=")
+                                        .put(createTableOp.getLikeTableName()).put(']');
                             }
 
                             //
                             try (TableMetadata likeTableMetadata = executionContext.getCairoEngine().getTableMetadata(likeTableToken)) {
-                                op.updateFromLikeTableMetadata(likeTableMetadata);
+                                createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
                                 tableToken = engine.createTable(
                                         executionContext.getSecurityContext(),
                                         mem,
                                         path,
-                                        op.ignoreIfExists(),
-                                        op,
+                                        createTableOp.ignoreIfExists(),
+                                        createTableOp,
                                         false,
                                         volumeAlias != null
                                 );
@@ -2493,15 +2509,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     executionContext.getSecurityContext(),
                                     mem,
                                     path,
-                                    op.ignoreIfExists(),
-                                    op,
+                                    createTableOp.ignoreIfExists(),
+                                    createTableOp,
                                     false,
                                     volumeAlias != null
                             );
                         }
-                        op.updateOperationFutureTableToken(tableToken);
+                        createTableOp.updateOperationFutureTableToken(tableToken);
                     } catch (EntryUnavailableException e) {
-                        throw SqlException.$(op.getTableNamePosition(), "table already exists");
+                        throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
                     } catch (CairoException e) {
                         if (e.isAuthorizationError() || e.isCancellation()) {
                             // No point printing stack trace for authorization or cancellation errors
@@ -2512,19 +2528,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (e.isInterruption()) {
                             throw e;
                         }
-                        throw SqlException.$(op.getTableNamePosition(), "Could not create table, ")
+                        throw SqlException.$(createTableOp.getTableNamePosition(), "Could not create table, ")
                                 .put(e.getFlyweightMessage());
                     }
                 }
             }
             // todo: jit is always false, why?
-            QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos, false);
+            QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
         } catch (Throwable e) {
             if (e instanceof CairoException) {
-                ((CairoException) e).position(op.getTableNamePosition());
+                ((CairoException) e).position(createTableOp.getTableNamePosition());
             }
             // todo: jit is always false, why?
-            QueryProgress.logError(e, sqlId, op.getSqlText(), executionContext, beginNanos, false);
+            QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
             throw e;
         }
     }
