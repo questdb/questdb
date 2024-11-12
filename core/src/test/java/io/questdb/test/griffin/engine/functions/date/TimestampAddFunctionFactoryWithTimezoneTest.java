@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
- package io.questdb.test.griffin.engine.functions.date;
+package io.questdb.test.griffin.engine.functions.date;
 
 import org.junit.Test;
 
@@ -32,7 +32,7 @@ import io.questdb.std.Numbers;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 
 public class TimestampAddFunctionFactoryWithTimezoneTest extends AbstractFunctionFactoryTest {
-    
+
 
     @Test
     public void testDayAdditionWithTimezone() throws Exception {
