@@ -3432,10 +3432,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertException("DECLARE @x := ?, @y := ? SELECT @x, @y", 14, "Invalid column: ?");
     }
 
-//    @Test
-//    public void testDeclareWithMissingColon() throws Exception {
-//        assertException("DECLARE @x = 1, @y = 2 SELECT @x * @y + @x / @y", 11, "incorrect declare variable syntax, expected `:=`");
-//    }
+    @Test
+    public void testDeclareSelectWithSubQuery() throws Exception {
+        assertModel("select-choose column from (select-virtual [2 + 5 column] 2 + 5 column from (long_sequence(1)))",
+                "DECLARE @x := 2, @y := 5 SELECT * FROM (SELECT @x + @y)", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareWithMissingColon() throws Exception {
+        assertException("DECLARE @x = 1, @y = 2 SELECT @x * @y + @x / @y", 11, "incorrect declare variable syntax, expected `:=`");
+    }
 
     @Test
     public void testDisallowDotInColumnAlias() throws Exception {
