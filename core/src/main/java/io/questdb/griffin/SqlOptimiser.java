@@ -2269,7 +2269,14 @@ public class SqlOptimiser implements Mutable {
             return token;
         }
 
-        CharSequence nestedAlias = getTranslatedColumnAlias(model.getNestedModel(), stopModel, token);
+        CharSequence nestedAlias;
+//        if (model.getNestedModel() != null) {
+        nestedAlias = getTranslatedColumnAlias(model.getNestedModel(), stopModel, token);
+//        } else {
+//            nestedAlias = token;
+//        }
+
+
         if (nestedAlias != null) {
             CharSequence alias = model.getColumnNameToAliasMap().get(nestedAlias);
             if (alias == null) {
@@ -3597,10 +3604,10 @@ public class SqlOptimiser implements Mutable {
 
         if (
                 model.getSelectModelType() == SELECT_MODEL_CHOOSE
-                        && model.getNestedModel() != null
-                        && model.getNestedModel().getSelectModelType() == SELECT_MODEL_NONE
-                        && model.getNestedModel().getOrderBy().size() > 0
-                        && model.getNestedModel().getWhereClause() == null
+                        && nested != null
+                        && nested.getSelectModelType() == SELECT_MODEL_NONE
+                        && nested.getOrderBy().size() > 1 // only for multi-sort case, to get limited size cursor
+                        && nested.getWhereClause() == null
                         && model.getLimitLo() != null
                         && model.getLimitHi() == null
                         && model.getUnionModel() == null
@@ -3609,15 +3616,12 @@ public class SqlOptimiser implements Mutable {
                         && model.getSampleBy() == null
                         && !hasAggregateQueryColumn(model)
                         && !model.isDistinct()
-                        && nested != null
-                        && nested.getJoinModels().size() == 1
                         && nested.getTimestamp() != null
-                        && nested.getWhereClause() == null
+                        && Chars.equalsIgnoreCase(nested.getTimestamp().token, nested.getOrderBy().get(0).token)
                         && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
                         && loFunction.isConstant()
                         && (limitValue = loFunction.getLong(null)) > 0
-                        && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
-                        && (nested.getOrderBy().size() > 0)) {
+                        && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())) {
 
             nested.setLimit(model.getLimitLo(), null);
             model.setLimit(null, null);
