@@ -25,11 +25,13 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -310,11 +312,13 @@ public class CreateTableTest extends AbstractCairoTest {
                             for (int j = 0; j < tableCount; j++) {
                                 CompiledQuery query = compiler.query().$("create table if not exists tab").$(j).$(" (x int)")
                                         .compile(executionContext);
-                                CreateTableOperation op = query.getCreateTableOperation();
-                                compiler.execute(op, executionContext);
-                                final TableToken token = op.getFuture().getTableToken();
-                                assertNotNull(token);
-                                assertEquals("tab" + j, token.getTableName());
+                                try (Operation op = query.getCreateTableOperation()) {
+                                    try (OperationFuture fut = op.execute(executionContext, null)) {
+                                        final TableToken token = ((CreateTableOperation.CreateTableOperationFuture)fut).getTableToken();
+                                        assertNotNull(token);
+                                        assertEquals("tab" + j, token.getTableName());
+                                    }
+                                }
                             }
                         }
                     } catch (Throwable e) {

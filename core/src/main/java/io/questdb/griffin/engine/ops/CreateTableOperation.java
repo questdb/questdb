@@ -275,7 +275,7 @@ public class CreateTableOperation implements TableStructure, Operation {
         try (SqlCompiler compiler = sqlExecutionContext.getCairoEngine().getSqlCompiler()) {
             compiler.execute(this, sqlExecutionContext);
         }
-        return getFuture();
+        return future;
     }
 
     public long getBatchO3MaxLag() {
@@ -299,15 +299,6 @@ public class CreateTableOperation implements TableStructure, Operation {
     @Override
     public int getColumnType(int index) {
         return getLowAt(index * 2);
-    }
-
-    /**
-     * SQLCompiler side API to get future associated with this operation.
-     *
-     * @return mutable future associated with this operation
-     */
-    public CreateTableOperationFuture getFuture() {
-        return future;
     }
 
     @Override
