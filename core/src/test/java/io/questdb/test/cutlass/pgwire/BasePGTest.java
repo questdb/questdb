@@ -28,7 +28,12 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
+import io.questdb.cutlass.pgwire.HexTestsCircuitBreakRegistry;
+import io.questdb.cutlass.pgwire.IPGWireServer;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
@@ -41,6 +46,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
@@ -51,10 +57,20 @@ import io.questdb.test.tools.TestUtils;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assume;
+import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.sql.*;
+import java.net.BindException;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.JDBCType;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Properties;
@@ -98,8 +114,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected int forceSendFragmentationChunkSize = 1024 * 1024;
     protected long maxQueryTime = Long.MAX_VALUE;
     protected int recvBufferSize = 1024 * 1024;
-    protected int sendBufferSize = 1024 * 1024;
     protected int selectCacheBlockCount = -1;
+    protected int sendBufferSize = 1024 * 1024;
 
     protected BasePGTest(@NonNull LegacyMode legacyMode) {
         this.legacyMode = legacyMode == LegacyMode.LEGACY;
@@ -284,6 +300,14 @@ public abstract class BasePGTest extends AbstractCairoTest {
         return rows;
     }
 
+    public void skipInLegacyMode() {
+        Assume.assumeFalse("Test does not support legacy mode", legacyMode);
+    }
+
+    public void skipInModernMode() {
+        Assume.assumeTrue("Test does not support modern mode", legacyMode);
+    }
+
     private static void toSink(InputStream is, Utf16Sink sink) throws IOException {
         // limit what we print
         byte[] bb = new byte[1];
@@ -353,7 +377,33 @@ public abstract class BasePGTest extends AbstractCairoTest {
         // use this line to switch to local postgres
         // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
-        return DriverManager.getConnection(url, properties);
+
+        // a hack to deal with "Address already in use" error:
+        // Some tests open and close connections in a quick succession.
+        // This can lead to the above error since it might exhaust available ephemeral ports on the host machine
+        int maxAttempts = 100;
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return DriverManager.getConnection(url, properties);
+            } catch (PSQLException ex) {
+                Throwable cause = ex.getCause();
+                if (!(cause instanceof BindException)) {
+                    // not a "Address already in use" error
+                    throw ex;
+                }
+                String causeMessage = cause.getMessage();
+                if (causeMessage == null || !causeMessage.contains("Address already in use")) {
+                    // not a "Address already in use" error
+                    throw ex;
+                }
+                if (attempt >= maxAttempts) {
+                    // too many attempts
+                    throw ex;
+                }
+                LOG.info().$("Failed to open a connection due to 'Address already in use'. Retrying... [attempt=").$(attempt).I$();
+                Os.sleep(100);
+            }
+        }
     }
 
     static Collection<Object[]> legacyModeParams() {
@@ -499,11 +549,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
         final PGWireConfiguration conf = new Port0PGWireConfiguration(-1, legacyMode) {
 
             @Override
-            public int getSelectCacheBlockCount() {
-                return selectCacheBlockCount == -1 ? super.getSelectCacheBlockCount() : selectCacheBlockCount;
-            }
-
-            @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
             }
@@ -526,6 +571,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public int getRecvBufferSize() {
                 return recvBufferSize;
+            }
+
+            @Override
+            public int getSelectCacheBlockCount() {
+                return selectCacheBlockCount == -1 ? super.getSelectCacheBlockCount() : selectCacheBlockCount;
             }
 
             @Override
