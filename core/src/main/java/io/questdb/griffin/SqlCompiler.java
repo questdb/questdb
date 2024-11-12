@@ -30,7 +30,6 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;

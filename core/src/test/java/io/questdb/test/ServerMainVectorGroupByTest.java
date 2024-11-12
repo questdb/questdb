@@ -26,7 +26,11 @@ package io.questdb.test;
 
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -44,7 +48,6 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
-import static io.questdb.test.AbstractCairoTest.ddl;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static io.questdb.test.tools.TestUtils.insertFromSelectPopulateTableStmt;
 

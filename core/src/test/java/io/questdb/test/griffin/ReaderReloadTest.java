@@ -47,12 +47,12 @@ public class ReaderReloadTest extends AbstractCairoTest {
 
     @Test
     public void testReaderReloadDoesNotReopenPartitionsNonWal() throws Exception {
-        testReaderReloadDoesNotReopenPartitions(true);
+        testReaderReloadDoesNotReopenPartitions();
     }
 
     @Test
     public void testReaderReloadDoesNotReopenPartitionsWal() throws Exception {
-        testReaderReloadDoesNotReopenPartitions(true);
+        testReaderReloadDoesNotReopenPartitions();
     }
 
     @Test
@@ -97,7 +97,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
         });
     }
 
-    private static void testReaderReloadDoesNotReopenPartitions(boolean isWal) throws Exception {
+    private static void testReaderReloadDoesNotReopenPartitions() throws Exception {
         AtomicLong openCount = new AtomicLong();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -110,7 +110,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-            ddl("create table x as (select x, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(1)) timestamp(ts) partition by HOUR" + (isWal ? " WAL" : " BYPASS WAL"));
+            ddl("create table x as (select x, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(1)) timestamp(ts) partition by HOUR" + " WAL");
 
             TableToken xTableToken = engine.verifyTableName("x");
             drainWalQueue();
