@@ -884,15 +884,15 @@ public class SqlParser {
         expectTok(lexer, '(');
         final ExpressionNode columnName = expectLiteral(lexer);
 
-        CreateTableColumnModel touchUpModel = ensureCreateTableColumnModel(columnName.token, columnName.position);
-        if (touchUpModel.getColumnType() != ColumnType.UNDEFINED) {
-            throw SqlException.$(touchUpModel.getColumnNamePos(), "duplicate cast");
+        CreateTableColumnModel model = ensureCreateTableColumnModel(columnName.token, columnName.position);
+        if (model.getColumnType() != ColumnType.UNDEFINED) {
+            throw SqlException.$(lexer.lastTokenPosition(), "duplicate cast");
         }
         expectTok(lexer, "as");
 
         final ExpressionNode columnType = expectLiteral(lexer);
         final int type = toColumnType(lexer, columnType.token);
-        touchUpModel.setType(type, columnType.position);
+        model.setType(type, columnType.position);
 
         if (ColumnType.isSymbol(type)) {
             CharSequence tok = tok(lexer, "'capacity', 'nocache', 'cache' or ')'");
@@ -907,7 +907,7 @@ public class SqlParser {
                 capacityPosition = 0;
                 symbolCapacity = configuration.getDefaultSymbolCapacity();
             }
-            touchUpModel.setSymbolCapacity(symbolCapacity);
+            model.setSymbolCapacity(symbolCapacity);
 
             final boolean isCached;
             if (isNoCacheKeyword(tok)) {
@@ -918,7 +918,7 @@ public class SqlParser {
                 isCached = configuration.getDefaultSymbolCacheFlag();
                 lexer.unparseLast();
             }
-            touchUpModel.setSymbolCacheFlag(isCached);
+            model.setSymbolCacheFlag(isCached);
 
             if (isCached) {
                 TableUtils.validateSymbolCapacityCached(true, symbolCapacity, capacityPosition);
