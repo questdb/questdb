@@ -427,7 +427,7 @@ public class FuzzRunner {
     }
 
     public FilesFacade getFileFacade() {
-        return engine.getConfiguration().getFilesFacade();
+        return new FailureFileFacade(engine.getConfiguration().getFilesFacade());
     }
 
     public int getTransactionCount() {
