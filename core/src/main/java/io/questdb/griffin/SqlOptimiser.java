@@ -3586,10 +3586,14 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model
      */
-    private void pushLimitFromChooseToNone(QueryModel model) {
+    private void pushLimitFromChooseToNone(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model == null) {
             return;
         }
+
+        QueryModel nested = model.getNestedModel();
+        Function loFunction;
+        long limitValue;
 
         if (
                 model.getSelectModelType() == SELECT_MODEL_CHOOSE
@@ -3598,9 +3602,23 @@ public class SqlOptimiser implements Mutable {
                         && model.getNestedModel().getOrderBy().size() > 0
                         && model.getNestedModel().getWhereClause() == null
                         && model.getLimitLo() != null
-                        && model.getLimitHi() == null) {
+                        && model.getLimitHi() == null
+                        && model.getUnionModel() == null
+                        && model.getJoinModels().size() == 1
+                        && model.getGroupBy().size() == 0
+                        && model.getSampleBy() == null
+                        && !hasAggregateQueryColumn(model)
+                        && !model.isDistinct()
+                        && nested != null
+                        && nested.getJoinModels().size() == 1
+                        && nested.getTimestamp() != null
+                        && nested.getWhereClause() == null
+                        && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
+                        && loFunction.isConstant()
+                        && (limitValue = loFunction.getLong(null)) > 0
+                        && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())
+                        && (nested.getOrderBy().size() > 0)) {
 
-            QueryModel nested = model.getNestedModel();
             nested.setLimit(model.getLimitLo(), null);
             model.setLimit(null, null);
 
@@ -3612,7 +3630,7 @@ public class SqlOptimiser implements Mutable {
                 nested.setAllowPropagationOfOrderByAdvice(false);
             }
         } else {
-            pushLimitFromChooseToNone(model.getNestedModel());
+            pushLimitFromChooseToNone(model.getNestedModel(), executionContext);
         }
     }
 
@@ -6346,8 +6364,8 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             optimiseJoins(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
-            pushLimitFromChooseToNone(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
+            pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);
             rewrittenModel = rewriteOrderBy(rewrittenModel);
