@@ -2269,13 +2269,7 @@ public class SqlOptimiser implements Mutable {
             return token;
         }
 
-        CharSequence nestedAlias;
-//        if (model.getNestedModel() != null) {
-        nestedAlias = getTranslatedColumnAlias(model.getNestedModel(), stopModel, token);
-//        } else {
-//            nestedAlias = token;
-//        }
-
+        CharSequence nestedAlias = getTranslatedColumnAlias(model.getNestedModel(), stopModel, token);
 
         if (nestedAlias != null) {
             CharSequence alias = model.getColumnNameToAliasMap().get(nestedAlias);
@@ -3589,7 +3583,7 @@ public class SqlOptimiser implements Mutable {
      * For a query like this: SELECT a, b, c from x ORDER BY a DESC, b DESC LIMIT 100
      * The limit is on the outer select-choose, and not the select-none.
      * This means that we fail to specialise the query whereas we would automatically
-     * perform this push down in the case of neative limits.
+     * perform this push down in the case of negative limits.
      *
      * @param model
      */
@@ -4135,16 +4129,16 @@ public class SqlOptimiser implements Mutable {
     private void rewriteNegativeLimit(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model != null) {
 
+            // try to condense potential wildcard model
             if (!rewriteNegativeLimitGuard(model, executionContext)) {
-                // try to condense potential wildcard model
+
                 rewriteToCondenseWildcardModels(model);
             }
 
-            // if still doesn't pass, maybe it has an order by clause
+            // if still doesn't pass, maybe it has an existing order by clause
             if (!rewriteNegativeLimitGuard(model, executionContext)) {
                 rewriteNegativeLimitWithOrderBy(model);
             }
-
 
             final QueryModel nested = model.getNestedModel();
 
@@ -4294,25 +4288,19 @@ public class SqlOptimiser implements Mutable {
                 return;
             }
 
-            // first is designated timestamp and asc
-            // we want to perform this conversion
-            // SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3
-            // becomes
-            // SELECT timestamp, side FROM (SELECT timestamp, side from TRADES ORDER BY timestamp DESC, side DESC LIMIT 3) ORDER BY timestamp ASC, side DESC
-            // Essentially, we push down a limited reverse scan, and then sort the data afterwards.
-
+            // we want to push down a limited reverse scan, and then sort into the intended ordering afterwards
 
             // first, copy the order by up
-
             for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
                 model.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
                 model.getOrderByAdvice().add(nested.getOrderBy().get(i));
                 model.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
-                // also strip advice
 
+                // also strip advice
                 model.getOrderByAdvice().remove(i);
                 model.getOrderByDirectionAdvice().remove(i);
             }
+
             // reverse the scan
             nested.getOrderByDirection().set(0, ORDER_DIRECTION_DESCENDING);
 
@@ -4325,7 +4313,6 @@ public class SqlOptimiser implements Mutable {
                 // assume already filled
                 nested.getOrderByDirectionAdvice().set(0, ORDER_DIRECTION_DESCENDING);
             }
-
 
             nested.setAllowPropagationOfOrderByAdvice(false); // stop propagation
 
