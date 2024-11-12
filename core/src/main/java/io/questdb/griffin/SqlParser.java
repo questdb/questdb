@@ -59,8 +59,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
-import static io.questdb.griffin.model.ExpressionNode.CONSTANT;
-import static io.questdb.griffin.model.ExpressionNode.LITERAL;
+import static io.questdb.griffin.model.ExpressionNode.*;
 
 public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
@@ -1043,7 +1042,12 @@ public class SqlParser {
             ExpressionNode expr = expr(lexer, model, sqlParserCallback);
 
             if (expr == null) {
-                throw SqlException.$((lexer.lastTokenPosition()), "empty declaration");
+                throw SqlException.$(lexer.lastTokenPosition(), "empty declaration");
+            }
+
+
+            if (expr.type != OPERATION || !Chars.equalsIgnoreCase(expr.token, ":=")) {
+                throw SqlException.$(expr.position, "incorrect declare variable syntax, expected `:=`");
             }
 
             model.getDecls().put(expr.lhs.token, expr);
@@ -1597,7 +1601,7 @@ public class SqlParser {
                 tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparseLast();
                 ExpressionNode n = expr(lexer, model, sqlParserCallback);
-                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != ExpressionNode.OPERATION)) {
+                if (n == null || (n.type != ExpressionNode.LITERAL && n.type != CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != OPERATION)) {
                     throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
                 }
 
@@ -2658,7 +2662,7 @@ public class SqlParser {
                     continue;
                 }
                 ExpressionNode where = node.args.getQuick(i);
-                if (where.type == ExpressionNode.OPERATION && where.token.charAt(0) == '=') {
+                if (where.type == OPERATION && where.token.charAt(0) == '=') {
                     ExpressionNode thisConstant;
                     ExpressionNode thisLiteral;
                     if (where.lhs.type == CONSTANT && where.rhs.type == ExpressionNode.LITERAL) {
@@ -2726,7 +2730,7 @@ public class SqlParser {
     }
 
     private void rewriteConcat0(ExpressionNode node) {
-        if (node.type == ExpressionNode.OPERATION && isConcatOperator(node.token)) {
+        if (node.type == OPERATION && isConcatOperator(node.token)) {
             node.type = ExpressionNode.FUNCTION;
             node.token = CONCAT_FUNC_NAME;
             addConcatArgs(node.args, node.rhs);
@@ -2857,7 +2861,7 @@ public class SqlParser {
     }
 
     private void rewritePgCast0(ExpressionNode node) {
-        if (node.type == ExpressionNode.OPERATION && SqlKeywords.isColonColon(node.token)) {
+        if (node.type == OPERATION && SqlKeywords.isColonColon(node.token)) {
             node.token = "cast";
             node.type = ExpressionNode.FUNCTION;
             node.rhs.type = CONSTANT;
