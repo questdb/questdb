@@ -1423,7 +1423,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     private TableToken createStandardTable(String tableName, boolean isWal) throws SqlException {
-        compile("create table " + tableName + " as (" +
+        ddl("create table " + tableName + " as (" +
                 "select x, " +
                 " rnd_symbol('AB', 'BC', 'CD') sym, " +
                 " timestamp_sequence('2022-02-24', 1000000L) ts, " +
@@ -1505,7 +1505,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
         assertMemoryLeak(dodgyFf, () -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
+            ddl("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
                     "str string," +

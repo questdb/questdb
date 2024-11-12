@@ -70,7 +70,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
 
         assertMemoryLeak(ff, () -> {
 
-            compile("create table x as (select x, x as y, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(100)) timestamp(ts) partition by DAY");
+            ddl("create table x as (select x, x as y, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(100)) timestamp(ts) partition by DAY");
 
             TableToken xTableToken = engine.verifyTableName("x");
             TableReader reader1 = engine.getReader(xTableToken);
@@ -79,8 +79,8 @@ public class ReaderReloadTest extends AbstractCairoTest {
             assertSql("column\n" +
                     "1\n", "select sum(x) / sum(x) from x");
 
-            compile("alter table x add column new_col int");
-            compile("insert into x select x, x, timestamp_sequence('2022-02-25T14', 1000000000) ts, x % 2 from long_sequence(100)");
+            ddl("alter table x add column new_col int");
+            insert("insert into x select x, x, timestamp_sequence('2022-02-25T14', 1000000000) ts, x % 2 from long_sequence(100)");
             failToOpen.set(true);
 
             try (TableReader reader2 = engine.getReader(xTableToken)) {
@@ -110,7 +110,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-            compile("create table x as (select x, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(1)) timestamp(ts) partition by HOUR" + (isWal ? " WAL" : " BYPASS WAL"));
+            ddl("create table x as (select x, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(1)) timestamp(ts) partition by HOUR" + (isWal ? " WAL" : " BYPASS WAL"));
 
             TableToken xTableToken = engine.verifyTableName("x");
             drainWalQueue();

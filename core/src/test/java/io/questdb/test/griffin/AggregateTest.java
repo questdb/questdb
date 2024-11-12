@@ -265,13 +265,13 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithIndexedSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE records (\n" +
+            ddl("CREATE TABLE records (\n" +
                     "  ts TIMESTAMP,\n" +
                     "  account_uuid SYMBOL INDEX,\n" +
                     "  requests LONG\n" +
                     ") timestamp (ts)");
 
-            compile("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 's' || x/100, x/100 from long_sequence(399)");
+            insert("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 's' || x/100, x/100 from long_sequence(399)");
 
             String query = "select account_uuid, sum(requests) request_count " +
                     "from records " +
@@ -311,13 +311,13 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithSymbolKey1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE records (\n" +
+            ddl("CREATE TABLE records (\n" +
                     "  ts TIMESTAMP,\n" +
                     "  account_uuid SYMBOL,\n" +
                     "  requests LONG\n" +
                     ") timestamp (ts)");
 
-            compile("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 's' || x/100, x/100 from long_sequence(399)");
+            insert("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 's' || x/100, x/100 from long_sequence(399)");
 
             String query = "select account_uuid, sum(requests) request_count " +
                     "from records " +
@@ -358,14 +358,14 @@ public class AggregateTest extends AbstractCairoTest {
     @Test
     public void testGroupByWithSymbolKey2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE records (\n" +
+            ddl("CREATE TABLE records (\n" +
                     "  ts TIMESTAMP,\n" +
                     "  org_uuid SYMBOL,\n" +
                     "  account_uuid SYMBOL,\n" +
                     "  price DOUBLE\n" +
                     ") timestamp (ts)");
 
-            compile("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 'o' || x/100, 's' || x/100, x/100 from long_sequence(399)");
+            insert("insert into records select dateadd('m',x::int,'2023-02-01T00:00:00.000000'), 'o' || x/100, 's' || x/100, x/100 from long_sequence(399)");
 
             String query = "select org_uuid, account_uuid, sum(price) total_price " +
                     "from records " +

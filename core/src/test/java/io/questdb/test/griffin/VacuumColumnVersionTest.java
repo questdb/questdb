@@ -461,7 +461,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     private String[] update3ColumnsWithOpenReader(ColumnPurgeJob purgeJob, String tableName) throws SqlException {
-        compile(
+        ddl(
                 "create table " + tableName + " as" +
                         " (select timestamp_sequence('1970-01-01T00:01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
@@ -471,10 +471,10 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY"
         );
-        compile("alter table " + tableName + " drop column x");
-        compile("alter table " + tableName + " add column x int");
+        ddl("alter table " + tableName + " drop column x");
+        ddl("alter table " + tableName + " add column x int");
         try (TableReader rdr = getReader(tableName)) {
-            compile("insert into " + tableName + "(ts, x, str,sym1,sym2) " +
+            insert("insert into " + tableName + "(ts, x, str,sym1,sym2) " +
                     "select timestamp_sequence('1970-01-01', 24 * 60 * 60 * 1000000L) ts," +
                     " x," +
                     " rnd_str('a', 'b', 'c', 'd') str," +

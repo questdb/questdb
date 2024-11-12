@@ -126,7 +126,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
-            compile(
+            ddl(
                     "create table " + tableName +
                             " (ts timestamp, commit int, s symbol) " +
                             " , index(s) timestamp(ts) partition by DAY WAL "
@@ -143,7 +143,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
-            compile(
+            ddl(
                     "create table " + tableName +
                             " (ts timestamp, commit int) " +
                             " timestamp(ts) partition by DAY WAL "
@@ -159,7 +159,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
-            compile(
+            ddl(
                     "create table " + tableName +
                             " (ts timestamp, commit int, s varchar) " +
                             " timestamp(ts) partition by DAY WAL "
@@ -176,7 +176,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
-            compile(
+            ddl(
                     "create table " + tableName +
                             " (ts timestamp, commit int) " +
                             " timestamp(ts) partition by DAY WAL "
@@ -208,7 +208,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     rnd
             );
             applyWal(transactions, tableName, 1, rnd);
-            compile("alter table " + tableName + " dedup upsert keys(ts)");
+            ddl("alter table " + tableName + " dedup upsert keys(ts)");
 
             transactions.clear();
 
@@ -576,13 +576,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private Rnd generateRandomAndProps(Log log, long seed1, long seed2) {
-        Rnd rnd = fuzzer.generateRandom(log, seed1, seed2);
-        setFuzzProperties(rnd);
-        setRandomAppendPageSize(rnd);
-        return rnd;
-    }
-
     private Rnd generateRandomAndProps(Log log) {
         Rnd rnd = fuzzer.generateRandom(log);
         setFuzzProperties(rnd);
@@ -676,8 +669,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             fuzzer.createInitialTable(tableNameDedup, true);
 
             // Add long256 type to have to be a chance of a dedup key
-            compile("alter table " + tableNameDedup + " add column col256 long256");
-            compile("alter table " + tableNameWalNoDedup + " add column col256 long256");
+            ddl("alter table " + tableNameDedup + " add column col256 long256");
+            ddl("alter table " + tableNameWalNoDedup + " add column col256 long256");
 
             drainWalQueue();
 
@@ -704,7 +697,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     tableNameDedup,
                     comaSeparatedUpsertCols
             );
-            compile(alterStatement);
+            ddl(alterStatement);
 
             WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
             sharedWorkerPool.start(LOG);
@@ -838,8 +831,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         applyWal(transactions, tableName, 1, rnd);
 
         LOG.info().$("adding S column after ").$ts(maxTimestamp).$();
-        compile("alter table " + tableName + " add column s " + ColumnType.nameOf(columType));
-        compile("alter table " + tableName + " dedup upsert keys(ts, s)");
+        ddl("alter table " + tableName + " add column s " + ColumnType.nameOf(columType));
+        ddl("alter table " + tableName + " dedup upsert keys(ts, s)");
 
         int rndCount = rnd.nextInt(10);
         int strLen = 4 + rnd.nextInt(20);

@@ -399,7 +399,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                compile("CREATE TABLE 'tests' (\n" +
+                ddl("CREATE TABLE 'tests' (\n" +
                         "  Ticker SYMBOL capacity 256 CACHE,\n" +
                         "  ts timestamp\n" +
                         ") timestamp (ts) PARTITION BY MONTH");
@@ -794,8 +794,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testLtJoinNonKeyed() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compile("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
-                compile("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                ddl("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                ddl("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
 
                 insert("INSERT INTO bids VALUES " +
                         "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
@@ -850,8 +850,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 compiler.setFullFatJoins(true);
                 // stock and exchange are composite keys
                 // rating is also a symbol, but not used in a join key
-                compile("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
-                compile("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                ddl("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                ddl("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
 
                 insert("INSERT INTO bids VALUES " +
                         "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
@@ -950,10 +950,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 compiler.setFullFatJoins(true);
 
                 // create a master table - without a symbol column
-                compile("create table taba as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 10000000000000L) as ts from long_sequence(5)) timestamp(ts)");
+                ddl("create table taba as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 10000000000000L) as ts from long_sequence(5)) timestamp(ts)");
 
                 // create a slave table - with a symbol column, with timestamps 1 microsecond before master timestamps
-                compile("create table tabb as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss') - 1, 10000000000000L) as ts, rnd_symbol('A', 'B', 'C') as sym from long_sequence(5)) timestamp(ts)");
+                ddl("create table tabb as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss') - 1, 10000000000000L) as ts, rnd_symbol('A', 'B', 'C') as sym from long_sequence(5)) timestamp(ts)");
 
                 // use a CTE to amend the master table with a synthetic symbol column
                 String query = "with s as (\n" +
@@ -984,8 +984,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinOnSymbolsDifferentIDs() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x (s symbol, xi int, xts timestamp) timestamp(xts)");
-            compile("create table y (s symbol, yi int, yts timestamp) timestamp(yts)");
+            ddl("create table x (s symbol, xi int, xts timestamp) timestamp(xts)");
+            ddl("create table y (s symbol, yi int, yts timestamp) timestamp(yts)");
             insert("insert into x values ('a', 0, '2000')");
             insert("insert into x values ('b', 1, '2001')");
             insert("insert into x values ('c', 2, '2001')");
@@ -1183,7 +1183,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                compile("CREATE TABLE 'tests' (\n" +
+                ddl("CREATE TABLE 'tests' (\n" +
                         "  Ticker SYMBOL capacity 256 CACHE,\n" +
                         "  ts timestamp\n" +
                         ") timestamp (ts) PARTITION BY MONTH");
@@ -1240,7 +1240,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                compile("CREATE TABLE 'tests' (\n" +
+                ddl("CREATE TABLE 'tests' (\n" +
                         "  Ticker SYMBOL capacity 256 CACHE,\n" +
                         "  ts timestamp\n" +
                         ") timestamp (ts) PARTITION BY MONTH");
@@ -1297,7 +1297,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                compile("CREATE TABLE 'tests' (\n" +
+                ddl("CREATE TABLE 'tests' (\n" +
                         "  UnusedTag SYMBOL,\n" + // just filler to make the joining a bit more interesting
                         "  Ticker SYMBOL capacity 256 CACHE,\n" +
                         "  ts timestamp,\n" +
@@ -1748,8 +1748,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                compile("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
-                compile("create table tab_b (sym_b symbol, ts_b timestamp, s_B string) timestamp(ts_b) partition by DAY");
+                ddl("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
+                ddl("create table tab_b (sym_b symbol, ts_b timestamp, s_B string) timestamp(ts_b) partition by DAY");
 
                 insert("insert into tab_a values " +
                         "('ABC', '2022-01-01T00:00:00.000000Z', 'foo')"

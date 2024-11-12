@@ -96,7 +96,7 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
     @Test
     public void testTimeoutLimitedSizeSortedLightRecordCursor() throws Exception {
         assertMemoryLeak(() -> {
-            compile(
+            ddl(
                     "CREATE TABLE trips as (" +
                             "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000000) ts from long_sequence(20)" +
                             ") timestamp(ts) partition by day;"
@@ -113,7 +113,7 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
     @Test
     public void testTimeoutSortedLightRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
-            compile(
+            ddl(
                     "CREATE TABLE trips as (" +
                             "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20)" +
                             ") timestamp(ts) partition by day;"
@@ -126,7 +126,7 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
     @Test
     public void testTimeoutSortedRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
-            compile(
+            ddl(
                     "CREATE TABLE trips as (" +
                             "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000) ts from long_sequence(20)" +
                             ") timestamp(ts) partition by day;"

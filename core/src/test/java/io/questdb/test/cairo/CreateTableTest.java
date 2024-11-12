@@ -312,7 +312,7 @@ public class CreateTableTest extends AbstractCairoTest {
                             for (int j = 0; j < tableCount; j++) {
                                 CompiledQuery query = compiler.query().$("create table if not exists tab").$(j).$(" (x int)")
                                         .compile(executionContext);
-                                try (Operation op = query.getCreateTableOperation()) {
+                                try (Operation op = query.getOperation()) {
                                     try (OperationFuture fut = op.execute(executionContext, null)) {
                                         final TableToken token = ((CreateTableOperation.CreateTableOperationFuture)fut).getTableToken();
                                         assertNotNull(token);

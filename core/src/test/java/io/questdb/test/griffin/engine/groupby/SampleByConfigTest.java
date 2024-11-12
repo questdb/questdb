@@ -84,7 +84,7 @@ public class SampleByConfigTest extends AbstractBootstrapTest {
             final CairoEngine engine = serverMain.getEngine();
 
             try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                engine.compile(ddl, sqlExecutionContext);
+                engine.ddl(ddl, sqlExecutionContext);
                 engine.compile(dml, sqlExecutionContext);
                 drainWalQueue(engine);
 

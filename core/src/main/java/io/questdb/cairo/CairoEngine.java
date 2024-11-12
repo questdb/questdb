@@ -86,7 +86,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -103,7 +102,6 @@ import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
-import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
 import static io.questdb.griffin.CompiledQuery.*;
 
 public class CairoEngine implements Closeable, WriterSource {
@@ -213,7 +211,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 break;
             case DROP:
-                drop0(null, cq);
+                drop0(sqlExecutionContext, null, cq);
                 break;
             case SELECT:
                 throw SqlException.$(0, "use select()");
@@ -235,23 +233,17 @@ public class CairoEngine implements Closeable, WriterSource {
         switch (cc.getType()) {
             case CREATE_TABLE:
             case CREATE_TABLE_AS_SELECT:
+            case DROP:
                 assert sqlExecutionContext.getCairoEngine() == compiler.getEngine();
-                try (Operation createTableOperation = cc.getCreateTableOperation()) {
-                    assert createTableOperation != null;
-                    try (OperationFuture fut = createTableOperation.execute(sqlExecutionContext, null)) {
+                try (Operation op = cc.getOperation()) {
+                    assert op != null;
+                    try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     }
                 }
                 break;
             case INSERT:
                 insert(compiler, ddl, sqlExecutionContext);
-                break;
-            case DROP:
-                try (OperationFuture fut = cc.execute(eventSubSeq)) {
-                    if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
-                        throw SqlException.$(0, "drop table timeout");
-                    }
-                }
                 break;
             case SELECT:
                 throw SqlException.$(0, "use select()");
@@ -347,10 +339,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
         checkpointAgent.checkpointCreate(executionContext, false);
-    }
-
-    public void snapshotCreate(SqlExecutionContext executionContext) throws SqlException {
-        checkpointAgent.checkpointCreate(executionContext, true);
     }
 
     /**
@@ -455,7 +443,7 @@ public class CairoEngine implements Closeable, WriterSource {
             switch (cq.getType()) {
                 case UPDATE:
                 case DROP:
-                    drop0(eventSubSeq, cq);
+                    drop0(sqlExecutionContext, eventSubSeq, cq);
                     break;
                 case INSERT:
                 case INSERT_AS_SELECT:
@@ -1246,6 +1234,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.checkpointAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
     }
 
+    public void snapshotCreate(SqlExecutionContext executionContext) throws SqlException {
+        checkpointAgent.checkpointCreate(executionContext, true);
+    }
+
     public void unlock(
             @SuppressWarnings("unused") SecurityContext securityContext,
             TableToken tableToken,
@@ -1341,11 +1333,9 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private static void drop0(@Nullable SCSequence eventSubSeq, CompiledQuery cq) throws SqlException {
-        try (OperationFuture fut = cq.execute(eventSubSeq)) {
-            if (fut.await(30 * Timestamps.SECOND_MILLIS) != QUERY_COMPLETE) {
-                throw SqlException.$(0, "drop table timeout");
-            }
+    private static void drop0(SqlExecutionContext executionContext, @Nullable SCSequence eventSubSeq, CompiledQuery cq) throws SqlException {
+        try (Operation operation = cq.getOperation(); OperationFuture fut = operation.execute(executionContext, eventSubSeq)) {
+            fut.await();
         }
     }
 

@@ -128,7 +128,7 @@ public class Long128Tests extends AbstractCairoTest {
 
     @Test
     public void testJoinOnLong128Column() throws Exception {
-        compile(
+        ddl(
                 "create table tab1 as " +
                         "(select" +
                         " to_long128(3 * x, 6 * x) ts, " +
@@ -163,7 +163,7 @@ public class Long128Tests extends AbstractCairoTest {
 
     @Test
     public void testJoinWithLong128ColumnOnPrimaryAndSecondary() throws Exception {
-        compile(
+        ddl(
                 "create table tab1 as " +
                         "(select" +
                         " to_long128(x, x) ts, " +
@@ -343,7 +343,7 @@ public class Long128Tests extends AbstractCairoTest {
     @Test
     public void testUpdateLong128ColumnToNull() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table testUpdateLong128ColumnToNull as " +
+            ddl("create table testUpdateLong128ColumnToNull as " +
                     "(select" +
                     " to_long128(-x, x / 2) uuid, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts1," +
@@ -351,7 +351,7 @@ public class Long128Tests extends AbstractCairoTest {
                     " from long_sequence(10)" +
                     ")");
 
-            compile("update testUpdateLong128ColumnToNull set uuid = null where i < 5");
+            ddl("update testUpdateLong128ColumnToNull set uuid = null where i < 5");
             assertSql(
                     "uuid\tts1\ti\n" +
                             "\t2022-02-24T00:00:00.000000Z\t1\n" +

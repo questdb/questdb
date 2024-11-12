@@ -50,7 +50,7 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void test2686() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table table_1 (\n" +
+            ddl("create table table_1 (\n" +
                     "          ts timestamp,\n" +
                     "          name string,\n" +
                     "          age int,\n" +
@@ -61,7 +61,7 @@ public class JoinTest extends AbstractCairoTest {
             insert("insert into table_1 values ( '2022-10-25T02:00:00.000000Z', 'peter',  58, False )");
             insert("insert into table_1 values ( '2022-10-25T03:00:00.000000Z', 'david',  21, True )");
 
-            compile("create table table_2 (\n" +
+            ddl("create table table_2 (\n" +
                     "          ts timestamp,\n" +
                     "          name string,\n" +
                     "          age int,\n" +
@@ -1487,8 +1487,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testAsofJoinWithComplexConditionFails1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 asof join t2 on l1=l2+5", "unsupported ASOF join expression [expr='l1 = l2 + 5']", 35);
         });
@@ -1497,8 +1497,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testAsofJoinWithComplexConditionFails2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 asof join t2 on l1>l2", "unsupported ASOF join expression [expr='l1 > l2']", 35);
         });
@@ -1507,8 +1507,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testAsofJoinWithComplexConditionFails3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 asof join t2 on l1=abs(l2)", "unsupported ASOF join expression [expr='l1 = abs(l2)']", 35);
         });
@@ -1576,19 +1576,19 @@ public class JoinTest extends AbstractCairoTest {
     public void testCrossJoinCount() throws Exception {
         assertMemoryLeak(() -> {
             // 1 partition
-            compile("create table TabA ( " +
+            ddl("create table TabA ( " +
                     "          ts timestamp, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by month");
 
             // 3 partitions
-            compile("create table TabB ( " +
+            ddl("create table TabB ( " +
                     "          ts timestamp, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by hour");
 
             // 0 partitions
-            compile("create table TabC ( " +
+            ddl("create table TabC ( " +
                     "          ts timestamp, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by year");
@@ -2997,9 +2997,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (5), (4), (3), (2), (1);");
 
             assertHashJoinSql(
@@ -3017,9 +3017,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition10() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
+            ddl("create table t1 (i int, s1 string)");
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (5,'e'), (2, 'b'), (4, 'd'), (3,'c');");
 
             assertHashJoinSql(
@@ -3037,9 +3037,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition11() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
+            ddl("create table t1 (i int, s1 string)");
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
 
             assertHashJoinSql(
@@ -3057,9 +3057,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition12() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
+            ddl("create table t1 (i int, s1 string)");
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
 
             assertHashJoinSql(
@@ -3079,9 +3079,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition13() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
+            ddl("create table t1 (i int, s1 string)");
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t2 (j int, s2 string)");
 
             assertHashJoinSql(
                     "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
@@ -3098,8 +3098,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition14() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t1 (i int, s1 string)");
+            ddl("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
 
             assertHashJoinSql(
@@ -3112,8 +3112,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition15() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t1 (i int, s1 string)");
+            ddl("create table t2 (j int, s2 string)");
 
             assertHashJoinSql(
                     "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
@@ -3125,9 +3125,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition16() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
+            ddl("create table t1 (i int, s1 string)");
             insert("insert into t1 values (1, 'a'), (2, 'b');");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (1,'f'), (1, 'g'), (1, 'd'), (3,'c');");
 
             assertHashJoinSql(
@@ -3143,9 +3143,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition17() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string, ts1 timestamp) timestamp(ts1)");
+            ddl("create table t1 (i int, s1 string, ts1 timestamp) timestamp(ts1)");
             insert("insert into t1 values (1, 'a', 1), (2, 'b', 2);");
-            compile("create table t2 (j int, s2 string, ts2 timestamp) timestamp(ts2) ");
+            ddl("create table t2 (j int, s2 string, ts2 timestamp) timestamp(ts2) ");
             insert("insert into t2 values (1,'a', 1), (1,'f', 2), (1, 'g', 3), (1, 'd', 4), (3,'c', 5);");
 
             assertHashJoinSql(
@@ -3161,9 +3161,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition18() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 symbol)");
+            ddl("create table t1 (i int, s1 symbol)");
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
-            compile("create table t2 (j int, s2 symbol)");
+            ddl("create table t2 (j int, s2 symbol)");
             insert("insert into t2 values (1, 'a'), (5, 'e'), (2, 'b'), (4, 'd'), (3, 'c');");
 
             assertHashJoinSql(
@@ -3181,9 +3181,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (5), (4), (3), (2), (1);");
 
             assertHashJoinSql(
@@ -3201,9 +3201,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (5), (4), (3), (2), (1);");
 
             assertHashJoinSql(
@@ -3221,9 +3221,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (1), (5), (2), (4), (3);");
 
             assertHashJoinSql(
@@ -3241,9 +3241,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition5() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (1), (5), (2), (4), (3);");
 
             assertHashJoinSql(
@@ -3261,9 +3261,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition6() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (1), (5), (2), (4), (3);");
 
             assertHashJoinSql(
@@ -3281,9 +3281,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition7() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (-4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (1), (5), (-2), (-4), (3);");
 
             assertHashJoinSql(
@@ -3301,9 +3301,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition8() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
 
             assertHashJoinSql(
@@ -3321,9 +3321,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionCondition9() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t2 (j int, s2 string)");
             insert("insert into t2 values (1,'a'), (5,'e'), (-2, 'b'), (4, 'd'), (3,'c');");
 
             assertHashJoinSql(
@@ -3341,9 +3341,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionConditionVarchar13() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 varchar)");
+            ddl("create table t1 (i int, s1 varchar)");
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
-            compile("create table t2 (j int, s2 varchar)");
+            ddl("create table t2 (j int, s2 varchar)");
 
             assertHashJoinSql(
                     "select * from t1 left join t2 on j = i and (s1 ~ '[abde]')",
@@ -3360,8 +3360,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinOnFunctionConditionVarchar14() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 varchar)");
-            compile("create table t2 (j int, s2 varchar)");
+            ddl("create table t1 (i int, s1 varchar)");
+            ddl("create table t2 (j int, s2 varchar)");
             insert("insert into t2 values (1,'a'), (1,'e'), (2, 'b'), (2, 'd'), (3,'c');");
 
             assertHashJoinSql(
@@ -3374,9 +3374,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinWithWhere1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
+            ddl("create table t1 (i int, s1 string)");
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t2 (j int, s2 string)");
             insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
 
             assertHashJoinSql(
@@ -3394,9 +3394,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinWithWhere2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
+            ddl("create table t1 (i int, s1 string)");
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t2 (j int, s2 string)");
             insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
 
             assertHashJoinSql(
@@ -3414,9 +3414,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinWithWhere3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
+            ddl("create table t1 (i int, s1 string)");
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t2 (j int, s2 string)");
             insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
 
             assertHashJoinSql(
@@ -3430,9 +3430,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftHashJoinWithWhere4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s1 string)");
+            ddl("create table t1 (i int, s1 string)");
             insert("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c'), (4, 'd'), (5, 'e');");
-            compile("create table t2 (j int, s2 string)");
+            ddl("create table t2 (j int, s2 string)");
             insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (1, 'a');");
 
             assertHashJoinSql(
@@ -3447,8 +3447,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinOnFunctionCondition0() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int);");
-            compile("create table t2 as (select x+10 j from long_sequence(3))");
+            ddl("create table t1 (i int);");
+            ddl("create table t2 as (select x+10 j from long_sequence(3))");
 
             String query = "select * from t1 left join t2 on t1.i+10 = t2.j";
 
@@ -3459,8 +3459,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinOnFunctionCondition1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 as (select x i from long_sequence(5))");
-            compile("create table t2 as (select x+10 j from long_sequence(3))");
+            ddl("create table t1 as (select x i from long_sequence(5))");
+            ddl("create table t2 as (select x+10 j from long_sequence(3))");
 
             assertSql(
                     "i\tj\n" +
@@ -3477,8 +3477,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinOnFunctionCondition2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 as (select x i from long_sequence(5))");
-            compile("create table t2 as (select x-3 j from long_sequence(3))");//-2,-1,0
+            ddl("create table t1 as (select x i from long_sequence(5))");
+            ddl("create table t2 as (select x-3 j from long_sequence(3))");//-2,-1,0
 
             assertSql(
                     "i\tj\n" +
@@ -3495,9 +3495,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinOnFunctionCondition3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (-2), (3), (-4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (-1), (-2), (3), (0), (-5);");
 
             String query = "select * from t1 left join t2 on abs(t1.i) = abs(t2.j)";
@@ -3517,9 +3517,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinOnFunctionCondition4() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (-1), (-2), (-3), (-4), (-5);");
 
             assertSql(
@@ -3537,9 +3537,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinOnFunctionCondition5() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
             assertSql(
@@ -3561,9 +3561,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinOnFunctionCondition6() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
             assertSql(
@@ -3582,9 +3582,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinOnFunctionCondition7() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
             assertSql(
@@ -3606,9 +3606,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinOnFunctionCondition8() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int)");
+            ddl("create table t1 (i int)");
             insert("insert into t1 values (1), (2), (3), (4), (5);");
-            compile("create table t2 (j int)");
+            ddl("create table t2 (j int)");
             insert("insert into t2 values (-5), (-4), (-3), (-2), (-1);");
 
             assertSql(
@@ -3626,9 +3626,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinOnFunctionConditionWith3Tables() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 as (select x i from long_sequence(5))");
-            compile("create table t2 as (select x+10 j from long_sequence(3))");
-            compile("create table t3 as (select x+1 k from long_sequence(3))");
+            ddl("create table t1 as (select x i from long_sequence(5))");
+            ddl("create table t2 as (select x+10 j from long_sequence(3))");
+            ddl("create table t3 as (select x+1 k from long_sequence(3))");
 
             String query = "select * from t1 left join (select * from t2 left join t3 on t2.j-1 = t3.k) tx on t1.i+10 = tx.j";
 
@@ -3647,8 +3647,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithConstantFalseFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 as (select x i from long_sequence(3))");
-            compile("create table t2 as (select x+10 j from long_sequence(3))");
+            ddl("create table t1 as (select x i from long_sequence(3))");
+            ddl("create table t2 as (select x+10 j from long_sequence(3))");
 
             String query = "select * from t1 left join t2 on i=j and abs(1) = 0";
 
@@ -3785,8 +3785,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinWithComplexConditionFails1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 lt join t2 on l1=l2+5", "unsupported LT join expression [expr='l1 = l2 + 5']", 33);
         });
@@ -3795,8 +3795,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinWithComplexConditionFails2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 lt join t2 on l1>l2", "unsupported LT join expression [expr='l1 > l2']", 33);
         });
@@ -3805,8 +3805,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinWithComplexConditionFails3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 lt join t2 on l1=abs(l2)", "unsupported LT join expression [expr='l1 = abs(l2)']", 33);
         });
@@ -3815,10 +3815,10 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinWithCondition01() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("insert into t1 select x, x::timestamp from long_sequence(3)");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
-            compile("insert into t2 select x, x::timestamp from long_sequence(3)");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("insert into t1 select x, x::timestamp from long_sequence(3)");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("insert into t2 select x, x::timestamp from long_sequence(3)");
 
             assertSql(
                     "l1\tts1\tl2\tts2\n" +
@@ -3833,9 +3833,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinWithoutCondition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
             insert("insert into t1 select x, x::timestamp from long_sequence(3)");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
             insert("insert into t2 select x, x::timestamp from long_sequence(3)");
 
             assertSql(
@@ -3852,9 +3852,9 @@ public class JoinTest extends AbstractCairoTest {
     public void testLtJoinWithoutCondition2() throws Exception {
         // Here we test case when all slave records have newer timestamps than what's in the master table.
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
             insert("insert into t1 select x, x::timestamp from long_sequence(3)");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
             insert("insert into t2 select x, (x + 1000000)::timestamp from long_sequence(3)");
 
             assertSql(
@@ -4714,8 +4714,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoinWithComplexConditionFails1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 splice join t2 on l1=l2+5", "unsupported SPLICE join expression [expr='l1 = l2 + 5']", 37);
         });
@@ -4724,8 +4724,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoinWithComplexConditionFails2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 splice join t2 on l1>l2", "unsupported SPLICE join expression [expr='l1 > l2']", 37);
         });
@@ -4734,8 +4734,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoinWithComplexConditionFails3() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
-            compile("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
+            ddl("create table t1 (l1 long, ts1 timestamp) timestamp(ts1) partition by year");
+            ddl("create table t2 (l2 long, ts2 timestamp) timestamp(ts2) partition by year");
 
             assertFailure("select * from t1 splice join t2 on l1=abs(l2)", "unsupported SPLICE join expression [expr='l1 = abs(l2)']", 37);
         });
@@ -4782,9 +4782,9 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testStringSymbolVarcharJoins() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t1 (i int, s string, b symbol)");
+            ddl("create table t1 (i int, s string, b symbol)");
             insert("insert into t1 values (1, 'a', 'a'), (2, 'b', 'b'), (3, 'c', 'c'), (4, 'd', 'd'), (5, 'e', 'e');");
-            compile("create table t2 (j int, v varchar)");
+            ddl("create table t2 (j int, v varchar)");
             insert("insert into t2 values (5, 'e'), (3, 'c'), (2, 'b'), (4, 'd'), (1, 'a');");
 
             final String expected = "i\ts\tb\tj\tv\n" +
@@ -4833,8 +4833,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSymbolStringJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table xy2 as (select rnd_str(1,3,1) a from long_sequence(1000))");
-            compile("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
+            ddl("create table xy2 as (select rnd_str(1,3,1) a from long_sequence(1000))");
+            ddl("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
             assertSql(
                     "a\tb\ta1\n" +
                             "ZY\t-2057990897\tZY\n" +
@@ -4859,8 +4859,8 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testSymbolVarcharJoin() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table xy2 as (select rnd_varchar(1,3,1) a from long_sequence(1000))");
-            compile("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
+            ddl("create table xy2 as (select rnd_varchar(1,3,1) a from long_sequence(1000))");
+            ddl("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
             assertSql(
                     "a\tb\ta1\n" +
                             "סּ\uDA07\uDD7B\uDBD1\uDCF9\t393942866\tסּ\uDA07\uDD7B\uDBD1\uDCF9\n" +
@@ -4896,19 +4896,19 @@ public class JoinTest extends AbstractCairoTest {
     public void testUnionAllCount() throws Exception {
         assertMemoryLeak(() -> {
             // 1 partition
-            compile("create table TabA ( " +
+            ddl("create table TabA ( " +
                     "          ts timestamp, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by month");
 
             // 3 partitions
-            compile("create table TabB ( " +
+            ddl("create table TabB ( " +
                     "          ts timestamp, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by hour");
 
             // 0 partitions
-            compile("create table TabC ( " +
+            ddl("create table TabC ( " +
                     "          ts timestamp, " +
                     "          x long " +
                     "        ) timestamp(ts) PARTITION by year");

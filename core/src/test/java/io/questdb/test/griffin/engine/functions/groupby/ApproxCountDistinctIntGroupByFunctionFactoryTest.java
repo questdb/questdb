@@ -47,7 +47,7 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testDifferentPrecisionsDenseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
+            ddl("create table x as (select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
 
             String expected = "count_distinct\n" +
                     "631884\n";
@@ -94,7 +94,7 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testDifferentPrecisionsSparseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+            ddl("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
 
             assertQueryNoLeakCheck(
                     "count_distinct\n" +
@@ -145,7 +145,7 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testGroupKeyedDenseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (" +
+            ddl("create table x as (" +
                     "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 100000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)" +
                     ") timestamp(ts))");
             assertQueryNoLeakCheck(
@@ -180,7 +180,7 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testGroupKeyedSparseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (" +
+            ddl("create table x as (" +
                     "select * from (select rnd_symbol('a','b','c','d','e','f') a, rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(20)" +
                     ") timestamp(ts))");
             assertQueryNoLeakCheck(
@@ -215,7 +215,7 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testGroupNotKeyedDenseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
+            ddl("create table x as (select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(1000000)) timestamp(ts))");
             assertQueryNoLeakCheck(
                     "count_distinct\n" +
                             "631884\n",
@@ -238,7 +238,7 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testGroupNotKeyedSparseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
+            ddl("create table x as (select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))");
             assertQueryNoLeakCheck(
                     "count_distinct\n" +
                             "6\n",
@@ -261,7 +261,7 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testGroupNotKeyedWithNullsDenseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (" +
+            ddl("create table x as (" +
                     "select * from (select rnd_int(1, 1000000, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(1000000)) timestamp(ts)" +
                     ") timestamp(ts) PARTITION BY YEAR");
             String expectedExact = "count_distinct\n" +
@@ -282,7 +282,7 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testGroupNotKeyedWithNullsSparseHLL() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x as (" +
+            ddl("create table x as (" +
                     "select * from (select rnd_int(1, 6, 0) s, timestamp_sequence(10, 100000) ts from long_sequence(100)) timestamp(ts)" +
                     ") timestamp(ts) PARTITION BY YEAR");
             String expectedExact = "count_distinct\n" +

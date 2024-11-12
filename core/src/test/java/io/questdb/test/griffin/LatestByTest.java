@@ -147,7 +147,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByAllIndexedWithPrefixes() throws Exception {
         assertMemoryLeak(() -> {
-            compile(
+            ddl(
                     "create table pos_test\n" +
                             "( \n" +
                             "  ts timestamp,\n" +
@@ -156,7 +156,7 @@ public class LatestByTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day;"
             );
 
-            compile(
+            ddl(
                     "insert into pos_test values " +
                             "('2021-09-02T00:00:00.000000', 'device_1', #46swgj10)," +
                             "('2021-09-02T00:00:00.000001', 'device_2', #46swgj10)," +
@@ -205,7 +205,7 @@ public class LatestByTest extends AbstractCairoTest {
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -237,7 +237,7 @@ public class LatestByTest extends AbstractCairoTest {
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
             insert("insert into t values ('e', 'f', '1970-01-01T01:01:01.000000Z')");
@@ -270,7 +270,7 @@ public class LatestByTest extends AbstractCairoTest {
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
             insert("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
@@ -303,7 +303,7 @@ public class LatestByTest extends AbstractCairoTest {
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
             insert("insert into t values ('a', 'e', '1970-01-01T01:01:01.000000Z')");
@@ -338,7 +338,7 @@ public class LatestByTest extends AbstractCairoTest {
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -371,7 +371,7 @@ public class LatestByTest extends AbstractCairoTest {
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L) ts " +
                     "from long_sequence(100)" +
                     ") timestamp(ts) partition by DAY");
@@ -414,7 +414,7 @@ public class LatestByTest extends AbstractCairoTest {
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
             };
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', null) s, rnd_symbol('c', null) s2, rnd_symbol('d', null) s3, timestamp_sequence(0, 60*60*1000*1000L) ts " +
                     "from long_sequence(100)" +
                     ") timestamp(ts) partition by DAY");
@@ -455,7 +455,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByPartitionByDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table forecasts (when timestamp, ts timestamp, temperature double) timestamp(ts) partition by day");
+            ddl("create table forecasts (when timestamp, ts timestamp, temperature double) timestamp(ts) partition by day");
 
             // forecasts for 2020-05-05
             insert("insert into forecasts values " +
@@ -518,7 +518,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByPartitionByTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
+            ddl("create table forecasts (when timestamp, version timestamp, temperature double) timestamp(version) partition by day");
 
             // forecasts for 2020-05-05
             insert("insert into forecasts values " +
@@ -546,7 +546,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestBySubQueryInitializesSymbolTables() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE 'offer_exchanges' (" +
+            ddl("CREATE TABLE 'offer_exchanges' (" +
                     "pair SYMBOL CAPACITY 100000 INDEX, " +
                     "rate DOUBLE, " +
                     "volume_a DOUBLE, " +
@@ -605,7 +605,7 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
 
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol('g', 'd', 'f') s, " +
@@ -690,7 +690,7 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
 
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
@@ -726,7 +726,7 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
 
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "  select " +
                     "    x, " +
                     "    rnd_symbol('a', 'b', 'c', 'd', 'e', 'f') s, " +
@@ -807,8 +807,8 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithDeferredNonExistingSymbolOnNonEmptyTableDoesNotThrowException() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
-            compile("insert into tab\n" +
+            ddl("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+            ddl("insert into tab\n" +
                     "select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)\n" +
                     "from long_sequence(1000);");
 
@@ -825,7 +825,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithInAndNotInAllBindVariables() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -849,7 +849,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithInAndNotInAllBindVariablesEmptyResultSet() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -871,7 +871,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithInAndNotInAllBindVariablesIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     "), index(s) timestamp(ts) partition by DAY");
 
@@ -895,7 +895,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithInAndNotInAllBindVariablesNonEmptyResultSet() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -918,7 +918,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithInAndNotInBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -941,7 +941,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithNotInAllBindVariablesMultipleValues() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -981,7 +981,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithNotInAllBindVariablesMultipleValuesFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -1007,7 +1007,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithNotInAllBindVariablesMultipleValuesIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     "), index(s) timestamp(ts) partition by DAY");
 
@@ -1047,7 +1047,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithNotInAllBindVariablesMultipleValuesIndexedFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, rnd_symbol('c', 'd') s2, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     "), index(s), index(s2) timestamp(ts) partition by DAY");
 
@@ -1073,7 +1073,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithNotInAllBindVariablesSingleValue() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     ") timestamp(ts) partition by DAY");
 
@@ -1096,7 +1096,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithNotInAllBindVariablesSingleValueIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L) ts from long_sequence(49)" +
                     "), index(s) timestamp(ts) partition by DAY");
 
@@ -1119,8 +1119,8 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithStaticNonExistingSymbolOnNonEmptyTableDoesNotThrowException() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
-            compile("insert into tab\n" +
+            ddl("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+            ddl("insert into tab\n" +
                     "select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)\n" +
                     "from long_sequence(1000);");
 
@@ -1137,7 +1137,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithSymbolOnEmptyTableDoesNotThrowException() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+            ddl("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
 
             assertQuery("id\tv\tr_1M\n",
                     "with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),\n" +
@@ -1216,7 +1216,7 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
 
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
@@ -1303,7 +1303,7 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
 
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
@@ -1338,7 +1338,7 @@ public class LatestByTest extends AbstractCairoTest {
                 }
             };
 
-            compile("create table t as (" +
+            ddl("create table t as (" +
                     "select " +
                     "x, " +
                     "rnd_symbol('a', 'b', null) s, " +
@@ -1393,7 +1393,7 @@ public class LatestByTest extends AbstractCairoTest {
 
     private void testLatestByPartitionBy(String partitionByType, String valueA, String valueB) throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table forecasts " +
+            ddl("create table forecasts " +
                     "( when " + partitionByType + ", " +
                     "version timestamp, " +
                     "temperature double) timestamp(version) partition by day");

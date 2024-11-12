@@ -48,12 +48,12 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testKeyedCountAllColumnTypesOnDataWithColTops() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour");
+            ddl("create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour");
             insert("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ");
-            compile("alter table x add column k int");
+            ddl("alter table x add column k int");
             insert("insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ");
 
-            compile("alter table x add column i int, " +
+            ddl("alter table x add column i int, " +
                     " l long, " +
                     " f float, " +
                     " d double, " +
@@ -503,11 +503,11 @@ public class CountColumnTest extends AbstractCairoTest {
     @Test
     public void testVectorizedKeyedCountWithColTops() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour");
+            ddl("create table x ( tstmp timestamp ) timestamp (tstmp) partition by hour");
             insert("insert into x values  (0::timestamp), (1::timestamp), (3600L*1000000::timestamp) ");
-            compile("alter table x add column k int");
+            ddl("alter table x add column k int");
             insert("insert into x values ((1+3600L*1000000)::timestamp, 3), (2*3600L*1000000::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), (3*3600L*1000000::timestamp, 0) ");
-            compile("alter table x add column i int, l long ");
+            ddl("alter table x add column i int, l long ");
             insert("insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null)");
             insert("insert into x values ((2+3*3600L*1000000)::timestamp,2, 8,8)");
             insert("insert into x values ((1+4*3600L*1000000)::timestamp,3, null,null)");

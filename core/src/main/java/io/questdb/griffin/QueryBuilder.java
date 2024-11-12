@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.StringSink;
 
@@ -63,7 +64,7 @@ public final class QueryBuilder implements Mutable {
 
     public TableToken createTable(SqlExecutionContext executionContext) throws SqlException {
         try (
-                CreateTableOperation op = compiler.compile(sink, executionContext).getCreateTableOperation();
+                Operation op = compiler.compile(sink, executionContext).getOperation();
                 CreateTableOperation.CreateTableOperationFuture fut = (CreateTableOperation.CreateTableOperationFuture) op.execute(executionContext, null)
         ) {
             fut.await();

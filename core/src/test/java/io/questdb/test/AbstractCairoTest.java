@@ -43,6 +43,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -69,6 +70,7 @@ import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -154,13 +156,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static FilesFacade ff;
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
-    protected static long spinLockTimeout = 50;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
     protected static MessageBus messageBus;
     protected static Metrics metrics;
     protected static QuestDBTestNode node1;
     protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static SecurityContext securityContext;
+    protected static long spinLockTimeout = 50;
     protected static SqlExecutionContext sqlExecutionContext;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     private static long memoryUsage = -1;
@@ -599,6 +601,13 @@ public abstract class AbstractCairoTest extends AbstractTest {
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)
                 ) {
                     cursor.hasNext();
+                }
+            } else if (cq.getOperation() != null) {
+                try (
+                        Operation op = cq.getOperation();
+                        OperationFuture fut = op.execute(sqlExecutionContext, null)
+                ) {
+                    fut.await();
                 }
             } else {
                 ddl(compiler, sql, sqlExecutionContext);
@@ -1109,7 +1118,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                compile(ddl);
+                ddl(ddl);
             }
 
             snapshotMemoryUsage();

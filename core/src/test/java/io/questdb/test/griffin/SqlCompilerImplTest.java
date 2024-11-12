@@ -45,11 +45,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.DropTableOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -70,6 +70,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -3937,8 +3938,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInnerJoinConditionPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
-            compile("insert into tab values (0, 0), (1, 1), (2,2)");
+            ddl("create table tab ( created timestamp, value long ) timestamp(created) ");
+            insert("insert into tab values (0, 0), (1, 1), (2,2)");
 
             for (String join : new String[]{"", "LEFT", "LT", "ASOF",}) {
                 assertSql(
@@ -5178,8 +5179,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinPostMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
-            compile("insert into tab values (0, 0), (1, 1)");
+            ddl("create table tab ( created timestamp, value long ) timestamp(created) ");
+            insert("insert into tab values (0, 0), (1, 1)");
 
             String query = "SELECT count(1) FROM " +
                     "( SELECT * " +
@@ -5429,8 +5430,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testNonEqualityJoinCondition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
-            compile("insert into tab values (0, 0), (1, 1)");
+            ddl("create table tab ( created timestamp, value long ) timestamp(created) ");
+            insert("insert into tab values (0, 0), (1, 1)");
 
             assertQueryNoLeakCheck(
                     "count\n" +
@@ -6414,14 +6415,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     ddl(compiler, "drop table ka boom zoom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(compiler.compileDropExtCalled);
+                    Assert.assertTrue(compiler.compileDropTableExtCalled);
+                    compiler.compileDropTableExtCalled = false;
+                }
+
+                try {
+                    ddl(compiler, "drop fridge blue toenail", sqlExecutionContext);
+                    Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertTrue(compiler.compileDropOtherCalled);
+                    compiler.compileDropOtherCalled = false;
                 }
 
                 try {
                     ddl(compiler, "drop something", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(compiler.compileDropExtCalled);
+                    Assert.assertTrue(compiler.compileDropOtherCalled);
+                    compiler.compileDropOtherCalled = false;
                 }
 
                 try {
@@ -6787,12 +6798,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     static class SqlCompilerWrapper extends SqlCompilerImpl {
         boolean addColumnSuffixCalled;
-        boolean compileDropExtCalled;
+        boolean compileDropTableExtCalled;
         boolean createTableSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
         boolean unknownDropColumnSuffixCalled;
+        boolean compileDropOtherCalled;
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
@@ -6805,14 +6817,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        public void dropTable(
-                SqlExecutionContext executionContext,
-                CharSequence tableName,
-                int tableNamePosition,
-                CharSequenceObjHashMap<CharSequence> flags
+        protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
+            compileDropOtherCalled = true;
+            super.compileDropOther(executionContext, tok, position);
+        }
+
+        @Override
+        protected void compileDropTableExt(
+                @NotNull SqlExecutionContext executionContext,
+                @NotNull DropTableOperationBuilder opBuilder,
+                @NotNull CharSequence tok,
+                int position
         ) throws SqlException {
-            dropTableCalled = true;
-            super.dropTable(executionContext, tableName, tableNamePosition, flags);
+            compileDropTableExtCalled = true;
+            super.compileDropTableExt(executionContext, opBuilder, tok, position);
         }
 
         @Override
@@ -6836,12 +6854,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
             unknownAlterStatementCalled = true;
             super.compileAlterExt(executionContext, tok);
-        }
-
-        @Override
-        protected void compileDropExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
-            compileDropExtCalled = true;
-            super.compileDropExt(executionContext, tok);
         }
 
         @Override

@@ -982,7 +982,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                     try {
                         switch (step) {
                             case FUZZ_CREATE:
-                                compile("create table " + tableName + "(a int, t timestamp) timestamp(t) partition by day wal");
+                                ddl("create table " + tableName + "(a int, t timestamp) timestamp(t) partition by day wal");
                                 break;
                             case FUZZ_RENAME:
                                 compile("rename table " + oldTableName + " to " + tableName);

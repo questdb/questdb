@@ -815,7 +815,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine, sqlExecutionContext) -> {
 
-                    engine.compile(
+                    engine.ddl(
                             "create table trips (" +
                                     "Col1 STRING," +
                                     "Pickup_DateTime TIMESTAMP," +

@@ -120,7 +120,7 @@ public class UnionStringyCastTest extends AbstractCairoTest {
     }
 
     private void testUnionStringyLeft0(String allOrEmpty) throws Exception {
-        compile(stringyTableDdl(stringyType));
+        ddl(stringyTableDdl(stringyType));
         engine.releaseAllWriters();
         String query = String.format("select a, typeOf(a) from (%s_table union%s %s)",
                 stringyType, allOrEmpty, selectFromCastTable);
@@ -141,7 +141,7 @@ public class UnionStringyCastTest extends AbstractCairoTest {
     }
 
     private void testUnionStringyRight0(String allOrEmpty) throws Exception {
-        compile(stringyTableDdl(stringyType));
+        ddl(stringyTableDdl(stringyType));
         engine.releaseAllWriters();
         String query = String.format("select a, typeOf(a) from (%s union%s %s_table)", selectFromCastTable, allOrEmpty, stringyType);
         String expected = "a\ttypeOf\n" +

@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
@@ -34,7 +33,7 @@ import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
-import io.questdb.griffin.engine.ops.DropOperation;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
@@ -49,15 +48,13 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     // number of rows either returned by SELECT operation or affected by UPDATE or INSERT
     private long affectedRowsCount;
     private AlterOperation alterOp;
-    private CreateTableOperation createTableOp;
-    private DropOperation dropOp;
+    private Operation operation;
     private InsertOperation insertOp;
     private RecordCursorFactory recordCursorFactory;
     private SqlExecutionContext sqlExecutionContext;
     private String sqlStatement;
     // prepared statement name for DEALLOCATE operation
     private CharSequence statementName;
-    private TableToken tableToken;
     private short type;
     private UpdateOperation updateOp;
 
@@ -86,13 +83,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     public void clear() {
         this.type = NONE;
         this.recordCursorFactory = null;
-        this.tableToken = null;
         this.affectedRowsCount = -1;
         this.insertOp = null;
         this.alterOp = null;
         this.updateOp = null;
         this.statementName = null;
-        this.dropOp = null;
+        this.operation = null;
     }
 
     @Override
@@ -107,7 +103,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
                 return insertOp.execute(sqlExecutionContext);
             case CREATE_TABLE:
             case CREATE_TABLE_AS_SELECT:
-                return createTableOp.execute(sqlExecutionContext, eventSubSeq);
+                assert false;
             case UPDATE:
                 updateOp.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);
@@ -115,7 +111,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
                 alterOp.withSqlStatement(sqlStatement);
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             case DROP:
-                dropOp.execute(sqlExecutionContext, eventSubSeq);
+                assert false;
                 // fall thru
             default:
                 return doneFuture.of(0);
@@ -133,8 +129,8 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
-    public CreateTableOperation getCreateTableOperation() {
-        return createTableOp;
+    public Operation getOperation() {
+        return operation;
     }
 
     @Override
@@ -210,7 +206,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofCreateTable(CreateTableOperation createTableOp) {
         of(createTableOp.getRecordCursorFactory() == null ? CREATE_TABLE : CREATE_TABLE_AS_SELECT);
-        this.createTableOp = createTableOp;
+        this.operation = createTableOp;
     }
 
     public void ofCreateUser() {
@@ -222,9 +218,9 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(DEALLOCATE);
     }
 
-    public void ofDrop(DropOperation dropOperation) {
+    public void ofDrop(Operation op) {
         of(DROP);
-        this.dropOp = dropOperation;
+        this.operation = op;
     }
 
     public void ofEmpty() {
@@ -315,7 +311,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private CompiledQuery of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
-        this.tableToken = null;
         this.affectedRowsCount = -1;
         return this;
     }

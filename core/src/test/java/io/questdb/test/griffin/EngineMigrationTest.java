@@ -146,8 +146,8 @@ public class EngineMigrationTest extends AbstractCairoTest {
     public void testMig702HandlesMissingTxn() throws SqlException {
         node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
-        compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
-        compile("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        ddl("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        ddl("create table def (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
         TableToken tokenAbc = engine.verifyTableName("abc");
         TableToken tokenDef = engine.verifyTableName("def");
 
@@ -183,7 +183,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
         // Run migration
         EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
 
-        compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        ddl("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
         TableToken token = engine.verifyTableName("abc");
         CairoConfiguration config = engine.getConfiguration();
 
@@ -214,7 +214,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
     public void testMig702Repeatable() throws SqlException, NumericException {
         node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
 
-        compile("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
+        ddl("create table abc (a int, ts timestamp) timestamp(ts) partition by DAY WAL");
         TableToken token = engine.verifyTableName("abc");
 
         CairoConfiguration config = engine.getConfiguration();
@@ -931,7 +931,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
     }
 
     private void assertMissingPartitions() throws SqlException {
-        compile("alter table t_col_top_день_missing_parts drop partition where ts < '1970-01-02'");
+        ddl("alter table t_col_top_день_missing_parts drop partition where ts < '1970-01-02'");
         assertSql(
                 "x\tm\tts\tдень\n" +
                         "6\tc\t1970-01-02T04:20:00.000000Z\tnull\n" +

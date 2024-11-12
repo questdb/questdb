@@ -215,7 +215,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void createTable(final String tableName, boolean isWal) throws SqlException {
-        compile("create table " + tableName + " (" +
+        ddl("create table " + tableName + " (" +
                 "x long," +
                 "sym symbol," +
                 "ts timestamp," +
@@ -224,7 +224,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void dropTable(final String tableName) throws SqlException {
-        compile("drop table " + tableName);
+        ddl("drop table " + tableName);
     }
 
     private void testWalTablesSuspendedWithError(String suspendSql, ErrorTag expectedErrorTag, String expectedErrorMessage) throws Exception {
@@ -234,7 +234,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             insert("insert into A values (1, 'A', '2022-12-05T01', 'A')");
             insert("insert into B values (2, 'A', '2022-12-05T01', 'B')");
-            compile(suspendSql);
+            ddl(suspendSql);
             insert("insert into B values (3, 'C', '2022-12-05T02', 'D')");
 
             drainWalQueue();
@@ -244,7 +244,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             assertSql("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                     "B\ttrue\t2\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n", "wal_tables()");
 
-            compile("alter table B resume wal");
+            ddl("alter table B resume wal");
 
             drainWalQueue();
 

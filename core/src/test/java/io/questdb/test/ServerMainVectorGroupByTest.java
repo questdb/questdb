@@ -44,6 +44,7 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 
+import static io.questdb.test.AbstractCairoTest.ddl;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static io.questdb.test.tools.TestUtils.insertFromSelectPopulateTableStmt;
 
@@ -153,9 +154,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         sink.put(" s SYMBOL,");
         sink.put(" ts TIMESTAMP");
         sink.put(") TIMESTAMP(ts) PARTITION BY DAY");
-        try (OperationFuture op = compiler.compile(sink.toString(), context).execute(null)) {
-            op.await();
-        }
+        engine.ddl(sink, context);
         TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
                 .col("l", ColumnType.LONG)
                 .col("s", ColumnType.SYMBOL)

@@ -2309,7 +2309,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 break;
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
                 try (
-                        Operation op = cq.getCreateTableOperation();
+                        Operation op = cq.getOperation();
                         OperationFuture fut = op.execute(sqlExecutionContext, tempSequence)
                 ) {
                     fut.await();
@@ -2389,8 +2389,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 queryContainsSecret = sqlExecutionContext.containsSecret();
                 break;
             case CompiledQuery.CREATE_TABLE:
+            case CompiledQuery.DROP:
                 try (
-                        Operation op = cq.getCreateTableOperation();
+                        Operation op = cq.getOperation();
                         OperationFuture fut = op.execute(sqlExecutionContext, tempSequence)
                 ) {
                     fut.await();
@@ -2398,7 +2399,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 queryTag = TAG_OK;
                 break;
             case CompiledQuery.ALTER:
-            case CompiledQuery.DROP:
                 // future-proofing ALTER execution
                 try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, true)) {
                     fut.await();

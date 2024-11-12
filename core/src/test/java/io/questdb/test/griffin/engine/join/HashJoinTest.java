@@ -121,8 +121,8 @@ public class HashJoinTest extends AbstractCairoTest {
     @Test
     public void testHashOuterLeftJoinWithFilter() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table taba (i long, locale_name symbol )");
-            compile("create table tabb (i long, state symbol, city symbol)");
+            ddl("create table taba (i long, locale_name symbol )");
+            ddl("create table tabb (i long, state symbol, city symbol)");
             insert("insert into taba values (1, 'pl')");
             insert("insert into tabb values (1, 'a', 'pl')");
             insert("insert into tabb values (1, 'b', 'b')");

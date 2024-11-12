@@ -145,7 +145,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testApproxPercentileAllNulls() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table test (x long)");
+            ddl("create table test (x long)");
             insert("insert into test values (null), (null), (null)");
             assertSql(
                     "approx_percentile\n" +
@@ -169,7 +169,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testApproxPercentileEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table test (x double)");
+            ddl("create table test (x double)");
             assertSql(
                     "approx_percentile\n" +
                             "null\n",
@@ -181,7 +181,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testApproxPercentilePackedAllNulls() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table test (x long)");
+            ddl("create table test (x long)");
             insert("insert into test values (null), (null), (null)");
             assertSql(
                     "approx_percentile\n" +
@@ -194,7 +194,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testApproxPercentilePackedEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table test (x double)");
+            ddl("create table test (x double)");
             assertSql(
                     "approx_percentile\n" +
                             "null\n",
@@ -218,7 +218,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testApproxPercentileSomeNulls() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table test (x double)");
+            ddl("create table test (x double)");
             insert("insert into test values (1.0), (null), (null), (null)");
             assertSql(
                     "approx_percentile\n" +
@@ -315,7 +315,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testThrowsOnNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table test (x double)");
+            ddl("create table test (x double)");
             insert("insert into test values (1.0), (-1.0)");
             try {
                 assertSql(
@@ -332,7 +332,7 @@ public class ApproxPercentileDoubleGroupByFunctionFactoryTest extends AbstractCa
     @Test
     public void testThrowsOnNegativeValuesPacked() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table test (x double)");
+            ddl("create table test (x double)");
             insert("insert into test values (1.0), (-1.0)");
             try {
                 assertSql(

@@ -3196,7 +3196,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByAllowsPredicatePushDownWhenTsIsNotIncludedInColumnList() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            ddl("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select * from (" +
                             "select ts2 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
@@ -3403,7 +3403,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByDoesntAllowNonTimestampPredicatePushdown() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab as (\n" +
+            ddl("create table tab as (\n" +
                     "select dateadd('m', 11*x::int, '2022-12-01T01:00:00.000000Z') ts, x v, rnd_str('A', 'B') s\n" +
                     "from long_sequence(6) ) timestamp(ts)");
 
@@ -3447,7 +3447,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByDoesntAllowTimestampPredicatePushdown() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab as (\n" +
+            ddl("create table tab as (\n" +
                     "select dateadd('m', 10*x::int, '2022-12-01T01:00:00.000000Z') ts, x v\n" +
                     "from long_sequence(6) ) timestamp(ts)");
 
@@ -3522,7 +3522,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFirstLastFactoryIsChosenIfNotKeyedByFilteredSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE pos (" +
+            ddl("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
                     "  ts TIMESTAMP," +
                     "  id SYMBOL INDEX," +
@@ -3551,7 +3551,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE pos (" +
+            ddl("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
                     "  ts TIMESTAMP," +
                     "  id SYMBOL INDEX," +
@@ -3580,7 +3580,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonFilteredSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE pos (" +
+            ddl("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
                     "  id SYMBOL INDEX," +
                     "  lat DOUBLE," +
@@ -3624,7 +3624,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByFirstLastFactoryIsNotChosenIfKeyedByNonSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE pos (" +
+            ddl("CREATE TABLE pos (" +
                     "  time TIMESTAMP," +
                     "  id SYMBOL INDEX," +
                     "  lat DOUBLE," +
@@ -4609,7 +4609,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteJoinNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            ddl("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select * from " +
                             "(select sym, first(val), avg(val), last(val), max(val) " +
@@ -4650,7 +4650,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteJoinTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            ddl("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select * from " +
                             "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
@@ -4725,7 +4725,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteMultipleTimestamps1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            ddl("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4747,7 +4747,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteMultipleTimestamps1NotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            ddl("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4769,7 +4769,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteMultipleTimestamps2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            ddl("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
@@ -4791,7 +4791,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteUTCOffset() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            ddl("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select ts1, sym, min(val), avg(val), max(val) " +
                             "from x " +
@@ -4812,7 +4812,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteUnionNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            ddl("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4849,7 +4849,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteUnionTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            ddl("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                             "from x " +
@@ -4882,7 +4882,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByRewriteWith() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            ddl("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
             assertPlanNoLeakCheck(
                     "with y as (select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
                             "from x " +
@@ -5205,7 +5205,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleByWithPredicate() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab as (\n" +
+            ddl("create table tab as (\n" +
                     "select dateadd('m', 11*x::int, '2022-12-01T01:00:00.000000Z') ts, x v, rnd_str('A', 'B') s\n" +
                     "from long_sequence(6) ) timestamp(ts)");
 
@@ -13135,7 +13135,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     private void testSampleByPushdownWithDesignatedTs(String fill, String alignTo, String plan) throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists x (  ts timestamp, sym symbol, val long ) timestamp(ts) partition by DAY");
+            ddl("create table if not exists x (  ts timestamp, sym symbol, val long ) timestamp(ts) partition by DAY");
             String fillOpt = fill.isEmpty() ? "" : "fill(" + fill + ")";
             String query = "select * from (" +
                     "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +
@@ -13149,7 +13149,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     private void testSampleByPushdownWithoutDesignatedTs(String fill, String alignTo, String plan) throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table if not exists y (  ts timestamp, sym symbol, val long ) ");
+            ddl("create table if not exists y (  ts timestamp, sym symbol, val long ) ");
             String fillOpt = fill.isEmpty() ? "" : "fill(" + fill + ")";
             String query = "select * from (" +
                     "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +

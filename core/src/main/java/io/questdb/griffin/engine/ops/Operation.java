@@ -32,5 +32,8 @@ import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
 public interface Operation extends QuietCloseable {
+
+    int getOperationCode();
+
     OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException;
 }

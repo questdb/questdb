@@ -446,10 +446,24 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testDropTableDeniedOnNoWriteAccess() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            engine.ddl("create table balances(cust_id int, ccy symbol, balance double)", sqlExecutionContext);
             memoryRestrictedEngine.reloadTableNames();
             try {
-                assertExceptionNoLeakCheck("drop table balances", readOnlyExecutionContext);
+                try (SqlCompiler compiler = memoryRestrictedEngine.getSqlCompiler()) {
+                    compiler.setFullFatJoins(false);
+                    CompiledQuery cq = compiler.compile("drop table balances", readOnlyExecutionContext);
+                    if (cq.getRecordCursorFactory() != null) {
+                        try (
+                                RecordCursorFactory factory = cq.getRecordCursorFactory();
+                                RecordCursor cursor = factory.getCursor(readOnlyExecutionContext)
+                        ) {
+                            cursor.hasNext();
+                        }
+                    } else {
+                        memoryRestrictedEngine.ddl("drop table balances", readOnlyExecutionContext);
+                    }
+                }
+                Assert.fail();
             } catch (Exception ex) {
                 TestUtils.assertContains(ex.getMessage(), "permission denied");
             }

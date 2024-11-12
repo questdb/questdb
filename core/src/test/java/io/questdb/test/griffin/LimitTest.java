@@ -437,12 +437,12 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testSelectLast10RecordsInReverseTsOrder() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE intervaltest (\n" +
+            ddl("CREATE TABLE intervaltest (\n" +
                     "  id long,\n" +
                     "  ts TIMESTAMP\n" +
                     ") timestamp (ts) PARTITION BY DAY");
 
-            compile("insert into intervaltest \n" +
+            ddl("insert into intervaltest \n" +
                     "select x, ('2023-04-06T00:00:00.000000Z'::timestamp::long + (x*1000))::timestamp\n" +
                     "from long_sequence(600000)");
 

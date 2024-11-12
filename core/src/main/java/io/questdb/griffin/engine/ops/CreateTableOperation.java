@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -322,6 +323,11 @@ public class CreateTableOperation implements TableStructure, Operation {
     @Override
     public long getO3MaxLag() {
         return o3MaxLag;
+    }
+
+    @Override
+    public int getOperationCode() {
+        return OperationCodes.CREATE_TABLE;
     }
 
     @Override

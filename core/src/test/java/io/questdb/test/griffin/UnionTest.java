@@ -1246,12 +1246,12 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testUnionSymbolAndString() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table table1 as \n" +
+            ddl("create table table1 as \n" +
                     "(\n" +
                     "  select cast(x as symbol) as sym1 \n" +
                     "  from long_sequence(3)\n" +
                     ")");
-            compile("create table table3 as \n" +
+            ddl("create table table3 as \n" +
                     "(\n" +
                     "  select cast(x+2 as string) as str3\n" +
                     "  from long_sequence(3)\n" +

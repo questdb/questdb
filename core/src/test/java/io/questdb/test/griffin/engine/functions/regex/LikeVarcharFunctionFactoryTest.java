@@ -256,8 +256,8 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLongPatternLike() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( s varchar )");
-            compile("insert into x values ( 'foobar' ), ( 'foobarbaz' ), ( 'foobarfoo' ), ( 'bazbarfoo foobarbaz' ), ( 'bazbarfoo foobarbaz bazbarfoo' ), ( null ) ");
+            ddl("create table x ( s varchar )");
+            insert("insert into x values ( 'foobar' ), ( 'foobarbaz' ), ( 'foobarfoo' ), ( 'bazbarfoo foobarbaz' ), ( 'bazbarfoo foobarbaz bazbarfoo' ), ( null ) ");
 
             assertLike("s\n", "select * from x where s like '%yyy%'", false);
             assertLike("s\nfoobar\nfoobarbaz\nfoobarfoo\n", "select * from x where s like 'foobar%'", false);
@@ -279,8 +279,8 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLongPatternLikeNonAscii() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( s varchar )");
-            compile("insert into x values ( 'фубар' ), ( 'фубарбаз' ), ( 'фубарфу' ), ( 'базбарфу фубарбаз' ), ( 'базбарфу фубарбаз базбарфу' ), ( null ) ");
+            ddl("create table x ( s varchar )");
+            insert("insert into x values ( 'фубар' ), ( 'фубарбаз' ), ( 'фубарфу' ), ( 'базбарфу фубарбаз' ), ( 'базбарфу фубарбаз базбарфу' ), ( null ) ");
 
             assertLike("s\nфубар\nфубарбаз\nфубарфу\n", "select * from x where s like 'фубар%'", false);
             assertLike("s\nфубарбаз\nбазбарфу фубарбаз\n", "select * from x where s like '%барбаз'", false);
@@ -368,8 +368,8 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimpleLikeNonAscii() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( s varchar ) ");
-            compile("insert into x values ( 'ф' ), ( 'фф' ), ( null ) ");
+            ddl("create table x ( s varchar ) ");
+            insert("insert into x values ( 'ф' ), ( 'фф' ), ( null ) ");
 
             assertLike("s\nф\n", "select * from x where s like 'ф'", false);
             assertLike("s\nф\n", "select * from x where s like '_'", false);
@@ -385,8 +385,8 @@ public class LikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimplePatternLike() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( s varchar ) ");
-            compile("insert into x values ( 'v' ), ( 'vv' ), ( null ) ");
+            ddl("create table x ( s varchar ) ");
+            insert("insert into x values ( 'v' ), ( 'vv' ), ( null ) ");
 
             assertLike("s\nv\n", "select * from x where s like 'v'", false);
             assertLike("s\nv\n", "select * from x where s like '_'", false);

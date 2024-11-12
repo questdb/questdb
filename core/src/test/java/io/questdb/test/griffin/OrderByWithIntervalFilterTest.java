@@ -33,11 +33,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByWithMaxTableTimestampBeyondLastInterval() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            ddl("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            insert("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
                     "from long_sequence(200)");
         });
@@ -92,11 +92,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByWithMaxTableTimestampMatchingFirstInterval() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            ddl("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            insert("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -116,11 +116,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByWithMaxTableTimestampMatchingIntermediateInterval() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            ddl("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            insert("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -175,11 +175,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
     @Test //end value of last interval
     public void testOrderByWithMaxTableTimestampMatchingLastInterval1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            ddl("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            insert("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -234,11 +234,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
     @Test //start value of last interval
     public void testOrderByWithMaxTableTimestampMatchingLastInterval2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            ddl("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            insert("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T00:00:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -293,11 +293,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByWithMinTableTimestampBeyondLastInterval() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            ddl("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            insert("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T01:30:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -313,11 +313,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByWithMinTableTimestampMatchingLastInterval1() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            ddl("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            insert("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T01:29:00.000000Z') " +
                     "from long_sequence(90)");
         });
@@ -338,11 +338,11 @@ public class OrderByWithIntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByWithMinTableTimestampMatchingLastInterval2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE itest ( " +
+            ddl("CREATE TABLE itest ( " +
                     "  id SYMBOL, " +
                     "  ts TIMESTAMP " +
                     ") timestamp (ts) PARTITION BY HOUR");
-            compile("insert into itest " +
+            insert("insert into itest " +
                     "select 'id-' || x, dateadd('m', x::int, '2023-04-06T01:28:00.000000Z') " +
                     "from long_sequence(90)");
         });

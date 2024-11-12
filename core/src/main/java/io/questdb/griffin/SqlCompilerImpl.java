@@ -42,6 +42,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MapWriter;
+import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
@@ -78,9 +79,11 @@ import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyFactory;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
-import io.questdb.griffin.engine.ops.DropOperation;
-import io.questdb.griffin.engine.ops.DropOperationBuilder;
+import io.questdb.griffin.engine.ops.DropAllTablesOperation;
+import io.questdb.griffin.engine.ops.DropTableOperation;
+import io.questdb.griffin.engine.ops.DropTableOperationBuilder;
 import io.questdb.griffin.engine.ops.InsertOperationImpl;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -146,7 +149,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     protected final SqlCodeGenerator codeGenerator;
     protected final CompiledQueryImpl compiledQuery;
     protected final CairoConfiguration configuration;
-    protected final DropOperationBuilder dropOperationBuilder;
     protected final CairoEngine engine;
     protected final LowerCaseAsciiCharSequenceObjHashMap<KeywordBasedExecutor> keywordBasedExecutors = new LowerCaseAsciiCharSequenceObjHashMap<>();
     protected final GenericLexer lexer;
@@ -158,6 +160,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final CharacterStore characterStore;
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final CharSequenceObjHashMap<String> dropAllTablesFailedTableNames = new CharSequenceObjHashMap<>();
+    private final DropTableOperationBuilder dropTableOperationBuilder;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final FilesFacade ff;
     private final FunctionParser functionParser;
@@ -243,7 +246,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             );
 
             alterOperationBuilder = new AlterOperationBuilder();
-            dropOperationBuilder = new DropOperationBuilder(engine);
+            dropTableOperationBuilder = new DropTableOperationBuilder();
             queryRegistry = engine.getQueryRegistry();
         } catch (Throwable th) {
             close();
@@ -376,203 +379,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    public void dropAllTables(SqlExecutionContext executionContext) {
-        // collect table names
-        dropAllTablesFailedTableNames.clear();
-        tableTokenBucket.clear();
-        engine.getTableTokens(tableTokenBucket, false);
-        SecurityContext securityContext = executionContext.getSecurityContext();
-        TableToken tableToken;
-        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-            tableToken = tableTokenBucket.get(i);
-            if (!tableToken.isSystem()) {
-                securityContext.authorizeTableDrop(tableToken);
-                try {
-                    engine.dropTable(path, tableToken);
-                } catch (CairoException report) {
-                    // it will fail when there are readers/writers and lock cannot be acquired
-                    dropAllTablesFailedTableNames.put(tableToken.getTableName(), report.getMessage());
-                }
-            }
-        }
-        if (dropAllTablesFailedTableNames.size() > 0) {
-            CairoException ex = CairoException.nonCritical().put("failed to drop tables [");
-            CharSequence tableName;
-            String reason;
-            ObjList<CharSequence> keys = dropAllTablesFailedTableNames.keys();
-            for (int i = 0, n = keys.size(); i < n; i++) {
-                tableName = keys.get(i);
-                reason = dropAllTablesFailedTableNames.get(tableName);
-                ex.put('\'').put(tableName).put("': ").put(reason);
-                if (i + 1 < n) {
-                    ex.put(", ");
-                }
-            }
-            throw ex.put(']');
-        }
-    }
-
     @Override
-    public void dropTable(
-            SqlExecutionContext sqlExecutionContext,
-            @Nullable CharSequence tableName,
-            int tableNamePosition,
-            CharSequenceObjHashMap<CharSequence> flags
-    ) throws SqlException {
-        final TableToken tableToken = tableName != null ? sqlExecutionContext.getTableTokenIfExists(tableName) : null;
-        if (tableToken == null) {
-            if (flags.contains(DropOperation.DROP_FLAG_IF_EXISTS)) {
-                return;
-            }
-            throw SqlException.tableDoesNotExist(tableNamePosition, tableName);
-        }
-        sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
-        engine.dropTable(path, tableToken);
-    }
-
-    @Override
-    public void execute(final CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException {
-        final long sqlId = queryRegistry.register(createTableOp.getSqlText(), executionContext);
-        long beginNanos = configuration.getMicrosecondClock().getTicks();
-        QueryProgress.logStart(sqlId, createTableOp.getSqlText(), executionContext, false);
-        try {
-
-            // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
-            final int status = executionContext.getTableStatus(path, createTableOp.getTableName());
-            if (createTableOp.ignoreIfExists() && status == TableUtils.TABLE_EXISTS) {
-                createTableOp.updateOperationFutureTableToken(executionContext.getTableTokenIfExists(createTableOp.getTableName()));
-            } else if (status == TableUtils.TABLE_EXISTS) {
-                throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
-            } else {
-                // create table (...) ... in volume volumeAlias;
-                CharSequence volumeAlias = createTableOp.getVolumeAlias();
-                if (volumeAlias != null) {
-                    CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
-                    if (volumePath != null) {
-                        if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
-                            throw CairoException.critical(0).put("not a valid path for volume [alias=")
-                                    .put(volumeAlias).put(", path=").put(path).put(']');
-                        }
-                    } else {
-                        throw SqlException.position(0).put("volume alias is not allowed [alias=")
-                                .put(volumeAlias).put(']');
-                    }
-                }
-
-                final TableToken tableToken;
-                if (createTableOp.getRecordCursorFactory() != null) {
-                    this.insertCount = -1;
-                    int position = createTableOp.getTableNamePosition();
-                    executionContext.setUseSimpleCircuitBreaker(true);
-                    final RecordCursorFactory factory = createTableOp.getRecordCursorFactory();
-                    try (final RecordCursor cursor = factory.getCursor(executionContext)) {
-                        typeCast.clear();
-                        final RecordMetadata metadata = factory.getMetadata();
-                        createTableOp.validateAndUpdateMetadataFromSelect(metadata);
-                        boolean keepLock = !createTableOp.isWalEnabled();
-
-                        // todo: test create table if exists with select
-                        tableToken = engine.createTable(
-                                executionContext.getSecurityContext(),
-                                mem,
-                                path,
-                                createTableOp.ignoreIfExists(),
-                                createTableOp,
-                                keepLock,
-                                volumeAlias != null
-                        );
-
-                        try {
-                            copyTableDataAndUnlock(
-                                    executionContext.getSecurityContext(),
-                                    tableToken,
-                                    createTableOp.isWalEnabled(),
-                                    cursor,
-                                    metadata,
-                                    createTableOp.getBatchSize(),
-                                    createTableOp.getBatchO3MaxLag(),
-                                    executionContext.getCircuitBreaker()
-                            );
-                        } catch (CairoException e) {
-                            e.position(position);
-                            LogRecord record = LOG.error()
-                                    .$("could not create table as select [message=").$(e.getFlyweightMessage());
-                            if (!e.isCancellation()) {
-                                record.$(", errno=").$(e.getErrno());
-                            }
-                            record.I$();
-                            engine.dropTable(path, tableToken);
-                            engine.unlockTableName(tableToken);
-                            throw e;
-                        } finally {
-                            queryRegistry.unregister(sqlId, executionContext);
-                        }
-                    } finally {
-                        executionContext.setUseSimpleCircuitBreaker(false);
-                    }
-                    createTableOp.updateOperationFutureTableToken(tableToken);
-                    createTableOp.updateOperationFutureAffectedRowsCount(insertCount);
-                } else {
-                    try {
-                        if (createTableOp.getLikeTableName() != null) {
-                            TableToken likeTableToken = executionContext.getTableTokenIfExists(createTableOp.getLikeTableName());
-                            if (likeTableToken == null) {
-                                throw SqlException
-                                        .$(createTableOp.getLikeTableNamePosition(), "table does not exist [table=")
-                                        .put(createTableOp.getLikeTableName()).put(']');
-                            }
-
-                            //
-                            try (TableMetadata likeTableMetadata = executionContext.getCairoEngine().getTableMetadata(likeTableToken)) {
-                                createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
-                                tableToken = engine.createTable(
-                                        executionContext.getSecurityContext(),
-                                        mem,
-                                        path,
-                                        createTableOp.ignoreIfExists(),
-                                        createTableOp,
-                                        false,
-                                        volumeAlias != null
-                                );
-                            }
-                        } else {
-                            tableToken = engine.createTable(
-                                    executionContext.getSecurityContext(),
-                                    mem,
-                                    path,
-                                    createTableOp.ignoreIfExists(),
-                                    createTableOp,
-                                    false,
-                                    volumeAlias != null
-                            );
-                        }
-                        createTableOp.updateOperationFutureTableToken(tableToken);
-                    } catch (EntryUnavailableException e) {
-                        throw SqlException.$(createTableOp.getTableNamePosition(), "table already exists");
-                    } catch (CairoException e) {
-                        if (e.isAuthorizationError() || e.isCancellation()) {
-                            // No point printing stack trace for authorization or cancellation errors
-                            LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
-                        } else {
-                            LOG.error().$("could not create table [error=").$((Throwable) e).I$();
-                        }
-                        if (e.isInterruption()) {
-                            throw e;
-                        }
-                        throw SqlException.$(createTableOp.getTableNamePosition(), "Could not create table, ")
-                                .put(e.getFlyweightMessage());
-                    }
-                }
-            }
-            // todo: jit is always false, why?
-            QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
-        } catch (Throwable e) {
-            if (e instanceof CairoException) {
-                ((CairoException) e).position(createTableOp.getTableNamePosition());
-            }
-            // todo: jit is always false, why?
-            QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
-            throw e;
+    public void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException {
+        switch (op.getOperationCode()) {
+            case OperationCodes.CREATE_TABLE:
+                executeCreateTable((CreateTableOperation) op, executionContext);
+                break;
+            case OperationCodes.DROP_TABLE:
+                executeDropTable((DropTableOperation) op, executionContext);
+                break;
+            case OperationCodes.DROP_ALL_TABLES:
+                executeDropAllTables(executionContext);
+                break;
+            default:
+                throw SqlException.position(0).put("Unsupported operation [code=").put(op.getOperationCode()).put(']');
         }
     }
 
@@ -1810,13 +1630,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // drop does not have passwords
         QueryProgress.logStart(-1, sqlText, executionContext, false);
         // the selected method depends on the second token, we have already seen DROP
-        dropOperationBuilder.clear();
-        dropOperationBuilder.setBeginNanos(configuration.getNanosecondClock().getTicks());
-
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null) {
             // DROP TABLE [ IF EXISTS ] name [;]
             if (SqlKeywords.isTableKeyword(tok)) {
+
+                dropTableOperationBuilder.clear();
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("IF EXISTS table-name");
@@ -1849,27 +1668,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     tableNameInterned = tableToken.getTableName();
                 }
-                dropOperationBuilder.ofDropTable(tableNameInterned, tableNamePosition, hasIfExists);
+                dropTableOperationBuilder.of(tableNameInterned, tableNamePosition, hasIfExists);
                 tok = SqlUtil.fetchNext(lexer);
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    compileDropTableExt(executionContext, dropTableOperationBuilder, tok, lexer.lastTokenPosition());
+                }
+                dropTableOperationBuilder.setSqlText(sqlText);
+                compiledQuery.ofDrop(dropTableOperationBuilder.build());
             } else if (SqlKeywords.isAllKeyword(tok)) {
                 // DROP ALL TABLES [;]
                 tok = SqlUtil.fetchNext(lexer);
                 if (tok != null && SqlKeywords.isTablesKeyword(tok)) {
                     tok = SqlUtil.fetchNext(lexer);
                     if (tok == null || Chars.equals(tok, ';')) {
-                        tok = null;
-                        dropOperationBuilder.ofDropAllTables();
+                        compiledQuery.ofDrop(DropAllTablesOperation.INSTANCE);
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "expected ").put("[;]");
                     }
                 } else {
                     throw SqlException.position(lexer.lastTokenPosition()).put("'tables' expected");
                 }
+            } else {
+                compileDropOther(executionContext, tok, lexer.lastTokenPosition());
             }
+        } else {
+            compileDropReportExpected(lexer.lastTokenPosition());
         }
-        compileDropExt(executionContext, tok);
-        dropOperationBuilder.setSqlText(sqlText);
-        compiledQuery.ofDrop(dropOperationBuilder.build());
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext) throws SqlException {
@@ -2560,6 +2384,202 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
+    private void executeCreateTable(CreateTableOperation op, SqlExecutionContext executionContext) throws SqlException {
+        final long sqlId = queryRegistry.register(op.getSqlText(), executionContext);
+        long beginNanos = configuration.getMicrosecondClock().getTicks();
+        QueryProgress.logStart(sqlId, op.getSqlText(), executionContext, false);
+        try {
+
+            // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
+            final int status = executionContext.getTableStatus(path, op.getTableName());
+            if (op.ignoreIfExists() && status == TableUtils.TABLE_EXISTS) {
+                op.updateOperationFutureTableToken(executionContext.getTableTokenIfExists(op.getTableName()));
+            } else if (status == TableUtils.TABLE_EXISTS) {
+                throw SqlException.$(op.getTableNamePosition(), "table already exists");
+            } else {
+                // create table (...) ... in volume volumeAlias;
+                CharSequence volumeAlias = op.getVolumeAlias();
+                if (volumeAlias != null) {
+                    CharSequence volumePath = configuration.getVolumeDefinitions().resolveAlias(volumeAlias);
+                    if (volumePath != null) {
+                        if (!ff.isDirOrSoftLinkDir(path.of(volumePath).$())) {
+                            throw CairoException.critical(0).put("not a valid path for volume [alias=")
+                                    .put(volumeAlias).put(", path=").put(path).put(']');
+                        }
+                    } else {
+                        throw SqlException.position(0).put("volume alias is not allowed [alias=")
+                                .put(volumeAlias).put(']');
+                    }
+                }
+
+                final TableToken tableToken;
+                if (op.getRecordCursorFactory() != null) {
+                    this.insertCount = -1;
+                    int position = op.getTableNamePosition();
+                    executionContext.setUseSimpleCircuitBreaker(true);
+                    final RecordCursorFactory factory = op.getRecordCursorFactory();
+                    try (final RecordCursor cursor = factory.getCursor(executionContext)) {
+                        typeCast.clear();
+                        final RecordMetadata metadata = factory.getMetadata();
+                        op.validateAndUpdateMetadataFromSelect(metadata);
+                        boolean keepLock = !op.isWalEnabled();
+
+                        // todo: test create table if exists with select
+                        tableToken = engine.createTable(
+                                executionContext.getSecurityContext(),
+                                mem,
+                                path,
+                                op.ignoreIfExists(),
+                                op,
+                                keepLock,
+                                volumeAlias != null
+                        );
+
+                        try {
+                            copyTableDataAndUnlock(
+                                    executionContext.getSecurityContext(),
+                                    tableToken,
+                                    op.isWalEnabled(),
+                                    cursor,
+                                    metadata,
+                                    op.getBatchSize(),
+                                    op.getBatchO3MaxLag(),
+                                    executionContext.getCircuitBreaker()
+                            );
+                        } catch (CairoException e) {
+                            e.position(position);
+                            LogRecord record = LOG.error()
+                                    .$("could not create table as select [message=").$(e.getFlyweightMessage());
+                            if (!e.isCancellation()) {
+                                record.$(", errno=").$(e.getErrno());
+                            }
+                            record.I$();
+                            engine.dropTable(path, tableToken);
+                            engine.unlockTableName(tableToken);
+                            throw e;
+                        } finally {
+                            queryRegistry.unregister(sqlId, executionContext);
+                        }
+                    } finally {
+                        executionContext.setUseSimpleCircuitBreaker(false);
+                    }
+                    op.updateOperationFutureTableToken(tableToken);
+                    op.updateOperationFutureAffectedRowsCount(insertCount);
+                } else {
+                    try {
+                        if (op.getLikeTableName() != null) {
+                            TableToken likeTableToken = executionContext.getTableTokenIfExists(op.getLikeTableName());
+                            if (likeTableToken == null) {
+                                throw SqlException
+                                        .$(op.getLikeTableNamePosition(), "table does not exist [table=")
+                                        .put(op.getLikeTableName()).put(']');
+                            }
+
+                            //
+                            try (TableMetadata likeTableMetadata = executionContext.getCairoEngine().getTableMetadata(likeTableToken)) {
+                                op.updateFromLikeTableMetadata(likeTableMetadata);
+                                tableToken = engine.createTable(
+                                        executionContext.getSecurityContext(),
+                                        mem,
+                                        path,
+                                        op.ignoreIfExists(),
+                                        op,
+                                        false,
+                                        volumeAlias != null
+                                );
+                            }
+                        } else {
+                            tableToken = engine.createTable(
+                                    executionContext.getSecurityContext(),
+                                    mem,
+                                    path,
+                                    op.ignoreIfExists(),
+                                    op,
+                                    false,
+                                    volumeAlias != null
+                            );
+                        }
+                        op.updateOperationFutureTableToken(tableToken);
+                    } catch (EntryUnavailableException e) {
+                        throw SqlException.$(op.getTableNamePosition(), "table already exists");
+                    } catch (CairoException e) {
+                        if (e.isAuthorizationError() || e.isCancellation()) {
+                            // No point printing stack trace for authorization or cancellation errors
+                            LOG.error().$("could not create table [error=").$(e.getFlyweightMessage()).I$();
+                        } else {
+                            LOG.error().$("could not create table [error=").$((Throwable) e).I$();
+                        }
+                        if (e.isInterruption()) {
+                            throw e;
+                        }
+                        throw SqlException.$(op.getTableNamePosition(), "Could not create table, ")
+                                .put(e.getFlyweightMessage());
+                    }
+                }
+            }
+            // todo: jit is always false, why?
+            QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos, false);
+        } catch (Throwable e) {
+            if (e instanceof CairoException) {
+                ((CairoException) e).position(op.getTableNamePosition());
+            }
+            // todo: jit is always false, why?
+            QueryProgress.logError(e, sqlId, op.getSqlText(), executionContext, beginNanos, false);
+            throw e;
+        }
+    }
+
+    private void executeDropAllTables(SqlExecutionContext executionContext) {
+        // collect table names
+        dropAllTablesFailedTableNames.clear();
+        tableTokenBucket.clear();
+        engine.getTableTokens(tableTokenBucket, false);
+        SecurityContext securityContext = executionContext.getSecurityContext();
+        TableToken tableToken;
+        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+            tableToken = tableTokenBucket.get(i);
+            if (!tableToken.isSystem()) {
+                securityContext.authorizeTableDrop(tableToken);
+                try {
+                    engine.dropTable(path, tableToken);
+                } catch (CairoException report) {
+                    // it will fail when there are readers/writers and lock cannot be acquired
+                    dropAllTablesFailedTableNames.put(tableToken.getTableName(), report.getMessage());
+                }
+            }
+        }
+        if (dropAllTablesFailedTableNames.size() > 0) {
+            CairoException ex = CairoException.nonCritical().put("failed to drop tables [");
+            CharSequence tableName;
+            String reason;
+            ObjList<CharSequence> keys = dropAllTablesFailedTableNames.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                tableName = keys.get(i);
+                reason = dropAllTablesFailedTableNames.get(tableName);
+                ex.put('\'').put(tableName).put("': ").put(reason);
+                if (i + 1 < n) {
+                    ex.put(", ");
+                }
+            }
+            throw ex.put(']');
+        }
+    }
+
+    private void executeDropTable(
+            DropTableOperation op,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final TableToken tableToken = op.getTableName() != null ? sqlExecutionContext.getTableTokenIfExists(op.getTableName()) : null;
+        if (tableToken == null) {
+            if (op.getFlags().contains(DropTableOperation.DROP_FLAG_IF_EXISTS)) {
+                return;
+            }
+            throw SqlException.tableDoesNotExist(op.getTableNamePosition(), op.getTableName());
+        }
+        sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
+        engine.dropTable(path, tableToken);
+    }
+
     private void executeWithRetries(
             ExecutableMethod method,
             ExecutionModel executionModel,
@@ -3152,15 +3172,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(lexer.lastTokenPosition()).put("'table' expected");
     }
 
-    protected void compileDropExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
-        if (dropOperationBuilder.getCmd() == DropOperation.DROP_ENTITY_UNDEFINED) {
-            if (tok == null) {
-                throw SqlException.position(lexer.getPosition()).put("'table' or 'all tables' expected");
-            }
-            throw SqlException.position(lexer.lastTokenPosition()).put("'table' or 'all tables' expected");
-        } else if (tok != null && !Chars.equals(tok, ';')) {
-            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
-        }
+    protected void compileDropOther(
+            @NotNull SqlExecutionContext executionContext,
+            @NotNull CharSequence tok,
+            int position
+    ) throws SqlException {
+        throw SqlException.position(position).put("'table' or 'all tables' expected");
+    }
+
+    protected void compileDropReportExpected(int position) throws SqlException {
+        throw SqlException.position(position).put("'table' or 'all tables' expected");
+    }
+
+    protected void compileDropTableExt(
+            @NotNull SqlExecutionContext executionContext,
+            @NotNull DropTableOperationBuilder opBuilder,
+            @NotNull CharSequence tok,
+            int position
+    ) throws SqlException {
+        throw SqlException.$(position, "unexpected token [").put(tok).put(']');
     }
 
     protected RecordCursorFactory generateSelectOneShot(

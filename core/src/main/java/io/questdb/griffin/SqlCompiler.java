@@ -26,7 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
@@ -42,17 +42,7 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
 
-    void dropAllTables(SqlExecutionContext sqlExecutionContext) throws SqlException;
-
-    // todo: dropTable should take Operation and context as the only arguments
-    void dropTable(
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence tableName,
-            int tableNamePosition,
-            CharSequenceObjHashMap<CharSequence> flags
-    ) throws SqlException;
-
-    void execute(final CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException;
+    void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException;
 
     QueryBuilder query();
 

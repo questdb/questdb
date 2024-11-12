@@ -211,8 +211,8 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimplePatternLike() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( s varchar ) ");
-            compile("insert into x values ( 'foo' ), ( 'foobar' ), ( null ) ");
+            ddl("create table x ( s varchar ) ");
+            insert("insert into x values ( 'foo' ), ( 'foobar' ), ( null ) ");
 
             assertLike("s\n", "select * from x where s ilike 'f'", false);
             assertLike("s\n", "select * from x where s ilike '_'", false);
@@ -230,8 +230,8 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimplePatternLikeNonAscii() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( s varchar ) ");
-            compile("insert into x values ( 'фу' ), ( 'фубар' ), ( null ) ");
+            ddl("create table x ( s varchar ) ");
+            insert("insert into x values ( 'фу' ), ( 'фубар' ), ( null ) ");
 
             assertLike("s\n", "select * from x where s ilike 'ф'", false);
             assertLike("s\n", "select * from x where s ilike '_'", false);

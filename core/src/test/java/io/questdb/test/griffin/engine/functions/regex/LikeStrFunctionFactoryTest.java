@@ -402,8 +402,8 @@ public class LikeStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimplePatternLike() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( s string ) ");
-            compile("insert into x values ( 'v' ), ( 'vv' ), ( null ) ");
+            ddl("create table x ( s string ) ");
+            insert("insert into x values ( 'v' ), ( 'vv' ), ( null ) ");
 
             assertLike("s\nv\n", "select * from x where s like 'v'", false);
             assertLike("s\nv\n", "select * from x where s like '_'", false);

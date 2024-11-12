@@ -655,7 +655,7 @@ public class TruncateTest extends AbstractCairoTest {
     public void testTruncateWithColumnTop() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    compile(
+                    ddl(
                             "create table testTruncateWithColumnTop as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -665,9 +665,9 @@ public class TruncateTest extends AbstractCairoTest {
                                     ") timestamp (k) partition by day"
                     );
 
-                    compile("alter table testTruncateWithColumnTop add column column_with_top int");
+                    ddl("alter table testTruncateWithColumnTop add column column_with_top int");
 
-                    compile(
+                    insert(
                             "insert into testTruncateWithColumnTop " +
                                     "select" +
                                     " cast(x as int) i," +

@@ -134,7 +134,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
             this.queryExecutors.extendAndSet(CompiledQuery.SET, sendConfirmation);
-            this.queryExecutors.extendAndSet(CompiledQuery.DROP, this::executeAlterTable);
+            this.queryExecutors.extendAndSet(CompiledQuery.DROP, this::executeDdl);
             this.queryExecutors.extendAndSet(CompiledQuery.PSEUDO_SELECT, this::executePseudoSelect);
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE, this::executeDdl);
             this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
@@ -585,7 +585,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CompiledQuery cq,
             CharSequence keepAliveHeader
     ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
-        Operation op = cq.getCreateTableOperation();
+        Operation op = cq.getOperation();
         try (OperationFuture fut = op.execute(sqlExecutionContext, state.getEventSubSequence())) {
             int waitResult = fut.await(getAsyncWriterStartTimeout(state));
             if (waitResult != OperationFuture.QUERY_COMPLETE) {

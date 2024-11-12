@@ -34,7 +34,7 @@ public class RenameTableTest extends AbstractCairoTest {
 
     @Test
     public void testApplyRename() throws SqlException {
-        compile(
+        ddl(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i, " +
@@ -73,7 +73,7 @@ public class RenameTableTest extends AbstractCairoTest {
         String newTableName = testName.getMethodName() + "_new";
 
         assertMemoryLeak(ff, () -> {
-            compile("create table " + tableName + " as (" +
+            ddl("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
                     " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
