@@ -28,7 +28,12 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
+import io.questdb.cutlass.pgwire.HexTestsCircuitBreakRegistry;
+import io.questdb.cutlass.pgwire.IPGWireServer;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
@@ -51,10 +56,18 @@ import io.questdb.test.tools.TestUtils;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assume;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.JDBCType;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Properties;
@@ -98,8 +111,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected int forceSendFragmentationChunkSize = 1024 * 1024;
     protected long maxQueryTime = Long.MAX_VALUE;
     protected int recvBufferSize = 1024 * 1024;
-    protected int sendBufferSize = 1024 * 1024;
     protected int selectCacheBlockCount = -1;
+    protected int sendBufferSize = 1024 * 1024;
 
     protected BasePGTest(@NonNull LegacyMode legacyMode) {
         this.legacyMode = legacyMode == LegacyMode.LEGACY;
@@ -282,6 +295,14 @@ public abstract class BasePGTest extends AbstractCairoTest {
             sink.put('\n');
         }
         return rows;
+    }
+
+    public void skipInLegacyMode() {
+        Assume.assumeFalse("Test does not support legacy mode", legacyMode);
+    }
+
+    public void skipInModernMode() {
+        Assume.assumeTrue("Test does not support modern mode", legacyMode);
     }
 
     private static void toSink(InputStream is, Utf16Sink sink) throws IOException {
@@ -499,11 +520,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
         final PGWireConfiguration conf = new Port0PGWireConfiguration(-1, legacyMode) {
 
             @Override
-            public int getSelectCacheBlockCount() {
-                return selectCacheBlockCount == -1 ? super.getSelectCacheBlockCount() : selectCacheBlockCount;
-            }
-
-            @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
             }
@@ -526,6 +542,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public int getRecvBufferSize() {
                 return recvBufferSize;
+            }
+
+            @Override
+            public int getSelectCacheBlockCount() {
+                return selectCacheBlockCount == -1 ? super.getSelectCacheBlockCount() : selectCacheBlockCount;
             }
 
             @Override

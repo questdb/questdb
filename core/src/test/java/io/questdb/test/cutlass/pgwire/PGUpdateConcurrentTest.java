@@ -34,13 +34,19 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Chars;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
@@ -85,55 +91,55 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
         // concurrent update breaks because we cache update statements and attempt to re-execute
         // operations. Update operation is non-reusable.
-        Assume.assumeTrue(legacyMode);
+        skipInModernMode();
         testConcurrency(4, 10, 8, PartitionMode.MULTIPLE);
     }
 
     @Test
     public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
-        Assume.assumeTrue(legacyMode);
+        skipInModernMode();
         testConcurrency(4, 10, 8, PartitionMode.NONE);
     }
 
     @Test
     public void testConcurrencyMultipleWriterMultipleReaderSinglePartitioned() throws Exception {
-        Assume.assumeTrue(legacyMode);
+        skipInModernMode();
         testConcurrency(4, 10, 8, PartitionMode.SINGLE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderMultiPartitioned() throws Exception {
-        Assume.assumeTrue(legacyMode);
+        skipInModernMode();
         testConcurrency(1, 10, 25, PartitionMode.MULTIPLE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderNonPartitioned() throws Exception {
-        Assume.assumeTrue(legacyMode);
+        skipInModernMode();
         testConcurrency(1, 10, 40, PartitionMode.NONE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
-        Assume.assumeTrue(legacyMode);
+        skipInModernMode();
         testConcurrency(1, 10, 40, PartitionMode.SINGLE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
-        Assume.assumeTrue(legacyMode);
+        skipInModernMode();
         testConcurrency(1, 1, 30, PartitionMode.MULTIPLE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
-        Assume.assumeTrue(legacyMode);
+        skipInModernMode();
         testConcurrency(1, 1, 50, PartitionMode.NONE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
-        Assume.assumeTrue(legacyMode);
+        skipInModernMode();
         testConcurrency(1, 1, 50, PartitionMode.SINGLE);
     }
 

@@ -29,7 +29,6 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -53,7 +52,7 @@ public class PGCommitFailureTest extends BasePGTest {
 
     @Test
     public void testExplicitCommitFailure() throws Exception {
-        Assume.assumeFalse(legacyMode);
+        skipInLegacyMode();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             ddl("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
