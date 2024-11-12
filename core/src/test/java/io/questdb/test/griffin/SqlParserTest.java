@@ -3424,7 +3424,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectWithCTE() throws Exception {
-        assertModel("select-choose column from (select-virtual [7 + 5 column] 7 + 5 column from (long_sequence(1)))",
+        assertModel("select-choose column from (select-virtual [2 + 5 column] 2 + 5 column from (long_sequence(1))) a",
                 "DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y) SELECT * FROM a", ExecutionModel.QUERY);
     }
 

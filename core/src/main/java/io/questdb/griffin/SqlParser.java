@@ -1165,13 +1165,13 @@ public class SqlParser {
             tok = tok(lexer, "'select', 'with', or table name expected");
         }
 
+        // [with]
         if (isWithKeyword(tok)) {
-            parseWithClauses(lexer, model.getWithClauses(), sqlParserCallback);
+            parseWithClauses(lexer, model.getWithClauses(), sqlParserCallback, model.getDecls());
             tok = tok(lexer, "'select' or table name expected");
         } else if (topWithClauses != null) {
             model.getWithClauses().putAll(topWithClauses);
         }
-
 
         // [select]
         if (isSelectKeyword(tok)) {
@@ -2566,7 +2566,7 @@ public class SqlParser {
 
     @NotNull
     private ExecutionModel parseWith(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
-        parseWithClauses(lexer, topLevelWithModel, sqlParserCallback);
+        parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null); // todo: review passing non-null here
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
             return parseSelect(lexer, sqlParserCallback);
@@ -2598,7 +2598,7 @@ public class SqlParser {
         return m;
     }
 
-    private void parseWithClauses(GenericLexer lexer, LowerCaseCharSequenceObjHashMap<WithClauseModel> model, SqlParserCallback sqlParserCallback) throws SqlException {
+    private void parseWithClauses(GenericLexer lexer, LowerCaseCharSequenceObjHashMap<WithClauseModel> model, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         do {
             ExpressionNode name = expectLiteral(lexer);
             if (name.token.length() == 0) {
@@ -2613,7 +2613,7 @@ public class SqlParser {
             expectTok(lexer, '(');
             int lo = lexer.lastTokenPosition();
             WithClauseModel wcm = withClauseModelPool.next();
-            wcm.of(lo + 1, model, parseAsSubQueryAndExpectClosingBrace(lexer, model, true, sqlParserCallback, null)); // todo: review passing non-null here
+            wcm.of(lo + 1, model, parseAsSubQueryAndExpectClosingBrace(lexer, model, true, sqlParserCallback, decls)); // todo: review passing non-null here
             model.put(name.token, wcm);
 
             CharSequence tok = optTok(lexer);
