@@ -46,6 +46,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
@@ -57,9 +58,11 @@ import org.checkerframework.checker.nullness.qual.NonNull;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assume;
+import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.BindException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.JDBCType;
@@ -374,7 +377,33 @@ public abstract class BasePGTest extends AbstractCairoTest {
         // use this line to switch to local postgres
         // return DriverManager.getConnection("jdbc:postgresql://127.0.0.1:5432/qdb", properties);
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
-        return DriverManager.getConnection(url, properties);
+
+        // a hack to deal with "Address already in use" error:
+        // Some tests open and close connections in a quick succession.
+        // This can lead to the above error since it might exhaust available ephemeral ports on the host machine
+        int maxAttempts = 100;
+        for (int attempt = 1; ; attempt++) {
+            try {
+                return DriverManager.getConnection(url, properties);
+            } catch (PSQLException ex) {
+                Throwable cause = ex.getCause();
+                if (!(cause instanceof BindException)) {
+                    // not a "Address already in use" error
+                    throw ex;
+                }
+                String causeMessage = cause.getMessage();
+                if (causeMessage == null || !causeMessage.contains("Address already in use")) {
+                    // not a "Address already in use" error
+                    throw ex;
+                }
+                if (attempt >= maxAttempts) {
+                    // too many attempts
+                    throw ex;
+                }
+                LOG.info().$("Failed to open a connection due to 'Address already in use'. Retrying... [attempt=").$(attempt).I$();
+                Os.sleep(100);
+            }
+        }
     }
 
     static Collection<Object[]> legacyModeParams() {
