@@ -673,7 +673,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     }
 
     private void msgBind(long lo, long msgLimit) throws BadProtocolException {
-
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;
         }
@@ -916,7 +915,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     }
 
     private void msgParse(long address, long lo, long msgLimit) throws BadProtocolException {
-
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;
         }

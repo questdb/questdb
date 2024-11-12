@@ -2271,6 +2271,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     void clearForPooling() {
         clearState();
         stateParseExecuted = false;
+        outResendCursorRecord = false;
         sqlReturnRowCountLimit = 0;
         sqlReturnRowCountToBeSent = 0;
         parameterValueArenaHi = parameterValueArenaPtr;
