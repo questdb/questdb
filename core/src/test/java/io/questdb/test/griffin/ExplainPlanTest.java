@@ -5806,11 +5806,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab (i int, ts timestamp) timestamp(ts)",
                 "select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc",
-                "Sort light lo: 10\n" +
+                "Sort light lo: 10 partiallySorted: true\n" +
                         "  keys: [ts desc, i]\n" +
                         "    PageFrame\n" +
-                        "        Row forward scan\n" +
-                        "        Frame forward scan on: tab\n"
+                        "        Row backward scan\n" +
+                        "        Frame backward scan on: tab\n"
         );
     }
 
@@ -9718,11 +9718,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc, l desc limit 10) order by ts desc",
-                    "Sort light lo: 10\n" +
+                    "Sort light lo: 10 partiallySorted: true\n" +
                             "  keys: [ts desc, l desc]\n" +
                             "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: a\n"
+                            "        Row backward scan\n" +
+                            "        Frame backward scan on: a\n"
             );
         });
     }
