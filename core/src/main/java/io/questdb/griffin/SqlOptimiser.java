@@ -3612,6 +3612,7 @@ public class SqlOptimiser implements Mutable {
                         && !model.isDistinct()
                         && nested.getTimestamp() != null
                         && Chars.equalsIgnoreCase(nested.getTimestamp().token, nested.getOrderBy().get(0).token)
+                        && nested.getOrderByDirection().get(0) == ORDER_DIRECTION_DESCENDING
                         && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
                         && loFunction.isConstant()
                         && (limitValue = loFunction.getLong(null)) > 0
