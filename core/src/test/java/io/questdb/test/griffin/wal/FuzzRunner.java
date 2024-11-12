@@ -89,6 +89,7 @@ public class FuzzRunner {
     private double dataAddProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
+    private FailureFileFacade ff;
     private int fuzzRowCount;
     private int ioAllocationFailureCount;
     private boolean isO3;
@@ -221,6 +222,11 @@ public class FuzzRunner {
         TableWriter writer = TestUtils.getWriter(engine, tableName);
         TableReader rdr1 = getReader(tableName);
         TableReader rdr2 = getReader(tableName);
+
+        int osCallsStart = ff.osCallsCount.get();
+        int columns = 1;
+        int partitions = 1;
+        int operations = 1;
         try (
                 O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)
         ) {
@@ -238,6 +244,7 @@ public class FuzzRunner {
                 int size = transaction.operationList.size();
                 for (int operationIndex = 0; operationIndex < size; operationIndex++) {
                     FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                    operations++;
                     operation.apply(rnd, engine, writerCopy, -1);
                 }
 
@@ -257,8 +264,14 @@ public class FuzzRunner {
         } finally {
             Misc.free(rdr1);
             Misc.free(rdr2);
+            if (writer != null) {
+                columns = writer.getMetadata().getColumnCount();
+                partitions = writer.getPartitionCount();
+            }
             Misc.free(writer);
         }
+        int osCallsEnd = ff.osCallsCount.get();
+        LOG.info().$("========= OS calls per columns in partition: ").$((osCallsEnd - osCallsStart) / (columns * partitions * 1.0)).I$();
     }
 
     public void applyToWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
@@ -427,7 +440,11 @@ public class FuzzRunner {
     }
 
     public FilesFacade getFileFacade() {
-        return new FailureFileFacade(engine.getConfiguration().getFilesFacade());
+        if (ff == null) {
+            this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
+        }
+//        return engine.getConfiguration().getFilesFacade();
+        return ff;
     }
 
     public int getTransactionCount() {
