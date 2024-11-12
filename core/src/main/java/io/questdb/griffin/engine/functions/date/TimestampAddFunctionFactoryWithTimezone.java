@@ -69,12 +69,10 @@ public class TimestampAddFunctionFactoryWithTimezone implements FunctionFactory 
                                 return new AddLongIntVarConstFunction(args.getQuick(2), interval.getInt(null), func, periodValue, timeZone.getStrA(null));
                             }
                             return TimestampConstant.NULL;
-                        }
-                        else {
+                        } else {
                             return new AddLongIntVarVarConstFunction(args.getQuick(2), args.getQuick(3), interval.getInt(null), func, periodValue);
                         }
-                    }
-                    else {
+                    } else {
                         return new AddLongIntVarVarVarFunction(args.getQuick(2), args.getQuick(3), args.getQuick(1), func, periodValue);
                     }
                 }

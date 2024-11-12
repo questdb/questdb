@@ -21,7 +21,8 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-package io.questdb.test.griffin.engine.functions.date;
+
+ package io.questdb.test.griffin.engine.functions.date;
 
 import org.junit.Test;
 
@@ -32,45 +33,30 @@ import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 
 public class TimestampAddFunctionFactoryWithTimezoneTest extends AbstractFunctionFactoryTest {
     
+
     @Test
     public void testDayAdditionWithTimezone() throws Exception {
-        assertMemoryLeak(() -> 
-            call('d', 5, 1587275359886758L, "Europe/Bratislava")
-            .andAssert(1587707359886758L, 0.0001)
-        );
+        assertMemoryLeak(() -> call('d', 5, 1587275359886758L, "Europe/Bratislava").andAssert(1587707359886758L, 0.0001));
     }
 
     @Test
     public void testDayAdditionWithDifferentTimezone() throws Exception {
-        assertMemoryLeak(() -> 
-            call('d', 5, 1587275359886758L, "America/New_York")
-            .andAssert(1587707359886758L, 0.0001)
-        );
+        assertMemoryLeak(() -> call('d', 5, 1587275359886758L, "America/New_York").andAssert(1587707359886758L, 0.0001));
     }
 
     @Test
     public void testDaySubtractionWithTimezone() throws Exception {
-        assertMemoryLeak(() -> 
-            call('d', -5, 1587275359886758L, "Europe/London")
-            .andAssert(1586843359886758L, 0.0001)
-        );
+        assertMemoryLeak(() -> call('d', -5, 1587275359886758L, "Europe/London").andAssert(1586843359886758L, 0.0001));
     }
 
     @Test
     public void testDayAdditionDuringDSTChange() throws Exception {
-        // Test adding days across DST boundary (e.g., in New York)
-        assertMemoryLeak(() -> 
-            call('d', 2, 1603580400000000L, "America/New_York") // Oct 24, 2020, just before DST end
-            .andAssert(1603753200000000L, 0.0001) // Expected to handle the DST change correctly
-        );
+        assertMemoryLeak(() -> call('d', 2, 1603580400000000L, "America/New_York").andAssert(1603753200000000L, 0.0001));
     }
 
     @Test
     public void testInvalidTimezone() throws Exception {
-        assertMemoryLeak(() -> 
-            call('d', 5, 1587275359886758L, "Invalid/Timezone")
-            .andAssert(1587707359886758L, 0.0001)
-        );
+        assertMemoryLeak(() -> call('d', 5, 1587275359886758L, "Invalid/Timezone").andAssert(1587707359886758L, 0.0001));
     }
 
     @Test
@@ -415,7 +401,6 @@ public class TimestampAddFunctionFactoryWithTimezoneTest extends AbstractFunctio
         );
     }
 
-    
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new TimestampAddFunctionFactoryWithTimezone();
