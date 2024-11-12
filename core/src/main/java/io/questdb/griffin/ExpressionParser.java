@@ -258,19 +258,6 @@ public class ExpressionParser {
                 boolean processDefaultBranch = false;
                 final int lastPos = lexer.lastTokenPosition();
                 switch (thisChar) {
-//                    case '@':
-//                        parsedDeclaration = true;
-                    // declaration
-//                        opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, GenericLexer.immutableOf(tok), Integer.MIN_VALUE, lexer.lastTokenPosition()));
-//                        thisBranch = BRANCH_DECLARATION;
-//                        break;
-//                    case ':':
-//                        if (prevBranch == BRANCH_DECLARATION) {
-//                            processDefaultBranch = true;
-//                            break;
-//                        } else {
-//                            throw SqlException.$(lexer.lastTokenPosition(), "expected variable bind `:=`");
-//                        }
                     case '-':
                     case '+':
                         // floating-point literals in scientific notation (e.g. 1e-10, 1e+10) separated in several tokens by lexer ('1e', '-', '10') - so we need to glue them together
@@ -818,6 +805,11 @@ public class ExpressionParser {
                         break;
                     case 's':
                     case 'S':
+                        if (parsedDeclaration) {
+                            lexer.unparseLast();
+                            break OUT;
+                        }
+
                         if (prevBranch != BRANCH_LITERAL && SqlKeywords.isSelectKeyword(tok)) {
                             thisBranch = BRANCH_LAMBDA;
                             if (betweenCount > 0) {
@@ -1075,7 +1067,7 @@ public class ExpressionParser {
 
                         thisBranch = BRANCH_OPERATOR;
 
-                        if (thisChar == '@') {
+                        if (thisChar == ':' && tok.length() == 2 && tok.charAt(1) == '=') {
                             parsedDeclaration = true;
                         }
 

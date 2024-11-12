@@ -3389,13 +3389,37 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareWithBasicSelectWithDouble() throws Exception {
-        assertModel("select-virtual 5 5 from (long_sequence(1))", "DECLARE @x := 123.456 SELECT @x", ExecutionModel.QUERY);
+    public void testDeclareOptionalComma() throws Exception {
+        assertModel("select-virtual 5 + 2 column from (long_sequence(1))", "DECLARE \n" +
+                "  @x := 5\n" +
+                "  @y := 2\n" +
+                "SELECT\n" +
+                "  @x + @y", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareWithBasicSelectWithInt() throws Exception {
+    public void testDeclareSelectDouble() throws Exception {
+        assertModel("select-virtual 123.456 column1 from (long_sequence(1))", "DECLARE @x := 123.456 SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectInt() throws Exception {
         assertModel("select-virtual 5 5 from (long_sequence(1))", "DECLARE @x := 5 SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectMultipleColumns() throws Exception {
+        assertModel("select-virtual 1 1, 2 2 from (long_sequence(1))", "DECLARE @x := 1, @y := 2 SELECT @x, @y", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectMultipleColumnsBinaryExpr() throws Exception {
+        assertModel("select-virtual 1 + 2 column from (long_sequence(1))", "DECLARE @x := 1, @y := 2 SELECT @x + @y", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectMultipleColumnsComplexNesting() throws Exception {
+        assertModel("select-virtual 1 * 2 + 1 / 2 column from (long_sequence(1))", "DECLARE @x := 1, @y := 2 SELECT @x * @y + @x / @y", ExecutionModel.QUERY);
     }
 
     @Test

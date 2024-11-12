@@ -60,6 +60,7 @@ import org.jetbrains.annotations.TestOnly;
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.CONSTANT;
+import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
@@ -68,8 +69,10 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet columnAliasStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
+    private static final RecursiveReplacingTreeTraversalAlgo recursiveReplacingTreeTraversalAlgo = new RecursiveReplacingTreeTraversalAlgo();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
+    private static RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -1020,10 +1023,10 @@ public class SqlParser {
     }
 
     private void parseDeclare(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        while (true) {
+        while (true) { // todo: make this a safer condition
             CharSequence tok = optTok(lexer);
 
-            if (tok == null || isSelectKeyword(tok) || !(tok.charAt(0) == '@')) {
+            if (tok == null) {
                 break;
             }
 
@@ -1033,19 +1036,17 @@ public class SqlParser {
 
             lexer.unparseLast();
 
+            if (isSelectKeyword(tok) || !(tok.charAt(0) == '@')) {
+                break;
+            }
 
             ExpressionNode expr = expr(lexer, model, sqlParserCallback);
-
-            lexer.restart();
-            while (lexer.getPosition() <= expr.position) {
-                lexer.next();
-            }
 
             if (expr == null) {
                 throw SqlException.$((lexer.lastTokenPosition()), "empty declaration");
             }
 
-//            model.getDecls().put(immutableTok, expr);
+            model.getDecls().put(expr.lhs.token, expr);
 
         }
     }
@@ -2036,11 +2037,10 @@ public class SqlParser {
                         throw SqlException.$(expr.position + expr.token.length(), "'*' or column name expected");
                     }
 
-                    if (model.getDecls().contains(expr.token)) {
-                        // swap "@var" out
-                        expr = model.getDecls().get(expr.token);
-                    }
+                    // crawl for decls
+                    expr = recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(model.getDecls()));
                 }
+
 
                 final CharSequence alias;
 
@@ -3061,6 +3061,26 @@ public class SqlParser {
         return model;
     }
 
+    private static class RewriteDeclaredVariablesInExpressionVisitor implements RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor {
+        public LowerCaseCharSequenceObjHashMap<ExpressionNode> decls;
+        public boolean hasAtChar;
+
+        @Override
+        public ExpressionNode visit(ExpressionNode node) throws SqlException {
+            if (node.token != null && (hasAtChar = node.token.charAt(0) == '@') && node.type == LITERAL && decls.contains(node.token)) {
+                return decls.get(node.token).rhs;
+            } else if (hasAtChar) {
+                throw SqlException.$(node.position, "tried to use undeclared variable `" + node.token + '`');
+            }
+            return node;
+        }
+
+        RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor of(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) {
+            this.decls = decls;
+            return this;
+        }
+    }
+
     static {
         tableAliasStop.add("where");
         tableAliasStop.add("latest");
@@ -3101,7 +3121,7 @@ public class SqlParser {
         joinStartSet.put("left", QueryModel.JOIN_INNER);
         joinStartSet.put("join", QueryModel.JOIN_INNER);
         joinStartSet.put("inner", QueryModel.JOIN_INNER);
-        joinStartSet.put("left", QueryModel.JOIN_OUTER);//only left join is supported currently 
+        joinStartSet.put("left", QueryModel.JOIN_OUTER);//only left join is supported currently
         joinStartSet.put("cross", QueryModel.JOIN_CROSS);
         joinStartSet.put("asof", QueryModel.JOIN_ASOF);
         joinStartSet.put("splice", QueryModel.JOIN_SPLICE);
