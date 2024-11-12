@@ -3441,7 +3441,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareSelectWithSubQueryAndShadowedVariable() throws Exception {
         assertModel("select-choose column from (select-virtual [7 + 5 column] 7 + 5 column from (long_sequence(1)))",
-                "DECLARE @x := , @y := 5 SELECT * FROM (DECLARE @x:= 7 SELECT @x + @y)", ExecutionModel.QUERY);
+                "DECLARE @x := 2, @y := 5 SELECT * FROM (DECLARE @x:= 7 SELECT @x + @y)", ExecutionModel.QUERY);
     }
 
     @Test
