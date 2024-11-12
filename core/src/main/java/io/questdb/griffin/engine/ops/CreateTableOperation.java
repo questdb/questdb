@@ -137,8 +137,14 @@ public class CreateTableOperation implements TableStructure, Operation {
             CharSequence colName = columnNames.get(i);
             this.columnNames.add(Chars.toString(colName));
             CreateTableColumnModel model = createColumnModelMap.get(colName);
-            addColumnBits(model.getColumnType(), model.getSymbolCacheFlag(), model.getSymbolCapacity(),
-                    model.isIndexed(), model.getIndexValueBlockSize(), model.isDedupKey());
+            addColumnBits(
+                    model.getColumnType(),
+                    model.getSymbolCacheFlag(),
+                    model.getSymbolCapacity(),
+                    model.isIndexed(),
+                    model.getIndexValueBlockSize(),
+                    model.isDedupKey()
+            );
         }
         // this is a vanilla "create table" with fixed columns and fixed timestamp index
         this.timestampColumnName = null;
@@ -399,8 +405,14 @@ public class CreateTableOperation implements TableStructure, Operation {
         columnBits.clear();
         for (int i = 0; i < likeTableMetadata.getColumnCount(); i++) {
             TableColumnMetadata colMeta = likeTableMetadata.getColumnMetadata(i);
-            addColumnBits(colMeta.getColumnType(), colMeta.isSymbolCacheFlag(), colMeta.getSymbolCapacity(),
-                    colMeta.isSymbolIndexFlag(), colMeta.getIndexValueBlockCapacity(), colMeta.isDedupKeyFlag());
+            addColumnBits(
+                    colMeta.getColumnType(),
+                    colMeta.isSymbolCacheFlag(),
+                    colMeta.getSymbolCapacity(),
+                    colMeta.isSymbolIndexFlag(),
+                    colMeta.getIndexValueBlockCapacity(),
+                    colMeta.isDedupKeyFlag()
+            );
             columnNames.add(colMeta.getColumnName());
         }
     }
@@ -504,7 +516,14 @@ public class CreateTableOperation implements TableStructure, Operation {
                 }
             }
             columnNames.add(columnName);
-            addColumnBits(columnType, symbolCacheFlag, symbolCapacity, symbolIndexed, indexBlockCapacity, isDedupKey);
+            addColumnBits(
+                    columnType,
+                    symbolCacheFlag,
+                    symbolCapacity,
+                    symbolIndexed,
+                    indexBlockCapacity,
+                    isDedupKey
+            );
         }
         if (hasDedup && !isTimestampDeduped) {
             // Report the error's position in SQL as the position of the first column in the DEDUP list
@@ -521,11 +540,16 @@ public class CreateTableOperation implements TableStructure, Operation {
     }
 
     private void addColumnBits(
-            int columnType, boolean symbolCacheFlag, int symbolCapacity,
-            boolean indexFlag, int indexBlockCapacity, boolean dedupFlag
+            int columnType,
+            boolean symbolCacheFlag,
+            int symbolCapacity,
+            boolean indexFlag,
+            int indexBlockCapacity,
+            boolean dedupFlag
     ) {
-        int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0) | (indexFlag ? COLUMN_FLAG_INDEXED : 0) |
-                (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0);
+        int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0)
+                | (indexFlag ? COLUMN_FLAG_INDEXED : 0)
+                | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0);
         columnBits.add(
                 Numbers.encodeLowHighInts(columnType, symbolCapacity),
                 Numbers.encodeLowHighInts(flags, indexBlockCapacity)

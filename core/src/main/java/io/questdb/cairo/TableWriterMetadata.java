@@ -149,7 +149,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                             type,
                             TableUtils.isColumnIndexed(metaMem, i),
                             TableUtils.getIndexBlockCapacity(metaMem, i),
-                            TableUtils.isSymbolCached(metaMem, i),
+                            true,
                             null,
                             i,
                             TableUtils.getSymbolCapacity(metaMem, i),
@@ -289,7 +289,19 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                 int replacingIndex,
                 boolean symbolCached
         ) {
-            super(nameStr, type, columnIndexed, indexBlockCapacity, symbolTableStatic, parent, i, isDedupKey, replacingIndex, symbolCached, symbolCapacity);
+            super(
+                    nameStr,
+                    type,
+                    columnIndexed,
+                    indexBlockCapacity,
+                    symbolTableStatic,
+                    parent,
+                    i,
+                    isDedupKey,
+                    replacingIndex,
+                    symbolCached,
+                    symbolCapacity
+            );
         }
     }
 }

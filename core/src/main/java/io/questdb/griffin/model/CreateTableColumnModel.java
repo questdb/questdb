@@ -53,7 +53,7 @@ public class CreateTableColumnModel implements Mutable {
         dedupKeyFlag = false;
         dedupColumnPos = -1;
         indexColumnPos = -1;
-        indexValueBlockSize = -1;
+        indexValueBlockSize = 0;
         indexedFlag = false;
         symbolCacheFlag = false;
         symbolCapacity = -1;
