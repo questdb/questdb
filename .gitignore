@@ -34,3 +34,4 @@ core/CMakeCache.txt
 core/rust/qdbr/target
 compat/src/test/rust/scenarios/target/
 compat/src/test/rust/scenarios/Cargo.lock
+database/
