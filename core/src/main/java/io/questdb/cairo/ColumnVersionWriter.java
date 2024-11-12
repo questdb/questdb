@@ -149,7 +149,12 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                     cachedColumnVersionList.set(i + TIMESTAMP_ADDED_PARTITION_OFFSET, lastPartitionTimestamp);
                     // Because column we not really added there, put the column top to the value
                     // of the last partition row count (e.g. transientRowCount)
-                    upsert(lastPartitionTimestamp, columnIndex, columnNameTxn, transientRowCount);
+                    // Add the column top if there is no explicit record for this column, if there is one
+                    // keep the existing value.
+                    int recordIndex = getRecordIndex(lastPartitionTimestamp, columnIndex);
+                    if (recordIndex < 0) {
+                        upsert(lastPartitionTimestamp, columnIndex, columnNameTxn, transientRowCount);
+                    }
                 }
             } else {
                 break;
