@@ -3434,6 +3434,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectWithMultipleCTEs() throws Exception {
+        String query = "DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y as col1), b AS (SELECT (@x - @y) + col1 as col2 FROM a) SELECT * FROM b";
+        assertModel("select-choose col2 from (select-virtual [2 - 5 + col1 col2] 2 - 5 + col1 col2 from (select-virtual [2 + 5 col1] 2 + 5 col1 from (long_sequence(1))) a) b", query
+                , ExecutionModel.QUERY);
+        assertSql("col2\n" +
+                "4\n", query);
+    }
+
+    @Test
     public void testDeclareSelectWithPositionalBindVariables() throws Exception {
         assertException("DECLARE @x := ?, @y := ? SELECT @x, @y", 14, "Invalid column: ?");
     }
