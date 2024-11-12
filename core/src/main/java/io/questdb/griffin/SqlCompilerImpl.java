@@ -605,7 +605,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return generateSelectOneShot(queryModel, executionContext, generateProgressLogger);
             } catch (TableReferenceOutOfDateException e) {
                 if (--remainingRetries < 0) {
-                    throw SqlException.$(0, e.getFlyweightMessage());
+                    throw SqlException.$(0, "underlying cursor is extremely volatile");
                 }
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
                 clear();

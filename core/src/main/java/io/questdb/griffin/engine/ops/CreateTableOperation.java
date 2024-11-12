@@ -65,6 +65,7 @@ public class CreateTableOperation implements TableStructure, Operation {
     private final LowerCaseCharSequenceObjHashMap<TableColumnMetadata> augmentedColumnMetadata = new LowerCaseCharSequenceObjHashMap<>();
     private final long batchO3MaxLag;
     private final long batchSize;
+    private final LowerCaseCharSequenceIntHashMap colNameToCastClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToDedupClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceIntHashMap colNameToIndexClausePos = new LowerCaseCharSequenceIntHashMap();
     private final LongList columnBits = new LongList();
@@ -255,6 +256,9 @@ public class CreateTableOperation implements TableStructure, Operation {
             }
             if (model.isIndexed()) {
                 colNameToIndexClausePos.put(columnName, model.getIndexColumnPos());
+            }
+            if (model.getColumnType() != ColumnType.UNDEFINED) {
+                colNameToCastClausePos.put(columnName, model.getColumnNamePos());
             }
             TableColumnMetadata tcm = new TableColumnMetadata(
                     columnNameStr,
@@ -467,6 +471,14 @@ public class CreateTableOperation implements TableStructure, Operation {
             if (timestampColType != ColumnType.TIMESTAMP) {
                 throw SqlException.position(timestampColumnNamePosition)
                         .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampColType)).put(']');
+            }
+        }
+        ObjList<CharSequence> castColNames = colNameToCastClausePos.keys();
+        for (int i = 0, n = castColNames.size(); i < n; i++) {
+            CharSequence castColName = castColNames.get(i);
+            if (metadata.getColumnIndexQuiet(castColName) < 0) {
+                throw SqlException.position(colNameToCastClausePos.get(castColName))
+                        .put("CAST column doesn't exist [column=").put(castColName).put(']');
             }
         }
         ObjList<CharSequence> indexColNames = colNameToIndexClausePos.keys();
