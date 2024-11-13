@@ -8378,7 +8378,7 @@ nodejs code:
     @Test
     public void testQueryTimeout() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        maxQueryTime = 300;
+        maxQueryTime = 100;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             ddl("create table tab as (select rnd_double() d from long_sequence(1000000))");
             try (final PreparedStatement statement = connection.prepareStatement("select * from tab order by d")) {
