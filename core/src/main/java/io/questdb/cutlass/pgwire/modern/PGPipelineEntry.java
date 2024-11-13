@@ -90,6 +90,8 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.function.Consumer;
+
 import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
@@ -457,7 +459,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             CharacterStore characterStore,
             DirectUtf8String utf8String,
             ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
-            SCSequence tempSequence
+            SCSequence tempSequence,
+            Consumer<? super CharSequence> namedStatementDeallocator
     ) throws BadProtocolException {
         // do not execute anything, that has been parse-executed
         if (stateParseExecuted) {
@@ -521,13 +524,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     break;
                 case CompiledQuery.DEALLOCATE:
                     // this is supposed to work instead of sending 'close' message via the
-                    // network protocol. My latest understanding is that this is meant to close either
-                    // prepared statement or portal, depending on the name provided. The difference perhaps would be
-                    // in the way we have to reply back to the client. Reply format out of 'execute' message is
+                    // network protocol. Reply format out of 'execute' message is
                     // different from that of 'close' message.
-
-                    preparedStatementNameToDeallocate = Chars.toString(compiledQuery.getStatementName());
-                    throw kaput().put("unsupported for now");
+                    namedStatementDeallocator.accept(preparedStatementNameToDeallocate);
+                    break;
                 case CompiledQuery.BEGIN:
                     return IN_TRANSACTION;
                 case CompiledQuery.COMMIT:
@@ -2225,7 +2225,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 sqlTag = TAG_SET;
                 break;
             case CompiledQuery.DEALLOCATE:
-                this.preparedStatementNameToDeallocate = cq.getStatementName();
+                this.preparedStatementNameToDeallocate = Chars.toString(cq.getStatementName());
                 sqlTag = TAG_DEALLOCATE;
                 break;
             case CompiledQuery.BEGIN:
@@ -2283,6 +2283,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         portalName = null;
         sqlType = 0;
         sqlTag = null;
+        preparedStatementNameToDeallocate = null;
     }
 
     void clearState() {

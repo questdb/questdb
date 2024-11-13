@@ -7024,9 +7024,6 @@ nodejs code:
 
     @Test
     public void testPHPSelectHex() throws Exception {
-        // @Ignore
-        // The test sends a DEALLOCATE query, modern server responds with error "unsupported for now"
-        Assume.assumeTrue(legacyMode);
         //         PHP client script to reproduce
         //        $dbName = 'qdb';
         //        $hostname = '127.0.0.1';

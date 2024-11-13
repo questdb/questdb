@@ -90,6 +90,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
+import java.util.function.Consumer;
 
 /**
  * Useful PostgreSQL documentation links:<br>
@@ -191,6 +192,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = IMPLICIT_TRANSACTION;
+    private final Consumer<? super CharSequence> preparedStatementDeallocator = this::uncacheNamedStatement;
 
     public PGConnectionContextModern(
             CairoEngine engine,
@@ -881,7 +883,8 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 characterStore,
                 utf8String,
                 binarySequenceParamsPool,
-                tempSequence
+                tempSequence,
+                preparedStatementDeallocator
         );
     }
 
@@ -1440,7 +1443,8 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     characterStore,
                     utf8String,
                     binarySequenceParamsPool,
-                    tempSequence
+                    tempSequence,
+                    preparedStatementDeallocator
             );
             pipelineCurrentEntry.setStateExec(true);
         }
