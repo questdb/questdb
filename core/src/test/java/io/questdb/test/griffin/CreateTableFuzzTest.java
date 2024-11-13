@@ -34,15 +34,27 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class CreateTableFuzzTest extends AbstractCairoTest {
+    public static final int VARIANT_DIRECT = 0;
+    public static final int VARIANT_LIKE = 1;
+    public static final int VARIANT_SELECT = 2;
+
+    private final Rnd rnd = TestUtils.generateRandom(LOG);
+    private final boolean useCast = rnd.nextBoolean();
+    private final boolean useCastSymbolCapacity = rnd.nextBoolean();
+    private final boolean useDedup = rnd.nextBoolean();
+    private final boolean useIfNotExists = rnd.nextBoolean();
+    private final boolean useIndexCapacity = rnd.nextBoolean();
+    private final boolean useIndexClause = rnd.nextBoolean();
+    private final boolean usePartitionBy = rnd.nextBoolean();
+    private final int variantSelector = rnd.nextInt(3);
 
     @Test
     public void testX() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
         SCSequence seq = new SCSequence();
         assertMemoryLeak(() -> {
             try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
                 createSourceTable(sqlCompiler);
-                StringBuilder ddl = generateCreateTable(rnd);
+                StringBuilder ddl = generateCreateTable();
                 System.out.println();
                 System.out.println(ddl);
                 System.out.println();
@@ -50,47 +62,59 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 try (OperationFuture fut = query.execute(seq)) {
                     fut.await();
                 }
+                if (!useIfNotExists) {
+                    drop("DROP TABLE tango");
+                }
+                if (variantSelector != VARIANT_SELECT) {
+                    try (OperationFuture fut = query.execute(seq)) {
+                        fut.await();
+                    }
+                }
             }
         });
     }
 
-    private void appendAsSelect(StringBuilder ddl, Rnd rnd) {
+    private void appendAsSelect(StringBuilder ddl) {
         ddl.append(" AS (SELECT ")
-                .append(rndCase("ts", rnd)).append(", ")
-                .append(rndCase("sym", rnd)).append(", ")
-                .append(rndCase("x", rnd))
-                .append(" FROM ").append(rndCase("samba", rnd)).append(')');
-        if (rnd.nextBoolean()) {
-            ddl.append(", INDEX(").append(rndCase("sym", rnd));
-            if (rnd.nextBoolean()) {
+                .append(rndCase("ts")).append(", ")
+                .append(rndCase("sym")).append(", ")
+                .append(rndCase("x"))
+                .append(" FROM ").append(rndCase("samba")).append(')');
+        if (useIndexClause) {
+            ddl.append(", INDEX(").append(rndCase("sym"));
+            if (useIndexCapacity) {
                 ddl.append(" CAPACITY 256");
             }
             ddl.append(')');
         }
-        if (rnd.nextBoolean()) {
-            ddl.append(", CAST(").append(rndCase("x", rnd)).append(" AS SYMBOL");
-            if (rnd.nextBoolean()) {
+        if (useCast) {
+            ddl.append(", CAST(").append(rndCase("x")).append(" AS SYMBOL");
+            if (useCastSymbolCapacity) {
                 ddl.append(" CAPACITY 256");
             }
             ddl.append(')');
         }
     }
 
-    private void appendDirectTableDef(StringBuilder ddl, Rnd rnd) {
-        ddl.append(" (").append(rndCase("ts", rnd)).append(" TIMESTAMP, ")
-                .append(rndCase("x", rnd)).append(" STRING)");
+    private void appendDedup(StringBuilder ddl) {
+        ddl.append(" DEDUP UPSERT KEYS(").append(rndCase("ts")).append(')');
     }
 
-    private void appendLikeTable(StringBuilder ddl, Rnd rnd) {
-        ddl.append(" (LIKE ").append(rndCase("samba", rnd)).append(')');
+    private void appendDirectTableDef(StringBuilder ddl) {
+        ddl.append(" (").append(rndCase("ts")).append(" TIMESTAMP, ")
+                .append(rndCase("x")).append(" STRING)");
     }
 
-    private void appendTsAndPartition(StringBuilder ddl, Rnd rnd) {
-        ddl.append(" TIMESTAMP(").append(rndCase("ts", rnd)).append(')');
-        if (rnd.nextBoolean()) {
-            return;
+    private void appendLikeTable(StringBuilder ddl) {
+        ddl.append(" (LIKE ").append(rndCase("samba")).append(')');
+    }
+
+    private void appendTsAndPartition(StringBuilder ddl) {
+        ddl.append(" TIMESTAMP(").append(rndCase("ts")).append(')');
+        if (usePartitionBy) {
+            ddl.append(" PARTITION BY HOUR");
         }
-        ddl.append(" PARTITION BY HOUR");
+        ddl.append(" WAL");
     }
 
     private void createSourceTable(SqlCompiler sqlCompiler) throws Exception {
@@ -102,38 +126,38 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private StringBuilder generateCreateTable(Rnd rnd) {
+    private StringBuilder generateCreateTable() {
         StringBuilder ddl = new StringBuilder();
         ddl.append("CREATE TABLE ");
-        if (rnd.nextBoolean()) {
+        if (useIfNotExists) {
             ddl.append("IF NOT EXISTS ");
         }
-        ddl.append(rndCase("tango", rnd));
-        int createVariant = rnd.nextInt(3);
-        switch (createVariant) {
-            case 0:
-                appendDirectTableDef(ddl, rnd);
+        ddl.append(rndCase("tango"));
+        switch (variantSelector) {
+            case VARIANT_DIRECT:
+                appendDirectTableDef(ddl);
                 break;
-            case 1:
-                appendAsSelect(ddl, rnd);
+            case VARIANT_LIKE:
+                appendLikeTable(ddl);
                 break;
-            case 2:
-                appendLikeTable(ddl, rnd);
+            case VARIANT_SELECT:
+                appendAsSelect(ddl);
                 break;
             default:
         }
-        if (createVariant == 2 || rnd.nextBoolean()) {
+        if (variantSelector == VARIANT_LIKE || !usePartitionBy) {
             return ddl;
         }
-        if (rnd.nextBoolean()) {
-            appendTsAndPartition(ddl, rnd);
+        appendTsAndPartition(ddl);
+        if (useDedup) {
+            appendDedup(ddl);
         }
         return ddl;
     }
 
-    private String rndCase(String word, Rnd rnd) {
+    private String rndCase(String word) {
         StringBuilder result = new StringBuilder(word.length());
-        for (int i = 0; i < word.length(); i++) {
+        for (int i = VARIANT_DIRECT; i < word.length(); i++) {
             char c = word.charAt(i);
             if (c <= 'z' && Character.isLetter(c) && rnd.nextBoolean()) {
                 c = (char) (c ^ 32); // flips the case
