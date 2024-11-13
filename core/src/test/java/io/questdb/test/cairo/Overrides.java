@@ -32,7 +32,6 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
@@ -52,7 +51,6 @@ public class Overrides {
     private final Properties defaultProperties = new Properties();
     private final Properties properties = new Properties();
     private boolean changed = true;
-    private SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     private MicrosecondClock testMicrosClock = defaultMicrosecondClock;
@@ -64,14 +62,10 @@ public class Overrides {
     private boolean mangleTableDirNames = true;
     private CairoConfiguration propsConfig;
     private RostiAllocFacade rostiAllocFacade = null;
-    private long spinLockTimeout = 50;
+    private long spinLockTimeout = 5000;
 
     public Overrides() {
         resetToDefaultTestProperties(defaultProperties);
-    }
-
-    public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-        return circuitBreakerConfiguration;
     }
 
     public CairoConfiguration getConfiguration(String root) {
