@@ -2586,9 +2586,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             DropTableOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = op.getTableName() != null ? sqlExecutionContext.getTableTokenIfExists(op.getTableName()) : null;
-        if (tableToken == null) {
-            if (op.getFlags().contains(DropTableOperation.DROP_FLAG_IF_EXISTS)) {
+        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getTableName());
+        if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
+            if (op.ifExists()) {
                 return;
             }
             throw SqlException.tableDoesNotExist(op.getTableNamePosition(), op.getTableName());

@@ -6,14 +6,13 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.CharSequenceObjHashMap;
 import org.jetbrains.annotations.Nullable;
 
 public class DropTableOperation implements Operation {
     public static final String DROP_FLAG_IF_EXISTS = "if_exists";
     public static final CharSequence IF_EXISTS_VALUE_STUB = "";
-    private final CharSequenceObjHashMap<CharSequence> flags = new CharSequenceObjHashMap<>();
     private final DoneOperationFuture future = new DoneOperationFuture();
+    private final boolean ifExists;
     private final String sqlText;
     private final String tableName;
     private final int tableNamePosition;
@@ -22,11 +21,11 @@ public class DropTableOperation implements Operation {
             String sqlText,
             String tableName,
             int tableNamePosition,
-            CharSequenceObjHashMap<CharSequence> flags
+            boolean ifExists
     ) {
         this.tableName = tableName;
         this.tableNamePosition = tableNamePosition;
-        this.flags.putAll(flags);
+        this.ifExists = ifExists;
         this.sqlText = sqlText;
     }
 
@@ -40,10 +39,6 @@ public class DropTableOperation implements Operation {
             compiler.execute(this, sqlExecutionContext);
         }
         return future;
-    }
-
-    public CharSequenceObjHashMap<CharSequence> getFlags() {
-        return flags;
     }
 
     @Override
@@ -61,5 +56,9 @@ public class DropTableOperation implements Operation {
 
     public int getTableNamePosition() {
         return tableNamePosition;
+    }
+
+    public boolean ifExists() {
+        return ifExists;
     }
 }
