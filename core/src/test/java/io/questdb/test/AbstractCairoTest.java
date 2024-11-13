@@ -1448,8 +1448,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         CairoEngine.insert(compiler, insertSql, sqlExecutionContext);
     }
 
-    protected static QuestDBTestNode newNode(int nodeId, String root) {
-        return newNode(root, true, nodeId, new Overrides(), getEngineFactory(), getConfigurationFactory());
+    protected static QuestDBTestNode newNode() {
+        return newNode("/Users/alpel/temp/db", true, 2, new Overrides(), getEngineFactory(), getConfigurationFactory());
     }
 
     protected static QuestDBTestNode newNode(int nodeId) {
@@ -2039,14 +2039,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics, MessageBus messageBus) {
         return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, messageBus, engine);
-    }
-
-    protected TableToken registerTableName(CharSequence tableName) {
-        TableToken token = engine.lockTableName(tableName, false);
-        if (token != null) {
-            engine.registerTableToken(token);
-        }
-        return token;
     }
 
     protected long update(CharSequence updateSql) throws SqlException {

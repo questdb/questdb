@@ -94,7 +94,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     @Ignore
     public void testEncodeExternal() {
         final String root2 = "/Users/alpel/temp/db";
-        final QuestDBTestNode node2 = newNode(2, root2);
+        final QuestDBTestNode node2 = newNode();
         nodes.remove(node2);
 
         try (

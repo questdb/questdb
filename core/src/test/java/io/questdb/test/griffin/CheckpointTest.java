@@ -1331,9 +1331,9 @@ public class CheckpointTest extends AbstractCairoTest {
             path.of(configuration.getRoot());
             copyPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
 
-            compile(ddl);
+            ddl(ddl);
             if (ddl2 != null) {
-                compile(ddl2);
+                ddl(ddl2);
             }
 
             ddl("checkpoint create");
