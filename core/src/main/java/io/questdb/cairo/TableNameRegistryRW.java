@@ -103,13 +103,18 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         if (tableNameToTableTokenMap.get(tableName) != LOCKED_TOKEN) {
             throw CairoException.critical(0).put("cannot register table, name is not locked [name=").put(tableName).put(']');
         }
+
+        // This most unsafe, can throw, run it first.
+        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+            metadataRW.hydrateTable(tableToken);
+        }
+
         if (tableToken.isWal()) {
             nameStore.logAddTable(tableToken);
         }
         dirNameToTableTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(tableToken);
-        }
+
+        // Finish the name registration, table is queriable from this moment.
         boolean stillLocked = tableNameToTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken);
         assert stillLocked;
     }
