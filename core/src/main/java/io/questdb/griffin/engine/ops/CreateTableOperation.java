@@ -486,7 +486,7 @@ public class CreateTableOperation implements TableStructure, Operation {
                         .put("INDEX column doesn't exist [column=").put(indexedColName).put(']');
             }
         }
-        ObjList<CharSequence> dedupColNames = colNameToIndexClausePos.keys();
+        ObjList<CharSequence> dedupColNames = colNameToDedupClausePos.keys();
         for (int i = 0, n = dedupColNames.size(); i < n; i++) {
             CharSequence dedupColName = dedupColNames.get(i);
             if (metadata.getColumnIndexQuiet(dedupColName) < 0) {
@@ -494,6 +494,7 @@ public class CreateTableOperation implements TableStructure, Operation {
                         .put("DEDUP column doesn't exist [column=").put(dedupColName).put(']');
             }
         }
+        columnNames.clear();
         boolean hasDedup = false;
         boolean isTimestampDeduped = false;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
