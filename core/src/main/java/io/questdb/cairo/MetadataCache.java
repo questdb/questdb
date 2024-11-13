@@ -398,8 +398,11 @@ public class MetadataCache implements QuietCloseable {
         @Override
         public void dropTable(@NotNull TableToken tableToken) {
             String tableName = tableToken.getTableName();
-            tableMap.remove(tableName);
-            LOG.info().$("dropped [table=").$(tableName).I$();
+            CairoTable entry = tableMap.get(tableName);
+            if (tableToken.equals(entry.getTableToken())) {
+                tableMap.remove(tableName);
+                LOG.info().$("dropped [table=").$(tableName).I$();
+            }
         }
 
         /**

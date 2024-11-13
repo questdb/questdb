@@ -61,10 +61,6 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
                 nameStore.logDropTable(token);
             }
 
-            // remove the token from the map and release the name.
-            boolean removed = tableNameToTableTokenMap.remove(token.getTableName(), LOCKED_DROP_TOKEN);
-            assert removed;
-
             if (token.isWal()) {
                 dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.ofDropped(token));
             } else {
@@ -73,8 +69,12 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 metadataRW.dropTable(token);
             }
-            return true;
 
+            // remove the token from the map and release the name.
+            boolean removed = tableNameToTableTokenMap.remove(token.getTableName(), LOCKED_DROP_TOKEN);
+            assert removed;
+
+            return true;
         }
         return false;
     }
@@ -100,7 +100,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     @Override
     public void registerName(TableToken tableToken) {
         String tableName = tableToken.getTableName();
-        if (!tableNameToTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken)) {
+        if (tableNameToTableTokenMap.get(tableName) != LOCKED_TOKEN) {
             throw CairoException.critical(0).put("cannot register table, name is not locked [name=").put(tableName).put(']');
         }
         if (tableToken.isWal()) {
@@ -110,6 +110,8 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(tableToken);
         }
+        boolean stillLocked = tableNameToTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken);
+        assert stillLocked;
     }
 
     @Override
@@ -163,17 +165,18 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             nameStore.logDropTable(oldToken);
             nameStore.logAddTable(newToken);
 
-            // Release the new name in the map.
-            boolean removed = tableNameToTableTokenMap.remove(oldToken.getTableName(), LOCKED_DROP_TOKEN);
-            assert removed;
-
-            // Update the reverse map.
-            dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
-
             try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                 // Save the new name in the table dir.
                 metadataRW.renameTable(oldToken, newToken);
             }
+
+            // Update the reverse map.
+            dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
+
+            // Release the new name in the map.
+            boolean removed = tableNameToTableTokenMap.remove(oldToken.getTableName(), LOCKED_DROP_TOKEN);
+            assert removed;
+
             return true;
         }
         return false;
