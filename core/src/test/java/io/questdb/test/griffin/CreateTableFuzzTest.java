@@ -32,7 +32,6 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.junit.Assert.assertNotNull;
@@ -56,8 +55,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private String tsCol = "ts";
 
     @Test
-    @Ignore
-    public void testX() throws Exception {
+    public void testCreateTableFuzz() throws Exception {
         assertMemoryLeak(() -> {
             if (variantSelector != VARIANT_DIRECT) {
                 createSourceTable();
