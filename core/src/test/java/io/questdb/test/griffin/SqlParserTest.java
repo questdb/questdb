@@ -3460,6 +3460,25 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectWithSubQueryAndShadowedVariableAndOuterUsage() throws Exception {
+        assertModel("select-virtual 2 - 5 foo, column from (select-virtual [7 + 5 column] 7 + 5 column from (long_sequence(1)))",
+                "DECLARE @x := 2, @y := 5 SELECT @x - @y as foo, * FROM (DECLARE @x:= 7 SELECT @x + @y)", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectWithWhere() throws Exception {
+        assertModel("select-virtual 2 + 5 column from (long_sequence(1) where 2 < 5)",
+                "DECLARE @x := 2, @y := 5 SELECT @x + @y FROM long_sequence(1) WHERE @x < @y", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectWithWhereComplex() throws Exception {
+        assertModel("select-virtual 2 + 5 column from (long_sequence(1) where 2 < 5)",
+                "DECLARE @x := 2::timestamp, @y := 5::timestamp SELECT @x + @y FROM long_sequence(1) WHERE @x < @y", ExecutionModel.QUERY);
+    }
+
+
+    @Test
     public void testDeclareWithMissingColon() throws Exception {
         assertException("DECLARE @x = 1, @y = 2 SELECT @x * @y + @x / @y", 11, "incorrect declare variable syntax, expected `:=`");
     }

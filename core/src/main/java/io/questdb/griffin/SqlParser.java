@@ -1046,12 +1046,12 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "empty declaration");
             }
 
+//
+//            if (expr.type != OPERATION || !Chars.equalsIgnoreCase(expr.token, ":=")) {
+//                throw SqlException.$(expr.position, "incorrect declare variable syntax, expected `:=`");
+//            }
 
-            if (expr.type != OPERATION || !Chars.equalsIgnoreCase(expr.token, ":=")) {
-                throw SqlException.$(expr.position, "incorrect declare variable syntax, expected `:=`");
-            }
-
-            model.getDecls().put(expr.lhs.token, expr);
+            model.getDecls().put(tok, expr);
 
         }
     }
@@ -1285,7 +1285,8 @@ public class SqlParser {
         return model;
     }
 
-    private QueryModel parseDmlUpdate(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+    private QueryModel parseDmlUpdate(GenericLexer lexer, SqlParserCallback sqlParserCallback,
+                                      @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         // Update QueryModel structure is
         // QueryModel with SET column expressions (updateQueryModel)
         // |-- nested QueryModel of select-virtual or select-choose of data selected for update (fromModel)
@@ -1345,6 +1346,7 @@ public class SqlParser {
             // [where]
             if (tok != null && isWhereKeyword(tok)) {
                 ExpressionNode expr = expr(lexer, fromModel, sqlParserCallback);
+                expr = recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor);
                 if (expr != null) {
                     nestedModel.setWhereClause(expr);
                 } else {
@@ -1360,11 +1362,11 @@ public class SqlParser {
     }
 
     // doesn't allow copy, rename
-    private ExecutionModel parseExplain(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+    private ExecutionModel parseExplain(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback);
+            return parseSelect(lexer, sqlParserCallback, decls);
         }
 
         if (isCreateKeyword(tok)) {
@@ -1372,18 +1374,18 @@ public class SqlParser {
         }
 
         if (isUpdateKeyword(tok)) {
-            return parseUpdate(lexer, sqlParserCallback);
+            return parseUpdate(lexer, sqlParserCallback, decls);
         }
 
         if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback);
+            return parseInsert(lexer, sqlParserCallback, decls);
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback);
+            return parseWith(lexer, sqlParserCallback, decls);
         }
 
-        return parseSelect(lexer, sqlParserCallback);
+        return parseSelect(lexer, sqlParserCallback, decls);
     }
 
     private int parseExplainOptions(GenericLexer lexer, CharSequence prevTok) throws SqlException {
@@ -1491,6 +1493,7 @@ public class SqlParser {
                 throw SqlException.$((lexer.lastTokenPosition()), "unexpected where clause after 'latest on'");
             }
             ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+            expr = recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor);
             if (expr != null) {
                 model.setWhereClause(expr);
                 tok = optTok(lexer);
@@ -1696,7 +1699,8 @@ public class SqlParser {
         model.setTableNameExpr(tableNameExpr);
     }
 
-    private ExecutionModel parseInsert(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+    private ExecutionModel parseInsert(GenericLexer lexer, SqlParserCallback sqlParserCallback,
+                                       @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         final InsertModel model = insertModelPool.next();
         CharSequence tok = tok(lexer, "atomic or into or batch");
         model.setBatchSize(configuration.getInsertModelBatchSize());
@@ -1757,7 +1761,7 @@ public class SqlParser {
         if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
-            final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, null); // todo: review passing non-null here
+            final QueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls);
             model.setQueryModel(queryModel);
             tok = optTok(lexer);
             // no more tokens or ';' should indicate end of statement
@@ -1998,9 +2002,10 @@ public class SqlParser {
         return model;
     }
 
-    private ExecutionModel parseSelect(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+    private ExecutionModel parseSelect(GenericLexer lexer, SqlParserCallback sqlParserCallback,
+                                       @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         lexer.unparseLast();
-        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, null); // todo: review passing non-null here
+        final QueryModel model = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
@@ -2492,9 +2497,10 @@ public class SqlParser {
         return null;
     }
 
-    private ExecutionModel parseUpdate(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+    private ExecutionModel parseUpdate(GenericLexer lexer, SqlParserCallback sqlParserCallback,
+                                       @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         lexer.unparseLast();
-        final QueryModel model = parseDmlUpdate(lexer, sqlParserCallback);
+        final QueryModel model = parseDmlUpdate(lexer, sqlParserCallback, decls);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
             return model;
@@ -2565,19 +2571,20 @@ public class SqlParser {
     }
 
     @NotNull
-    private ExecutionModel parseWith(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
-        parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null); // todo: review passing non-null here
+    private ExecutionModel parseWith(GenericLexer lexer, SqlParserCallback sqlParserCallback,
+                                     @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+        parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback);
+            return parseSelect(lexer, sqlParserCallback, decls);
         }
 
         if (isUpdateKeyword(tok)) {
-            return parseUpdate(lexer, sqlParserCallback);
+            return parseUpdate(lexer, sqlParserCallback, decls);
         }
 
         if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback);
+            return parseInsert(lexer, sqlParserCallback, decls);
         }
 
         throw SqlException.$(lexer.lastTokenPosition(), "'select' | 'update' | 'insert' expected");
@@ -3016,7 +3023,7 @@ public class SqlParser {
 
         if (isExplainKeyword(tok)) {
             int format = parseExplainOptions(lexer, tok);
-            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback);
+            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback, null);
             ExplainModel explainModel = explainModelPool.next();
             explainModel.setFormat(format);
             explainModel.setModel(model);
@@ -3024,7 +3031,7 @@ public class SqlParser {
         }
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback);
+            return parseSelect(lexer, sqlParserCallback, null);
         }
 
         if (isCreateKeyword(tok)) {
@@ -3032,7 +3039,7 @@ public class SqlParser {
         }
 
         if (isUpdateKeyword(tok)) {
-            return parseUpdate(lexer, sqlParserCallback);
+            return parseUpdate(lexer, sqlParserCallback, null);
         }
 
         if (isRenameKeyword(tok)) {
@@ -3040,7 +3047,7 @@ public class SqlParser {
         }
 
         if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback);
+            return parseInsert(lexer, sqlParserCallback, null);
         }
 
         if (isCopyKeyword(tok)) {
@@ -3048,14 +3055,14 @@ public class SqlParser {
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback);
+            return parseWith(lexer, sqlParserCallback, null);
         }
 
         if (isFromKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
         }
 
-        return parseSelect(lexer, sqlParserCallback);
+        return parseSelect(lexer, sqlParserCallback, null);
     }
 
     QueryModel parseAsSubQuery(
