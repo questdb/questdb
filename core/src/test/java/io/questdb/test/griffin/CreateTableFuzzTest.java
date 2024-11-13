@@ -27,11 +27,14 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.mp.SCSequence;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
+
+import static org.junit.Assert.assertNotNull;
 
 public class CreateTableFuzzTest extends AbstractCairoTest {
     public static final int VARIANT_DIRECT = 0;
@@ -40,35 +43,42 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
 
     private final Rnd rnd = TestUtils.generateRandom(LOG);
     private final boolean useCast = rnd.nextBoolean();
-    private final boolean useCastSymbolCapacity = rnd.nextBoolean();
-    private final boolean useDedup = rnd.nextBoolean();
+    private final boolean useCastSymbolCapacity = useCast && rnd.nextBoolean();
     private final boolean useIfNotExists = rnd.nextBoolean();
-    private final boolean useIndexCapacity = rnd.nextBoolean();
     private final boolean useIndexClause = rnd.nextBoolean();
+    private final boolean useIndexCapacity = useIndexClause && rnd.nextBoolean();
     private final boolean usePartitionBy = rnd.nextBoolean();
+    private final boolean useDedup = usePartitionBy && rnd.nextBoolean();
     private final int variantSelector = rnd.nextInt(3);
+    private String strCol = "str";
+    private String symCol = "sym";
+    private String tsCol = "ts";
 
     @Test
     public void testX() throws Exception {
-        SCSequence seq = new SCSequence();
         assertMemoryLeak(() -> {
-            try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
-                createSourceTable(sqlCompiler);
-                StringBuilder ddl = generateCreateTable();
-                System.out.println();
-                System.out.println(ddl);
-                System.out.println();
-                CompiledQuery query = sqlCompiler.compile(ddl, sqlExecutionContext);
-                try (OperationFuture fut = query.execute(seq)) {
-                    fut.await();
-                }
-                if (!useIfNotExists) {
-                    drop("DROP TABLE tango");
-                }
-                if (variantSelector != VARIANT_SELECT) {
-                    try (OperationFuture fut = query.execute(seq)) {
+            if (variantSelector != VARIANT_DIRECT) {
+                createSourceTable();
+            }
+            StringBuilder ddl = generateCreateTable();
+            System.out.println();
+            System.out.println(ddl);
+            System.out.println();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery query = compiler.compile(ddl, sqlExecutionContext);
+                try (Operation op = query.getOperation()) {
+                    assertNotNull(op);
+                    try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     }
+                    validateCreatedTable();
+                    if (!useIfNotExists) {
+                        drop("DROP TABLE tango");
+                    }
+                    try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                        fut.await();
+                    }
+                    validateCreatedTable();
                 }
             }
         });
@@ -76,20 +86,20 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
 
     private void appendAsSelect(StringBuilder ddl) {
         ddl.append(" AS (SELECT ")
-                .append(rndCase("ts")).append(", ")
-                .append(rndCase("sym")).append(", ")
-                .append(rndCase("x"))
+                .append(tsCol = rndCase("ts")).append(", ")
+                .append(symCol = rndCase("sym")).append(", ")
+                .append(strCol = rndCase("str"))
                 .append(" FROM ").append(rndCase("samba")).append(')');
-        if (useIndexClause) {
-            ddl.append(", INDEX(").append(rndCase("sym"));
-            if (useIndexCapacity) {
+        if (useCast) {
+            ddl.append(", CAST(").append(rndCase("str")).append(" AS SYMBOL");
+            if (useCastSymbolCapacity) {
                 ddl.append(" CAPACITY 256");
             }
             ddl.append(')');
         }
-        if (useCast) {
-            ddl.append(", CAST(").append(rndCase("x")).append(" AS SYMBOL");
-            if (useCastSymbolCapacity) {
+        if (useIndexClause) {
+            ddl.append(", INDEX(").append(rndCase("sym"));
+            if (useIndexCapacity) {
                 ddl.append(" CAPACITY 256");
             }
             ddl.append(')');
@@ -100,15 +110,6 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         ddl.append(" DEDUP UPSERT KEYS(").append(rndCase("ts")).append(')');
     }
 
-    private void appendDirectTableDef(StringBuilder ddl) {
-        ddl.append(" (").append(rndCase("ts")).append(" TIMESTAMP, ")
-                .append(rndCase("x")).append(" STRING)");
-    }
-
-    private void appendLikeTable(StringBuilder ddl) {
-        ddl.append(" (LIKE ").append(rndCase("samba")).append(')');
-    }
-
     private void appendTsAndPartition(StringBuilder ddl) {
         ddl.append(" TIMESTAMP(").append(rndCase("ts")).append(')');
         if (usePartitionBy) {
@@ -117,13 +118,8 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         ddl.append(" WAL");
     }
 
-    private void createSourceTable(SqlCompiler sqlCompiler) throws Exception {
-        try (OperationFuture fut = sqlCompiler.compile(
-                        "CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, x STRING)", sqlExecutionContext)
-                .execute(null)
-        ) {
-            fut.await();
-        }
+    private void createSourceTable() throws Exception {
+        engine.ddl("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, str STRING)", sqlExecutionContext);
     }
 
     private StringBuilder generateCreateTable() {
@@ -135,10 +131,10 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         ddl.append(rndCase("tango"));
         switch (variantSelector) {
             case VARIANT_DIRECT:
-                appendDirectTableDef(ddl);
+                ddl.append(" (ts TIMESTAMP, str STRING)");
                 break;
             case VARIANT_LIKE:
-                appendLikeTable(ddl);
+                ddl.append(" (LIKE ").append(rndCase("samba")).append(')');
                 break;
             case VARIANT_SELECT:
                 appendAsSelect(ddl);
@@ -165,5 +161,28 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
             result.append(c);
         }
         return result.toString();
+    }
+
+    private void validateCreatedTable() throws SqlException {
+        System.out.printf("Variant %d Cast %s CastSymbolCapacity %s Dedup %s IndexCapacity %s IndexClause %s PartitionBy %s\n",
+                variantSelector, useCast, useCastSymbolCapacity, useDedup, useIndexCapacity, useIndexClause, usePartitionBy);
+        StringBuilder b = new StringBuilder("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
+        if (variantSelector == VARIANT_SELECT) {
+            b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
+                    .append(usePartitionBy).append('\t').append(useDedup).append('\n');
+            b.append(symCol).append("\tSYMBOL\t").append(useIndexClause).append('\t')
+                    .append(useIndexCapacity ? 256 : useIndexClause ? 256 : 0).append('\t').append(!useIndexClause).append("\t128\tfalse\tfalse\n");
+            b.append(strCol).append("\t").append(useCast ? "SYMBOL" : "STRING").append("\tfalse\t0\t").append(useCast).append("\t")
+                    .append(useCastSymbolCapacity ? 256 : useCast ? 128 : 0).append("\tfalse\tfalse\n");
+        } else if (variantSelector == VARIANT_LIKE) {
+            b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+            b.append(symCol).append("\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n");
+            b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+        } else {
+            b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
+                    .append(usePartitionBy).append('\t').append(useDedup).append('\n');
+            b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+        }
+        assertSql(b, "show columns from tango");
     }
 }
