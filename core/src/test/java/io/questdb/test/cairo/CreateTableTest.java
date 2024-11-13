@@ -24,7 +24,11 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -314,7 +318,7 @@ public class CreateTableTest extends AbstractCairoTest {
                                         .compile(executionContext);
                                 try (Operation op = query.getOperation()) {
                                     try (OperationFuture fut = op.execute(executionContext, null)) {
-                                        final TableToken token = ((CreateTableOperation.CreateTableOperationFuture)fut).getTableToken();
+                                        final TableToken token = ((CreateTableOperation.CreateTableOperationFuture) fut).getTableToken();
                                         assertNotNull(token);
                                         assertEquals("tab" + j, token.getTableName());
                                     }
