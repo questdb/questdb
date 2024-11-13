@@ -65,6 +65,8 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
             StringBuilder ddl = generateCreateTable();
             System.out.println();
             System.out.println(ddl);
+            System.out.printf("Variant %d Cast %s CastSymbolCapacity %s Dedup %s IndexCapacity %s IndexClause %s PartitionBy %s\n",
+                    variantSelector, useCast, useCastSymbolCapacity, useDedup, useIndexCapacity, useIndexClause, usePartitionBy);
             System.out.println();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery query = compiler.compile(ddl, sqlExecutionContext);
@@ -95,14 +97,14 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         if (useCast) {
             ddl.append(", CAST(").append(rndCase("str")).append(" AS SYMBOL");
             if (useCastSymbolCapacity) {
-                ddl.append(" CAPACITY 256");
+                ddl.append(" CAPACITY 64");
             }
             ddl.append(')');
         }
         if (useIndexClause) {
             ddl.append(", INDEX(").append(rndCase("sym"));
             if (useIndexCapacity) {
-                ddl.append(" CAPACITY 256");
+                ddl.append(" CAPACITY 512");
             }
             ddl.append(')');
         }
@@ -166,16 +168,14 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     }
 
     private void validateCreatedTable() throws SqlException {
-        System.out.printf("Variant %d Cast %s CastSymbolCapacity %s Dedup %s IndexCapacity %s IndexClause %s PartitionBy %s\n",
-                variantSelector, useCast, useCastSymbolCapacity, useDedup, useIndexCapacity, useIndexClause, usePartitionBy);
         StringBuilder b = new StringBuilder("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
         if (variantSelector == VARIANT_SELECT) {
             b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
                     .append(usePartitionBy).append('\t').append(useDedup).append('\n');
             b.append(symCol).append("\tSYMBOL\t").append(useIndexClause).append('\t')
-                    .append(useIndexCapacity ? 256 : useIndexClause ? 256 : 0).append('\t').append(!useIndexClause).append("\t128\tfalse\tfalse\n");
+                    .append(useIndexCapacity ? 512 : useIndexClause ? 256 : 0).append('\t').append(!useIndexClause).append("\t128\tfalse\tfalse\n");
             b.append(strCol).append("\t").append(useCast ? "SYMBOL" : "STRING").append("\tfalse\t0\t").append(useCast).append("\t")
-                    .append(useCastSymbolCapacity ? 256 : useCast ? 128 : 0).append("\tfalse\tfalse\n");
+                    .append(useCastSymbolCapacity ? 64 : useCast ? 128 : 0).append("\tfalse\tfalse\n");
         } else if (variantSelector == VARIANT_LIKE) {
             b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
             b.append(symCol).append("\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n");
