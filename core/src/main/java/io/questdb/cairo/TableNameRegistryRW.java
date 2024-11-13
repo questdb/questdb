@@ -106,7 +106,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
         // This most unsafe, can throw, run it first.
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(tableToken);
+            metadataRW.hydrateTable(tableToken, true);
         }
 
         if (tableToken.isWal()) {
@@ -115,7 +115,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         dirNameToTableTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
 
         // Finish the name registration, table is queriable from this moment.
-        boolean stillLocked = tableNameToTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken, true);
+        boolean stillLocked = tableNameToTableTokenMap.replace(tableName, LOCKED_TOKEN, tableToken);
         assert stillLocked;
     }
 
