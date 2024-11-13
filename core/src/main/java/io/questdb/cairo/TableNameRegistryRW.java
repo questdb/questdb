@@ -62,7 +62,9 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             }
 
             // remove the token from the map and release the name.
-            assert tableNameToTableTokenMap.remove(token.getTableName(), LOCKED_DROP_TOKEN);
+            boolean removed = tableNameToTableTokenMap.remove(token.getTableName(), LOCKED_DROP_TOKEN);
+            assert removed;
+
             if (token.isWal()) {
                 dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.ofDropped(token));
             } else {
@@ -162,7 +164,8 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
             nameStore.logAddTable(newToken);
 
             // Release the new name in the map.
-            assert tableNameToTableTokenMap.remove(oldToken.getTableName(), LOCKED_DROP_TOKEN);
+            boolean removed = tableNameToTableTokenMap.remove(oldToken.getTableName(), LOCKED_DROP_TOKEN);
+            assert removed;
 
             // Update the reverse map.
             dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
