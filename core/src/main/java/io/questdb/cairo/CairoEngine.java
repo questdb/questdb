@@ -738,6 +738,9 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken == TableNameRegistry.LOCKED_TOKEN) {
             return TableUtils.TABLE_RESERVED;
         }
+        if (tableToken == TableNameRegistry.LOCKED_DROP_TOKEN) {
+            return TableUtils.TABLE_DOES_NOT_EXIST;
+        }
         if (tableToken == null || !tableToken.equals(tableNameRegistry.getTableToken(tableToken.getTableName()))) {
             return TableUtils.TABLE_DOES_NOT_EXIST;
         }
@@ -1068,16 +1071,17 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @TestOnly
-    public void reloadTableNames() {
-        reloadTableNames(null);
+    public boolean reloadTableNames() {
+        return reloadTableNames(null);
     }
 
     @TestOnly
-    public void reloadTableNames(@Nullable ObjList<TableToken> convertedTables) {
-        tableNameRegistry.reload(convertedTables);
+    public boolean reloadTableNames(@Nullable ObjList<TableToken> convertedTables) {
+        boolean consistent = tableNameRegistry.reload(convertedTables);
         try (MetadataCacheWriter metadataRW = getMetadataCache().writeLock()) {
             metadataRW.hydrateAllTables();
         }
+        return consistent;
     }
 
     public void removeTableToken(TableToken tableToken) {
@@ -1314,6 +1318,9 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken == TableNameRegistry.LOCKED_TOKEN) {
             throw CairoException.nonCritical().put("table name is reserved [table=").put(tableName).put("]");
         }
+        if (tableToken == TableNameRegistry.LOCKED_DROP_TOKEN) {
+            throw CairoException.tableDoesNotExist(tableName);
+        }
         return tableToken;
     }
 
@@ -1325,7 +1332,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void verifyTableToken(TableToken tableToken) {
         TableToken tt = tableNameRegistry.getTableToken(tableToken.getTableName());
-        if (tt == null || tt == TableNameRegistry.LOCKED_TOKEN) {
+        if (tt == null || TableNameRegistry.isLocked(tt)) {
             throw CairoException.tableDoesNotExist(tableToken.getTableName());
         }
         if (!tt.equals(tableToken)) {
@@ -1560,7 +1567,7 @@ public class CairoEngine implements Closeable, WriterSource {
     @NotNull
     private TableToken verifyTableNameForRead(CharSequence tableName) {
         TableToken token = getTableTokenIfExists(tableName);
-        if (token == null || token == TableNameRegistry.LOCKED_TOKEN) {
+        if (token == null || TableNameRegistry.isLocked(token)) {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;

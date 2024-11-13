@@ -48,6 +48,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableNameRegistry;
 import io.questdb.cairo.TableNameRegistryStore;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;

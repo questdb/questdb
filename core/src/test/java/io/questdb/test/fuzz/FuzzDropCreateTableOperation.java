@@ -59,6 +59,8 @@ public class FuzzDropCreateTableOperation implements FuzzTransactionOperation {
                     if (!isWal) {
                         engine.releaseInactive();
                         Os.sleep(50);
+                    } else {
+                        Os.pause();
                     }
                 }
             }

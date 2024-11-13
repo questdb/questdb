@@ -99,7 +99,6 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                         "select table_name, ownership_reason from writer_pool where table_name in ('x','y') order by 1",
                         sink,
                         "table_name\townership_reason\n" +
-                                "x\t\n" +
                                 "y\t\n"
                 );
 
