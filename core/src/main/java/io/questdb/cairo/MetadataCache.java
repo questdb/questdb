@@ -399,7 +399,7 @@ public class MetadataCache implements QuietCloseable {
         public void dropTable(@NotNull TableToken tableToken) {
             String tableName = tableToken.getTableName();
             CairoTable entry = tableMap.get(tableName);
-            if (tableToken.equals(entry.getTableToken())) {
+            if (entry != null && tableToken.equals(entry.getTableToken())) {
                 tableMap.remove(tableName);
                 LOG.info().$("dropped [table=").$(tableName).I$();
             }
