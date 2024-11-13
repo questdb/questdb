@@ -85,7 +85,7 @@ public class SampleByConfigTest extends AbstractBootstrapTest {
 
             try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.ddl(ddl, sqlExecutionContext);
-                engine.compile(dml, sqlExecutionContext);
+                engine.ddl(dml, sqlExecutionContext);
                 drainWalQueue(engine);
 
                 TestUtils.assertSql(engine, sqlExecutionContext, query, Misc.getThreadLocalSink(), expected);

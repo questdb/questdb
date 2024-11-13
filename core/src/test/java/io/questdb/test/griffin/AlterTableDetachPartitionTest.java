@@ -156,7 +156,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     "2022-06-01",
                     3
             );
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+            ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertSql(
                     "first\tts\n" +
                             "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
@@ -205,16 +205,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     "2022-06-01",
                     3
             );
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+            ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertSql(
                     "first\tts\n" +
                             "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
-            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
+            ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertFailure("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'", DETACH_ERR_COPY_META.name());
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
-            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
+            ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+            ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
 
             assertSql(
                     "first\tts\n" +
@@ -259,7 +259,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     "2022-06-01",
                     3
             );
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+            ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertSql(
                     "first\tts\n" +
                             "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
@@ -274,7 +274,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     "could not attach partition"
             );
 
-            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
+            ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertSql(
                     "first\tts\n" +
                             "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
@@ -306,12 +306,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "2020-01-02T23:59:59.000000Z\tfoobar\n", "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
-            compile("alter table " + tableName + " detach partition list '2020-01-01'");
+            ddl("alter table " + tableName + " detach partition list '2020-01-01'");
 
-            compile("truncate table " + tableName);
+            ddl("truncate table " + tableName);
 
             renameDetachedToAttachable(tableName, "2020-01-01");
-            compile("alter table " + tableName + " attach partition list '2020-01-01'");
+            ddl("alter table " + tableName + " attach partition list '2020-01-01'");
 
             // No symbols are present.
             assertSql(
@@ -347,12 +347,12 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "2020-01-02T23:59:59.000000Z\tfoobar\n", "select first(ts), sym from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
-            compile("alter table " + tableName + " detach partition list '2020-01-01'");
+            ddl("alter table " + tableName + " detach partition list '2020-01-01'");
 
-            compile("truncate table " + tableName + " keep symbol maps");
+            ddl("truncate table " + tableName + " keep symbol maps");
 
             renameDetachedToAttachable(tableName, "2020-01-01");
-            compile("alter table " + tableName + " attach partition list '2020-01-01'");
+            ddl("alter table " + tableName + " attach partition list '2020-01-01'");
 
             // All symbols are kept.
             assertSql(
@@ -470,14 +470,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     2
             );
 
-            compile("alter table " + tableName + " add column str string");
-            compile("alter table " + tableName + " add column vch varchar");
+            ddl("alter table " + tableName + " add column str string");
+            ddl("alter table " + tableName + " add column vch varchar");
 
-            compile("insert into " + tableName +
+            ddl("insert into " + tableName +
                     " select x, rnd_int(), timestamp_sequence('2020-01-02T23:59:59', 1000000L * 60 * 20), rnd_str('a', 'b', 'c', null), rnd_varchar('a', 'b', 'c', null)" +
                     " from long_sequence(100)");
 
-            compile("alter table " + tableName + " detach partition list '2020-01-02', '2020-01-03'");
+            ddl("alter table " + tableName + " detach partition list '2020-01-02', '2020-01-03'");
 
             assertSql(
                     "first\tstr\n" +
@@ -490,7 +490,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             );
 
             renameDetachedToAttachable(tableName, "2020-01-02", "2020-01-03");
-            compile("alter table " + tableName + " attach partition list '2020-01-02', '2020-01-03'");
+            ddl("alter table " + tableName + " attach partition list '2020-01-02', '2020-01-03'");
 
             assertSql(
                     "first\tstr\n" +
@@ -633,7 +633,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             );
 
 
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-03'");
+            ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-03'");
 
             Assert.assertEquals(1, counter.get());
             runPartitionPurgeJobs();
@@ -733,21 +733,21 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                             "2022-06-01",
                             3
                     );
-                    compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                    ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
                     assertSql(
                             "first\tts\n" +
                                     "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                     );
 
                     for (int i = 0; i < 2; i++) {
-                        compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                        ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
                         assertSql(
                                 "first\tts\n" +
                                         "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
                                         "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
                                         "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                         );
-                        compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
+                        ddl("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
                     }
                 }
@@ -1185,21 +1185,21 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     "2022-06-01",
                     3
             );
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
+            ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01', '2022-06-02'");
             assertSql(
                     "first\tts\n" +
                             "2022-06-03T02:23:59.300000Z\t2022-06-03T02:23:59.300000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
             );
 
             for (int i = 0; i < 2; i++) {
-                compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
+                ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01', '2022-06-02'");
                 assertSql(
                         "first\tts\n" +
                                 "2022-06-01T07:11:59.900000Z\t2022-06-01T07:11:59.900000Z\n" +
                                 "2022-06-02T11:59:59.500000Z\t2022-06-02T07:11:59.900000Z\n" +
                                 "2022-06-03T09:35:59.200000Z\t2022-06-03T07:11:59.900000Z\n", "select first(ts), ts from " + tableName + " sample by 1d ALIGN TO FIRST OBSERVATION"
                 );
-                compile("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
+                ddl("ALTER TABLE " + tableName + " DROP PARTITION LIST '2022-06-01', '2022-06-02'");
 
             }
         });
@@ -2007,7 +2007,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             renameDetachedToAttachable(tableName, timestampDay);
 
             // reattach old version
-            compile("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'");
+            ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + timestampDay + "'");
             assertContent(
                     "l\ti\tts\n" +
                             "1\t1\t2022-06-01T07:59:59.916666Z\n" +
@@ -2045,7 +2045,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             String timestampDay = "2022-06-01";
             String timestampWrongDay2 = "2022-06-02";
 
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "','" + timestampWrongDay2 + "'");
+            ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "','" + timestampWrongDay2 + "'");
             renameDetachedToAttachable(tableName, timestampDay);
 
             TableToken tableToken = engine.verifyTableName(tableName);
@@ -2084,7 +2084,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             String timestampDay = "2022-06-01";
             String timestampWrongDay2 = "2022-06-02";
 
-            compile("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "','" + timestampWrongDay2 + "'");
+            ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + timestampDay + "','" + timestampWrongDay2 + "'");
             renameDetachedToAttachable(tableName, timestampDay);
 
             String timestampWrongDay = "2021-06-01";

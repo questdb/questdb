@@ -120,7 +120,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         " timestamp(ts) PARTITION BY DAY");
 
                 try (TableReader rdr1 = getReader("up_part_o3_many")) {
-                    compile("insert into up_part_o3_many " +
+                    ddl("insert into up_part_o3_many " +
                             " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                             " x," +
                             " rnd_str('a', 'b', 'c', 'd') str," +
@@ -300,7 +300,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY");
 
-                compile("insert into up_part_o3 " +
+                ddl("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -453,7 +453,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY");
 
-                compile("insert into up_part_o3 " +
+                ddl("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -700,7 +700,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY");
 
-                compile("insert into up_part_o3 " +
+                ddl("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +
@@ -796,7 +796,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         " from long_sequence(5)), index(sym2)" +
                         " timestamp(ts) PARTITION BY DAY");
 
-                compile("insert into up_part_o3 " +
+                ddl("insert into up_part_o3 " +
                         " select timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1000000L) ts," +
                         " x," +
                         " rnd_str('a', 'b', 'c', 'd') str," +

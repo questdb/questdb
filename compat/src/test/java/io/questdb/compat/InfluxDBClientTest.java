@@ -54,7 +54,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
-            serverMain.getEngine().compile(
+            serverMain.getEngine().ddl(
                     "create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                             "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL"
             );
@@ -98,7 +98,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
         }})) {
             serverMain.start();
-            serverMain.getEngine().compile(
+            serverMain.getEngine().ddl(
                     "create table wal_low_max_uncomitted(sym symbol, ts timestamp) " +
                             "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100"
             );
@@ -128,7 +128,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
-            serverMain.getEngine().compile(
+            serverMain.getEngine().ddl(
                     "create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                             "i int, l long, ip ipv4, g geohash(4c), ts timestamp)"
             );
@@ -182,7 +182,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "512");
         }})) {
             serverMain.start();
-            serverMain.getEngine().compile(
+            serverMain.getEngine().ddl(
                     "create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                             "i int, l long, ip ipv4, g geohash(4c), ts timestamp)"
             );
@@ -338,7 +338,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
         }})) {
             serverMain.start();
-            serverMain.getEngine().compile(
+            serverMain.getEngine().ddl(
                     "create table wal_low_max_uncomitted(sym symbol, ts timestamp) " +
                             "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100"
             );
@@ -367,7 +367,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.DEBUG_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "15");
         }})) {
             serverMain.start();
-            serverMain.getEngine().compile(
+            serverMain.getEngine().ddl(
                     "create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                             "i int, l long, ip ipv4, g geohash(4c), ts timestamp)"
             );
@@ -491,7 +491,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
         }})) {
             serverMain.start();
-            serverMain.getEngine().compile("create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
+            serverMain.getEngine().ddl("create table wal_not_here(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                     "i int, l long, ip ipv4, g geohash(4c), ts timestamp)");
 
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
@@ -530,7 +530,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
         }})) {
             serverMain.start();
-            serverMain.getEngine().compile(
+            serverMain.getEngine().ddl(
                     "create table wal_low_max_uncomitted(sym symbol, i long, ts timestamp) " +
                             "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=" + count
             );
@@ -562,7 +562,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
         }})) {
             serverMain.start();
-            serverMain.getEngine().compile("create table wal_tbl(sym symbol, ts timestamp) " +
+            serverMain.getEngine().ddl("create table wal_tbl(sym symbol, ts timestamp) " +
                     "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100");
             List<String> lines = new ArrayList<>();
             String goodLine = "wal_tbl,sym=aaa\n";
@@ -593,7 +593,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS.getEnvVarName(), "false");
         }})) {
             serverMain.start();
-            serverMain.getEngine().compile(
+            serverMain.getEngine().ddl(
                     "create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                             "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL"
             );
@@ -622,7 +622,7 @@ public class InfluxDBClientTest extends AbstractTest {
             put(PropertyKey.LINE_AUTO_CREATE_NEW_TABLES.getEnvVarName(), "false");
         }})) {
             serverMain.start();
-            serverMain.getEngine().compile(
+            serverMain.getEngine().ddl(
                     "create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                             "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL"
             );

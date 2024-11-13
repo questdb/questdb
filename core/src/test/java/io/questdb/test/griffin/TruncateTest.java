@@ -690,7 +690,7 @@ public class TruncateTest extends AbstractCairoTest {
                         Assert.assertEquals(TRUNCATE, compiler.compile("truncate table testTruncateWithColumnTop", sqlExecutionContext).getType());
                     }
 
-                    compile(
+                    ddl(
                             "insert into testTruncateWithColumnTop " +
                                     "select" +
                                     " cast(x as int) i," +

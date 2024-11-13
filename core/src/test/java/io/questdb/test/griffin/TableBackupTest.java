@@ -25,7 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropServerConfiguration;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalUtils;
@@ -46,7 +51,12 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
 import org.junit.runner.RunWith;
@@ -239,9 +249,9 @@ public class TableBackupTest {
         Assume.assumeTrue(PartitionBy.isPartitioned(partitionBy));
         assertMemoryLeak(() -> {
             TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-            compileAndDrainWalQueue("alter table " + tableToken.getTableName() + " add column new_g4 geohash(30b)");
-            compileAndDrainWalQueue("alter table " + tableToken.getTableName() + " add column new_g8 geohash(32b)");
-            compileAndDrainWalQueue("INSERT INTO '" + tableToken.getTableName() + "' (new_g4, new_g8, timestamp2) SELECT * FROM (" +
+            ddlAndDrainWalQueue("alter table " + tableToken.getTableName() + " add column new_g4 geohash(30b)");
+            ddlAndDrainWalQueue("alter table " + tableToken.getTableName() + " add column new_g8 geohash(32b)");
+            ddlAndDrainWalQueue("INSERT INTO '" + tableToken.getTableName() + "' (new_g4, new_g8, timestamp2) SELECT * FROM (" +
                     " SELECT" +
                     "     rnd_geohash(30)," +
                     "     rnd_geohash(32)," +
@@ -271,7 +281,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             try {
                 TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-                compileAndDrainWalQueue("backup table .." + Files.SEPARATOR + tableToken.getTableName());
+                ddlAndDrainWalQueue("backup table .." + Files.SEPARATOR + tableToken.getTableName());
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertEquals("'.' is an invalid table name", ex.getFlyweightMessage());
@@ -297,7 +307,7 @@ public class TableBackupTest {
     public void testInvalidSql1() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compileAndDrainWalQueue("backup something");
+                ddlAndDrainWalQueue("backup something");
                 Assert.fail();
             } catch (SqlException ex) {
                 Assert.assertEquals(7, ex.getPosition());
@@ -310,7 +320,7 @@ public class TableBackupTest {
     public void testInvalidSql2() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                compileAndDrainWalQueue("backup table");
+                ddlAndDrainWalQueue("backup table");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(12, e.getPosition());
@@ -324,7 +334,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             try {
                 TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-                compileAndDrainWalQueue("backup table " + tableToken.getTableName() + " tb2");
+                ddlAndDrainWalQueue("backup table " + tableToken.getTableName() + " tb2");
                 Assert.fail();
             } catch (SqlException ex) {
                 TestUtils.assertEquals("expected ','", ex.getFlyweightMessage());
@@ -337,7 +347,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             try {
                 TableToken tableToken = executeCreateTableStmt(testName.getMethodName());
-                compileAndDrainWalQueue("backup table " + tableToken.getTableName() + ", tb2");
+                ddlAndDrainWalQueue("backup table " + tableToken.getTableName() + ", tb2");
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertEquals("table does not exist [table=tb2]", e.getFlyweightMessage());
@@ -350,7 +360,7 @@ public class TableBackupTest {
         assertMemoryLeak(() -> {
             TableToken token1 = executeCreateTableStmt(testName.getMethodName());
             TableToken token2 = executeCreateTableStmt(token1.getTableName() + "_yip");
-            compileAndDrainWalQueue("backup table " + token1.getTableName() + ", " + token2.getTableName());
+            ddlAndDrainWalQueue("backup table " + token1.getTableName() + ", " + token2.getTableName());
             setFinalBackupPath();
             assertTables(token1);
             assertTables(token2);
@@ -503,7 +513,7 @@ public class TableBackupTest {
 
         String sql = "INSERT INTO '" + tableToken.getTableName() + "'(timestamp2) VALUES('2123')";
         executeBackupSqlStmt(sql);
-        compileAndDrainWalQueue(sql);
+        ddlAndDrainWalQueue(sql);
 
         selectAll(tableToken, false, sink1);
         selectAll(tableToken, true, sink2);
@@ -518,8 +528,8 @@ public class TableBackupTest {
         mainCompiler.compile("BACKUP TABLE \"" + tableToken.getTableName() + '"', mainSqlExecutionContext);
     }
 
-    private void compileAndDrainWalQueue(String sql) throws SqlException {
-        mainEngine.compile(sql, mainSqlExecutionContext);
+    private void ddlAndDrainWalQueue(String sql) throws SqlException {
+        mainEngine.ddl(sql, mainSqlExecutionContext);
         drainWalQueue();
     }
 

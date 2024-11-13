@@ -5638,7 +5638,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             ddl("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)");
             engine.releaseAllReaders();
             engine.releaseAllWriters();
-            compile("reindex table rebuild_index column sym lock exclusive");
+            ddl("reindex table rebuild_index column sym lock exclusive");
             assertSql(
                     "sym\tx\n" +
                             "1\t1\n" +
@@ -5659,7 +5659,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "), index(sym) timestamp(ts)");
             engine.releaseAllReaders();
             engine.releaseAllWriters();
-            compile("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
+            ddl("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
             assertSql(
                     "sym\tx\tts\n" +
                             "1\t1\t1970-01-01T00:00:00.000000Z\n" +
@@ -5679,7 +5679,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
             try (TableWriter ignore = getWriter("rebuild_index")) {
-                compile("reindex table rebuild_index column sym lock exclusive");
+                ddl("reindex table rebuild_index column sym lock exclusive");
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "cannot lock table");
@@ -5702,7 +5702,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
-            compile("REINDEX TABLE \"xxx\" Lock exclusive;");
+            ddl("REINDEX TABLE \"xxx\" Lock exclusive;");
         });
     }
 

@@ -119,7 +119,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                         "2023-03-13",
                         4
                 );
-                compile("ALTER TABLE " + tab2Name + " DETACH PARTITION LIST '2023-03'");
+                ddl("ALTER TABLE " + tab2Name + " DETACH PARTITION LIST '2023-03'");
                 if (isWal) {
                     drainWalQueue();
                 }
@@ -175,7 +175,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                         "2023-03-13",
                         4
                 );
-                compile("ALTER TABLE " + tab2Name + " DETACH PARTITION LIST '2023-03-15'");
+                ddl("ALTER TABLE " + tab2Name + " DETACH PARTITION LIST '2023-03-15'");
                 if (isWal) {
                     drainWalQueue();
                 }

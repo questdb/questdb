@@ -69,21 +69,13 @@ public class TestServerMain extends ServerMain {
         }
     }
 
-    public void compile(String sql) {
+    public void ddl(String sql) {
         try {
-            if (sqlExecutionContext == null) {
-                getEngine().compile(sql);
-            } else {
-                getEngine().compile(sql, sqlExecutionContext);
-            }
+            ensureContext();
+            getEngine().ddl(sql, sqlExecutionContext);
         } catch (SqlException e) {
             throw new AssertionError(e);
         }
-    }
-
-    public void ddl(String sql) throws SqlException {
-        ensureContext();
-        getEngine().ddl(sql, sqlExecutionContext);
     }
 
     public void reset() {

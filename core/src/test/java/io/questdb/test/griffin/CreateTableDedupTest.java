@@ -437,7 +437,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                         "s\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\ttrue\n",
                 "show columns from '" + tableName + "'"
         );
-        compile("alter table " + tableName + " dedup disable");
+        ddl("alter table " + tableName + " dedup disable");
         drainWalQueue();
         assertSql(
                 "table_name\tdedup\n" +
@@ -445,7 +445,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                 "select table_name, dedup from tables() where table_name ='" + tableName + "'"
         );
 
-        compile("alter table " + tableName + " dedup enable upsert keys(ts)");
+        ddl("alter table " + tableName + " dedup enable upsert keys(ts)");
         drainWalQueue();
         assertSql(
                 "table_name\tdedup\n" +

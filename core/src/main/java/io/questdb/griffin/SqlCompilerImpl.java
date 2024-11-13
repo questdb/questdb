@@ -1693,7 +1693,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 compileDropOther(executionContext, tok, lexer.lastTokenPosition());
             }
         } else {
-            compileDropReportExpected(lexer.lastTokenPosition());
+            compileDropReportExpected(lexer.getPosition());
         }
     }
 

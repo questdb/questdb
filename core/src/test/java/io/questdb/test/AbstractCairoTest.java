@@ -1296,18 +1296,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         assertFactoryMemoryUsage();
     }
 
-    protected static void compile(CharSequence sql) throws SqlException {
-        engine.compile(sql, sqlExecutionContext);
-    }
-
-    protected static void compile(CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        engine.compile(sql, sqlExecutionContext);
-    }
-
-    protected static void compile(SqlCompiler compiler, CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CairoEngine.compile(compiler, sql, sqlExecutionContext);
-    }
-
     protected static void configOverrideEnv(Map<String, String> env) {
         node1.getConfigurationOverrides().setEnv(env);
     }
@@ -1342,12 +1330,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return new ApplyWal2TableJob(engine, 1, 1);
     }
 
-    protected static void ddl(CharSequence ddl, SqlExecutionContext executionContext) throws SqlException {
-        engine.ddl(ddl, executionContext);
+    protected static void ddl(CharSequence sql) throws SqlException {
+        engine.ddl(sql, sqlExecutionContext);
     }
 
-    protected static void ddl(CharSequence ddl) throws SqlException {
-        ddl(ddl, sqlExecutionContext);
+    protected static void ddl(CharSequence ddl, SqlExecutionContext executionContext) throws SqlException {
+        engine.ddl(ddl, executionContext);
     }
 
     protected static void ddl(SqlCompiler compiler, CharSequence ddl) throws SqlException {

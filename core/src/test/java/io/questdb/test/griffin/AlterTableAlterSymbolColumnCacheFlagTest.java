@@ -176,7 +176,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
         assertMemoryLeak(() -> {
             try {
                 createX();
-                compile(sql);
+                ddl(sql);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
