@@ -345,7 +345,7 @@ public class UpdateTest extends AbstractCairoTest {
             );
 
             // Add indexed column in last partition
-            compile("alter table symInd add column sym_index symbol index");
+            ddl("alter table symInd add column sym_index symbol index");
 
             // More data in order
             insert(
@@ -562,7 +562,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "testUpdateAddedColumn"
             );
 
-            compile("alter table testUpdateAddedColumn drop column x");
+            ddl("alter table testUpdateAddedColumn drop column x");
             update("UPDATE testUpdateAddedColumn SET y = COALESCE(y, 1)");
 
             assertSql(
@@ -1451,7 +1451,7 @@ public class UpdateTest extends AbstractCairoTest {
             );
 
             try {
-                compile("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
+                ddl("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
@@ -1466,7 +1466,7 @@ public class UpdateTest extends AbstractCairoTest {
             ddl(
                     "create table test (ts timestamp, x int, y string, sym symbol, symi symbol index) timestamp(ts) partition by DAY WAL"
             );
-            compile("insert into test select timestamp_sequence('2022-02-24T01:01', 1000000L * 60 * 60), x, 'a', 'abc', 'i' from long_sequence(5)");
+            ddl("insert into test select timestamp_sequence('2022-02-24T01:01', 1000000L * 60 * 60), x, 'a', 'abc', 'i' from long_sequence(5)");
 
             ddl("alter table test add column abc int");
             ddl("alter table test drop column x");

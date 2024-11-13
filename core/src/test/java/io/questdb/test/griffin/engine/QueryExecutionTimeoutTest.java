@@ -550,7 +550,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                     resetTimeout();
                 }
 
-                compile(compiler, dml, context);
+                ddl(compiler, dml, context);
             }
 
             if (query != null) {

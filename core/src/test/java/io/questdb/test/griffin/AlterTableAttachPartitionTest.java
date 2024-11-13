@@ -770,7 +770,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             "2022-08-01",
                             10);
 
-                    compile("alter table " + dst.getName() + " drop partition list '2022-08-09'");
+                    ddl("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                 }
@@ -836,7 +836,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             "2022-08-01",
                             10);
 
-                    compile("alter table " + dst.getName() + " drop partition list '2022-08-09'");
+                    ddl("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                 }
@@ -868,7 +868,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             "2022-08-01",
                             10);
 
-                    compile("alter table " + dst.getName() + " drop partition list '2022-08-09'");
+                    ddl("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
                     try {
                         attachFromSrcIntoDst(src, dst, "2022-08-09");
@@ -908,7 +908,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             "2022-08-01",
                             10);
 
-                    compile("alter table " + dst.getName() + " drop partition list '2022-08-09'");
+                    ddl("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
                     // remove .k
                     engine.clear();

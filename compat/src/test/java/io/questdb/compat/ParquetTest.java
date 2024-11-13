@@ -106,26 +106,26 @@ public class ParquetTest extends AbstractTest {
 
         try (final ServerMain serverMain = ServerMain.create(root)) {
             serverMain.start();
-            serverMain.getEngine().compile(ddl); // txn 1
+            serverMain.getEngine().ddl(ddl); // txn 1
 
-            serverMain.getEngine().compile("alter table " + tableName + " add column an_int_top int");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_long_top long");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_float_top float");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_double_top double");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_symbol_top symbol");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_geo_byte_top geohash(4b)");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_geo_short_top geohash(8b)");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_geo_int_top geohash(16b)");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_geo_long_top geohash(32b)");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_string_top string");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_bin_top binary");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_varchar_top varchar");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_ip_top ipv4");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_uuid_top uuid");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_long128_top long128");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_long256_top long256");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_date_top date");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_ts_top timestamp");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column an_int_top int");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_long_top long");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_float_top float");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_double_top double");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_symbol_top symbol");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_geo_byte_top geohash(4b)");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_geo_short_top geohash(8b)");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_geo_int_top geohash(16b)");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_geo_long_top geohash(32b)");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_string_top string");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_bin_top binary");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_varchar_top varchar");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_ip_top ipv4");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_uuid_top uuid");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_long128_top long128");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_long256_top long256");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_date_top date");
+            serverMain.getEngine().ddl("alter table " + tableName + " add column a_ts_top timestamp");
 
             String insert = "insert into " + tableName + "(id, an_int_top, a_long_top, a_float_top, a_double_top,\n" +
                     " a_symbol_top, a_geo_byte_top, a_geo_short_top, a_geo_int_top, a_geo_long_top,\n" +
@@ -159,7 +159,7 @@ public class ParquetTest extends AbstractTest {
                     " timestamp_sequence(1600000000000, 500)" +
                     " from long_sequence(" + UPDATE_ROWS + ");";
 
-            serverMain.getEngine().compile(insert); // txn 20
+            serverMain.getEngine().ddl(insert); // txn 20
 
             serverMain.awaitTxn("x", 20);
 

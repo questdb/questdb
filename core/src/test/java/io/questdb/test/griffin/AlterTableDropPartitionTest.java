@@ -394,13 +394,13 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
             tm.col("inn", ColumnType.INT).timestamp("ts");
             createPopulateTable(tm, 100, "2022-02-24", 3);
 
-            compile("alter table x add column lo LONG");
-            compile("insert into x " +
+            ddl("alter table x add column lo LONG");
+            ddl("insert into x " +
                     "select x, timestamp_sequence('2022-02-26T23:59:59', 1000000), x " +
                     "from long_sequence(199)");
 
-            compile("alter table x drop partition list '2022-02-26'");
-            compile("insert into x " +
+            ddl("alter table x drop partition list '2022-02-26'");
+            ddl("insert into x " +
                     "select x, timestamp_sequence('2022-02-26T12', 10*60*1000000), x " +
                     "from long_sequence(10)");
 
@@ -888,7 +888,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         try {
             long nextTimestamp = IntervalUtils.parseFloorPartialTimestamp("2018-01-01") + increment * 200 + 1;
             String nextTsStr = Timestamps.toUSecString(nextTimestamp);
-            compile("insert into x " +
+            ddl("insert into x " +
                     "select" +
                     " cast(x as int) i," +
                     " rnd_symbol('msft','ibm', 'googl') sym," +

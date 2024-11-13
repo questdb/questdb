@@ -82,7 +82,7 @@ public class RenameTableTest extends AbstractCairoTest {
             );
 
             TableToken table2directoryName = engine.verifyTableName(tableName);
-            compile("rename table " + tableName + " to " + upperCaseName);
+            ddl("rename table " + tableName + " to " + upperCaseName);
             insert("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
             insert("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
 
@@ -96,7 +96,7 @@ public class RenameTableTest extends AbstractCairoTest {
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n", "select * from " + upperCaseName);
 
-            compile("rename table " + upperCaseName + " to " + newTableName);
+            ddl("rename table " + upperCaseName + " to " + newTableName);
 
             assertSql("x\tsym2\tts\n" +
                     "1\tDE\t2022-02-24T00:00:00.000000Z\n" +

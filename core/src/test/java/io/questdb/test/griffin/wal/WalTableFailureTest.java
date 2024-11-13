@@ -118,7 +118,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            ddl("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -170,7 +170,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            ddl("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -211,7 +211,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
             drainWalQueue();
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'ef')");
+            ddl("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'ef')");
 
             // Data is not there, job failed to apply the data.
             assertSql("x\tsym\tts\tsym2\n" +
@@ -382,7 +382,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 }
             }
 
-            compile("insert into " + tableToken.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
+            ddl("insert into " + tableToken.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
             drainWalQueue();
 
             assertSql("x2\tsym\tts\tsym2\n" +
@@ -433,7 +433,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            compile("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            ddl("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -486,7 +486,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            ddl("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -574,7 +574,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            compile("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            ddl("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -630,7 +630,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 Assert.assertEquals(2, walWriter.getWalId());
             }
 
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            ddl("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -644,10 +644,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            compile("alter table " + tableToken.getTableName() + " add column new_column int");
+            ddl("alter table " + tableToken.getTableName() + " add column new_column int");
 
             try {
-                compile("alter table " + tableToken.getTableName() + " add column new_column int");
+                ddl("alter table " + tableToken.getTableName() + " add column new_column int");
             } catch (SqlException ex) {
                 // Critical error
                 TestUtils.assertContains(ex.getFlyweightMessage(), "column 'new_column' already exists");
@@ -673,7 +673,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
             String tableName = tableToken.getTableName();
 
-            compile("alter table " + tableName + " add column new_column int");
+            ddl("alter table " + tableName + " add column new_column int");
 
             try {
                 insert("insert into " + tableName +
@@ -718,7 +718,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 String tableName = testName.getMethodName();
                 createStandardWalTable(tableName);
 
-                compile("alter table " + tableName + " add column new_column int");
+                ddl("alter table " + tableName + " add column new_column int");
 
                 insert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
                 drainWalQueue(walApplyJob);
@@ -745,7 +745,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
             engine.notifyWalTxnCommitted(ignored);
 
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            ddl("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();
 
             assertSql("x\tsym\tts\tsym2\n" +
@@ -772,7 +772,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             } catch (TableReferenceOutOfDateException ignore) {
             }
 
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            ddl("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();
 
             assertSql("x\tsym\tts\tsym2\n" +
@@ -929,7 +929,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "wal_tables()"
             );
 
-            compile("alter table " + tableToken.getTableName() + " suspend wal");
+            ddl("alter table " + tableToken.getTableName() + " suspend wal");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
@@ -937,11 +937,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "wal_tables()"
             );
 
-            compile("update " + tableToken.getTableName() + " set x = 1111;");
+            ddl("update " + tableToken.getTableName() + " set x = 1111;");
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
-            compile("alter table " + tableToken.getTableName() + " suspend wal with "
+            ddl("alter table " + tableToken.getTableName() + " suspend wal with "
                     + (Os.isWindows() ? 112 : 28) + ", 'test error message'");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
@@ -950,7 +950,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "wal_tables()"
             );
 
-            compile("alter table " + tableToken.getTableName() + " resume wal;");
+            ddl("alter table " + tableToken.getTableName() + " resume wal;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
@@ -997,8 +997,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 writer.addColumn("abcd", ColumnType.INT);
             }
 
-            compile("alter table " + tableName.getTableName() + " add column dddd2 long");
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'abcd', 123)");
+            ddl("alter table " + tableName.getTableName() + " add column dddd2 long");
+            ddl("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'abcd', 123)");
             drainWalQueue();
 
             // No SQL applied
@@ -1018,12 +1018,12 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 writer.removeColumn("sym");
             }
 
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'abcde')");
-            compile("insert into " + tableName.getTableName() + " values (2, 'ab', '2022-02-25', 'abcdr')");
+            ddl("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'abcde')");
+            ddl("insert into " + tableName.getTableName() + " values (2, 'ab', '2022-02-25', 'abcdr')");
             // inserts do not check structure version
             // it fails only when structure is changing through the WAL
-            compile("alter table " + tableName.getTableName() + " add column dddd2 long");
-            compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcdt', 123L)");
+            ddl("alter table " + tableName.getTableName() + " add column dddd2 long");
+            ddl("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcdt', 123L)");
 
             drainWalQueue();
             assertSql("ts\tsym2\n" +
@@ -1110,7 +1110,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             checkWalTransactionsJob.run(0);
 
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            ddl("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();
 
             assertSql("x\tsym\tts\tsym2\n" +
@@ -1170,7 +1170,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     " values (101, 'dfd', '2022-02-24T01', 'asd')");
 
             try {
-                compile("alter table " + tableToken.getTableName() + " add column jjj int, column2 long");
+                ddl("alter table " + tableToken.getTableName() + " add column jjj int, column2 long");
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(
@@ -1212,11 +1212,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
             //1
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
             //2 fail
-            compile("update " + tableToken.getTableName() + " set x = 1111");
+            ddl("update " + tableToken.getTableName() + " set x = 1111");
             //3
-            compile("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (1, 'AB', 'EF', '2022-02-24T01')");
+            ddl("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (1, 'AB', 'EF', '2022-02-24T01')");
             //4
-            compile("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (2, 'AB', 'EF', '2022-02-24T02')");
+            ddl("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (2, 'AB', 'EF', '2022-02-24T02')");
 
             drainWalQueue();
 
@@ -1236,7 +1236,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
             engine.getTableSequencerAPI().releaseAll();
-            compile("alter table " + tableToken.getTableName() + " resume wal");
+            ddl("alter table " + tableToken.getTableName() + " resume wal");
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             drainWalQueue();
@@ -1267,9 +1267,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
         assertMemoryLeak(filesFacade, () -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            compile("update " + tableToken.getTableName() + " set x = 1111;");
-            compile("update " + tableToken.getTableName() + " set sym = 'XXX';");
-            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY';");
+            ddl("update " + tableToken.getTableName() + " set x = 1111;");
+            ddl("update " + tableToken.getTableName() + " set sym = 'XXX';");
+            ddl("update " + tableToken.getTableName() + " set sym2 = 'YYY';");
 
             drainWalQueue();
 
@@ -1277,7 +1277,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
-            compile("alter table " + tableToken.getTableName() + " resume wal;");
+            ddl("alter table " + tableToken.getTableName() + " resume wal;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
 
             drainWalQueue();
@@ -1303,11 +1303,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
             //1
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
             //2 fail
-            compile("update " + tableToken.getTableName() + " set x = 1111");
+            ddl("update " + tableToken.getTableName() + " set x = 1111");
             //3
-            compile("update " + tableToken.getTableName() + " set sym = 'XXX'");
+            ddl("update " + tableToken.getTableName() + " set sym = 'XXX'");
             //4
-            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
+            ddl("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
 
             drainWalQueue();
 
@@ -1316,13 +1316,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
             try {
-                compile("alter table " + tableToken.getTableName() + " resume wal from transaction 999;"); // fails
+                ddl("alter table " + tableToken.getTableName() + " resume wal from transaction 999;"); // fails
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getMessage(), "[-1] resume txn is higher than next available transaction [resumeFromTxn=999, nextTxn=5]");
             }
 
-            compile("alter table " + tableToken.getTableName() + " resume wal from txn 3;");
+            ddl("alter table " + tableToken.getTableName() + " resume wal from txn 3;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             engine.releaseInactive(); // release writer from the pool
             drainWalQueue();
@@ -1411,7 +1411,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     private static void assertAlterTableTypeFail(String alterStmt, String expected) {
         try {
-            compile(alterStmt);
+            ddl(alterStmt);
             Assert.fail("expected SQLException is not thrown");
         } catch (SqlException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), expected);
@@ -1525,7 +1525,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     insertMethod.commit();
 
                     insertMethod.execute();
-                    compile("alter table " + tableName + " add column new_column int");
+                    ddl("alter table " + tableName + " add column new_column int");
 
                     try {
                         insertMethod.commit();
@@ -1550,7 +1550,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         createStandardWalTable(tableName);
 
         // Drop partition which does not exist
-        compile(query);
+        ddl(query);
 
         // Table should not be suspended
         insert("insert into " + tableName +
@@ -1568,10 +1568,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
             createStandardWalTable(tableName);
 
             // Drop partition which does not exist
-            compile(query);
+            ddl(query);
 
             // Table should be suspended
-            compile("update " + tableName + " set x = 1111");
+            ddl("update " + tableName + " set x = 1111");
 
             drainWalQueue();
 
@@ -1600,7 +1600,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
 
             try (WalWriter ignore = engine.getWalWriter(tableName)) {
-                compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
+                ddl("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
                 try (WalWriter insertedWriter = engine.getWalWriter(tableName)) {
                     try (Path path = new Path()) {
                         String columnName = "sym";
@@ -1619,7 +1619,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 }
             }
 
-            compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
+            ddl("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
             drainWalQueue();
 
             assertSql("x\tsym\tts\tsym2\n" +
@@ -1651,11 +1651,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
             //1
             final TableToken tableToken = createStandardWalTable(tableName);
             //2 fail
-            compile("update " + tableToken.getTableName() + " set x = 1111");
+            ddl("update " + tableToken.getTableName() + " set x = 1111");
             //3
-            compile("update " + tableToken.getTableName() + " set sym = 'XXX'");
+            ddl("update " + tableToken.getTableName() + " set sym = 'XXX'");
             //4
-            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
+            ddl("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
 
             drainWalQueue();
 
@@ -1673,8 +1673,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "wal_tables()"
             );
 
-            compile("alter table " + tableToken.getTableName() + " resume wal");
-            compile("alter table " + tableToken.getTableName() + " resume wal from transaction 0"); // ignored
+            ddl("alter table " + tableToken.getTableName() + " resume wal");
+            ddl("alter table " + tableToken.getTableName() + " resume wal from transaction 0"); // ignored
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
 
             engine.releaseInactive(); // release writer from the pool
@@ -1683,7 +1683,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertSql("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                     tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n", "wal_tables()");
 
-            compile("drop table " + tableToken.getTableName());
+            ddl("drop table " + tableToken.getTableName());
         });
     }
 }

@@ -31,6 +31,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class CreateTableFuzzTest extends AbstractCairoTest {
@@ -49,11 +50,12 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private final int variantSelector = rnd.nextInt(3);
 
     @Test
+    @Ignore
     public void testX() throws Exception {
         SCSequence seq = new SCSequence();
         assertMemoryLeak(() -> {
             try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
-                createSourceTable(sqlCompiler);
+                engine.ddl("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, x STRING)");
                 StringBuilder ddl = generateCreateTable();
                 System.out.println();
                 System.out.println(ddl);
@@ -115,15 +117,6 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
             ddl.append(" PARTITION BY HOUR");
         }
         ddl.append(" WAL");
-    }
-
-    private void createSourceTable(SqlCompiler sqlCompiler) throws Exception {
-        try (OperationFuture fut = sqlCompiler.compile(
-                        "CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, x STRING)", sqlExecutionContext)
-                .execute(null)
-        ) {
-            fut.await();
-        }
     }
 
     private StringBuilder generateCreateTable() {

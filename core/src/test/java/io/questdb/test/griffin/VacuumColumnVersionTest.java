@@ -95,7 +95,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                                 " from long_sequence(5)), index(sym2)" +
                                 " timestamp(ts) PARTITION BY DAY"
                 );
-                compile("alter table testPurge drop column x");
+                ddl("alter table testPurge drop column x");
 
                 purgeJobInstance.set(purgeJob);
                 update("UPDATE testPurge SET sym1='123'");
@@ -131,7 +131,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                                 " from long_sequence(5)), index(sym2)" +
                                 " timestamp(ts) PARTITION BY DAY"
                 );
-                compile("alter table testPurge drop column x");
+                ddl("alter table testPurge drop column x");
 
                 try (TableReader rdr = getReader("testPurge")) {
                     update("UPDATE testPurge SET sym1='123', str='abcd', sym2='EE' WHERE ts >= '1970-01-02'");
@@ -337,8 +337,8 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
                                 " from long_sequence(5)), index(sym2)" +
                                 " timestamp(ts) PARTITION BY DAY"
                 );
-                compile("alter table testPurge drop column x");
-                compile("alter table testPurge add column x int");
+                ddl("alter table testPurge drop column x");
+                ddl("alter table testPurge add column x int");
                 insert("insert into testPurge(str,sym1,sym2,x,ts) values('str', 'sym1', 'sym2', 123, '1970-02-01')");
 
                 try (TableReader rdr = getReader("testPurge")) {
@@ -457,7 +457,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         if (Os.isWindows()) {
             engine.releaseInactive();
         }
-        compile("VACUUM TABLE " + tableName);
+        ddl("VACUUM TABLE " + tableName);
     }
 
     private String[] update3ColumnsWithOpenReader(ColumnPurgeJob purgeJob, String tableName) throws SqlException {

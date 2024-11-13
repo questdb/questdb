@@ -389,16 +389,6 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.close();
     }
 
-    public void compile(CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        try (SqlCompiler compiler = getSqlCompiler()) {
-            compile(compiler, sql, sqlExecutionContext);
-        }
-    }
-
-    public void compile(CharSequence sql) throws SqlException {
-        compile(sql, rootExecutionContext);
-    }
-
     public @NotNull TableToken createTable(
             SecurityContext securityContext,
             MemoryMARW mem,
@@ -421,6 +411,10 @@ public class CairoEngine implements Closeable, WriterSource {
     ) {
         securityContext.authorizeTableCreate();
         return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, inVolume);
+    }
+
+    public void ddl(CharSequence sql) throws SqlException {
+        ddl(sql, rootExecutionContext);
     }
 
     public void ddl(CharSequence ddl, SqlExecutionContext executionContext) throws SqlException {

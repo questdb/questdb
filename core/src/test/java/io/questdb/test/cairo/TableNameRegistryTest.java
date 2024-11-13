@@ -124,7 +124,6 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        Rnd rnd = TestUtils.generateRandom(LOG);
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             while (!done.get()) {
                                 try {
@@ -202,12 +201,11 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             threads.add(new Thread(() -> {
                 try {
                     barrier.await();
-                    Rnd rnd = TestUtils.generateRandom(LOG);
                     try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                         int counter = 0;
                         while (!done.get()) {
                             try {
-                                compile("rename table tab to tab" + (++counter), executionContext);
+                                ddl("rename table tab to tab" + (++counter), executionContext);
                                 drop("drop table tab" + counter, executionContext);
                             } catch (TableReferenceOutOfDateException e) {
                                 // this is fine, query will have to recompile
@@ -584,7 +582,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
-            compile("drop table tab1");
+            ddl("drop table tab1");
             createTableWal("tab1");
 
             simulateEngineRestart();
@@ -606,7 +604,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
-            compile("drop table tab1");
+            ddl("drop table tab1");
             createTableWal("tab1");
 
             simulateEngineRestart();
@@ -638,7 +636,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
-            compile("drop table tab1");
+            ddl("drop table tab1");
             createTableWal("tab1");
 
             simulateEngineRestart();
@@ -681,7 +679,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             drop("drop table tab1");
             createTableWal("tab1");
 
-            compile("drop table tab1");
+            ddl("drop table tab1");
             createTableWal("tab1");
 
             simulateEngineRestart();
@@ -836,7 +834,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
             simulateEngineRestart();
             engine.reconcileTableNameRegistryState();
 
-            compile("drop table tab1");
+            ddl("drop table tab1");
             createTableWal("tab1");
 
             simulateEngineRestart();
@@ -1143,7 +1141,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 ddl("create table " + tableName + "(a int, t timestamp) timestamp(t) partition by day wal");
                                 break;
                             case FUZZ_RENAME:
-                                compile("rename table " + oldTableName + " to " + tableName);
+                                ddl("rename table " + oldTableName + " to " + tableName);
                                 break;
                             case FUZZ_DROP:
                                 drop("drop table " + tableName);

@@ -847,7 +847,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                             "count\n24\n"
                     );
 
-                    engine.compile("alter table trips dedup upsert keys(Pickup_DateTime)", sqlExecutionContext);
+                    engine.ddl("alter table trips dedup upsert keys(Pickup_DateTime)", sqlExecutionContext);
 
                     // resend the same request
                     new SendAndReceiveRequestBuilder().execute(request, response);

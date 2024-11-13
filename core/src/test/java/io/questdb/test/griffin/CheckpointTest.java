@@ -1049,7 +1049,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 path.of(configuration.getRoot());
                 copyPath.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory());
 
-                compile("create table " + tableName + " (a symbol index capacity 128, b double, c long)");
+                ddl("create table " + tableName + " (a symbol index capacity 128, b double, c long)");
 
                 ddl("snapshot prepare");
 

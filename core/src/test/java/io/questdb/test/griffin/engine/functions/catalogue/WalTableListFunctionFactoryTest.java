@@ -164,7 +164,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             createTable("D", true);
 
             insert("insert into B values (1, 'A', '2022-12-05T01', 'B')");
-            compile("update B set x = 101");
+            ddl("update B set x = 101");
             insert("insert into B values (2, 'C', '2022-12-05T02', 'D')");
             insert("insert into C values (1, 'A', '2022-12-05T01', 'B')");
             insert("insert into C values (2, 'C', '2022-12-05T02', 'D')");

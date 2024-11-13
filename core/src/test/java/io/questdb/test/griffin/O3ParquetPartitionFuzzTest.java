@@ -142,7 +142,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             partitionTs = xr.getPartitionTimestampByIndex(partitionIndex);
             int partitionBy = xr.getPartitionedBy();
             PartitionBy.setSinkForPartition(stringSink, partitionBy, partitionTs);
-            CairoEngine.compile(compiler, "alter table x convert partition to parquet list '" + stringSink + "'", sqlExecutionContext);
+            engine.ddl("alter table x convert partition to parquet list '" + stringSink + "'", sqlExecutionContext);
         }
 
         long minTs = partitionTs - 3600000000L;

@@ -96,8 +96,8 @@ public class DropIndexTest extends AbstractCairoTest {
         model.col("a", ColumnType.INT);
         model.timestamp("ts");
         createPopulateTable(model, 5, "2022-02-24", 2);
-        compile("alter table " + tableName + " add column sym symbol index");
-        compile("insert into " + tableName +
+        ddl("alter table " + tableName + " add column sym symbol index");
+        ddl("insert into " + tableName +
                 " select x, timestamp_sequence('2022-02-24T01:30', 1000000000), rnd_symbol('A', 'B', 'C') from long_sequence(5)");
 
         assertSql("a\tts\tsym\n" +
@@ -120,7 +120,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 "4\t2022-02-24T01:35:59.200000Z\t\n" +
                 "5\t2022-02-24T01:59:59.000000Z\t\n", "select * from " + tableName + " where sym is null");
 
-        compile("alter table " + tableName + " alter column sym drop index");
+        ddl("alter table " + tableName + " alter column sym drop index");
 
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T00:23:59.800000Z\t\n" +
@@ -152,7 +152,7 @@ public class DropIndexTest extends AbstractCairoTest {
         model.col("a", ColumnType.INT);
         model.timestamp("ts");
         createPopulateTable(model, 5, "2022-02-24", 2);
-        compile("alter table " + tableName + " add column sym symbol index");
+        ddl("alter table " + tableName + " add column sym symbol index");
 
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T00:23:59.800000Z\t\n" +
@@ -161,7 +161,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 "4\t2022-02-24T01:35:59.200000Z\t\n" +
                 "5\t2022-02-24T01:59:59.000000Z\t\n", tableName);
 
-        compile("alter table " + tableName + " alter column sym drop index");
+        ddl("alter table " + tableName + " alter column sym drop index");
 
         assertSql("a\tts\tsym\n" +
                 "1\t2022-02-24T00:23:59.800000Z\t\n" +

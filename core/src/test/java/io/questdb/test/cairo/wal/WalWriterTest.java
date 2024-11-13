@@ -687,10 +687,10 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testAlterAddDropIndex() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
-            compile("alter table " + tableToken.getTableName() + " add sym2 symbol");
-            compile("alter table " + tableToken.getTableName() + " alter column sym2 add index");
-            compile("alter table " + tableToken.getTableName() + " alter column sym2 drop index");
-            compile("alter table " + tableToken.getTableName() + " add i2 int");
+            ddl("alter table " + tableToken.getTableName() + " add sym2 symbol");
+            ddl("alter table " + tableToken.getTableName() + " alter column sym2 add index");
+            ddl("alter table " + tableToken.getTableName() + " alter column sym2 drop index");
+            ddl("alter table " + tableToken.getTableName() + " add i2 int");
 
             drainWalQueue();
 

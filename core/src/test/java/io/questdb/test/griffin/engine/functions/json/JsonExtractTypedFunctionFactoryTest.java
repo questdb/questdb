@@ -196,7 +196,7 @@ public class JsonExtractTypedFunctionFactoryTest extends AbstractCairoTest {
             final String sql = "select json_extract(NULL, '.x', " + columnType + ") as x from long_sequence(1)";
             final SqlException exc = Assert.assertThrows(
                     SqlException.class,
-                    () -> compile(sql)
+                    () -> ddl(sql)
             );
             Assert.assertEquals(7, exc.getPosition());
             TestUtils.assertContains(exc.getMessage(), "please use json_extract(json,path)::type semantic");

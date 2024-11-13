@@ -174,7 +174,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                 ) {
 
                     insertMethod.execute();
-                    compile("alter table " + tableName + " add column jjj int");
+                    ddl("alter table " + tableName + " add column jjj int");
                     insertMethod.commit();
                 }
             }
@@ -940,17 +940,17 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             engine.releaseInactive();
 
-            compile("alter table weather drop column city");
+            ddl("alter table weather drop column city");
             insert("insert into weather values(1, 1, '1982-01-01', 'abc')");
             drainWalQueue();
 
             engine.releaseInactive();
-            compile("alter table weather add column city symbol");
+            ddl("alter table weather add column city symbol");
             insert("insert into weather values(1, 1, '1982-01-01', 'abc', 'city')");
             drainWalQueue();
 
             engine.releaseInactive();
-            compile("alter table weather drop column city");
+            ddl("alter table weather drop column city");
         });
     }
 
