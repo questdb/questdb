@@ -2431,6 +2431,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             lexer.of(createTableOp.getSelectText());
                             clear();
                             compileInner(executionContext, createTableOp.getSelectText());
+                            factory.close();
                             factory = this.compiledQuery.getRecordCursorFactory();
                             LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
                         }
