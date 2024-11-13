@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.wal;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
@@ -35,9 +36,9 @@ import org.jetbrains.annotations.NotNull;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class FailureFileFacade implements FilesFacade {
+    private final AtomicInteger failureGenerated = new AtomicInteger();
     private final FilesFacade ff;
-
-    public AtomicInteger osCallsCount = new AtomicInteger(0);
+    private final AtomicInteger osCallsCount = new AtomicInteger(0);
 
     public FailureFileFacade(@NotNull FilesFacade filesFacade) {
         this.ff = filesFacade;
@@ -45,7 +46,9 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean allocate(long fd, long size) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return false;
+        }
         return ff.allocate(fd, size);
     }
 
@@ -56,8 +59,15 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public long append(long fd, long buf, int len) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.append(fd, buf, len);
+    }
+
+    public void clearFailures() {
+        osCallsCount.set(0);
+        failureGenerated.set(0);
     }
 
     @Override
@@ -72,25 +82,33 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public int copy(LPSZ from, LPSZ to) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.copy(from, to);
     }
 
     @Override
     public long copyData(long srcFd, long destFd, long offsetSrc, long length) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.copyData(srcFd, destFd, offsetSrc, length);
     }
 
     @Override
     public long copyData(long srcFd, long destFd, long offsetSrc, long destOffset, long length) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.copyData(srcFd, destFd, offsetSrc, destOffset, length);
     }
 
     @Override
     public int copyRecursive(Path src, Path dst, int dirMode) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.copyRecursive(src, dst, dirMode);
     }
 
@@ -114,6 +132,10 @@ public class FailureFileFacade implements FilesFacade {
         ff.fadvise(fd, offset, len, advise);
     }
 
+    public int failureGenerated() {
+        return failureGenerated.get();
+    }
+
     @Override
     public long findClose(long findPtr) {
         return ff.findClose(findPtr);
@@ -121,7 +143,9 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public long findFirst(LPSZ path) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.findFirst(path);
     }
 
@@ -132,7 +156,9 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public int findNext(long findPtr) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.findNext(findPtr);
     }
 
@@ -243,13 +269,17 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public long length(long fd) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.length(fd);
     }
 
     @Override
     public long length(LPSZ name) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.length(name);
     }
 
@@ -265,25 +295,31 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public int mkdir(LPSZ path, int mode) {
-        osCallsCount.incrementAndGet();
+        checkForFailure();
         return ff.mkdir(path, mode);
     }
 
     @Override
     public int mkdirs(Path path, int mode) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.mkdirs(path, mode);
     }
 
     @Override
     public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.mmap(fd, len, offset, flags, memoryTag);
     }
 
     @Override
     public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
     }
 
@@ -294,43 +330,54 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public void munmap(long address, long size, int memoryTag) {
-        osCallsCount.incrementAndGet();
         ff.munmap(address, size, memoryTag);
     }
 
     @Override
     public long openAppend(LPSZ name) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.openAppend(name);
     }
 
     @Override
     public long openCleanRW(LPSZ name, long size) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.openCleanRW(name, size);
     }
 
     @Override
     public long openRO(LPSZ name) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.openRO(name);
     }
 
     @Override
     public long openRW(LPSZ name, long opts) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.openRW(name, opts);
     }
 
     @Override
     public long read(long fd, long buf, long size, long offset) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.read(fd, buf, size, offset);
     }
 
     @Override
     public long readIntAsUnsignedLong(long fd, long offset) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.readIntAsUnsignedLong(fd, offset);
     }
 
@@ -341,50 +388,77 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public byte readNonNegativeByte(long fd, long offset) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.readNonNegativeByte(fd, offset);
     }
 
     @Override
     public int readNonNegativeInt(long fd, long offset) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.readNonNegativeInt(fd, offset);
     }
 
     @Override
     public long readNonNegativeLong(long fd, long offset) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.readNonNegativeLong(fd, offset);
     }
 
     @Override
     public void remove(LPSZ name) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            throw CairoException.critical(errno()).put("could not remove [file=").put(name).put(']');
+        }
         ff.remove(name);
     }
 
     @Override
     public boolean removeQuiet(LPSZ name) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return false;
+        }
         return ff.removeQuiet(name);
     }
 
     @Override
     public int rename(LPSZ from, LPSZ to) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.rename(from, to);
     }
 
     @Override
     public boolean rmdir(Path name) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return false;
+        }
         return ff.rmdir(name);
     }
 
     @Override
     public boolean rmdir(Path name, boolean haltOnError) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return false;
+        }
         return ff.rmdir(name, haltOnError);
+    }
+
+    public void setToFailAfter(int ioFailureCallCount) {
+        int osCalls;
+
+        while (true) {
+            osCalls = osCallsCount.get();
+            if (osCalls > 0 || osCallsCount.compareAndSet(osCalls, ioFailureCallCount)) {
+                return;
+            }
+        }
     }
 
     @Override
@@ -399,13 +473,17 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public boolean touch(LPSZ path) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return false;
+        }
         return ff.touch(path);
     }
 
     @Override
     public boolean truncate(long fd, long size) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return false;
+        }
         return ff.truncate(fd, size);
     }
 
@@ -416,19 +494,25 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public int unlink(LPSZ softLink) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.unlink(softLink);
     }
 
     @Override
     public boolean unlinkOrRemove(Path path, Log LOG) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return false;
+        }
         return ff.unlinkOrRemove(path, LOG);
     }
 
     @Override
     public boolean unlinkOrRemove(Path path, int checkedType, Log LOG) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return false;
+        }
         return ff.unlinkOrRemove(path, checkedType, LOG);
     }
 
@@ -439,7 +523,17 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public long write(long fd, long address, long len, long offset) {
-        osCallsCount.incrementAndGet();
+        if (checkForFailure()) {
+            return -1;
+        }
         return ff.write(fd, address, len, offset);
+    }
+
+    private boolean checkForFailure() {
+        boolean fail = osCallsCount.decrementAndGet() == 0;
+        if (fail) {
+            failureGenerated.incrementAndGet();
+        }
+        return fail;
     }
 }

@@ -64,6 +64,8 @@ public class FuzzTransactionGenerator {
             int metaVersion,
             double tableDropProbability
     ) {
+        double failureProbability = 0.01;
+
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
         RecordMetadata meta = deepMetadataCopyOf(sequencerMetadata, tableMetadata);

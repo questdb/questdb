@@ -91,7 +91,8 @@ public class FuzzRunner {
     private double equalTsRowsProb;
     private FailureFileFacade ff;
     private int fuzzRowCount;
-    private int ioAllocationFailureCount;
+    private int ioFailureCount;
+    private int ioFailureCreatedCount;
     private boolean isO3;
     private double notSetProb;
     private double nullSetProb;
@@ -223,55 +224,74 @@ public class FuzzRunner {
         TableReader rdr1 = getReader(tableName);
         TableReader rdr2 = getReader(tableName);
 
-        int osCallsStart = ff.osCallsCount.get();
-        int columns = 1;
-        int partitions = 1;
-        int operations = 1;
         try (
                 O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)
         ) {
             int transactionSize = transactions.size();
             Rnd rnd = new Rnd();
+            int failuresObserved = 0;
             for (int i = 0; i < transactionSize; i++) {
-                FuzzTransaction transaction = transactions.getQuick(i);
-                TableWriter writerCopy = writer;
-                if (transaction.reopenTable) {
-                    rdr1 = Misc.free(rdr1);
-                    rdr2 = Misc.free(rdr2);
-                    writer = Misc.free(writer);
-                }
-
-                int size = transaction.operationList.size();
-                for (int operationIndex = 0; operationIndex < size; operationIndex++) {
-                    FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
-                    operations++;
-                    operation.apply(rnd, engine, writerCopy, -1);
-                }
-
-                if (transaction.reopenTable) {
-                    writer = TestUtils.getWriter(engine, tableName);
-                    rdr1 = getReader(tableName);
-                    rdr2 = getReader(tableName);
-                } else {
-                    if (transaction.rollback) {
-                        writer.rollback();
-                    } else {
-                        writer.commit();
+                if (ioFailureCreatedCount < ioFailureCount && failuresObserved == ff.failureGenerated()) {
+                    // Maybe it's time to plant an IO failure
+                    int nextFailureInTransactions = (transactions.size() - i) / (ioFailureCount - ioFailureCreatedCount);
+                    if (nextFailureInTransactions == 0 || rnd.nextInt(nextFailureInTransactions) == 0) {
+                        ff.setToFailAfter(rnd.nextInt(50));
+                        ioFailureCreatedCount++;
                     }
                 }
-                purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.25);
+
+                FuzzTransaction transaction = transactions.getQuick(i);
+                TableWriter writerCopy = writer;
+
+                try {
+                    if (transaction.reopenTable) {
+                        rdr1 = Misc.free(rdr1);
+                        rdr2 = Misc.free(rdr2);
+                        writer = Misc.free(writer);
+                    }
+
+                    int size = transaction.operationList.size();
+                    for (int operationIndex = 0; operationIndex < size; operationIndex++) {
+                        FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
+                        operation.apply(rnd, engine, writerCopy, -1);
+                    }
+
+                    if (transaction.reopenTable) {
+                        writer = TestUtils.getWriter(engine, tableName);
+                        rdr1 = getReader(tableName);
+                        rdr2 = getReader(tableName);
+                    } else {
+                        if (transaction.rollback) {
+                            writer.rollback();
+                        } else {
+                            writer.commit();
+                        }
+                    }
+                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.25);
+                } catch (CairoException e) {
+                    int failures = ff.failureGenerated();
+                    if (failures > failuresObserved) {
+                        failuresObserved = failures;
+                        LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
+                        rdr1 = Misc.free(rdr1);
+                        rdr2 = Misc.free(rdr2);
+                        writer = Misc.free(writer);
+
+                        writer = TestUtils.getWriter(engine, tableName);
+                        rdr1 = getReader(tableName);
+                        rdr2 = getReader(tableName);
+                        i--;
+                    } else {
+                        throw e;
+                    }
+                }
             }
         } finally {
             Misc.free(rdr1);
             Misc.free(rdr2);
-            if (writer != null) {
-                columns = writer.getMetadata().getColumnCount();
-                partitions = writer.getPartitionCount();
-            }
             Misc.free(writer);
+            ff.clearFailures();
         }
-        int osCallsEnd = ff.osCallsCount.get();
-        LOG.info().$("========= OS calls per columns in partition: ").$((osCallsEnd - osCallsStart) / (columns * partitions * 1.0)).I$();
     }
 
     public void applyToWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
@@ -443,7 +463,6 @@ public class FuzzRunner {
         if (ff == null) {
             this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
         }
-//        return engine.getConfiguration().getFilesFacade();
         return ff;
     }
 
@@ -452,10 +471,10 @@ public class FuzzRunner {
     }
 
     public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount) {
-        setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1, 0);
+        setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount, -1, 1);
     }
 
-    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount, int parallelWalCount, int ioAllocationFailureCount) {
+    public void setFuzzCounts(boolean isO3, int fuzzRowCount, int transactionCount, int strLen, int symbolStrLenMax, int symbolCountMax, int initialRowCount, int partitionCount, int parallelWalCount, int ioFailureCount) {
         this.isO3 = isO3;
         this.fuzzRowCount = fuzzRowCount;
         this.transactionCount = transactionCount;
@@ -465,7 +484,8 @@ public class FuzzRunner {
         this.initialRowCount = initialRowCount;
         this.partitionCount = partitionCount;
         this.parallelWalCount = parallelWalCount;
-        this.ioAllocationFailureCount = ioAllocationFailureCount;
+        this.ioFailureCount = ioFailureCount;
+        this.ioFailureCreatedCount = 0;
     }
 
     public void setFuzzProbabilities(
@@ -563,6 +583,14 @@ public class FuzzRunner {
 
     private void checkNoSuspendedTables(ObjHashSet<TableToken> tableTokenBucket) {
         engine.getTableSequencerAPI().forAllWalTables(tableTokenBucket, false, checkNoSuspendedTablesRef);
+    }
+
+    private int countOperations(ObjList<FuzzTransaction> transactions) {
+        int operations = 0;
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            operations += transactions.getQuick(i).operationList.size();
+        }
+        return operations;
     }
 
     @NotNull

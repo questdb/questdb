@@ -162,7 +162,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalApplyEjectsMultipleTables() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 458114392597958L, 1731436127893L);
         setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), getMaxWalFdCache(rnd));
         int tableCount = Math.max(2, rnd.nextInt(3));
         fullRandomFuzz(rnd, tableCount);
