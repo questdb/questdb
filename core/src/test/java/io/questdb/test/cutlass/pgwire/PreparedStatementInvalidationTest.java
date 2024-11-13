@@ -210,6 +210,30 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testChangeBindVariableType_insert() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table change_var_type(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
+            }
+            mayDrainWalQueue();
+
+            try (PreparedStatement insertStatement = connection.prepareStatement("insert into change_var_type (id, val, ts) values (?, 0, '1990-01-01')")) {
+                insertStatement.setLong(1, 42);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+                mayDrainWalQueue();
+
+                insertStatement.setString(1, "bad, bad value");
+                try {
+                    insertStatement.executeUpdate();
+                    Assert.fail("bad value was set, the INSERT should have failed");
+                } catch (PSQLException e) {
+                    assertMessageMatches(e, "inconvertible value");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInsertSpecificAfterColNameChange() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
