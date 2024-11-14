@@ -431,6 +431,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private void handleWalApplyFailure(TableToken tableToken, Throwable throwable, SeqTxnTracker txnTracker) {
         ErrorTag errorTag;
         String errorMessage;
+
+        if (engine.isTableDropped(tableToken) |
+                ((throwable instanceof CairoException) && ((CairoException) throwable).isTableDropped())) {
+            // Sometimes we can have SQL exceptions when re-compiling ALTER or UPDATE statements
+            // that the table we work on is already dropped. In this case, we can ignore the exception.
+            purgeTableFiles(tableToken, null, engine, Path.PATH.get());
+            return;
+        }
+
         if (throwable instanceof CairoException) {
             CairoException cairoException = (CairoException) throwable;
             if (cairoException.isOutOfMemory()) {
@@ -638,14 +647,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (engine.getTableSequencerAPI().notifyCommitReadable(tableToken, lastWriterTxn)) {
                     engine.notifyWalTxnCommitted(tableToken);
                 }
-            }
-        } catch (CairoException ex) {
-            if (ex.isTableDropped() || engine.isTableDropped(tableToken)) {
-                engine.notifyDropped(tableToken);
-                // Table is dropped, and we received cairo exception in the middle of apply
-                purgeTableFiles(tableToken, null, engine, tempPath);
-            } else {
-                handleWalApplyFailure(tableToken, ex, txnTracker);
             }
         } catch (Throwable ex) {
             handleWalApplyFailure(tableToken, ex, txnTracker);
