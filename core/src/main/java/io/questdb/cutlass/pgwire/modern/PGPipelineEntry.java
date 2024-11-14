@@ -847,6 +847,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void setStateClosed(boolean stateClosed, boolean isStatementClose) {
         this.stateClosed = stateClosed;
+        this.portalName = null;
         this.portal = false;
         if (isStatementClose) {
             this.preparedStatement = false;

@@ -161,6 +161,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final CharSequenceObjHashMap<PGPipelineEntry> namedStatements;
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final ArrayDeque<PGPipelineEntry> pipeline = new ArrayDeque<>();
+    private final Consumer<? super CharSequence> preparedStatementDeallocator = this::uncacheNamedStatement;
     private final int recvBufferSize;
     private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
     private final Rnd rnd;
@@ -192,7 +193,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = IMPLICIT_TRANSACTION;
-    private final Consumer<? super CharSequence> preparedStatementDeallocator = this::uncacheNamedStatement;
 
     public PGConnectionContextModern(
             CairoEngine engine,
@@ -822,6 +822,8 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
 
         pipelineCurrentEntry.setStateClosed(true, isStatementClose);
+        // return the factory back to global cache in case of a select
+        pipelineCurrentEntry.cacheIfPossible(tasCache, null);
     }
 
     private void msgDescribe(long lo, long msgLimit) throws BadProtocolException {
