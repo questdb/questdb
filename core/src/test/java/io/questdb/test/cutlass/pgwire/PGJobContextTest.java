@@ -2087,6 +2087,83 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testBindVariableInVarArg() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table x (s symbol, ts timestamp) timestamp(ts) partition by YEAR").execute();
+            connection.prepareStatement("insert into x values ('a', 0)").execute();
+            connection.prepareStatement("insert into x values ('b', 1)").execute();
+            connection.prepareStatement("insert into x values ('a', 2)").execute();
+            connection.prepareStatement("insert into x values ('c', 3)").execute();
+            connection.prepareStatement("insert into x values (null, 4)").execute();
+            connection.commit();
+
+            mayDrainWalQueue();
+
+            try (PreparedStatement ps = connection.prepareStatement("select * from x where s in (?, ?, ?)")) {
+                sink.clear();
+                ps.setString(1, "a");
+                ps.setString(2, "b");
+                ps.setString(3, null);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "s[VARCHAR],ts[TIMESTAMP]\n" +
+                                    "a,1970-01-01 00:00:00.0\n" +
+                                    "b,1970-01-01 00:00:00.000001\n" +
+                                    "a,1970-01-01 00:00:00.000002\n" +
+                                    "null,1970-01-01 00:00:00.000004\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                sink.clear();
+                ps.setString(1, "c");
+                ps.setString(2, null);
+                ps.setString(3, "a");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "s[VARCHAR],ts[TIMESTAMP]\n" +
+                                    "a,1970-01-01 00:00:00.0\n" +
+                                    "a,1970-01-01 00:00:00.000002\n" +
+                                    "c,1970-01-01 00:00:00.000003\n" +
+                                    "null,1970-01-01 00:00:00.000004\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("select * from x where ts in (?, ?)")) {
+                sink.clear();
+                ps.setString(1, "1970-01-01 00:00:00.000001");
+                ps.setString(2, "1970-01-01 00:00:00.000004");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "s[VARCHAR],ts[TIMESTAMP]\n" +
+                                    "b,1970-01-01 00:00:00.000001\n" +
+                                    "null,1970-01-01 00:00:00.000004\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                sink.clear();
+                ps.setString(1, "1970-01-01 00:00:00.000002");
+                ps.setString(2, "1970-01-01 00:00:00.000005");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "s[VARCHAR],ts[TIMESTAMP]\n" +
+                                    "a,1970-01-01 00:00:00.000002\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testBindVariableIsNotNull() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
