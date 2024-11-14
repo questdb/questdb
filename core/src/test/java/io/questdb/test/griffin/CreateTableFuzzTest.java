@@ -104,7 +104,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     assertEquals(withErrPos(errPos, "Invalid column: bork"), message);
                     return;
                 }
-                if (!(useSelectStar || ddl.indexOf(WRONG_NAME) == -1 || wrongName == TIMESTAMP)) {
+                if (!(useSelectStar || ddl.indexOf(WRONG_NAME) == -1)) {
                     fail("SQL statement uses a wrong column name, but it compiled anyway");
                 }
                 try (Operation op = query.getOperation()) {

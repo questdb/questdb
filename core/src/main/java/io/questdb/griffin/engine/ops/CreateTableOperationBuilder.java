@@ -221,17 +221,18 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
     public void setFactory(RecordCursorFactory factory) throws SqlException {
         this.recordCursorFactory = factory;
         final RecordMetadata metadata = factory.getMetadata();
-        ObjList<CharSequence> touchUpColumnNames = columnModels.keys();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             columnNameIndexMap.put(metadata.getColumnName(i), i);
         }
 
+        if (timestampExpr != null && metadata.getColumnIndexQuiet(timestampExpr.token) == -1) {
+            throw SqlException.invalidColumn(timestampExpr.position, timestampExpr.token);
+        }
+        ObjList<CharSequence> touchUpColumnNames = columnModels.keys();
         for (int i = 0, n = touchUpColumnNames.size(); i < n; i++) {
             CharSequence columnName = touchUpColumnNames.getQuick(i);
             int index = metadata.getColumnIndexQuiet(columnName);
             CreateTableColumnModel touchUp = columnModels.get(columnName);
-            // the only reason why columns cannot be found at this stage is
-            // concurrent table modification of table structure
             if (index == -1) {
                 throw SqlException.invalidColumn(touchUp.getColumnNamePos(), columnName);
             }
