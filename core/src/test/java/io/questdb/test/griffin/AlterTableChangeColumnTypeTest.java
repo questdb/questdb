@@ -48,6 +48,8 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(Parameterized.class)
@@ -499,11 +501,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testConvertFailsOnColumnFileOpen() throws Exception {
         assumeNonWal();
         AtomicReference<String> fail = new AtomicReference<>();
+        AtomicBoolean failRead = new AtomicBoolean();
 
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
-                if (fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
+                if (failRead.get() && fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
                     return -1;
                 }
@@ -512,7 +515,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             @Override
             public long openRW(LPSZ name, long opts) {
-                if (fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
+                if (!failRead.get() && fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
                     return -1;
                 }
@@ -540,6 +543,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             }
 
             fail.set("c.d");
+            failRead.set(true);
             try {
                 ddl("alter table x alter column c type varchar", sqlExecutionContext);
                 Assert.fail();
