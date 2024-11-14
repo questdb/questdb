@@ -88,31 +88,25 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 try {
                     query = compiler.compile(ddl, sqlExecutionContext);
                 } catch (SqlException e) {
-                    if (variant == LIKE) {
-                        throw e;
-                    }
                     String message = e.getMessage();
                     if (variant == DIRECT) {
                         if (wrongName == TIMESTAMP) {
                             assertEquals(withErrPos(tsPos, "invalid designated timestamp column [name=bork]"), message);
+                            return;
                         } else if (wrongName == DEDUP) {
                             assertEquals(withErrPos(dedupPos, "deduplicate key column not found [column=bork]"), message);
-                        } else {
-                            throw e;
+                            return;
                         }
-                    } else if (variant == SELECT) {
-                        if (wrongName != NONE) {
-                            int errPos = wrongName == CAST ? castPos
-                                    : wrongName == INDEX ? indexPos
-                                    : wrongName == TIMESTAMP ? tsPos
-                                    : wrongName == DEDUP ? dedupPos
-                                    : -1;
-                            assertEquals(withErrPos(errPos, "Invalid column: bork"), message);
-                        } else {
-                            throw e;
-                        }
+                    } else if (variant == SELECT && wrongName != NONE) {
+                        int errPos = wrongName == CAST ? castPos
+                                : wrongName == INDEX ? indexPos
+                                : wrongName == TIMESTAMP ? tsPos
+                                : wrongName == DEDUP ? dedupPos
+                                : -1;
+                        assertEquals(withErrPos(errPos, "Invalid column: bork"), message);
+                        return;
                     }
-                    return;
+                    throw e;
                 }
                 try (Operation op = query.getOperation()) {
                     assertNotNull(op);
