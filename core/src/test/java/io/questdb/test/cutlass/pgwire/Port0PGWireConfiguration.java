@@ -31,7 +31,7 @@ import io.questdb.std.Rnd;
 
 
 public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
-
+    private static final String DEBUG_PGWIRE_PORT = "QDB_DEBUG_PGWIRE_PORT";
     private final DefaultIODispatcherConfiguration ioDispatcherConfiguration;
     boolean isLegacyMode;
 
@@ -43,7 +43,7 @@ public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
         ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
             @Override
             public int getBindPort() {
-                return 0; // Bind to ANY port.
+                return getPGWirePort();
             }
 
             @Override
@@ -60,6 +60,12 @@ public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
             }
         };
         this.isLegacyMode = isLegacyMode;
+    }
+
+    public static int getPGWirePort() {
+        final String debugPort = System.getenv().get(DEBUG_PGWIRE_PORT);
+        // When QDB_DEBUG_PGWIRE_PORT is not set, bind to ANY port.
+        return debugPort != null ? Integer.parseInt(debugPort) : 0;
     }
 
     @Override

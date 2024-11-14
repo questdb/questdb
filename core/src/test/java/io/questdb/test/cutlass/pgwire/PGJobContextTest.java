@@ -8313,7 +8313,7 @@ nodejs code:
                     return new DefaultIODispatcherConfiguration() {
                         @Override
                         public int getBindPort() {
-                            return 0; // Bind to ANY port.
+                            return getPGWirePort();
                         }
 
                         @Override
