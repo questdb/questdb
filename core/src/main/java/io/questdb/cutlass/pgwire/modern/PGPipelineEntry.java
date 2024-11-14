@@ -560,6 +560,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return transactionState;
     }
 
+    public void msgParseCopyParameterTypesFrom(PGPipelineEntry that) {
+        msgParseParameterTypeOIDs.addAll(that.msgParseParameterTypeOIDs);
+    }
+
     public void msgParseCopyParameterTypesFromMsg(long lo, short parameterTypeCount) {
         msgParseParameterTypeOIDs.setPos(parameterTypeCount);
         for (int i = 0; i < parameterTypeCount; i++) {
@@ -743,7 +747,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.cacheHit = true;
         copyPgResultSetColumnTypes();
         this.outParameterTypeDescriptionTypeOIDs.clear();
-        this.outParameterTypeDescriptionTypeOIDs.addAll(tas.getOutPgParameterTypeOIDs());
+        this.outParameterTypeDescriptionTypeOIDs.addAll(tas.getPgOutParameterTypeOIDs());
     }
 
     public void ofSimpleCachedSelect(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, TypesAndSelectModern tas) throws SqlException {
@@ -757,7 +761,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.cacheHit = true;
         copyPgResultSetColumnTypes();
         this.outParameterTypeDescriptionTypeOIDs.clear();
-        assert tas.getOutPgParameterTypeOIDs().size() == 0;
+        assert tas.getPgOutParameterTypeOIDs().size() == 0;
 
         // We cannot use regular msgExecuteSelect() since this method is called from a callback in sqlcompiler and
         // msgExecuteSelect() may try to recompile the query on its own when it gets TableReferenceOutOfDateException.
@@ -2331,5 +2335,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
         }
         return true;
+    }
+
+    boolean msgParseReconcileParameterTypes(TypeContainer typeContainer) {
+        assert msgParseParameterTypeOIDs.size() <= Short.MAX_VALUE;
+        return msgParseReconcileParameterTypes((short) msgParseParameterTypeOIDs.size(), typeContainer);
     }
 }

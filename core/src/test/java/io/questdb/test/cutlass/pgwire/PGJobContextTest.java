@@ -1990,6 +1990,16 @@ if __name__ == "__main__":
         testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.MONTH);
     }
 
+    @Test
+    public void testBindVariableDropLastPartitionListByNoneHigherPrecision() throws Exception {
+        try {
+            testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.NONE);
+            Assert.fail();
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), "ERROR: table is not partitioned");
+        }
+    }
+
 //Testing through postgres - need to establish connection
 //    @Test
 //    public void testReadINet() throws SQLException, IOException {
@@ -2011,16 +2021,6 @@ if __name__ == "__main__":
 //                    "12.2.65.90\n", sink, rs);
 //        }
 //    }
-
-    @Test
-    public void testBindVariableDropLastPartitionListByNoneHigherPrecision() throws Exception {
-        try {
-            testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.NONE);
-            Assert.fail();
-        } catch (PSQLException e) {
-            TestUtils.assertContains(e.getMessage(), "ERROR: table is not partitioned");
-        }
-    }
 
     @Test
     public void testBindVariableDropLastPartitionListByWeekHigherPrecision() throws Exception {
@@ -3631,7 +3631,6 @@ if __name__ == "__main__":
 
     @Test
     public void testExplainPlanWithBindVariables() throws Exception {
-
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
                     "select x," +
@@ -3927,7 +3926,7 @@ if __name__ == "__main__":
                 assertTrue(resultSet.getString(4).startsWith("2023-03-23 01:00:00"));
                 assertTrue(resultSet.getString(5).startsWith("2023-03-23 23:00:00"));
                 assertEquals(23L, resultSet.getLong(6));
-                //skip disk sizes as there's a race
+                // skip disk sizes as there's a race
                 assertFalse(resultSet.getBoolean(9));
                 assertFalse(resultSet.getBoolean(10));
                 assertTrue(resultSet.getBoolean(11));
@@ -3941,12 +3940,71 @@ if __name__ == "__main__":
                 assertTrue(resultSet.getString(4).startsWith("2023-03-24 00:00:00"));
                 assertTrue(resultSet.getString(5).startsWith("2023-03-24 06:00:00"));
                 assertEquals(7L, resultSet.getLong(6));
-                //skip disk sizes as there's a race
+                // skip disk sizes as there's a race
                 assertFalse(resultSet.getBoolean(9));
                 assertTrue(resultSet.getBoolean(10));
                 assertTrue(resultSet.getBoolean(11));
                 assertFalse(resultSet.getBoolean(12));
                 assertFalse(resultSet.getBoolean(13));
+            }
+        });
+    }
+
+    @Test
+    public void testFetchWithBindVariables() throws Exception {
+        skipOnWalRun(); // Non-partitioned
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            int totalRows = 10;
+
+            PreparedStatement tbl = connection.prepareStatement("create table x (a int)");
+            tbl.execute();
+
+            PreparedStatement insert = connection.prepareStatement("insert into x(a) values(?)");
+            for (int i = 0; i < totalRows; i++) {
+                insert.setInt(1, i);
+                insert.execute();
+            }
+            connection.commit();
+
+            // first execute a query with the same text, but different bind var types
+            try (PreparedStatement stmt = connection.prepareStatement("x where a != ?")) {
+                stmt.setString(1, "-1");
+                ResultSet rs = stmt.executeQuery();
+                assertResultSet(
+                        "a[INTEGER]\n" +
+                                "0\n" +
+                                "1\n" +
+                                "2\n" +
+                                "3\n" +
+                                "4\n" +
+                                "5\n" +
+                                "6\n" +
+                                "7\n" +
+                                "8\n" +
+                                "9\n",
+                        sink,
+                        rs
+                );
+            }
+
+            PreparedStatement stmt = connection.prepareStatement("x where a != ?");
+            stmt.setInt(1, -1);
+            int[] testSizes = {0, 1, 3, 10, 12};
+            for (int testSize : testSizes) {
+                stmt.setFetchSize(testSize);
+                assertEquals(testSize, stmt.getFetchSize());
+
+                ResultSet rs = stmt.executeQuery();
+                assertEquals(testSize, rs.getFetchSize());
+
+                int count = 0;
+                while (rs.next()) {
+                    assertEquals(count, rs.getInt(1));
+                    ++count;
+                }
+
+                assertEquals(totalRows, count);
             }
         });
     }

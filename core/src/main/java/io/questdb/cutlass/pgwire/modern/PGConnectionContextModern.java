@@ -722,12 +722,33 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     // the pipeline is named, and we must not attempt to reuse it
                     // as the portal, so we are making a new entry
                     PGPipelineEntry pe = entryPool.next();
-                    pe.compileNewSQL(
-                            pipelineCurrentEntry.getSqlText(),
-                            engine,
-                            sqlExecutionContext,
-                            taiPool
-                    );
+                    // the parameter types have to be copied from the parent
+                    pe.msgParseCopyParameterTypesFrom(pipelineCurrentEntry);
+
+                    int cachedStatus = CACHE_MISS;
+                    final TypesAndSelectModern tas = tasCache.poll(pipelineCurrentEntry.getSqlText());
+                    if (tas != null) {
+                        if (pe.msgParseReconcileParameterTypes(tas)) {
+                            pe.ofSelect(pipelineCurrentEntry.getSqlText(), tas);
+                            cachedStatus = CACHE_HIT_SELECT_VALID;
+                        } else {
+                            tas.close();
+                            cachedStatus = CACHE_HIT_SELECT_INVALID;
+                        }
+                    }
+
+                    if (cachedStatus != CACHE_HIT_SELECT_VALID) {
+                        // When parameter types are not supplied we will assume that the types are STRING
+                        // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
+                        // compiling the SQL from scratch.
+                        pe.compileNewSQL(
+                                pipelineCurrentEntry.getSqlText(),
+                                engine,
+                                sqlExecutionContext,
+                                taiPool
+                        );
+                    }
+
                     pe.setParentPreparedStatement(pipelineCurrentEntry);
                     pe.copyStateFrom(pipelineCurrentEntry);
                     // Keep the reference to the portal name on the prepared statement before we overwrite the
