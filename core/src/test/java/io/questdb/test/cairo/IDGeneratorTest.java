@@ -54,7 +54,7 @@ public class IDGeneratorTest extends AbstractCairoTest {
                     try {
                         startBarrier.await();
                         for (int i = 0; i < 5000; i++) {
-                            listA.add(engineA.getTableIdGenerator().getNextId());
+                            listA.add(engineA.getNextTableId());
                         }
                     } catch (InterruptedException | BrokenBarrierException e) {
                         e.printStackTrace();
@@ -66,7 +66,7 @@ public class IDGeneratorTest extends AbstractCairoTest {
                 try {
                     startBarrier.await();
                     for (int i = 0; i < 5000; i++) {
-                        listB.add(engineB.getTableIdGenerator().getNextId());
+                        listB.add(engineB.getNextTableId());
                     }
                     th.join();
                 } catch (InterruptedException | BrokenBarrierException e) {
