@@ -101,12 +101,12 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                             throw e;
                         }
                     } else if (variant == SELECT) {
-                        int errPos = wrongName == CAST ? castPos
-                                : wrongName == INDEX ? indexPos
-                                : wrongName == TIMESTAMP ? tsPos
-                                : wrongName == DEDUP ? dedupPos
-                                : 0;
                         if (wrongName != NONE) {
+                            int errPos = wrongName == CAST ? castPos
+                                    : wrongName == INDEX ? indexPos
+                                    : wrongName == TIMESTAMP ? tsPos
+                                    : wrongName == DEDUP ? dedupPos
+                                    : -1;
                             assertEquals(withErrPos(errPos, "Invalid column: bork"), message);
                         } else {
                             throw e;
