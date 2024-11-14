@@ -85,6 +85,65 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testChangeBindVariableType_insert() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table change_var_type(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
+            }
+            mayDrainWalQueue();
+
+            try (PreparedStatement insertStatement = connection.prepareStatement("insert into change_var_type (id, val, ts) values (?, 0, '1990-01-01')")) {
+                insertStatement.setObject(1, 42);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+                mayDrainWalQueue();
+
+                insertStatement.setObject(1, "bad, bad value");
+                try {
+                    insertStatement.executeUpdate();
+                    Assert.fail("bad value was set, the INSERT should have failed");
+                } catch (PSQLException e) {
+                    assertMessageMatches(e, "inconvertible value");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testChangeBindVariableType_select() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table change_var_type(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
+                statement.execute("insert into change_var_type (id, val, ts) values (42, 0, '1990-01-01')");
+            }
+            mayDrainWalQueue();
+
+            try (PreparedStatement selectStatement = connection.prepareStatement("select * from change_var_type where id = ?")) {
+                selectStatement.setObject(1, 42L);
+                try (ResultSet rs = selectStatement.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[BIGINT],val[INTEGER],ts[TIMESTAMP]\n" +
+                                    "42,0,1990-01-01 00:00:00.0\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                // todo: funny behaviour when the string too small
+                // it might indicate a bug
+                selectStatement.setObject(1, "bad, bad value");
+                try {
+                    selectStatement.executeQuery();
+                    Assert.fail("bad value was set, the SELECT should have failed");
+                } catch (PSQLException e) {
+                    assertMessageMatches(e, "inconvertible value");
+                }
+            }
+
+        });
+    }
+
+    @Test
     public void testInsertAfterDropAndRecreate() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
@@ -205,30 +264,6 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                                 "42\t1990-01-01T00:00:00.000000Z\n" +
                                 "43\t1990-01-01T00:00:00.000000Z\n",
                         "select * from insert_after_drop");
-            }
-        });
-    }
-
-    @Test
-    public void testChangeBindVariableType_insert() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (Statement statement = connection.createStatement()) {
-                statement.execute("create table change_var_type(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
-            }
-            mayDrainWalQueue();
-
-            try (PreparedStatement insertStatement = connection.prepareStatement("insert into change_var_type (id, val, ts) values (?, 0, '1990-01-01')")) {
-                insertStatement.setLong(1, 42);
-                Assert.assertEquals(1, insertStatement.executeUpdate());
-                mayDrainWalQueue();
-
-                insertStatement.setString(1, "bad, bad value");
-                try {
-                    insertStatement.executeUpdate();
-                    Assert.fail("bad value was set, the INSERT should have failed");
-                } catch (PSQLException e) {
-                    assertMessageMatches(e, "inconvertible value");
-                }
             }
         });
     }
