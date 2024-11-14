@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IDGenerator;
-import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
@@ -179,11 +178,6 @@ public class TableSequencerImpl implements TableSequencer {
         final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
                 0, 0, timestamp, 0, 0, 0);
         metadata.dropTable();
-
-        try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.dropTable(tableToken);
-        }
-
         notifyTxnCommitted(Long.MAX_VALUE);
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
     }
