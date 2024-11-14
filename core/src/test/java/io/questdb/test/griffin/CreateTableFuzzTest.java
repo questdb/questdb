@@ -45,6 +45,8 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private static final String WRONG_NAME = "bork";
 
     private final Rnd rnd = TestUtils.generateRandom(LOG);
+    private final boolean addColumn = rnd.nextBoolean();
+    private final ColumnChaos columnChaos = ColumnChaos.values()[rnd.nextInt(ColumnChaos.values().length)];
     private final boolean useCast = rnd.nextBoolean();
     private final boolean useCastSymbolCapacity = useCast && rnd.nextBoolean();
     private final boolean useIfNotExists = rnd.nextBoolean();
@@ -74,11 +76,12 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     @Test
     public void testCreateTableAsSelect() throws Exception {
         assertMemoryLeak(() -> {
-            createInitialSourceTable();
             StringBuilder ddl = generateCreateTable(true);
             System.out.printf(
-                    "\n%s\nWrongName %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n\n",
+                    "\n%s\nWrongName %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n",
                     ddl, wrongName, useCast, useCastSymbolCapacity, useDedup, useIndex, useIndexCapacity, usePartitionBy);
+            System.out.printf("addColumn %s ColumnChaos %s\n\n", addColumn, columnChaos);
+            createSourceTable();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery query;
                 try {
@@ -128,9 +131,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     public void testCreateTableDirect() throws Exception {
         assertMemoryLeak(() -> {
             StringBuilder ddl = generateCreateTable(false);
-            System.out.printf(
-                    "\n%s\nWrongName %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n\n",
-                    ddl, wrongName, useCast, useCastSymbolCapacity, useDedup, useIndex, useIndexCapacity, usePartitionBy);
+            System.out.printf("\n%s\nWrongName %s Dedup %s PartitionBy %s\n\n", ddl, wrongName, useDedup, usePartitionBy);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery query;
                 try {
@@ -167,11 +168,9 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     @Test
     public void testCreateTableLike() throws Exception {
         assertMemoryLeak(() -> {
-            createInitialSourceTable();
+            createSourceTable();
             StringBuilder ddl = generateCreateTableLike();
-            System.out.printf(
-                    "\n%s\nWrongName %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n\n",
-                    ddl, wrongName, useCast, useCastSymbolCapacity, useDedup, useIndex, useIndexCapacity, usePartitionBy);
+            System.out.printf("\naddColumn %s ColumnChaos %s\n\n", addColumn, columnChaos);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery query = compiler.compile(ddl, sqlExecutionContext);
                 try (Operation op = query.getOperation()) {
@@ -179,20 +178,25 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     }
-                    validateCreatedTableLike();
-                    if (!useIfNotExists) {
-                        drop("DROP TABLE tango");
+                    validateCreatedTableLike(false);
+                    if (useIfNotExists) {
+                        try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                            fut.await();
+                        }
+                        validateCreatedTableLike(false);
                     }
+                    messWithSourceTable();
+                    drop("DROP TABLE tango");
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     }
-                    validateCreatedTableLike();
+                    validateCreatedTableLike(true);
                 }
             }
         });
     }
 
-    private static void createInitialSourceTable() throws SqlException {
+    private static void createSourceTable() throws SqlException {
         engine.ddl("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, str STRING)", sqlExecutionContext);
     }
 
@@ -263,7 +267,21 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     }
 
     private void messWithSourceTable() throws SqlException {
-        engine.ddl("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, str STRING)", sqlExecutionContext);
+        switch (columnChaos) {
+            case DROP:
+                engine.ddl("ALTER TABLE samba DROP COLUMN str");
+                break;
+            case CHANGE_TYPE:
+                engine.ddl("ALTER TABLE samba ALTER COLUMN str TYPE DOUBLE");
+                break;
+            case RENAME_AND_ADD:
+                engine.ddl("ALTER TABLE samba RENAME COLUMN str TO str_old");
+                engine.ddl("ALTER TABLE samba ADD COLUMN str DOUBLE");
+                break;
+        }
+        if (addColumn) {
+            engine.ddl("ALTER TABLE samba ADD COLUMN str_new STRING");
+        }
     }
 
     private String rndCase(String word) {
@@ -302,13 +320,33 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         assertSql(b, "show columns from tango");
     }
 
-    private void validateCreatedTableLike() throws SqlException {
+    private void validateCreatedTableLike(boolean afterMessing) throws SqlException {
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
         b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
         b.append(symCol).append("\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n");
-        b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+        if (afterMessing) {
+            switch (columnChaos) {
+                case CHANGE_TYPE:
+                    b.append(strCol).append("\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\tfalse\n");
+                    break;
+                case RENAME_AND_ADD:
+                    b.append("str_old\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                    b.append("str\tDOUBLE\tfalse\t256\tfalse\t0\tfalse\tfalse\n");
+                    break;
+                case DROP:
+            }
+            if (addColumn) {
+                b.append("str_new\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n");
+            }
+        } else {
+            b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+        }
         assertSql(b, "show columns from tango");
+    }
+
+    enum ColumnChaos {
+        DROP, CHANGE_TYPE, RENAME_AND_ADD
     }
 
     enum WrongNameChoice {
