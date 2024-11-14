@@ -1025,8 +1025,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 path.trimTo(pathSize);
             }
         } catch (Throwable th) {
-            LOG.error().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
+            LOG.critical().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)
                     .$(", error=").$(th).I$();
+            distressed = true;
             throw th;
         }
     }
@@ -1897,6 +1898,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return tsIndex > -1 && metadata.isDedupKey(tsIndex);
     }
 
+    public boolean isDistressed() {
+        return distressed;
+    }
+
     public boolean isOpen() {
         return tempMem16b != 0;
     }
@@ -2559,7 +2564,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionRemoveCandidates.clear();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
-                    masterRef++;
+                    // Potentially failed in row writing like putSym() call.
+                    // This can mean that the writer state is corrupt. Force re-open writer with next transaction
+                    LOG.critical().$("detected line append failure, writer marked as distressed [table=").$(tableToken).I$();
+                    distressed = true;
+                    return;
                 }
                 freeColumns(false);
                 txWriter.unsafeLoadAll();
@@ -2572,13 +2581,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 o3InError = false;
                 // when we rolled transaction back, hasO3() has to be false
                 o3MasterRef = -1;
-                LOG.info().$("tx rollback complete [name=").utf8(tableToken.getTableName()).I$();
+                LOG.info().$("tx rollback complete [table=").$(tableToken).I$();
                 processCommandQueue(false);
                 metrics.tableWriter().incrementRollbacks();
             } catch (Throwable e) {
-                LOG.critical().$("could not perform rollback [name=").utf8(tableToken.getTableName()).$(", msg=").$(e).I$();
+                LOG.critical().$("could not perform rollback [table=").$(tableToken).$(", msg=").$(e).I$();
                 distressed = true;
             }
+            checkDistressed();
         }
     }
 

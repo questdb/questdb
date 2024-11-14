@@ -198,6 +198,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             O3Utils.unmapAndClose(ff, dstFixFd, dstAuxAddr, dstFixSize);
             O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
 
+            // Notify table writer of error before clocking down done counters
+            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
             closeColumnIdle(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -303,60 +305,68 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
 
         subSeq.done(cursor);
 
-        copy(
-                columnCounter,
-                partCounter,
-                columnType,
-                blockType,
-                timestampMergeIndexAddr,
-                timestampMergeIndexSize,
-                srcDataFixFd,
-                srcDataFixAddr,
-                srcDataFixOffset,
-                srcDataFixSize,
-                srcDataVarFd,
-                srcDataVarAddr,
-                srcDataVarOffset,
-                srcDataVarSize,
-                srcDataLo,
-                srcDataHi,
-                srcDataTop,
-                srcDataMax,
-                srcOooFixAddr,
-                srcOooVarAddr,
-                srcOooLo,
-                srcOooHi,
-                srcOooMax,
-                srcOooPartitionLo,
-                srcOooPartitionHi,
-                timestampMin,
-                partitionTimestamp,
-                dstFixFd,
-                dstAuxAddr,
-                dstFixOffset,
-                dstFixFileOffset,
-                dstFixSize,
-                dstVarFd,
-                dstVarAddr,
-                dstVarOffset,
-                dstVarAdjust,
-                dstVarSize,
-                dstKFd,
-                dskVFd,
-                dstIndexOffset,
-                dstIndexAdjust,
-                indexBlockCapacity,
-                srcTimestampFd,
-                srcTimestampAddr,
-                srcTimestampSize,
-                partitionMutates,
-                srcDataNewPartitionSize,
-                srcDataOldPartitionSize,
-                o3SplitPartitionSize,
-                tableWriter,
-                indexWriter,
-                partitionUpdateSinkAddr
-        );
+        try {
+            copy(
+                    columnCounter,
+                    partCounter,
+                    columnType,
+                    blockType,
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcDataFixFd,
+                    srcDataFixAddr,
+                    srcDataFixOffset,
+                    srcDataFixSize,
+                    srcDataVarFd,
+                    srcDataVarAddr,
+                    srcDataVarOffset,
+                    srcDataVarSize,
+                    srcDataLo,
+                    srcDataHi,
+                    srcDataTop,
+                    srcDataMax,
+                    srcOooFixAddr,
+                    srcOooVarAddr,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    srcOooPartitionLo,
+                    srcOooPartitionHi,
+                    timestampMin,
+                    partitionTimestamp,
+                    dstFixFd,
+                    dstAuxAddr,
+                    dstFixOffset,
+                    dstFixFileOffset,
+                    dstFixSize,
+                    dstVarFd,
+                    dstVarAddr,
+                    dstVarOffset,
+                    dstVarAdjust,
+                    dstVarSize,
+                    dstKFd,
+                    dskVFd,
+                    dstIndexOffset,
+                    dstIndexAdjust,
+                    indexBlockCapacity,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    partitionMutates,
+                    srcDataNewPartitionSize,
+                    srcDataOldPartitionSize,
+                    o3SplitPartitionSize,
+                    tableWriter,
+                    indexWriter,
+                    partitionUpdateSinkAddr
+            );
+        } catch (Throwable th) {
+            LOG.error().$("o3 copy failed [table=").$(tableWriter.getTableToken())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", columnType=").$(columnType)
+                    .$(", exception=").$(th)
+                    .I$();
+        }
     }
 
     public static void copyFixedSizeCol(FilesFacade ff, long src, long srcLo, long srcHi, long dstFixAddr, long dstFixFileOffset, long dstFd, int shl, boolean mixedIOFlag) {

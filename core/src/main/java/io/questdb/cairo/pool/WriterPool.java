@@ -538,19 +538,28 @@ public class WriterPool extends AbstractPool {
     private boolean returnToPool(Entry e) {
         final long thread = Thread.currentThread().getId();
         final TableToken tableToken = e.writer.getTableToken();
+
+        boolean isDistressed;
         try {
             e.writer.rollback();
-
-            if (e.owner != UNALLOCATED) {
-                e.owner = QUEUE_PROCESSING_OWNER;
+            // Rollback can change writer state to distressed, do not observe it before rollback
+            isDistressed = e.writer.isDistressed();
+            if (!isDistressed) {
+                if (e.owner != UNALLOCATED) {
+                    e.owner = QUEUE_PROCESSING_OWNER;
+                }
+                // We can apply structure changes with ALTER TABLE and do UPDATE(s) before the writer returned to the pool
+                e.writer.tick(true);
+                e.writer.goPassive();
             }
-            // We can apply structure changes with ALTER TABLE and do UPDATE(s) before the writer returned to the pool
-            e.writer.tick(true);
-            e.writer.goPassive();
         } catch (Throwable ex) {
             // We are here because of a systemic issues of some kind
             // one of the known issues is "disk is full" so we could not roll back properly.
             // In this case we just close TableWriter
+            isDistressed = true;
+        }
+
+        if (isDistressed) {
             entries.remove(tableToken.getDirName());
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
             return true;

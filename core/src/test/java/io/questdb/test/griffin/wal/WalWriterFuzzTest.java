@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -64,6 +65,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         fsAllowsMixedIO = FilesFacadeImpl.INSTANCE.allowMixedIO(root);
         node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, fsAllowsMixedIO);
         setFuzzProperties(100, 1000, 2);
+        Files.PARANOIA_FD_MODE = true;
     }
 
     @Test
@@ -162,7 +164,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalApplyEjectsMultipleTables() throws Exception {
-        Rnd rnd = generateRandom(LOG, 458114392597958L, 1731436127893L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), getMaxWalSize(rnd), getMaxWalFdCache(rnd));
         int tableCount = Math.max(2, rnd.nextInt(3));
         fullRandomFuzz(rnd, tableCount);
@@ -179,7 +181,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 563520002619875L, 1731592476626L);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.01, 0.0);
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         setFuzzProperties(rnd);

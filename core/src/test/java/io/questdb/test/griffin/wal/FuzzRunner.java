@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.wal;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DebugUtils;
@@ -235,7 +236,7 @@ public class FuzzRunner {
                     // Maybe it's time to plant an IO failure
                     int nextFailureInTransactions = (transactions.size() - i) / (ioFailureCount - ioFailureCreatedCount);
                     if (nextFailureInTransactions == 0 || rnd.nextInt(nextFailureInTransactions) == 0) {
-                        ff.setToFailAfter(rnd.nextInt(50));
+                        ff.setToFailAfter(rnd.nextInt((int) (writer.getColumnCount() * 1.5)));
                         ioFailureCreatedCount++;
                     }
                 }
@@ -267,20 +268,31 @@ public class FuzzRunner {
                             writer.commit();
                         }
                     }
-                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.25);
-                } catch (CairoException e) {
+                } catch (CairoException | CairoError e) {
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
                         failuresObserved = failures;
-                        LOG.info().$("expected IO failure observed: ").$((Throwable) e).$();
-                        rdr1 = Misc.free(rdr1);
-                        rdr2 = Misc.free(rdr2);
+                        LOG.info().$("expected IO failure observed: ").$(e).$();
                         writer = Misc.free(writer);
 
                         writer = TestUtils.getWriter(engine, tableName);
+                        i--;
+                    } else {
+                        throw e;
+                    }
+                }
+
+                try {
+                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, 0.25);
+                } catch (CairoException | CairoError e) {
+                    int failures = ff.failureGenerated();
+                    if (failures > failuresObserved) {
+                        failuresObserved = failures;
+                        LOG.info().$("expected IO failure observed: ").$(e).$();
+                        rdr1 = Misc.free(rdr1);
+                        rdr2 = Misc.free(rdr2);
                         rdr1 = getReader(tableName);
                         rdr2 = getReader(tableName);
-                        i--;
                     } else {
                         throw e;
                     }
@@ -485,7 +497,6 @@ public class FuzzRunner {
         this.partitionCount = partitionCount;
         this.parallelWalCount = parallelWalCount;
         this.ioFailureCount = ioFailureCount;
-        this.ioFailureCreatedCount = 0;
     }
 
     public void setFuzzProbabilities(
