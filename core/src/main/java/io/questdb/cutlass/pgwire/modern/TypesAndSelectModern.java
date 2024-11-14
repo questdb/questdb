@@ -81,13 +81,13 @@ public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
         return factory;
     }
 
-    public IntList getOutPgParameterTypeOIDs() {
-        return outPgParameterTypeOIDs;
-    }
-
     @Override
     public IntList getPgInParameterTypeOIDs() {
         return inPgParameterTypeOIDs;
+    }
+
+    public IntList getPgOutParameterTypeOIDs() {
+        return outPgParameterTypeOIDs;
     }
 
     public String getSqlTag() {
