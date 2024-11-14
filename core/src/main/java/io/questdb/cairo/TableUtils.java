@@ -796,8 +796,7 @@ public final class TableUtils {
                         .$(", error=").utf8(ex.getFlyweightMessage()).I$();
                 Os.pause();
             } else {
-                LOG.error().$("metadata read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
-                throw CairoException.critical(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
+                throw CairoException.critical(0).put("Metadata read timeout [src=writer, timeout=").put(spinLockTimeout).put("ms]");
             }
         } else {
             throw ex;

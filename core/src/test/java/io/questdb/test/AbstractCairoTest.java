@@ -99,7 +99,6 @@ import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.MutableCharSink;
 import io.questdb.std.str.MutableUtf16Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -142,6 +141,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
     public static StaticOverrides staticOverrides = new StaticOverrides();
+    public static final int DEFAULT_SPIN_LOCK_TIMEOUT = 5000;
     protected static BindVariableService bindVariableService;
     protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
     protected static SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
@@ -162,7 +162,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static QuestDBTestNode node1;
     protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
     protected static SecurityContext securityContext;
-    protected static long spinLockTimeout = 50;
+    protected static long spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     protected static SqlExecutionContext sqlExecutionContext;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
     private static long memoryUsage = -1;
@@ -458,7 +458,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     public static void println(RecordMetadata metadata, RecordCursor cursor) {
-        ((MutableCharSink<?>) sink).clear();
+        sink.clear();
         CursorPrinter.println(metadata, sink);
 
         final Record record = cursor.getRecord();
@@ -1890,7 +1890,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                             Assert.fail(tuple.getDescription());
                         }
                         RecordMetadata metadata = factory.getMetadata();
-                        ((MutableUtf16Sink) sink).clear();
+                        sink.clear();
                         CursorPrinter.println(metadata, sink);
 
                         final Record record = cursor.getRecord();

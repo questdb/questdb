@@ -166,8 +166,7 @@ public class DynamicTableReaderMetadata extends TableReaderMetadata implements C
                     if (clock.getTicks() < deadline) {
                         return false;
                     }
-                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms]").$();
-                    throw CairoException.critical(0).put("Metadata read timeout");
+                    throw CairoException.critical(0).put("Metadata read timeout [src=metadata, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other

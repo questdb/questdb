@@ -39,6 +39,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.test.AbstractCairoTest;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -62,7 +63,7 @@ public class Overrides {
     private boolean mangleTableDirNames = true;
     private CairoConfiguration propsConfig;
     private RostiAllocFacade rostiAllocFacade = null;
-    private long spinLockTimeout = 5000;
+    private long spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
 
     public Overrides() {
         resetToDefaultTestProperties(defaultProperties);
@@ -131,7 +132,7 @@ public class Overrides {
         isHiddenTelemetryTable = false;
         properties.clear();
         changed = true;
-        spinLockTimeout = 5000;
+        spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
     }
 
     public void setCurrentMicros(long currentMicros) {
