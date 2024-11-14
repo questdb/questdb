@@ -32,40 +32,49 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.CreateTableFuzzTest.CreateVariant.DIRECT;
+import static io.questdb.test.griffin.CreateTableFuzzTest.CreateVariant.LIKE;
 import static org.junit.Assert.assertNotNull;
 
 public class CreateTableFuzzTest extends AbstractCairoTest {
-    public static final int VARIANT_DIRECT = 0;
-    public static final int VARIANT_LIKE = 1;
-    public static final int VARIANT_SELECT = 2;
-
+    private static final int INDEX_CAPACITY = 512;
+    private static final int SYMBOL_CAPACITY = 64;
     private final Rnd rnd = TestUtils.generateRandom(LOG);
     private final boolean useCast = rnd.nextBoolean();
     private final boolean useCastSymbolCapacity = useCast && rnd.nextBoolean();
     private final boolean useIfNotExists = rnd.nextBoolean();
-    private final boolean useIndexClause = rnd.nextBoolean();
-    private final boolean useIndexCapacity = useIndexClause && rnd.nextBoolean();
+    private final boolean useIndex = rnd.nextBoolean();
+    private final boolean useIndexCapacity = useIndex && rnd.nextBoolean();
     private final boolean usePartitionBy = rnd.nextBoolean();
     private final boolean useDedup = usePartitionBy && rnd.nextBoolean();
-    private final int variantSelector = rnd.nextInt(3);
+    private final CreateVariant variant = CreateVariant.values()[rnd.nextInt(CreateVariant.values().length)];
+    private int defaultIndexCapacity;
+    private int defaultSymbolCapacity;
     private String strCol = "str";
     private String symCol = "sym";
     private String tsCol = "ts";
 
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        defaultSymbolCapacity = engine.getConfiguration().getDefaultSymbolCapacity();
+        defaultIndexCapacity = engine.getConfiguration().getIndexValueBlockSize();
+    }
+
     @Test
     public void testCreateTableFuzz() throws Exception {
         assertMemoryLeak(() -> {
-            if (variantSelector != VARIANT_DIRECT) {
-                createSourceTable();
+            if (variant != DIRECT) {
+                engine.ddl("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, str STRING)", sqlExecutionContext);
             }
             StringBuilder ddl = generateCreateTable();
-            System.out.println();
-            System.out.println(ddl);
-            System.out.printf("Variant %d Cast %s CastSymbolCapacity %s Dedup %s IndexCapacity %s IndexClause %s PartitionBy %s\n",
-                    variantSelector, useCast, useCastSymbolCapacity, useDedup, useIndexCapacity, useIndexClause, usePartitionBy);
-            System.out.println();
+            System.out.printf(
+                    "\n%s\nVariant %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n\n",
+                    ddl, variant, useCast, useCastSymbolCapacity, useDedup, useIndex, useIndexCapacity, usePartitionBy);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery query = compiler.compile(ddl, sqlExecutionContext);
                 try (Operation op = query.getOperation()) {
@@ -95,33 +104,17 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         if (useCast) {
             ddl.append(", CAST(").append(rndCase("str")).append(" AS SYMBOL");
             if (useCastSymbolCapacity) {
-                ddl.append(" CAPACITY 64");
+                ddl.append(" CAPACITY ").append(SYMBOL_CAPACITY);
             }
             ddl.append(')');
         }
-        if (useIndexClause) {
+        if (useIndex) {
             ddl.append(", INDEX(").append(rndCase("sym"));
             if (useIndexCapacity) {
-                ddl.append(" CAPACITY 512");
+                ddl.append(" CAPACITY ").append(INDEX_CAPACITY);
             }
             ddl.append(')');
         }
-    }
-
-    private void appendDedup(StringBuilder ddl) {
-        ddl.append(" DEDUP UPSERT KEYS(").append(rndCase("ts")).append(')');
-    }
-
-    private void appendTsAndPartition(StringBuilder ddl) {
-        ddl.append(" TIMESTAMP(").append(rndCase("ts")).append(')');
-        if (usePartitionBy) {
-            ddl.append(" PARTITION BY HOUR");
-        }
-        ddl.append(" WAL");
-    }
-
-    private void createSourceTable() throws Exception {
-        engine.ddl("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, str STRING)", sqlExecutionContext);
     }
 
     private StringBuilder generateCreateTable() {
@@ -130,32 +123,32 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         if (useIfNotExists) {
             ddl.append("IF NOT EXISTS ");
         }
-        ddl.append(rndCase("tango"));
-        switch (variantSelector) {
-            case VARIANT_DIRECT:
+        ddl.append("tango");
+        switch (variant) {
+            case DIRECT:
                 ddl.append(" (ts TIMESTAMP, str STRING)");
                 break;
-            case VARIANT_LIKE:
+            case LIKE:
                 ddl.append(" (LIKE ").append(rndCase("samba")).append(')');
                 break;
-            case VARIANT_SELECT:
+            case SELECT:
                 appendAsSelect(ddl);
                 break;
             default:
         }
-        if (variantSelector == VARIANT_LIKE || !usePartitionBy) {
+        if (variant == LIKE || !usePartitionBy) {
             return ddl;
         }
-        appendTsAndPartition(ddl);
+        ddl.append(" TIMESTAMP(").append(rndCase("ts")).append(") PARTITION BY HOUR WAL");
         if (useDedup) {
-            appendDedup(ddl);
+            ddl.append(" DEDUP UPSERT KEYS(").append(rndCase("ts")).append(')');
         }
         return ddl;
     }
 
     private String rndCase(String word) {
         StringBuilder result = new StringBuilder(word.length());
-        for (int i = VARIANT_DIRECT; i < word.length(); i++) {
+        for (int i = 0; i < word.length(); i++) {
             char c = word.charAt(i);
             if (c <= 'z' && Character.isLetter(c) && rnd.nextBoolean()) {
                 c = (char) (c ^ 32); // flips the case
@@ -166,23 +159,36 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     }
 
     private void validateCreatedTable() throws SqlException {
-        StringBuilder b = new StringBuilder("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
-        if (variantSelector == VARIANT_SELECT) {
-            b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
-                    .append(usePartitionBy).append('\t').append(useDedup).append('\n');
-            b.append(symCol).append("\tSYMBOL\t").append(useIndexClause).append('\t')
-                    .append(useIndexCapacity ? 512 : useIndexClause ? 256 : 0).append('\t').append(!useIndexClause).append("\t128\tfalse\tfalse\n");
-            b.append(strCol).append("\t").append(useCast ? "SYMBOL" : "STRING").append("\tfalse\t0\t").append(useCast).append("\t")
-                    .append(useCastSymbolCapacity ? 64 : useCast ? 128 : 0).append("\tfalse\tfalse\n");
-        } else if (variantSelector == VARIANT_LIKE) {
-            b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
-            b.append(symCol).append("\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n");
-            b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
-        } else {
-            b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
-                    .append(usePartitionBy).append('\t').append(useDedup).append('\n');
-            b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+        StringBuilder b = new StringBuilder(
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
+        switch (variant) {
+            case DIRECT:
+                b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
+                        .append(usePartitionBy).append('\t').append(useDedup).append('\n');
+                b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                break;
+            case LIKE:
+                b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                b.append(symCol).append("\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n");
+                b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+                break;
+            case SELECT:
+                b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
+                        .append(usePartitionBy).append('\t').append(useDedup).append('\n');
+                b.append(symCol).append("\tSYMBOL\t").append(useIndex).append('\t')
+                        .append(useIndexCapacity ? INDEX_CAPACITY : useIndex ? defaultIndexCapacity : 0).append('\t')
+                        .append(!useIndex).append("\t128\tfalse\tfalse\n");
+                b.append(strCol).append("\t").append(useCast ? "SYMBOL" : "STRING").append("\tfalse\t0\t")
+                        .append(useCast).append("\t")
+                        .append(useCastSymbolCapacity ? SYMBOL_CAPACITY : useCast ? defaultSymbolCapacity : 0)
+                        .append("\tfalse\tfalse\n");
+                break;
+            default:
         }
         assertSql(b, "show columns from tango");
+    }
+
+    enum CreateVariant {
+        DIRECT, LIKE, SELECT
     }
 }
