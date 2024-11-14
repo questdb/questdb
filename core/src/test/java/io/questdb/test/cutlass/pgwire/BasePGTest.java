@@ -81,34 +81,14 @@ import static io.questdb.test.cutlass.pgwire.Port0PGWireConfiguration.getPGWireP
 
 public abstract class BasePGTest extends AbstractCairoTest {
 
-    public static final long CONN_AWARE_EXTENDED_BINARY = 4;
-    public static final long CONN_AWARE_EXTENDED_CACHED_BINARY = 64;
-    public static final long CONN_AWARE_EXTENDED_CACHED_TEXT = 128;
-    public static final long CONN_AWARE_EXTENDED_PREPARED_BINARY = 16;
-    public static final long CONN_AWARE_EXTENDED_PREPARED_TEXT = 32;
-    public static final long CONN_AWARE_EXTENDED_TEXT = 8;
-    public static final long CONN_AWARE_EXTENDED_ALL = CONN_AWARE_EXTENDED_BINARY
-            | CONN_AWARE_EXTENDED_TEXT
-            | CONN_AWARE_EXTENDED_PREPARED_BINARY
-            | CONN_AWARE_EXTENDED_PREPARED_TEXT
-            | CONN_AWARE_EXTENDED_CACHED_BINARY
-            | CONN_AWARE_EXTENDED_CACHED_TEXT;
-    public static final long CONN_AWARE_QUIRKS = 256;
+    public static final long CONN_AWARE_EXTENDED_LIMITED = 1;
     // QUIRKS Mode is where PostgresJDBC driver might send incorrect
     // message to the server. This breaks tests not just with QuestDB
     // but also with PostgresSQL actual.
-    public static final long CONN_AWARE_SIMPLE_BINARY = 1;
-    public static final long CONN_AWARE_SIMPLE_TEXT = 2;
-    public static final long CONN_AWARE_ALL =
-            CONN_AWARE_SIMPLE_BINARY
-                    | CONN_AWARE_SIMPLE_TEXT
-                    | CONN_AWARE_EXTENDED_BINARY
-                    | CONN_AWARE_EXTENDED_TEXT
-                    | CONN_AWARE_EXTENDED_PREPARED_BINARY
-                    | CONN_AWARE_EXTENDED_PREPARED_TEXT
-                    | CONN_AWARE_EXTENDED_CACHED_BINARY
-                    | CONN_AWARE_EXTENDED_CACHED_TEXT
-                    | CONN_AWARE_QUIRKS;
+    public static final long CONN_AWARE_QUIRKS = 4;
+    public static final long CONN_AWARE_EXTENDED = CONN_AWARE_EXTENDED_LIMITED | CONN_AWARE_QUIRKS;
+    public static final long CONN_AWARE_SIMPLE = 2;
+    public static final long CONN_AWARE_ALL = CONN_AWARE_SIMPLE | CONN_AWARE_EXTENDED;
     protected final boolean legacyMode;
     protected CopyRequestJob copyRequestJob = null;
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
@@ -442,60 +422,24 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     protected void assertWithPgServer(long bits, PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
-        if ((bits & BasePGTest.CONN_AWARE_SIMPLE_BINARY) == BasePGTest.CONN_AWARE_SIMPLE_BINARY) {
-            LOG.info().$("Mode: asserting simple binary").$();
-            assertWithPgServer(Mode.SIMPLE, true, -2, runnable);
-            assertWithPgServer(Mode.SIMPLE, true, -1, runnable);
-        }
-
-        if ((bits & BasePGTest.CONN_AWARE_SIMPLE_TEXT) == BasePGTest.CONN_AWARE_SIMPLE_TEXT) {
+        // SIMPLE + TEXT
+        if (((bits & BasePGTest.CONN_AWARE_SIMPLE) == BasePGTest.CONN_AWARE_SIMPLE)) {
             LOG.info().$("Mode: asserting simple text").$();
-            assertWithPgServer(Mode.SIMPLE, false, -2, runnable);
-            assertWithPgServer(Mode.SIMPLE, false, -1, runnable);
+            assertWithPgServer(Mode.SIMPLE, false, -1, runnable); // SIMPLE + TEXT
         }
 
-        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_BINARY) {
-            LOG.info().$("Mode: asserting extended binary").$();
-            assertWithPgServer(Mode.EXTENDED, true, -2, runnable);
-            if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED, true, -1, runnable);
-            }
+        // EXTENDED + TEXT PARAMS + TEXT RESULT + P/B/D/E/S
+        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_LIMITED) == BasePGTest.CONN_AWARE_EXTENDED_LIMITED) {
+            assertWithPgServer(Mode.EXTENDED, true, -2, runnable); // EXTENDED + BINARY PARAMS + TEXT RESULT + P/B/D/E/S
+            assertWithPgServer(Mode.EXTENDED, false, -2, runnable); // EXTENDED + TEXT PARAMS + TEXT RESULT + P/B/D/E/S
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -2, runnable); // EXTENDED + TEXT PARAMS + TEXT RESULT + P/B/D/E/S
         }
 
-        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_TEXT) {
-            LOG.info().$("Mode: asserting extended text").$();
-            assertWithPgServer(Mode.EXTENDED, false, -2, runnable);
-            if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED, false, -1, runnable);
-            }
-        }
-
-        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) {
-            LOG.info().$("Mode: asserting extended prepared binary").$();
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, -2, runnable);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, -1, runnable);
-        }
-
-        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_PREPARED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_PREPARED_TEXT) {
-            LOG.info().$("Mode: asserting extended prepared text").$();
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, -2, runnable);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, -1, runnable);
-        }
-
-        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_CACHED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_CACHED_BINARY) {
-            LOG.info().$("Mode: asserting extended cached binary").$();
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, -2, runnable);
-            if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, -1, runnable);
-            }
-        }
-
-        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_CACHED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_CACHED_TEXT) {
-            LOG.info().$("Mode: asserting extended cached text").$();
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -2, runnable);
-            if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -1, runnable);
-            }
+        if ((bits & BasePGTest.CONN_AWARE_EXTENDED_LIMITED) == BasePGTest.CONN_AWARE_EXTENDED_LIMITED && (bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
+            assertWithPgServer(Mode.EXTENDED, true, -1, runnable); // EXTENDED + BINARY PARAMS + BINARY RESULT (P/D/S and B/E/S)
+            assertWithPgServer(Mode.EXTENDED, false, -1, runnable); // EXTENDED + TEXT PARAMS + TEXT RESULT (P/D/S and B/E/S)
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, -1, runnable);  // EXTENDED + BINARY PARAMS + TEXT RESULT (P/D/S and B/E/S)
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -1, runnable);   // EXTENDED + TEXT PARAMS + TEXT RESULT (P/D/S and B/E/S)
         }
     }
 

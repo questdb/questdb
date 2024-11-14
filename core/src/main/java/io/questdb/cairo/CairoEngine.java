@@ -230,18 +230,12 @@ public class CairoEngine implements Closeable, WriterSource {
             @Nullable SCSequence eventSubSeq
     ) throws SqlException {
         CompiledQuery cc = compiler.compile(ddl, sqlExecutionContext);
-        switch (cc.getType()) {
-            case INSERT:
-                throw SqlException.$(0, "use insert()");
-            case DROP:
-                throw SqlException.$(0, "use drop()");
-            case SELECT:
-                throw SqlException.$(0, "use select()");
-            default:
-                try (OperationFuture future = cc.execute(eventSubSeq)) {
-                    future.await();
-                }
-                break;
+        if (cc.getType() == SELECT) {
+            throw SqlException.$(0, "use select()");
+        } else {
+            try (OperationFuture future = cc.execute(eventSubSeq)) {
+                future.await();
+            }
         }
     }
 

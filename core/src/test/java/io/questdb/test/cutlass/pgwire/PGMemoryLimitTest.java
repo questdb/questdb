@@ -111,7 +111,7 @@ public class PGMemoryLimitTest extends BasePGTest {
         // the reason "simple" is excluded is dues to PG driver sending
         // update x = '20', where x is long and '20' is, well, string. We don't support such conversion at
         // the update level yet
-        assertWithPgServer(CONN_AWARE_ALL ^ CONN_AWARE_SIMPLE_BINARY ^ CONN_AWARE_SIMPLE_TEXT, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement stat = connection.createStatement()) {
                 stat.execute(
                         "create table up as" +

@@ -34,7 +34,11 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.*;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.BeforeClass;
+import org.junit.Ignore;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.postgresql.PGProperty;
@@ -279,7 +283,7 @@ public class PGSecurityTest extends BasePGTest {
         // because the out of thin air property would overwrite the user set by the client. Example:
         // 2022-05-17T15:58:38.973955Z I i.q.c.p.PGConnectionContext property [name=user, value=user] <-- client indicates username is "user"
         // 2022-05-17T15:58:38.974236Z I i.q.c.p.PGConnectionContext property [name=user, value=database] <-- buggy pgwire parser overwrites username with out of thin air value
-        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> getConnectionWithCustomProperty(port, PGProperty.OPTIONS.getName()).close());
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> getConnectionWithCustomProperty(port, PGProperty.OPTIONS.getName()).close());
     }
 
     @Test

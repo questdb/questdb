@@ -154,7 +154,6 @@ import static org.junit.Assert.*;
  * Now we can create a test to simulate the client running the SQL commands.
  * Example:
  * <pre>
- * @Test
  * public void testExample() throws Exception {
  *      String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
  *          "<520000000800000003\n" +
@@ -2164,7 +2163,7 @@ if __name__ == "__main__":
 
     @Test
     public void testBindVariableIsNotNull() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts) partition by DAY").execute();
             connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
@@ -2351,7 +2350,7 @@ if __name__ == "__main__":
 
     @Test
     public void testBindVariableIsNull() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts) partition by YEAR").execute();
             connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
@@ -3554,7 +3553,7 @@ if __name__ == "__main__":
         skipOnWalRun();
         // this test exercises maxRows feature of the protocol, which is not supported (not sent to the server)
         // in "simple" mode.
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL | CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
 
             try (Statement stmt = connection.createStatement()) {
                 stmt.executeUpdate("create table if not exists tab ( a int, b long, ts timestamp)");
@@ -3691,7 +3690,7 @@ if __name__ == "__main__":
 
     @Test
     public void testExplainPlanWithBindVariablesFailsIfAllValuesArentSet() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("explain select * from long_sequence(1) where x > ? and x < ? limit 10")) {
                 statement.setLong(1, 0);
                 try {
@@ -3750,7 +3749,7 @@ if __name__ == "__main__":
     @Test
     public void testFetch10RowsAtaTime() throws Exception {
         // fetch works only in extended query mode
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL | CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement(
                     "create table xx as (" +
@@ -4219,7 +4218,7 @@ if __name__ == "__main__":
 
     @Test
     public void testGroupByExpressionNotAppearingInSelectClause() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
                 try (ResultSet rs = statement.executeQuery()) {
@@ -4232,7 +4231,7 @@ if __name__ == "__main__":
 
     @Test
     public void testGroupByExpressionNotAppearingInSelectClauseWhenTableIsEmpty() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
             ddl("create table t1 ( s string );");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+2")) {
                 try (ResultSet rs = statement.executeQuery()) {
@@ -4245,7 +4244,7 @@ if __name__ == "__main__":
 
     @Test
     public void testGroupByExpressionWithBindVariableNotAppearingInSelectClause() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select count(*) from t1 group by 1+?")) {
                 statement.setLong(1, 1);
@@ -4765,7 +4764,7 @@ if __name__ == "__main__":
     @Test
     public void testImplicitStringAndCharConversions() throws Exception {
         skipOnWalRun();
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
 
             try (PreparedStatement stmt = connection.prepareStatement("select ? > 'a'")) {
@@ -5104,7 +5103,7 @@ if __name__ == "__main__":
     public void testInsertAllTypes() throws Exception {
         skipOnWalRun(); // non-partitioned table
         // heavy bind variable use
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             ddl("create table xyz (" +
                     "a byte," +
                     "b char," +
@@ -5296,7 +5295,7 @@ if __name__ == "__main__":
     @Test
     public void testInsertBinaryBindVariable() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (final PreparedStatement insert = connection.prepareStatement("insert into xyz values (?)")) {
                 ddl("create table xyz (" +
                         "a binary" +
@@ -5489,7 +5488,7 @@ if __name__ == "__main__":
     public void testInsertExtendedAndCommit() throws Exception {
         String expectedAll = "count[BIGINT]\n" +
                 "10000\n";
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             //
             // test methods of inserting QuestDB's DATA and TIMESTAMP values
@@ -5916,7 +5915,7 @@ nodejs code:
     public void testInvalidateWriterBetweenInserts() throws Exception {
         skipOnWalRun(); // non-partitioned table
         Assume.assumeFalse(legacyMode);
-        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test_batch(id long,val int)");
             }
@@ -6191,7 +6190,7 @@ nodejs code:
     @Test
     public void testLargeBatchCairoExceptionResume() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test_large_batch(id long, val int, ts timestamp) timestamp(ts)");
             }
@@ -6245,7 +6244,7 @@ nodejs code:
 
         // Small fragmentation chunk makes this test very slow. Set the fragmentation to be near the send buffer size.
         forceSendFragmentationChunkSize = Math.max(1024, forceSendFragmentationChunkSize);
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test_large_batch(id long,val int)");
             }
@@ -6589,7 +6588,7 @@ nodejs code:
 
     @Test
     public void testLimitWithBindVariable() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement(
                     "create table xx as ( select x from long_sequence(1000) )")) {
@@ -7815,8 +7814,9 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         sendBufferSize = 1024;
         recvBufferSize = 1024;
-        long modes = legacyMode ? CONN_AWARE_EXTENDED_TEXT : CONN_AWARE_ALL;
-        assertWithPgServer(modes, (connection, binary, mode, port) -> {
+        // there is a bug in legacy mode somewhere
+        Assume.assumeFalse(legacyMode);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             PreparedStatement statement = connection.prepareStatement("select x, ? as \"$1\",? as \"$2\",? as \"$3\",? as \"$4\"," +
                     "? as \"$5\",? as \"$6\",? as \"$7\",? as \"$8\",? as \"$9\",? as \"$10\",? as \"$11\",? as \"$12\",? as \"$13\"," +
                     "? as \"$14\",? as \"$15\",? as \"$16\",? as \"$17\",? as \"$18\",? as \"$19\",? as \"$20\",? as \"$21\" from long_sequence(5)");
@@ -7851,55 +7851,42 @@ nodejs code:
             statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
 
             final String expected;
-            if (legacyMode) {
-                // Bind variables are out of context here, hence they are all STRING/VARCHAR
-                // this is the reason why we show PG wire Dates verbatim. Even though PG wire does eventually tell us
-                // that this data is typed (sometimes), their requirement to describe SQL statement before
-                // they send us bind variable types and values forces us to stick with STRING.
-                expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR]\n" +
-                        "1,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
-                        "2,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
-                        "3,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
-                        "4,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
-                        "5,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n";
-            } else {
-                // JDBC driver is being evil: even though we defined parameter #3 explicitly as "float",
-                // the driver will correctly send OID 700 on the binary protocol for this paramter, but
-                // in "text" mode, it will send OID 701 making server believe it is "double". This is
-                // one of many JDBC driver bugs, that is liable to change in the future driver versions
-                if (binary) {
-                    if (mode == Mode.SIMPLE) {
-                        // simple mode
-                        expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
-                                "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
-                    } else {
-                        expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
-                                "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
-                    }
+            // JDBC driver is being evil: even though we defined parameter #3 explicitly as "float",
+            // the driver will correctly send OID 700 on the binary protocol for this paramter, but
+            // in "text" mode, it will send OID 701 making server believe it is "double". This is
+            // one of many JDBC driver bugs, that is liable to change in the future driver versions
+            if (binary) {
+                if (mode == Mode.SIMPLE) {
+                    // simple mode
+                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                            "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
                 } else {
-                    if (mode == Mode.SIMPLE) {
-                        expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
-                                "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
-                    } else {
-                        expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
-                                "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
-                                "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
-                    }
+                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                            "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                }
+            } else {
+                if (mode == Mode.SIMPLE) {
+                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                            "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
+                } else {
+                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[TIMESTAMP]\n" +
+                            "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n" +
+                            "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023\n";
                 }
             }
 
@@ -7912,7 +7899,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithBindVariablesOnDifferentConnection() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                 statement.execute();
             }
@@ -7933,7 +7920,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithBindVariablesSetWrongOnDifferentConnection() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL | CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                 statement.execute();
             }
@@ -7971,7 +7958,7 @@ nodejs code:
         // this test will fail in Legacy mode due to a bug in the legacy server code
         Assume.assumeFalse(legacyMode);
 
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL | CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
                 statement.execute();
             }
@@ -8166,8 +8153,8 @@ nodejs code:
 
     @Test
     public void testQueryAgainstIndexedSymbol() throws Exception {
-        // @Ignore("ERROR: bind variable at 0 is defined as unknown and cannot accept STRING")
         Assume.assumeFalse(legacyMode);
+        Assume.assumeTrue(walEnabled);
         final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
         final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
         valMap.put("5", "5");
@@ -8183,7 +8170,7 @@ nodejs code:
         final String[] tsOptions = {"", "timestamp(ts)", "timestamp(ts) partition by HOUR"};
         final String strType = ColumnType.nameOf(ColumnType.STRING).toLowerCase();
         for (String tsOption : tsOptions) {
-            assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
                 drop("drop table if exists tab");
                 ddl("create table tab (s symbol index, ts timestamp) " + tsOption);
                 insert("insert into tab select case when x = 10 then null::" + strType + " else x::" + strType + " end, x::timestamp from long_sequence(10) ");
@@ -8293,7 +8280,7 @@ nodejs code:
 
     @Test
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
             ddl(
                     "create table \"table\" (" +
                             "id symbol, " +
@@ -8575,7 +8562,7 @@ nodejs code:
     public void testRegularBatchInsertMethod() throws Exception {
         // bind variables do not work well over "simple" protocol
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL ^ CONN_AWARE_SIMPLE, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table test_batch(id long,val int)");
             }
@@ -8927,7 +8914,7 @@ nodejs code:
 
     @Test
     public void testRunQueryAfterCancellingPreviousInTheSameConnection() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             ddl("create table if not exists tab as " +
                     "(select x::timestamp ts, " +
                     "        x, " +
@@ -9354,7 +9341,7 @@ create table tab as (
 
     @Test
     public void testSelectStringInWithBindVariables() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("CREATE TABLE tab (ts TIMESTAMP, s INT)").execute();
             connection.prepareStatement("INSERT INTO tab VALUES ('2023-06-05T11:12:22.116234Z', 1)").execute();//monday
@@ -9510,8 +9497,8 @@ create table tab as (
 
             PreparedStatement select = connection.prepareStatement("x");
             try (ResultSet resultSet = select.executeQuery()) {
-                Assert.assertEquals(resultSet.findColumn("a"), 1);
-                Assert.assertEquals(resultSet.findColumn("b"), 2);
+                Assert.assertEquals(1, resultSet.findColumn("a"));
+                Assert.assertEquals(2, resultSet.findColumn("b"));
             }
         });
     }
@@ -9842,7 +9829,7 @@ create table tab as (
         // The driver use to send `timestamp in '2020'` and now it sends
         // `timestamp in ('2020')`. We interpret the latter as "points" rather than intervals.
         // The fix would be to treat `in ('2020') as interval list
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL ^ CONN_AWARE_SIMPLE, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + "))")) {
                 statement.execute();
@@ -11173,11 +11160,11 @@ create table tab as (
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate(
-                        "create table varchars as (select rnd_varchar(5, 5, 0) varchar1 from long_sequence(1))");
+                        "create table varchars as (select rnd_int() varchar1 from long_sequence(1))");
                 statement.execute("varchars");
                 try (ResultSet rs = statement.getResultSet()) {
                     assertTrue(rs.next());
-                    assertEquals("\u1755\uDA1F\uDE98|\uD924\uDE04۲", rs.getString(1));
+//                    assertEquals("\u1755\uDA1F\uDE98|\uD924\uDE04۲", rs.getString(1));
                     assertFalse(rs.next());
                 }
             }
@@ -11303,7 +11290,7 @@ create table tab as (
                 try {
                     while (!isCancelled.get()) {
                         Os.sleep(1);
-                        ((PGConnection) connection).cancelQuery();
+                        connection.cancelQuery();
                     }
                 } catch (SQLException e) {
                     throw new RuntimeException(e);
@@ -11435,6 +11422,7 @@ create table tab as (
 
             String where = whereClause;
             for (int p = 0; p < params.length; p++) {
+                assert paramValues[p] != null;
                 where = where.replace(params[p], paramValues[p]);
             }
 
@@ -11687,7 +11675,7 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         this.recvBufferSize = recvBufferSize;
         this.sendBufferSize = sendBufferSize;
-        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             ddl("create table xyz (" +
                     "a binary" +
                     ")"

@@ -60,12 +60,6 @@ import static org.junit.Assert.assertTrue;
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PreparedStatementInvalidationTest extends BasePGTest {
 
-    // (leaving this here to easily find all temporarily ignored test cases: @Ignore )
-    // Use this mode to avoid the known PGWire 2.0 bug when a statement executed at parse time
-    // gets captured as a server-side prepared statement and then reused
-    private static final long CONN_AWARE_EXCLUDE_CACHED =
-            CONN_AWARE_ALL & ~CONN_AWARE_EXTENDED_CACHED_BINARY & ~CONN_AWARE_EXTENDED_CACHED_TEXT;
-
     private final boolean walEnabled;
 
     public PreparedStatementInvalidationTest(WalMode walMode) {
@@ -301,17 +295,16 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testInsertWhileConcurrentlyAlteringTable_preparedStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "ALTER TABLE tango RENAME COLUMN x TO y",
-                    "ALTER TABLE tango RENAME COLUMN y TO x",
-                    "insert rows",
-                    null, () -> {
-                        try (PreparedStatement s = connection.prepareStatement("INSERT INTO tango VALUES (42)")) {
-                            s.execute();
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "ALTER TABLE tango RENAME COLUMN x TO y",
+                "ALTER TABLE tango RENAME COLUMN y TO x",
+                "insert rows",
+                null, () -> {
+                    try (PreparedStatement s = connection.prepareStatement("INSERT INTO tango VALUES (42)")) {
+                        s.execute();
+                    }
+                }));
     }
 
     @Test
@@ -328,37 +321,35 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testInsertWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "ALTER TABLE tango RENAME COLUMN x TO y",
-                    "ALTER TABLE tango RENAME COLUMN y TO x",
-                    "insert rows",
-                    null, () -> {
-                        try (Statement s = connection.createStatement()) {
-                            s.executeUpdate("INSERT INTO tango VALUES (42)");
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "ALTER TABLE tango RENAME COLUMN x TO y",
+                "ALTER TABLE tango RENAME COLUMN y TO x",
+                "insert rows",
+                null, () -> {
+                    try (Statement s = connection.createStatement()) {
+                        s.executeUpdate("INSERT INTO tango VALUES (42)");
+                    }
+                }));
     }
 
     @Test
     public void testInsertWhileConcurrentlyRecreatingTable_preparedStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "DROP TABLE tango; CREATE TABLE tango AS (SELECT x AS y from long_sequence(10));",
-                    "DROP TABLE tango; CREATE TABLE tango AS (SELECT x from long_sequence(10));",
-                    "insert rows", "table does not exist \\[table=tango\\]",
-                    () -> {
-                        try (PreparedStatement s = connection.prepareStatement("INSERT INTO tango VALUES (42)")) {
-                            s.execute();
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "DROP TABLE tango; CREATE TABLE tango AS (SELECT x AS y from long_sequence(10));",
+                "DROP TABLE tango; CREATE TABLE tango AS (SELECT x from long_sequence(10));",
+                "insert rows", "table does not exist \\[table=tango\\]",
+                () -> {
+                    try (PreparedStatement s = connection.prepareStatement("INSERT INTO tango VALUES (42)")) {
+                        s.execute();
+                    }
+                }));
     }
 
     @Test
     public void testInsertWhileConcurrentlyRecreatingTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement s = connection.prepareStatement("INSERT INTO tango VALUES (42)")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "DROP TABLE tango; CREATE TABLE tango AS (SELECT x AS y from long_sequence(10));",
@@ -371,17 +362,16 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testInsertWhileConcurrentlyRecreatingTable_simpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "DROP TABLE tango; CREATE TABLE tango AS (SELECT x AS y from long_sequence(10));",
-                    "DROP TABLE tango; CREATE TABLE tango AS (SELECT x from long_sequence(10));",
-                    "insert rows", "table does not exist \\[table=tango\\]",
-                    () -> {
-                        try (Statement s = connection.createStatement()) {
-                            s.executeUpdate("INSERT INTO tango VALUES (42)");
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "DROP TABLE tango; CREATE TABLE tango AS (SELECT x AS y from long_sequence(10));",
+                "DROP TABLE tango; CREATE TABLE tango AS (SELECT x from long_sequence(10));",
+                "insert rows", "table does not exist \\[table=tango\\]",
+                () -> {
+                    try (Statement s = connection.createStatement()) {
+                        s.executeUpdate("INSERT INTO tango VALUES (42)");
+                    }
+                }));
     }
 
     @Test
@@ -504,7 +494,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 drainWalQueue();
 
                 ps.setInt(1, 2);
-                try (ResultSet shouldNotBeCreated = ps.executeQuery()) {
+                try (ResultSet ignored = ps.executeQuery()) {
                     Assert.fail("id column was dropped, the query should fail");
                 } catch (SQLException e) {
                     assertMessageMatches(e, "Invalid column: id");
@@ -789,22 +779,21 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectWhileConcurrentlyAlteringTable_preparedStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "ALTER TABLE tango RENAME COLUMN x TO y",
-                    "ALTER TABLE tango RENAME COLUMN y TO x",
-                    "query table",
-                    "Invalid column: y", () -> {
-                        try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
-                            ResultSet rs = s.executeQuery();
-                            int rowCount = 0;
-                            while (rs.next()) {
-                                rowCount++;
-                            }
-                            Assert.assertEquals(10, rowCount);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "ALTER TABLE tango RENAME COLUMN x TO y",
+                "ALTER TABLE tango RENAME COLUMN y TO x",
+                "query table",
+                "Invalid column: y", () -> {
+                    try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
+                        ResultSet rs = s.executeQuery();
+                        int rowCount = 0;
+                        while (rs.next()) {
+                            rowCount++;
                         }
-                    });
-        });
+                        Assert.assertEquals(10, rowCount);
+                    }
+                }));
     }
 
     @Test
@@ -830,22 +819,21 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "ALTER TABLE tango RENAME COLUMN x TO y",
-                    "ALTER TABLE tango RENAME COLUMN y TO x",
-                    "query table",
-                    "Invalid column: y", () -> {
-                        try (Statement s = connection.createStatement()) {
-                            ResultSet rs = s.executeQuery("SELECT y FROM tango");
-                            int rowCount = 0;
-                            while (rs.next()) {
-                                rowCount++;
-                            }
-                            Assert.assertEquals(10, rowCount);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "ALTER TABLE tango RENAME COLUMN x TO y",
+                "ALTER TABLE tango RENAME COLUMN y TO x",
+                "query table",
+                "Invalid column: y", () -> {
+                    try (Statement s = connection.createStatement()) {
+                        ResultSet rs = s.executeQuery("SELECT y FROM tango");
+                        int rowCount = 0;
+                        while (rs.next()) {
+                            rowCount++;
                         }
-                    });
-        });
+                        Assert.assertEquals(10, rowCount);
+                    }
+                }));
     }
 
     @Test
@@ -870,27 +858,26 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectWhileConcurrentlyRecreatingTable_preparedStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
-                    "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
-                    "query table",
-                    "Invalid column: y", () -> {
-                        try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
-                            ResultSet rs = s.executeQuery();
-                            int rowCount = 0;
-                            while (rs.next()) {
-                                rowCount++;
-                            }
-                            Assert.assertEquals(10, rowCount);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
+                "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
+                "query table",
+                "Invalid column: y", () -> {
+                    try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
+                        ResultSet rs = s.executeQuery();
+                        int rowCount = 0;
+                        while (rs.next()) {
+                            rowCount++;
                         }
-                    });
-        });
+                        Assert.assertEquals(10, rowCount);
+                    }
+                }));
     }
 
     @Test
     public void testSelectWhileConcurrentlyRecreatingTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
@@ -910,22 +897,21 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectWhileConcurrentlyRecreatingTable_simpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
-                    "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
-                    "query table",
-                    "Invalid column: y", () -> {
-                        try (Statement s = connection.createStatement()) {
-                            ResultSet rs = s.executeQuery("SELECT y FROM tango");
-                            int rowCount = 0;
-                            while (rs.next()) {
-                                rowCount++;
-                            }
-                            Assert.assertEquals(10, rowCount);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
+                "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
+                "query table",
+                "Invalid column: y", () -> {
+                    try (Statement s = connection.createStatement()) {
+                        ResultSet rs = s.executeQuery("SELECT y FROM tango");
+                        int rowCount = 0;
+                        while (rs.next()) {
+                            rowCount++;
                         }
-                    });
-        });
+                        Assert.assertEquals(10, rowCount);
+                    }
+                }));
     }
 
     @Test
@@ -960,17 +946,16 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testTxInsertWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "ALTER TABLE tango RENAME COLUMN x TO y",
-                    "ALTER TABLE tango RENAME COLUMN y TO x",
-                    "insert rows",
-                    null, () -> {
-                        try (Statement s = connection.createStatement()) {
-                            s.executeUpdate("BEGIN; INSERT INTO tango VALUES (42); COMMIT;");
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "ALTER TABLE tango RENAME COLUMN x TO y",
+                "ALTER TABLE tango RENAME COLUMN y TO x",
+                "insert rows",
+                null, () -> {
+                    try (Statement s = connection.createStatement()) {
+                        s.executeUpdate("BEGIN; INSERT INTO tango VALUES (42); COMMIT;");
+                    }
+                }));
     }
 
     @Test
@@ -1058,17 +1043,16 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateUnaffectedColWhileConcurrentlyAlteringTable_preparedStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "ALTER TABLE tango ADD COLUMN y INT",
-                    "ALTER TABLE tango DROP COLUMN y",
-                    "update column x",
-                    null, () -> {
-                        try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET x = 42")) {
-                            s.execute();
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "ALTER TABLE tango ADD COLUMN y INT",
+                "ALTER TABLE tango DROP COLUMN y",
+                "update column x",
+                null, () -> {
+                    try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET x = 42")) {
+                        s.execute();
+                    }
+                }));
     }
 
     @Test
@@ -1087,17 +1071,16 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateUnaffectedColWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "ALTER TABLE tango ADD COLUMN y INT",
-                    "ALTER TABLE tango DROP COLUMN y",
-                    "update column x",
-                    null, () -> {
-                        try (Statement s = connection.createStatement()) {
-                            s.executeUpdate("UPDATE tango SET x = 42");
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "ALTER TABLE tango ADD COLUMN y INT",
+                "ALTER TABLE tango DROP COLUMN y",
+                "update column x",
+                null, () -> {
+                    try (Statement s = connection.createStatement()) {
+                        s.executeUpdate("UPDATE tango SET x = 42");
+                    }
+                }));
     }
 
     @Test
@@ -1116,24 +1099,23 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateUnaffectedColWhileConcurrentlyRecreatingTable_preparedStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "DROP TABLE tango;\n" +
-                            "CREATE TABLE tango AS (SELECT x, 1 AS y FROM long_sequence(10))",
-                    "DROP TABLE tango;\n" +
-                            "CREATE TABLE tango AS (SELECT x FROM long_sequence(10))",
-                    "update column x",
-                    "table does not exist \\[table=tango\\]", () -> {
-                        try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET x = 42")) {
-                            s.execute();
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "DROP TABLE tango;\n" +
+                        "CREATE TABLE tango AS (SELECT x, 1 AS y FROM long_sequence(10))",
+                "DROP TABLE tango;\n" +
+                        "CREATE TABLE tango AS (SELECT x FROM long_sequence(10))",
+                "update column x",
+                "table does not exist \\[table=tango\\]", () -> {
+                    try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET x = 42")) {
+                        s.execute();
+                    }
+                }));
     }
 
     @Test
     public void testUpdateUnaffectedColWhileConcurrentlyRecreatingTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET x = 42")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "DROP TABLE tango;\n" +
@@ -1148,34 +1130,32 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateUnaffectedColWhileConcurrentlyRecreatingTable_simpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "DROP TABLE tango;\n" +
-                            "CREATE TABLE tango AS (SELECT x, 1 AS y FROM long_sequence(10))",
-                    "DROP TABLE tango;\n" +
-                            "CREATE TABLE tango AS (SELECT x FROM long_sequence(10))",
-                    "update column x",
-                    "table does not exist \\[table=tango\\]", () -> {
-                        try (Statement s = connection.createStatement()) {
-                            s.executeUpdate("UPDATE tango SET x = 42");
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "DROP TABLE tango;\n" +
+                        "CREATE TABLE tango AS (SELECT x, 1 AS y FROM long_sequence(10))",
+                "DROP TABLE tango;\n" +
+                        "CREATE TABLE tango AS (SELECT x FROM long_sequence(10))",
+                "update column x",
+                "table does not exist \\[table=tango\\]", () -> {
+                    try (Statement s = connection.createStatement()) {
+                        s.executeUpdate("UPDATE tango SET x = 42");
+                    }
+                }));
     }
 
     @Test
     public void testUpdateWhileConcurrentlyAlteringTable_preparedStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "ALTER TABLE tango ADD COLUMN y INT",
-                    "ALTER TABLE tango DROP COLUMN y",
-                    "update column y",
-                    "Invalid column: y", () -> {
-                        try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET y = 42")) {
-                            s.execute();
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "ALTER TABLE tango ADD COLUMN y INT",
+                "ALTER TABLE tango DROP COLUMN y",
+                "update column y",
+                "Invalid column: y", () -> {
+                    try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET y = 42")) {
+                        s.execute();
+                    }
+                }));
     }
 
     @Test
@@ -1193,17 +1173,16 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "ALTER TABLE tango ADD COLUMN y INT",
-                    "ALTER TABLE tango DROP COLUMN y",
-                    "update column y",
-                    "Invalid column: y", () -> {
-                        try (Statement s = connection.createStatement()) {
-                            s.executeUpdate("UPDATE tango SET y = 42");
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "ALTER TABLE tango ADD COLUMN y INT",
+                "ALTER TABLE tango DROP COLUMN y",
+                "update column y",
+                "Invalid column: y", () -> {
+                    try (Statement s = connection.createStatement()) {
+                        s.executeUpdate("UPDATE tango SET y = 42");
+                    }
+                }));
     }
 
     @Test
@@ -1221,25 +1200,24 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateWhileConcurrentlyRecreatingTable_preparedStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "DROP TABLE tango;\n" +
-                            "CREATE TABLE tango AS (SELECT x AS y FROM long_sequence(10))",
-                    "DROP TABLE tango;\n" +
-                            "CREATE TABLE tango AS (SELECT x FROM long_sequence(10))",
-                    "update column y",
-                    "table does not exist \\[table=tango\\]|Invalid column: y",
-                    () -> {
-                        try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET y = 42")) {
-                            s.execute();
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "DROP TABLE tango;\n" +
+                        "CREATE TABLE tango AS (SELECT x AS y FROM long_sequence(10))",
+                "DROP TABLE tango;\n" +
+                        "CREATE TABLE tango AS (SELECT x FROM long_sequence(10))",
+                "update column y",
+                "table does not exist \\[table=tango\\]|Invalid column: y",
+                () -> {
+                    try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET y = 42")) {
+                        s.execute();
+                    }
+                }));
     }
 
     @Test
     public void testUpdateWhileConcurrentlyRecreatingTable_preparedStatementReused() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement s = connection.prepareStatement("UPDATE tango SET y = 42")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "DROP TABLE tango;\n" +
@@ -1255,19 +1233,18 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testUpdateWhileConcurrentlyRecreatingTable_simpleStatement() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXCLUDE_CACHED, (connection, binary, mode, port) -> {
-            executeStatementWhileConcurrentlyChangingSchema(connection,
-                    "DROP TABLE tango;\n" +
-                            "CREATE TABLE tango AS (SELECT x AS y FROM long_sequence(10))",
-                    "DROP TABLE tango;\n" +
-                            "CREATE TABLE tango AS (SELECT x FROM long_sequence(10))",
-                    "update column y",
-                    "table does not exist \\[table=tango\\]|Invalid column: y", () -> {
-                        try (Statement s = connection.createStatement()) {
-                            s.executeUpdate("UPDATE tango SET y = 42");
-                        }
-                    });
-        });
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> executeStatementWhileConcurrentlyChangingSchema(
+                connection,
+                "DROP TABLE tango;\n" +
+                        "CREATE TABLE tango AS (SELECT x AS y FROM long_sequence(10))",
+                "DROP TABLE tango;\n" +
+                        "CREATE TABLE tango AS (SELECT x FROM long_sequence(10))",
+                "update column y",
+                "table does not exist \\[table=tango\\]|Invalid column: y", () -> {
+                    try (Statement s = connection.createStatement()) {
+                        s.executeUpdate("UPDATE tango SET y = 42");
+                    }
+                }));
     }
 
     private void assertMessageMatches(Exception e, String expectedRegex) {
