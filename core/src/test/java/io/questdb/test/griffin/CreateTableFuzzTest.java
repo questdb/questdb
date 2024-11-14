@@ -35,7 +35,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.test.griffin.CreateTableFuzzTest.CreateVariant.*;
 import static io.questdb.test.griffin.CreateTableFuzzTest.WrongNameChoice.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -53,7 +52,6 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private final boolean useIndexCapacity = useIndex && rnd.nextBoolean();
     private final boolean usePartitionBy = rnd.nextBoolean();
     private final boolean useDedup = usePartitionBy && rnd.nextBoolean();
-    private final CreateVariant variant = CreateVariant.values()[rnd.nextInt(CreateVariant.values().length)];
     private final WrongNameChoice wrongName = WrongNameChoice.values()[rnd.nextInt(WrongNameChoice.values().length)];
     private int castPos;
     private int dedupPos;
@@ -65,8 +63,8 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private String tsCol = "ts";
     private int tsPos;
 
-    @Before
     @Override
+    @Before
     public void setUp() {
         super.setUp();
         defaultSymbolCapacity = engine.getConfiguration().getDefaultSymbolCapacity();
@@ -74,30 +72,20 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableFuzz() throws Exception {
+    public void testCreateTableAsSelect() throws Exception {
         assertMemoryLeak(() -> {
-            if (variant != DIRECT) {
-                engine.ddl("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, str STRING)", sqlExecutionContext);
-            }
-            StringBuilder ddl = generateCreateTable();
+            createInitialSourceTable();
+            StringBuilder ddl = generateCreateTable(true);
             System.out.printf(
-                    "\n%s\nVariant %s WrongName %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n\n",
-                    ddl, variant, wrongName, useCast, useCastSymbolCapacity, useDedup, useIndex, useIndexCapacity, usePartitionBy);
+                    "\n%s\nWrongName %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n\n",
+                    ddl, wrongName, useCast, useCastSymbolCapacity, useDedup, useIndex, useIndexCapacity, usePartitionBy);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery query;
                 try {
                     query = compiler.compile(ddl, sqlExecutionContext);
                 } catch (SqlException e) {
                     String message = e.getMessage();
-                    if (variant == DIRECT) {
-                        if (wrongName == TIMESTAMP) {
-                            assertEquals(withErrPos(tsPos, "invalid designated timestamp column [name=bork]"), message);
-                            return;
-                        } else if (wrongName == DEDUP) {
-                            assertEquals(withErrPos(dedupPos, "deduplicate key column not found [column=bork]"), message);
-                            return;
-                        }
-                    } else if (variant == SELECT && wrongName != NONE) {
+                    if (wrongName != NONE) {
                         int errPos = wrongName == CAST ? castPos
                                 : wrongName == INDEX ? indexPos
                                 : wrongName == TIMESTAMP ? tsPos
@@ -123,17 +111,89 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                         }
                         return;
                     }
-                    validateCreatedTable();
+                    validateCreatedTableAsSelect();
                     if (!useIfNotExists) {
                         drop("DROP TABLE tango");
                     }
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     }
-                    validateCreatedTable();
+                    validateCreatedTableAsSelect();
                 }
             }
         });
+    }
+
+    @Test
+    public void testCreateTableDirect() throws Exception {
+        assertMemoryLeak(() -> {
+            StringBuilder ddl = generateCreateTable(false);
+            System.out.printf(
+                    "\n%s\nWrongName %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n\n",
+                    ddl, wrongName, useCast, useCastSymbolCapacity, useDedup, useIndex, useIndexCapacity, usePartitionBy);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery query;
+                try {
+                    query = compiler.compile(ddl, sqlExecutionContext);
+                } catch (SqlException e) {
+                    String message = e.getMessage();
+                    if (wrongName == TIMESTAMP) {
+                        assertEquals(withErrPos(tsPos, "invalid designated timestamp column [name=bork]"), message);
+                    } else if (wrongName == DEDUP) {
+                        assertEquals(withErrPos(dedupPos, "deduplicate key column not found [column=bork]"), message);
+                    } else {
+                        throw e;
+                    }
+                    return;
+                }
+                try (Operation op = query.getOperation()) {
+                    assertNotNull(op);
+                    try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                        fut.await();
+                    }
+                    validateCreatedTableDirect();
+                    if (!useIfNotExists) {
+                        drop("DROP TABLE tango");
+                    }
+                    try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                        fut.await();
+                    }
+                    validateCreatedTableDirect();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableLike() throws Exception {
+        assertMemoryLeak(() -> {
+            createInitialSourceTable();
+            StringBuilder ddl = generateCreateTableLike();
+            System.out.printf(
+                    "\n%s\nWrongName %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n\n",
+                    ddl, wrongName, useCast, useCastSymbolCapacity, useDedup, useIndex, useIndexCapacity, usePartitionBy);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                CompiledQuery query = compiler.compile(ddl, sqlExecutionContext);
+                try (Operation op = query.getOperation()) {
+                    assertNotNull(op);
+                    try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                        fut.await();
+                    }
+                    validateCreatedTableLike();
+                    if (!useIfNotExists) {
+                        drop("DROP TABLE tango");
+                    }
+                    try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                        fut.await();
+                    }
+                    validateCreatedTableLike();
+                }
+            }
+        });
+    }
+
+    private static void createInitialSourceTable() throws SqlException {
+        engine.ddl("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, str STRING)", sqlExecutionContext);
     }
 
     private static String withErrPos(int pos, String message) {
@@ -166,26 +226,19 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private StringBuilder generateCreateTable() {
+    private StringBuilder generateCreateTable(boolean asSelect) {
         StringBuilder ddl = new StringBuilder();
         ddl.append("CREATE TABLE ");
         if (useIfNotExists) {
             ddl.append("IF NOT EXISTS ");
         }
         ddl.append("tango");
-        switch (variant) {
-            case DIRECT:
-                ddl.append(" (ts TIMESTAMP, str STRING)");
-                break;
-            case LIKE:
-                ddl.append(" (LIKE ").append(rndCase("samba")).append(')');
-                break;
-            case SELECT:
-                appendAsSelect(ddl);
-                break;
-            default:
+        if (asSelect) {
+            appendAsSelect(ddl);
+        } else {
+            ddl.append(" (ts TIMESTAMP, str STRING)");
         }
-        if (variant == LIKE || !usePartitionBy) {
+        if (!usePartitionBy) {
             return ddl;
         }
         ddl.append(" TIMESTAMP(");
@@ -200,6 +253,19 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         return ddl;
     }
 
+    private StringBuilder generateCreateTableLike() {
+        StringBuilder ddl = new StringBuilder();
+        ddl.append("CREATE TABLE ");
+        if (useIfNotExists) {
+            ddl.append("IF NOT EXISTS ");
+        }
+        return ddl.append("tango (LIKE ").append(rndCase("samba")).append(')');
+    }
+
+    private void messWithSourceTable() throws SqlException {
+        engine.ddl("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, str STRING)", sqlExecutionContext);
+    }
+
     private String rndCase(String word) {
         StringBuilder result = new StringBuilder(word.length());
         for (int i = 0; i < word.length(); i++) {
@@ -212,38 +278,37 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         return result.toString();
     }
 
-    private void validateCreatedTable() throws SqlException {
+    private void validateCreatedTableAsSelect() throws SqlException {
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
-        switch (variant) {
-            case DIRECT:
-                b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
-                        .append(usePartitionBy).append('\t').append(useDedup).append('\n');
-                b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
-                break;
-            case LIKE:
-                b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
-                b.append(symCol).append("\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n");
-                b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
-                break;
-            case SELECT:
-                b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
-                        .append(usePartitionBy).append('\t').append(useDedup).append('\n');
-                b.append(symCol).append("\tSYMBOL\t").append(useIndex).append('\t')
-                        .append(useIndexCapacity ? INDEX_CAPACITY : useIndex ? defaultIndexCapacity : 0).append('\t')
-                        .append(!useIndex).append("\t128\tfalse\tfalse\n");
-                b.append(strCol).append("\t").append(useCast ? "SYMBOL" : "STRING").append("\tfalse\t0\t")
-                        .append(useCast).append("\t")
-                        .append(useCastSymbolCapacity ? SYMBOL_CAPACITY : useCast ? defaultSymbolCapacity : 0)
-                        .append("\tfalse\tfalse\n");
-                break;
-            default:
-        }
+        b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
+                .append(usePartitionBy).append('\t').append(useDedup).append('\n');
+        b.append(symCol).append("\tSYMBOL\t").append(useIndex).append('\t')
+                .append(useIndexCapacity ? INDEX_CAPACITY : useIndex ? defaultIndexCapacity : 0).append('\t')
+                .append(!useIndex).append("\t128\tfalse\tfalse\n");
+        b.append(strCol).append("\t").append(useCast ? "SYMBOL" : "STRING").append("\tfalse\t0\t")
+                .append(useCast).append("\t")
+                .append(useCastSymbolCapacity ? SYMBOL_CAPACITY : useCast ? defaultSymbolCapacity : 0)
+                .append("\tfalse\tfalse\n");
         assertSql(b, "show columns from tango");
     }
 
-    enum CreateVariant {
-        DIRECT, LIKE, SELECT
+    private void validateCreatedTableDirect() throws SqlException {
+        StringBuilder b = new StringBuilder(
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
+        b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
+                .append(usePartitionBy).append('\t').append(useDedup).append('\n');
+        b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+        assertSql(b, "show columns from tango");
+    }
+
+    private void validateCreatedTableLike() throws SqlException {
+        StringBuilder b = new StringBuilder(
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
+        b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+        b.append(symCol).append("\tSYMBOL\tfalse\t256\ttrue\t128\tfalse\tfalse\n");
+        b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+        assertSql(b, "show columns from tango");
     }
 
     enum WrongNameChoice {
