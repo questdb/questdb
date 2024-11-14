@@ -35,6 +35,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.CreateTableFuzzTest.ColumnChaos.CHANGE_TYPE;
+import static io.questdb.test.griffin.CreateTableFuzzTest.ColumnChaos.RENAME_AND_ADD;
 import static io.questdb.test.griffin.CreateTableFuzzTest.WrongNameChoice.*;
 import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -61,6 +63,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private int defaultSymbolCapacity;
     private int indexPos;
     private String strCol = "str";
+    private int strColPosWithinSelect;
     private String symCol = "sym";
     private String tsCol = "ts";
     private int tsPos;
@@ -114,14 +117,32 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                         }
                         return;
                     }
-                    validateCreatedTableAsSelect();
-                    if (!useIfNotExists) {
-                        drop("DROP TABLE tango");
+                    validateCreatedTableAsSelect(false);
+                    if (useIfNotExists) {
+                        try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
+                            fut.await();
+                        }
+                        validateCreatedTableAsSelect(false);
                     }
+                    messWithSourceTable();
+                    drop("DROP TABLE tango");
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
+                    } catch (SqlException e) {
+                        switch (columnChaos) {
+                            case DROP:
+                                assertEquals(withErrPos(strColPosWithinSelect, "Invalid column: " + strCol), e.getMessage());
+                                return;
+                            case CHANGE_TYPE:
+                            case RENAME_AND_ADD:
+                                assertEquals(withErrPos(castPos, String.format(
+                                        "unsupported cast [column=%s, from=DOUBLE, to=SYMBOL]", strCol
+                                )), e.getMessage());
+                                return;
+                        }
+                        throw e;
                     }
-                    validateCreatedTableAsSelect();
+                    validateCreatedTableAsSelect(true);
                 }
             }
         });
@@ -205,11 +226,13 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     }
 
     private void appendAsSelect(StringBuilder ddl) {
-        ddl.append(" AS (SELECT ")
+        ddl.append(" AS (");
+        int startOfSelect = ddl.length();
+        ddl.append("SELECT ")
                 .append(tsCol = rndCase("ts")).append(", ")
-                .append(symCol = rndCase("sym")).append(", ")
-                .append(strCol = rndCase("str"))
-                .append(" FROM ").append(rndCase("samba")).append(')');
+                .append(symCol = rndCase("sym")).append(", ");
+        strColPosWithinSelect = ddl.length() - startOfSelect;
+        ddl.append(strCol = rndCase("str")).append(" FROM ").append(rndCase("samba")).append(')');
         if (useCast) {
             ddl.append(", CAST(");
             castPos = ddl.length();
@@ -296,7 +319,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         return result.toString();
     }
 
-    private void validateCreatedTableAsSelect() throws SqlException {
+    private void validateCreatedTableAsSelect(boolean afterMessing) throws SqlException {
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
         b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
@@ -304,7 +327,10 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         b.append(symCol).append("\tSYMBOL\t").append(useIndex).append('\t')
                 .append(useIndexCapacity ? INDEX_CAPACITY : useIndex ? defaultIndexCapacity : 0).append('\t')
                 .append(!useIndex).append("\t128\tfalse\tfalse\n");
-        b.append(strCol).append("\t").append(useCast ? "SYMBOL" : "STRING").append("\tfalse\t0\t")
+        String strColType = useCast ? "SYMBOL"
+                : afterMessing && (columnChaos == CHANGE_TYPE || columnChaos == RENAME_AND_ADD) ? "DOUBLE"
+                : "STRING";
+        b.append(strCol).append("\t").append(strColType).append("\tfalse\t0\t")
                 .append(useCast).append("\t")
                 .append(useCastSymbolCapacity ? SYMBOL_CAPACITY : useCast ? defaultSymbolCapacity : 0)
                 .append("\tfalse\tfalse\n");
