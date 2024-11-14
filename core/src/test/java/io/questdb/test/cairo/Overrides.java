@@ -131,7 +131,7 @@ public class Overrides {
         isHiddenTelemetryTable = false;
         properties.clear();
         changed = true;
-        spinLockTimeout = 50;
+        spinLockTimeout = 5000;
     }
 
     public void setCurrentMicros(long currentMicros) {
