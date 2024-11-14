@@ -12059,12 +12059,12 @@ create table tab as (
             PreparedStatement tbl = connection.prepareStatement("create table xx as (" +
                     "select x," +
                     " timestamp_sequence(0, 1000) ts" +
-                    " from long_sequence(100000)) timestamp (ts)");
+                    " from long_sequence(1000000)) timestamp (ts)");
             tbl.execute();
 
             PreparedStatement stmt = connection.prepareStatement(query);
             connection.setNetworkTimeout(Runnable::run, 1);
-            int testSize = 100000;
+            int testSize = 1000;
             stmt.setFetchSize(testSize);
             assertEquals(testSize, stmt.getFetchSize());
 
