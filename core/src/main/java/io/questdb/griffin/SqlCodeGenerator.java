@@ -5285,8 +5285,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
-                if (orderDescendingByDesignatedTimestampOnly || orderByStartsWithDescDesignatedTimestampAndLimited
-                ) {
+                if (orderDescendingByDesignatedTimestampOnly || orderByStartsWithDescDesignatedTimestampAndLimited) {
                     dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 } else {
                     dfcFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
@@ -5884,7 +5883,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && model.getTimestamp() != null
                 && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token,
                 model.getTimestamp().token)
-                && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, "-");
+                && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, '-');
     }
 
     private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {

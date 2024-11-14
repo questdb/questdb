@@ -3580,12 +3580,16 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * For a query like this: SELECT a, b, c from x ORDER BY a DESC, b DESC LIMIT 100
+     * For a query like this: SELECT ts, b, c from x ORDER BY ts DESC, b DESC LIMIT 100
+     * See the model:
+     * `select-choose ts, b, c from (x timestamp (ts) order by ts desc, b desc) limit 100`
+     * <p>
      * The limit is on the outer select-choose, and not the select-none.
      * This means that we fail to specialise the query whereas we would automatically
      * perform this push down in the case of negative limits.
-     *
-     * @param model
+     * <p>
+     * After transformation, we get this model:
+     * `select-choose ts, b, c from (x timestamp (ts) order by ts desc, b desc limit 100)`
      */
     private void pushLimitFromChooseToNone(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model == null) {
@@ -4132,7 +4136,6 @@ public class SqlOptimiser implements Mutable {
 
             // try to condense potential wildcard model
             if (!rewriteNegativeLimitGuard(model, executionContext)) {
-
                 rewriteToCondenseWildcardModels(model);
             }
 
@@ -4259,11 +4262,17 @@ public class SqlOptimiser implements Mutable {
     /**
      * Handle queries like:
      * SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3
-     * This would ordinarily compile to a LimitedSizePartiallySortedRecordCursor.
+     * With a model like this:
+     * `select-choose timestamp, side from (trades timestamp (timestamp) order by timestamp, side desc) limit -(3)`
+     * <p>
+     * This would ordinarily compile to a `LimitedSizePartiallySortedRecordCursor`.
      * That means it will forward scan - and run out of memory on demo!
-     * Instead, we aim to subquery a backwards scan and then sort.
-     *
-     * @param model
+     * Instead, we aim to subquery a backwards scan and sort.
+     * This then needs to be compiled into a `LimitedSizePartiallySortedRecordCursor`, but in reverse
+     * in order to correctly handle duplicates.
+     * <p>
+     * So we produce a model like this:
+     * `select-choose timestamp, side from (trades timestamp (timestamp) order by timestamp desc, side desc limit 3) order by timestamp, side desc`
      */
     private void rewriteNegativeLimitWithOrderBy(QueryModel model) throws SqlException {
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
@@ -4273,6 +4282,7 @@ public class SqlOptimiser implements Mutable {
                 && model.getNestedModel().getOrderBy().size() > 1
                 && model.getNestedModel().getTimestamp() != null
                 && model.getLimitLo() != null
+                && model.getLimitHi() == null
                 && Chars.equals(model.getLimitLo().token, "-")) {
 
             QueryModel nested = model.getNestedModel();
@@ -4317,7 +4327,7 @@ public class SqlOptimiser implements Mutable {
 
             nested.setAllowPropagationOfOrderByAdvice(false); // stop propagation
 
-            // copy the integral part i.e if its -3, the 3
+            // copy the integral part i.e if it's -3, then 3
             nested.setLimit(model.getLimitLo().rhs, null);
 
             // remove limit from outer

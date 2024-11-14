@@ -1922,6 +1922,20 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPushDownLimitFromChooseToNoneWithHiLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tripsDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select cab_type, vendor_id, pickup_datetime from trips \n" +
+                    "order by pickup_datetime desc, cab_type desc limit 100, 110;", "Sort light lo: 100 hi: 110\n" +
+                    "  keys: [pickup_datetime desc, cab_type desc]\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: trips\n");
+        });
+    }
+
+    @Test
     public void testQueryPlanForFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int, ts timestamp) timestamp(ts);");
@@ -2717,6 +2731,33 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "1970-01-01T00:00:00.000000Z\tsell\tabc\n" +
                     "1970-01-01T00:00:00.000000Z\tbuy\tabc\n" +
                     "1970-01-01T00:00:00.000001Z\tsell\tabc\n", "SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC LIMIT -3;");
+        });
+    }
+
+    @Test
+    public void testRewriteNegativeLimitHandlesExistingOrderByWithHiLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -1, -3;", "Sort light lo: -1 hi: -3 partiallySorted: true\n" +
+                    "  keys: [timestamp, side desc]\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Frame forward scan on: trades\n");
+            insert("insert into trades (timestamp, side, symbol) values " +
+                    "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
+            drainWalQueue();
+            assertSql("timestamp\tside\n" +
+                    "1970-01-01T00:00:00.000000Z\tsell\n" +
+                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC; ");
+            assertSql("timestamp\tside\n" +
+                    "1970-01-01T00:00:00.000000Z\tsell\n" +
+                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;");
+
         });
     }
 
