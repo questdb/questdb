@@ -35,13 +35,16 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.test.griffin.CreateTableFuzzTest.CreateVariant.DIRECT;
-import static io.questdb.test.griffin.CreateTableFuzzTest.CreateVariant.LIKE;
+import static io.questdb.test.griffin.CreateTableFuzzTest.CreateVariant.*;
+import static io.questdb.test.griffin.CreateTableFuzzTest.WrongNameChoice.*;
+import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.assertNotNull;
 
 public class CreateTableFuzzTest extends AbstractCairoTest {
     private static final int INDEX_CAPACITY = 512;
     private static final int SYMBOL_CAPACITY = 64;
+    private static final String WRONG_NAME = "bork";
+
     private final Rnd rnd = TestUtils.generateRandom(LOG);
     private final boolean useCast = rnd.nextBoolean();
     private final boolean useCastSymbolCapacity = useCast && rnd.nextBoolean();
@@ -51,6 +54,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private final boolean usePartitionBy = rnd.nextBoolean();
     private final boolean useDedup = usePartitionBy && rnd.nextBoolean();
     private final CreateVariant variant = CreateVariant.values()[rnd.nextInt(CreateVariant.values().length)];
+    private final WrongNameChoice wrongName = WrongNameChoice.values()[rnd.nextInt(WrongNameChoice.values().length)];
     private int defaultIndexCapacity;
     private int defaultSymbolCapacity;
     private String strCol = "str";
@@ -73,14 +77,50 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
             }
             StringBuilder ddl = generateCreateTable();
             System.out.printf(
-                    "\n%s\nVariant %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n\n",
-                    ddl, variant, useCast, useCastSymbolCapacity, useDedup, useIndex, useIndexCapacity, usePartitionBy);
+                    "\n%s\nVariant %s WrongName %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n\n",
+                    ddl, variant, wrongName, useCast, useCastSymbolCapacity, useDedup, useIndex, useIndexCapacity, usePartitionBy);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                CompiledQuery query = compiler.compile(ddl, sqlExecutionContext);
+                CompiledQuery query;
+                try {
+                    query = compiler.compile(ddl, sqlExecutionContext);
+                } catch (SqlException e) {
+                    if (variant == LIKE) {
+                        throw e;
+                    }
+                    String message = e.getMessage();
+                    message = message.substring(message.indexOf(' ') + 1);
+                    if (variant == DIRECT) {
+                        if (wrongName == TIMESTAMP) {
+                            assertEquals("invalid designated timestamp column [name=bork]", message);
+                        } else if (wrongName == DEDUP) {
+                            assertEquals("deduplicate key column not found [column=bork]", message);
+                        } else {
+                            throw e;
+                        }
+                    } else if (variant == SELECT) {
+                        if (wrongName != NONE) {
+                            assertEquals("Invalid column: bork", message);
+                        } else {
+                            throw e;
+                        }
+                    }
+                    return;
+                }
                 try (Operation op = query.getOperation()) {
                     assertNotNull(op);
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
+                    } catch (SqlException e) {
+                        String message = e.getMessage();
+                        message = message.substring(message.indexOf(' ') + 1);
+                        if (wrongName == TIMESTAMP) {
+                            assertEquals("designated timestamp column doesn't exist [name=bork]", message);
+                        } else if (wrongName == DEDUP) {
+                            assertEquals("deduplicate key column not found [column=bork]", message);
+                        } else {
+                            throw e;
+                        }
+                        return;
                     }
                     validateCreatedTable();
                     if (!useIfNotExists) {
@@ -102,14 +142,14 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 .append(strCol = rndCase("str"))
                 .append(" FROM ").append(rndCase("samba")).append(')');
         if (useCast) {
-            ddl.append(", CAST(").append(rndCase("str")).append(" AS SYMBOL");
+            ddl.append(", CAST(").append(wrongName == CAST ? WRONG_NAME : rndCase("str")).append(" AS SYMBOL");
             if (useCastSymbolCapacity) {
                 ddl.append(" CAPACITY ").append(SYMBOL_CAPACITY);
             }
             ddl.append(')');
         }
         if (useIndex) {
-            ddl.append(", INDEX(").append(rndCase("sym"));
+            ddl.append(", INDEX(").append(wrongName == INDEX ? WRONG_NAME : rndCase("sym"));
             if (useIndexCapacity) {
                 ddl.append(" CAPACITY ").append(INDEX_CAPACITY);
             }
@@ -139,9 +179,11 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         if (variant == LIKE || !usePartitionBy) {
             return ddl;
         }
-        ddl.append(" TIMESTAMP(").append(rndCase("ts")).append(") PARTITION BY HOUR WAL");
+        ddl.append(" TIMESTAMP(").append(wrongName == TIMESTAMP ? WRONG_NAME : rndCase("ts"))
+                .append(") PARTITION BY HOUR WAL");
         if (useDedup) {
-            ddl.append(" DEDUP UPSERT KEYS(").append(rndCase("ts")).append(')');
+            ddl.append(" DEDUP UPSERT KEYS(").append(wrongName == DEDUP ? WRONG_NAME : rndCase("ts"))
+                    .append(')');
         }
         return ddl;
     }
@@ -190,5 +232,9 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
 
     enum CreateVariant {
         DIRECT, LIKE, SELECT
+    }
+
+    enum WrongNameChoice {
+        NONE, CAST, INDEX, TIMESTAMP, DEDUP
     }
 }
