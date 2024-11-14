@@ -65,6 +65,162 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     private static final int FUZZ_SWEEP = 4;
 
     @Test
+    public void testConcurrentCreateDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            int iterations = 500;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            int dropThreads = 2;
+            CyclicBarrier barrier = new CyclicBarrier(1 + dropThreads);
+            ObjList<Thread> threads = new ObjList<>(1 + dropThreads);
+            threads.add(new Thread(() -> {
+                try {
+                    barrier.await();
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        for (int j = 0; j < iterations; j++) {
+                            try {
+                                ddl(
+                                        "create table tab" + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
+                                                + " WAL ",
+                                        executionContext
+                                );
+                            } catch (SqlException e) {
+                                if (!Chars.contains(e.getFlyweightMessage(), "table already exists")) {
+                                    throw e;
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    ref.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }));
+            threads.getLast().start();
+
+            AtomicBoolean done = new AtomicBoolean(false);
+
+            for (int i = 0; i < dropThreads; i++) {
+                threads.add(new Thread(() -> {
+                    try {
+                        barrier.await();
+                        Rnd rnd = TestUtils.generateRandom(LOG);
+                        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                            while (!done.get()) {
+                                try {
+                                    drop("drop table tab", executionContext);
+                                } catch (TableReferenceOutOfDateException e) {
+                                    // this is fine, query will have to recompile
+                                } catch (SqlException | CairoException e) {
+                                    if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
+                                            && !Chars.contains(e.getFlyweightMessage(), "could not lock")
+                                            && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                                        throw e;
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Throwable e) {
+                        ref.set(e);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }));
+                threads.getLast().start();
+            }
+
+
+            threads.getQuick(0).join();
+            done.set(true);
+
+            for (int i = 1; i < threads.size(); i++) {
+                threads.getQuick(i).join();
+            }
+            Assert.assertTrue(engine.reloadTableNames());
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+        });
+    }
+
+    @Test
+    public void testConcurrentRenameDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            int iterations = 500;
+            AtomicReference<Throwable> ref = new AtomicReference<>();
+            CyclicBarrier barrier = new CyclicBarrier(2);
+
+            ObjList<Thread> threads = new ObjList<>(2);
+            threads.add(new Thread(() -> {
+                try {
+                    barrier.await();
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        for (int j = 0; j < iterations; j++) {
+                            try {
+                                ddl(
+                                        "create table tab" + " (x int, ts timestamp) timestamp(ts) Partition by DAY "
+                                                + " WAL ",
+                                        executionContext
+                                );
+                            } catch (SqlException e) {
+                                if (!Chars.contains(e.getFlyweightMessage(), "table already exists")) {
+                                    throw e;
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    ref.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }));
+            threads.get(0).start();
+
+            AtomicBoolean done = new AtomicBoolean(false);
+            threads.add(new Thread(() -> {
+                try {
+                    barrier.await();
+                    Rnd rnd = TestUtils.generateRandom(LOG);
+                    try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                        int counter = 0;
+                        while (!done.get()) {
+                            try {
+                                compile("rename table tab to tab" + (++counter), executionContext);
+                                drop("drop table tab" + counter, executionContext);
+                            } catch (TableReferenceOutOfDateException e) {
+                                // this is fine, query will have to recompile
+                            } catch (SqlException | CairoException e) {
+                                if (!Chars.contains(e.getFlyweightMessage(), "table does not exist")
+                                        && !Chars.contains(e.getFlyweightMessage(), "could not lock")
+                                        && !Chars.contains(e.getFlyweightMessage(), "table name is reserved")) {
+                                    throw e;
+                                }
+                            }
+                        }
+                    }
+                } catch (Throwable e) {
+                    ref.set(e);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }));
+            threads.get(1).start();
+
+            threads.getQuick(0).join();
+            done.set(true);
+            threads.getQuick(1).join();
+
+            Assert.assertTrue(engine.reloadTableNames());
+
+            if (ref.get() != null) {
+                throw new RuntimeException(ref.get());
+            }
+        });
+    }
+
+    @Test
     public void testConcurrentCreateDropRemove() throws Exception {
         assertMemoryLeak(() -> {
             int threadCount = 3;
@@ -389,6 +545,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals("table named tab" + i + " tokens: " + names, 1, names.size());
             }
+
+            Assert.assertTrue(engine.reloadTableNames());
         });
     }
 
