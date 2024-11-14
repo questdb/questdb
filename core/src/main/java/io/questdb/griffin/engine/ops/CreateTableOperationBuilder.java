@@ -373,13 +373,6 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
         }
     }
 
-    private static boolean isCompatibleCast(int from, int to) {
-        if (isIPv4Cast(from, to)) {
-            return true;
-        }
-        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
-    }
-
     private static boolean isIPv4Cast(int from, int to) {
         return (from == ColumnType.STRING && to == ColumnType.IPv4) || (from == ColumnType.VARCHAR && to == ColumnType.IPv4);
     }
@@ -396,6 +389,13 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             sink.putAscii(" index capacity ");
             sink.put(model.getIndexValueBlockSize());
         }
+    }
+
+    static boolean isCompatibleCast(int from, int to) {
+        if (from == to || isIPv4Cast(from, to)) {
+            return true;
+        }
+        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
     }
 
     static {

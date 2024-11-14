@@ -509,6 +509,11 @@ public class CreateTableOperation implements TableStructure, Operation {
             int indexBlockCapacity;
             if (augMeta != null) {
                 columnType = augMeta.getColumnType();
+                int fromType = metadata.getColumnType(i);
+                if (!isCompatibleCast(fromType, columnType)) {
+                    throw SqlException.unsupportedCast(
+                            colNameToCastClausePos.get(columnName), columnName, fromType, columnType);
+                }
                 symbolCapacity = augMeta.getSymbolCapacity();
                 symbolCacheFlag = augMeta.isSymbolCacheFlag();
                 symbolIndexed = augMeta.isSymbolIndexFlag();
@@ -516,6 +521,11 @@ public class CreateTableOperation implements TableStructure, Operation {
                 indexBlockCapacity = augMeta.getIndexValueBlockCapacity();
             } else {
                 columnType = metadata.getColumnType(i);
+                if (ColumnType.isNull(columnType)) {
+                    throw SqlException
+                            .$(0, "cannot create NULL-type column, please use type cast, e.g. ")
+                            .put(columnName).put("::").put("type");
+                }
                 symbolCapacity = defaultSymbolCapacity;
                 symbolCacheFlag = true;
                 symbolIndexed = false;
@@ -523,11 +533,6 @@ public class CreateTableOperation implements TableStructure, Operation {
                 indexBlockCapacity = 0;
             }
 
-            if (ColumnType.isNull(columnType)) {
-                throw SqlException
-                        .$(0, "cannot create NULL-type column, please use type cast, e.g. ")
-                        .put(columnName).put("::").put("type");
-            }
             if (!ColumnType.isSymbol(columnType) && symbolIndexed) {
                 throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
             }
