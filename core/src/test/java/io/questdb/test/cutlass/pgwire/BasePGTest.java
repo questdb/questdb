@@ -77,6 +77,7 @@ import java.util.Properties;
 import java.util.TimeZone;
 
 import static io.questdb.std.Numbers.hexDigits;
+import static io.questdb.test.cutlass.pgwire.Port0PGWireConfiguration.getPGWirePort;
 
 public abstract class BasePGTest extends AbstractCairoTest {
 
@@ -668,7 +669,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 return new DefaultIODispatcherConfiguration() {
                     @Override
                     public int getBindPort() {
-                        return 0; // Bind to ANY port.
+                        return getPGWirePort();
                     }
                 };
             }
@@ -703,7 +704,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 return new DefaultIODispatcherConfiguration() {
                     @Override
                     public int getBindPort() {
-                        return 5432;  // Bind to ANY port.
+                        return getPGWirePort();
                     }
                 };
             }
