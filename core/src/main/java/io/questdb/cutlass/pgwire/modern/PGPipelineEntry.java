@@ -1790,22 +1790,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
             // number of bits or chars for geohash
             final int bitFlags = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
-            final int columnValueSize = getColumnValueSize(record, i, typeTag, bitFlags);
+            final int columnValueSize = getColumnValueSize(record, i, typeTag, bitFlags, maxBlobSize);
 
             if (columnValueSize < 0) {
                 // unsupported type
                 return -1;
             }
 
-            if (typeTag == ColumnType.BINARY && columnValueSize >= maxBlobSize) {
-                throw kaput()
-                        .put("blob is too large [blobSize=").put(columnValueSize)
-                        .put(", maxBlobSize=").put(maxBlobSize)
-                        .put(", columnIndex=").put(i)
-                        .put(']');
-            }
-
             if (columnValueSize >= sendBufferSize) {
+                // doesn't fit into send buffer
                 return -1;
             }
 
@@ -1823,7 +1816,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 || typeTag == ColumnType.BOOLEAN;
     }
 
-    private int getColumnValueSize(Record record, int columnIndex, int typeTag, int bitFlags) {
+    // Returns the size of the serialized value in bytes,
+    // or -1 if the type is not supported (i.e., size cannot be estimated without serialization).
+    // throws BadProtocolException if the binary value exceeds maxBlobSize
+    private int getColumnValueSize(Record record, int columnIndex, int typeTag, int bitFlags, long maxBlobSize) throws BadProtocolException {
         switch (typeTag) {
             case ColumnType.NULL:
                 return Integer.BYTES;
@@ -1868,7 +1864,20 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 return symValue == null ? Integer.BYTES : Integer.BYTES + utf8Length(symValue);
             case ColumnType.BINARY:
                 BinarySequence sequence = record.getBin(columnIndex);
-                return sequence == null ? Integer.BYTES : Integer.BYTES + (int) sequence.length();
+                if (sequence == null) {
+                    return Integer.BYTES;
+                } else {
+                    long blobSize = sequence.length();
+                    if (blobSize < maxBlobSize) {
+                        return Integer.BYTES + (int) blobSize;
+                    } else {
+                        throw kaput()
+                                .put("blob is too large [blobSize=").put(blobSize)
+                                .put(", maxBlobSize=").put(maxBlobSize)
+                                .put(", columnIndex=").put(columnIndex)
+                                .put(']');
+                    }
+                }
             case ColumnType.GEOBYTE:
                 return getGeohashSize(record.getGeoByte(columnIndex), bitFlags);
             case ColumnType.GEOSHORT:
@@ -1878,6 +1887,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case ColumnType.GEOLONG:
                 return getGeohashSize(record.getGeoLong(columnIndex), bitFlags);
             default:
+                assert false : "unsupported type: " + typeTag;
                 return -1;
         }
     }
@@ -2165,22 +2175,28 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             } else {
                 if (isMsgLengthRequired) {
                     final int sizeInBuffer = (int) (utf8Sink.getSendBufferPtr() - messageLengthAddress);
-                    final int recordTailSize = calcRecordTailSize(
-                            record,
-                            outResendColumnIndex,
-                            columnCount,
-                            utf8Sink.getMaxBlobSize(),
-                            utf8Sink.getSendBufferSize()
-                    );
-                    if (recordTailSize > 0) {
-                        putInt(messageLengthAddress, sizeInBuffer + recordTailSize);
-                        outResendRecordHeader = false;
-                    } else {
-                        outResendColumnIndex = 0;
-                        outResendRecordHeader = true;
-                        // reset to the message start
-                        utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
+                    assert sizeInBuffer > 0;
+
+                    try {
+                        final int recordTailSize = calcRecordTailSize(
+                                record,
+                                outResendColumnIndex,
+                                columnCount,
+                                utf8Sink.getMaxBlobSize(),
+                                utf8Sink.getSendBufferSize()
+                        );
+                        if (recordTailSize > 0) {
+                            putInt(messageLengthAddress, sizeInBuffer + recordTailSize);
+                            outResendRecordHeader = false;
+                        } else {
+                            resetIncompleteRecord(utf8Sink, messageLengthAddress);
+                        }
+                    } catch (BadProtocolException bpe) {
+                        // we have binary data blob size > maxBlobSize
+                        resetIncompleteRecord(utf8Sink, messageLengthAddress);
+                        throw bpe;
                     }
+
                 }
             }
             throw e;
@@ -2195,6 +2211,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         outResendColumnIndex = 0;
         outResendRecordHeader = true;
         sqlReturnRowCount++;
+    }
+
+    private void resetIncompleteRecord(PGResponseSink utf8Sink, long messageLengthAddress) {
+        outResendColumnIndex = 0;
+        outResendRecordHeader = true;
+        // reset to the message start
+        utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
     }
 
     private void outRowDescription(PGResponseSink utf8Sink) {
