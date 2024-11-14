@@ -3661,13 +3661,10 @@ if __name__ == "__main__":
                         StringSink expectedResult = new StringSink();
                         if (mode == Mode.SIMPLE) {
                             // simple mode inlines variables in the sql text
-                            String filter = binary
-                                    ? "  filter: (" + i + "<x and x<" + (i + 1) * 10 + ".0)\n"
-                                    : "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n";
                             expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
                                     "  limit: 10\n" +
-                                    filter +
+                                    "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n" +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: xx\n");
