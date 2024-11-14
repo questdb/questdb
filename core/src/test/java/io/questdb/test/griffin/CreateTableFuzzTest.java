@@ -55,11 +55,15 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private final boolean useDedup = usePartitionBy && rnd.nextBoolean();
     private final CreateVariant variant = CreateVariant.values()[rnd.nextInt(CreateVariant.values().length)];
     private final WrongNameChoice wrongName = WrongNameChoice.values()[rnd.nextInt(WrongNameChoice.values().length)];
+    private int castPos;
+    private int dedupPos;
     private int defaultIndexCapacity;
     private int defaultSymbolCapacity;
+    private int indexPos;
     private String strCol = "str";
     private String symCol = "sym";
     private String tsCol = "ts";
+    private int tsPos;
 
     @Before
     @Override
@@ -88,18 +92,22 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                         throw e;
                     }
                     String message = e.getMessage();
-                    message = message.substring(message.indexOf(' ') + 1);
                     if (variant == DIRECT) {
                         if (wrongName == TIMESTAMP) {
-                            assertEquals("invalid designated timestamp column [name=bork]", message);
+                            assertEquals(withErrPos(tsPos, "invalid designated timestamp column [name=bork]"), message);
                         } else if (wrongName == DEDUP) {
-                            assertEquals("deduplicate key column not found [column=bork]", message);
+                            assertEquals(withErrPos(dedupPos, "deduplicate key column not found [column=bork]"), message);
                         } else {
                             throw e;
                         }
                     } else if (variant == SELECT) {
+                        int errPos = wrongName == CAST ? castPos
+                                : wrongName == INDEX ? indexPos
+                                : wrongName == TIMESTAMP ? tsPos
+                                : wrongName == DEDUP ? dedupPos
+                                : 0;
                         if (wrongName != NONE) {
-                            assertEquals("Invalid column: bork", message);
+                            assertEquals(withErrPos(errPos, "Invalid column: bork"), message);
                         } else {
                             throw e;
                         }
@@ -112,11 +120,10 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                         fut.await();
                     } catch (SqlException e) {
                         String message = e.getMessage();
-                        message = message.substring(message.indexOf(' ') + 1);
                         if (wrongName == TIMESTAMP) {
-                            assertEquals("designated timestamp column doesn't exist [name=bork]", message);
+                            assertEquals(withErrPos(tsPos, "designated timestamp column doesn't exist [name=bork]"), message);
                         } else if (wrongName == DEDUP) {
-                            assertEquals("deduplicate key column not found [column=bork]", message);
+                            assertEquals(withErrPos(dedupPos, "deduplicate key column not found [column=bork]"), message);
                         } else {
                             throw e;
                         }
@@ -135,6 +142,10 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         });
     }
 
+    private static String withErrPos(int pos, String message) {
+        return String.format("[%d] %s", pos, message);
+    }
+
     private void appendAsSelect(StringBuilder ddl) {
         ddl.append(" AS (SELECT ")
                 .append(tsCol = rndCase("ts")).append(", ")
@@ -142,14 +153,18 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 .append(strCol = rndCase("str"))
                 .append(" FROM ").append(rndCase("samba")).append(')');
         if (useCast) {
-            ddl.append(", CAST(").append(wrongName == CAST ? WRONG_NAME : rndCase("str")).append(" AS SYMBOL");
+            ddl.append(", CAST(");
+            castPos = ddl.length();
+            ddl.append(wrongName == CAST ? WRONG_NAME : rndCase("str")).append(" AS SYMBOL");
             if (useCastSymbolCapacity) {
                 ddl.append(" CAPACITY ").append(SYMBOL_CAPACITY);
             }
             ddl.append(')');
         }
         if (useIndex) {
-            ddl.append(", INDEX(").append(wrongName == INDEX ? WRONG_NAME : rndCase("sym"));
+            ddl.append(", INDEX(");
+            indexPos = ddl.length();
+            ddl.append(wrongName == INDEX ? WRONG_NAME : rndCase("sym"));
             if (useIndexCapacity) {
                 ddl.append(" CAPACITY ").append(INDEX_CAPACITY);
             }
@@ -179,11 +194,14 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         if (variant == LIKE || !usePartitionBy) {
             return ddl;
         }
-        ddl.append(" TIMESTAMP(").append(wrongName == TIMESTAMP ? WRONG_NAME : rndCase("ts"))
+        ddl.append(" TIMESTAMP(");
+        tsPos = ddl.length();
+        ddl.append(wrongName == TIMESTAMP ? WRONG_NAME : rndCase("ts"))
                 .append(") PARTITION BY HOUR WAL");
         if (useDedup) {
-            ddl.append(" DEDUP UPSERT KEYS(").append(wrongName == DEDUP ? WRONG_NAME : rndCase("ts"))
-                    .append(')');
+            ddl.append(" DEDUP UPSERT KEYS(");
+            dedupPos = ddl.length();
+            ddl.append(wrongName == DEDUP ? WRONG_NAME : rndCase("ts")).append(')');
         }
         return ddl;
     }
