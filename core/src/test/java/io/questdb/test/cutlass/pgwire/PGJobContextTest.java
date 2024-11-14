@@ -136,40 +136,40 @@ import static io.questdb.test.tools.TestUtils.*;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.*;
 
-/*
-    This class contains tests which replay PGWIRE traffic.
-    It is possible to simulate any PG client in our tests, such as different kind of Python, Rust or Go postgres libraries.
-
-    How to create these tests:
-    1. Enable dumping of PG messages
-        Change PGWireConfiguration.getDumpNetworkTraffic() to return 'true'.
-    2. Start ServerMain
-    3. Run the PG client
-        This could be any PG client or library. The client connects to QuestDB, and runs SQL commands.
-        Since dumping of messages are enabled, PG traffic should be written to the log.
-    4. Collect PG messages from the log
-        In the log you should see incoming and outgoing messages, such as ">0000006e00030" and "<520000000800000003".
-        Collect all sent and received messages.
-    5. Create a test to replay the messages
-        Now we can create a test to simulate the client running the SQL commands.
-        Example:
-            @Test
-            public void testExample() throws Exception {
-                String script =
-                        ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
-                        "<520000000800000003\n" +
-                        ">70000000076f6800\n" +
-                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
-                        ">50000000300073656c65637420782c202024312c2024322066726f6d206c6f6e675f73657175656e63652832293b000000\n" +
-                        ">4200000021000000010000000200000001330000000a35303030303030303030000044000000065000450000000900000000004800000004\n" +
-                        "<31000000043200000004540000004400037800000000000001000000140008ffffffff000024310000000000000200000413ffffffffffff000024320000000000000300000413ffffffffffff0000440000001e0003000000013100000001330000000a35303030303030303030440000001e0003000000013200000001330000000a35303030303030303030430000000d53454c454354203200\n";
-                assertHexScript(NetworkFacadeImpl.INSTANCE, script, getHexPgWireConfig());
-            }
-    6. Disable dumping of PG messages
-        Change PGWireConfiguration.getDumpNetworkTraffic() to return 'false' again.
-    7. Run the test
+/**
+ * This class contains tests which replay PGWIRE traffic.
+ * It is possible to simulate any PG client in our tests, such as different kind of Python, Rust or Go postgres libraries.
+ * <p>
+ * How to create these tests:
+ * 1. Enable dumping of PG messages
+ * Change PGWireConfiguration.getDumpNetworkTraffic() to return 'true'.
+ * 2. Start ServerMain
+ * 3. Run the PG client
+ * This could be any PG client or library. The client connects to QuestDB, and runs SQL commands.
+ * Since dumping of messages are enabled, PG traffic should be written to the log.
+ * 4. Collect PG messages from the log
+ * In the log you should see incoming and outgoing messages, such as ">0000006e00030" and "<520000000800000003".
+ * Collect all sent and received messages.
+ * 5. Create a test to replay the messages
+ * Now we can create a test to simulate the client running the SQL commands.
+ * Example:
+ * <pre>
+ * @Test
+ * public void testExample() throws Exception {
+ *      String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
+ *          "<520000000800000003\n" +
+ *          ">70000000076f6800\n" +
+ *          "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+ *          ">50000000300073656c65637420782c202024312c2024322066726f6d206c6f6e675f73657175656e63652832293b000000\n" +
+ *          ">4200000021000000010000000200000001330000000a35303030303030303030000044000000065000450000000900000000004800000004\n" +
+ *          "<31000000043200000004540000004400037800000000000001000000140008ffffffff000024310000000000000200000413ffffffffffff000024320000000000000300000413ffffffffffff0000440000001e0003000000013100000001330000000a35303030303030303030440000001e0003000000013200000001330000000a35303030303030303030430000000d53454c454354203200\n";
+ *      assertHexScript(NetworkFacadeImpl.INSTANCE, script, getHexPgWireConfig());
+ * }
+ * </pre>
+ * 6. Disable dumping of PG messages
+ * Change PGWireConfiguration.getDumpNetworkTraffic() to return 'false' again.
+ * 7. Run the test
  */
-
 @RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {

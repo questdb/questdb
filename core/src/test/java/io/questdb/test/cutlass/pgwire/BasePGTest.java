@@ -668,7 +668,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 return new DefaultIODispatcherConfiguration() {
                     @Override
                     public int getBindPort() {
-                        return 5432;  // Bind to ANY port.
+                        return 0; // Bind to ANY port.
                     }
                 };
             }
