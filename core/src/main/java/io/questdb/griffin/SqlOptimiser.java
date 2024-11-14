@@ -4306,10 +4306,6 @@ public class SqlOptimiser implements Mutable {
                 model.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
                 model.getOrderByAdvice().add(nested.getOrderBy().get(i));
                 model.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
-
-                // also strip advice
-                model.getOrderByAdvice().remove(i);
-                model.getOrderByDirectionAdvice().remove(i);
             }
 
             // reverse the scan
