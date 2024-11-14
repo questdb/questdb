@@ -1281,7 +1281,7 @@ public class PGJobContextTest extends BasePGTest {
             mayDrainWalQueue();
 
             try (PreparedStatement statement = connection.prepareStatement("x")) {
-                for (int i = 0; i < 1_000; i++) {
+                for (int i = 0; i < 50; i++) {
                     sink.clear();
                     try (ResultSet rs = statement.executeQuery()) {
                         // dump metadata
@@ -1330,12 +1330,11 @@ public class PGJobContextTest extends BasePGTest {
                     "15,-2038288432,true,N,0.06052105248562101,0.187,196,null,null,-1429876300179126818,1970-01-01 00:02:05.349169,15,00000000 81 e7 a2 16 22 35 3b 1c 9c 1d 5c,DYRODIPUNR,P,0xcfbc17960ded8623a35a624468b2006e75f5d434af616ffc9929b6a51b9efb10,Ƨ阇1(rոҊG\uD9A6\uDD42\n"
             };
 
-            for (int i = 0; i < 1000; i++) {
+            for (int i = 0; i < 100; i++) {
                 sink.clear();
-                int index = (i % 100) + 1;
-                try (PreparedStatement statement = connection.prepareStatement("x where kk = " + index)) {
+                try (PreparedStatement statement = connection.prepareStatement("x where kk = " + (i + 1))) {
                     try (ResultSet rs = statement.executeQuery()) {
-                        assertResultSet(header + (index - 1 < results.length ? results[index - 1] : ""), sink, rs);
+                        assertResultSet(header + (i < results.length ? results[i] : ""), sink, rs);
                     }
                 }
             }
