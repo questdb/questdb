@@ -1028,8 +1028,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // We must discard and try again
             count++;
             if (clock.getTicks() > deadline) {
-                LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).$("ms]").$();
-                throw CairoException.critical(0).put("Transaction read timeout");
+                throw CairoException.critical(0).put("Transaction read timeout [src=reader, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
             }
             Os.pause();
         }

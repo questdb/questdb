@@ -49,7 +49,6 @@ import org.junit.Test;
 import org.junit.rules.Timeout;
 
 import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -329,6 +328,8 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 )
                 .withAlterTableStartWaitTimeout(30_000);
 
+        // this is JDK8 thing:
+        //noinspection CharsetObjectCanBeUsed
         runUpdateOnBusyTable(
                 (writer, reader) -> TestUtils.assertReader(
                         "s\tx\tts\n" +
@@ -346,17 +347,17 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 ),
                 writer -> {
                 },
-                0,
                 queryTestBuilder,
                 null,
                 null,
                 -1L,
                 3,
-                URLEncoder.encode("update x set x=1 where s = 'a'", StandardCharsets.UTF_8),
-                URLEncoder.encode("update x set x=10 where s = 'b'", StandardCharsets.UTF_8)
+                URLEncoder.encode("update x set x=1 where s = 'a'", "UTF8"),
+                URLEncoder.encode("update x set x=10 where s = 'b'", "UTF8")
         );
     }
 
+    @SuppressWarnings("CharsetObjectCanBeUsed")
     @Test
     public void testUpdateConnectionDropOnColumnRewrite() throws Exception {
         SOCountDownLatch disconnectLatch = new SOCountDownLatch(1);
@@ -384,13 +385,12 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 },
                 writer -> {
                 },
-                0,
                 queryTestBuilder,
                 disconnectLatch,
                 null,
                 1000,
                 0,
-                URLEncoder.encode("update x set x=1 from tables()", StandardCharsets.UTF_8)
+                URLEncoder.encode("update x set x=1 from tables()", "UTF8")
         );
     }
 
@@ -524,7 +524,6 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
     private void runUpdateOnBusyTable(
             AlterVerifyAction alterVerifyAction,
             OnTickAction onTick,
-            int errorsExpected,
             HttpQueryTestBuilder queryTestBuilder,
             SOCountDownLatch waitToDisconnect,
             String errorHeader,
@@ -583,9 +582,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                                 }
                             }
                         } catch (Error e) {
-                            if (errorsExpected == 0) {
-                                error = e;
-                            }
+                            error = e;
                             errors.getAndIncrement();
                         } catch (Throwable e) {
                             errors.getAndIncrement();
@@ -599,7 +596,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 MicrosecondClock microsecondClock = engine.getConfiguration().getMicrosecondClock();
                 long startTimeMicro = microsecondClock.getTicks();
                 // Wait 1 min max for completion
-                while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0 && errors.get() <= errorsExpected) {
+                while (microsecondClock.getTicks() - startTimeMicro < 60_000_000 && finished.getCount() > 0 && errors.get() <= 0) {
                     onTick.run(writer);
                     writer.tick(true);
                     finished.await(1_000_000);
@@ -608,7 +605,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
                 if (error != null) {
                     throw error;
                 }
-                Assert.assertEquals(errorsExpected, errors.get());
+                Assert.assertEquals(0, errors.get());
                 Assert.assertEquals(0, finished.getCount());
                 engine.releaseAllReaders();
                 try (TableReader reader = engine.getReader(tableName)) {
@@ -622,6 +619,8 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
         });
     }
 
+    // JDK8 related
+    @SuppressWarnings("CharsetObjectCanBeUsed")
     private void testUpdateAfterReaderOutOfDateException(
             AlterVerifyAction alterVerifyAction,
             OnTickAction onTick,
@@ -655,13 +654,12 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
         runUpdateOnBusyTable(
                 alterVerifyAction,
                 onTick,
-                0,
                 queryTestBuilder,
                 null,
                 errorHeader,
                 statementTimeout,
                 updatedCount,
-                URLEncoder.encode("update x set ts=123", StandardCharsets.UTF_8)
+                URLEncoder.encode("update x set ts=123", "UTF8")
         );
     }
 
