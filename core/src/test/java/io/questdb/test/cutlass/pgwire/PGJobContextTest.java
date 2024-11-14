@@ -3643,7 +3643,7 @@ if __name__ == "__main__":
             if (mode == Mode.SIMPLE && !binary) {
                 // In the simple text mode we have to explicitly cast the first variable to long
                 // otherwise JDBC driver sends just text 'explain select * from xx where x > ('0') and x < ('10.0')::double limit 10'
-                // QuestDB complains with 'there is no matching operator`>` with the argument types: LONG > CHAR'
+                // QuestDB complains with 'there is no matching operator `>` with the argument types: LONG > CHAR'
                 query = "explain select * from xx where x > ?::long and x < ?::double limit 10";
             } else {
                 // in other modes we can keep things simple
@@ -3660,11 +3660,14 @@ if __name__ == "__main__":
                     try (ResultSet rs = statement.getResultSet()) {
                         StringSink expectedResult = new StringSink();
                         if (mode == Mode.SIMPLE) {
-                            // simple mode inline variables in the sql text
+                            // simple mode inlines variables in the sql text
+                            String filter = binary
+                                    ? "  filter: (" + i + "<x and x<" + (i + 1) * 10 + ".0)\n"
+                                    : "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n";
                             expectedResult.put("QUERY PLAN[VARCHAR]\n" +
                                     "Async Filter workers: 2\n" +
                                     "  limit: 10\n" +
-                                    "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n" +
+                                    filter +
                                     "    PageFrame\n" +
                                     "        Row forward scan\n" +
                                     "        Frame forward scan on: xx\n");
