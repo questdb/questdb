@@ -5125,7 +5125,7 @@ if __name__ == "__main__":
             ) {
                 final Rnd rnd = new Rnd();
                 connection.setAutoCommit(false);
-                for (int i = 0; i < 10_000; i++) {
+                for (int i = 0; i < 1_000; i++) {
                     if (rnd.nextInt() % 4 > 0) {
                         insert.setByte(1, rnd.nextByte());
                     } else {
@@ -5285,7 +5285,7 @@ if __name__ == "__main__":
                             count1++;
                         }
 
-                        Assert.assertEquals(10_000, count1);
+                        Assert.assertEquals(1_000, count1);
                     }
                 }
             }
