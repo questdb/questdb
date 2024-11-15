@@ -408,12 +408,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @Override
     public void getLong256(int columnIndex, CharSink<?> sink) {
-        long address = addressOfColumn(columnIndex);
-        final long a = Unsafe.getUnsafe().getLong(address);
-        final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);
-        final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);
-        final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);
-        Numbers.appendLong256(a, b, c, d, sink);
+        Numbers.appendLong256FromUnsafe(addressOfColumn(columnIndex), sink);
     }
 
     @Override

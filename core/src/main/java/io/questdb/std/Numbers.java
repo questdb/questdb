@@ -34,12 +34,9 @@ import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;import org.jetbrains.annotations.NotNull;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
+import io.questdb.std.str.Utf8s;
 import jdk.internal.math.FDBigInteger;
-//#endif
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -495,6 +492,14 @@ public final class Numbers {
         }
 
         appendHex(sink, a, false);
+    }
+
+    public static void appendLong256FromUnsafe(long address, CharSink<?> sink) {
+        final long a = Unsafe.getUnsafe().getLong(address);
+        final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+        final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);
+        final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);
+        appendLong256(a, b, c, d, sink);
     }
 
     public static void appendUuid(long lo, long hi, CharSink<?> sink) {
