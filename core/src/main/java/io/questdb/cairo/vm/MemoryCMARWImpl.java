@@ -212,6 +212,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             map(ff, name, size, memoryTag);
         } catch (Throwable th) {
             ff.close(fd);
+            fd = -1;
             throw th;
         }
     }
