@@ -1040,19 +1040,20 @@ public class SqlParser {
                 break;
             }
 
+            tok = tok.toString();
+
             ExpressionNode expr = expr(lexer, model, sqlParserCallback);
 
             if (expr == null) {
                 throw SqlException.$(lexer.lastTokenPosition(), "empty declaration");
             }
+            if (model.getDecls().size() > 0) {
+                expr = recursiveReplacingTreeTraversalAlgo.traverse(expr,
+                        rewriteDeclaredVariablesInExpressionVisitor.of(model.getDecls(), tok));
 
-//
-//            if (expr.type != OPERATION || !Chars.equalsIgnoreCase(expr.token, ":=")) {
-//                throw SqlException.$(expr.position, "incorrect declare variable syntax, expected `:=`");
-//            }
+            }
 
             model.getDecls().put(tok, expr);
-
         }
     }
 
@@ -1346,7 +1347,7 @@ public class SqlParser {
             // [where]
             if (tok != null && isWhereKeyword(tok)) {
                 ExpressionNode expr = expr(lexer, fromModel, sqlParserCallback);
-                expr = recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor);
+                expr = recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(decls));
                 if (expr != null) {
                     nestedModel.setWhereClause(expr);
                 } else {
@@ -1418,11 +1419,14 @@ public class SqlParser {
 
     private void parseFromClause(GenericLexer lexer, QueryModel model, QueryModel masterModel, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok = expectTableNameOrSubQuery(lexer);
+
+        // copy decls down
+        model.getDecls().putAll(masterModel.getDecls());
+
         // expect "(" in case of sub-query
 
         if (Chars.equals(tok, '(')) {
             // copy decls across
-            model.getDecls().putAll(masterModel.getDecls());
             QueryModel proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, masterModel.getDecls());
             tok = optTok(lexer);
 
@@ -1493,7 +1497,7 @@ public class SqlParser {
                 throw SqlException.$((lexer.lastTokenPosition()), "unexpected where clause after 'latest on'");
             }
             ExpressionNode expr = expr(lexer, model, sqlParserCallback);
-            expr = recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor);
+            expr = recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(model.getDecls()));
             if (expr != null) {
                 model.setWhereClause(expr);
                 tok = optTok(lexer);
@@ -3062,7 +3066,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
         }
 
-        return parseSelect(lexer, sqlParserCallback, null);
+        return parseSelect(lexer, sqlParserCallback, null); // todo: review decls null
     }
 
     QueryModel parseAsSubQuery(
@@ -3085,20 +3089,36 @@ public class SqlParser {
 
     private static class RewriteDeclaredVariablesInExpressionVisitor implements RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor {
         public LowerCaseCharSequenceObjHashMap<ExpressionNode> decls;
+        public CharSequence exclude;
         public boolean hasAtChar;
 
         @Override
         public ExpressionNode visit(ExpressionNode node) throws SqlException {
-            if (node.token != null && (hasAtChar = node.token.charAt(0) == '@') && node.type == LITERAL && decls.contains(node.token)) {
+            if (node.token == null) {
+                return node;
+            }
+
+            if ((hasAtChar = node.token.charAt(0) == '@') && exclude != null && (Chars.equalsIgnoreCase(node.token, exclude))) {
+                return node;
+            }
+
+            if (node.token != null && node.type == LITERAL && decls.contains(node.token)) {
                 return decls.get(node.token).rhs;
             } else if (hasAtChar) {
                 throw SqlException.$(node.position, "tried to use undeclared variable `" + node.token + '`');
             }
+
             return node;
         }
 
         RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor of(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) {
+            return this.of(decls, null);
+        }
+
+        RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor of(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+                                                                @Nullable CharSequence exclude) {
             this.decls = decls;
+            this.exclude = exclude;
             return this;
         }
     }

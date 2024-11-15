@@ -78,7 +78,7 @@ public final class OperatorExpression {
             }});
     private static final OperatorRegistry registry = new OperatorRegistry(
             new ObjList<OperatorExpression>() {{
-                add(new OperatorExpression(Operator.DeclareVariableBind, 1, true, BINARY));
+                add(new OperatorExpression(Operator.DeclareVariableBind, 100, false, BINARY));
                 add(new OperatorExpression(Operator.UnaryMinus, 3, false, UNARY));
                 add(new OperatorExpression(Operator.UnaryComplement, 3, false, UNARY));
                 add(new OperatorExpression(Operator.UnarySetNegation, 11, false, UNARY));
