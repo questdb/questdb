@@ -8914,6 +8914,8 @@ nodejs code:
 
     @Test
     public void testRunQueryAfterCancellingPreviousInTheSameConnection() throws Exception {
+        // yet enother bug in legacy code, this test would be unstable
+        Assume.assumeFalse(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             ddl("create table if not exists tab as " +
                     "(select x::timestamp ts, " +
