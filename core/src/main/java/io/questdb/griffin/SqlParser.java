@@ -1050,7 +1050,6 @@ public class SqlParser {
             if (model.getDecls().size() > 0) {
                 expr = recursiveReplacingTreeTraversalAlgo.traverse(expr,
                         rewriteDeclaredVariablesInExpressionVisitor.of(model.getDecls(), tok));
-
             }
 
             model.getDecls().put(tok, expr);
