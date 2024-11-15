@@ -24,7 +24,12 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.Long256;
+import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
@@ -85,15 +90,17 @@ public final class ColumnType {
     public static final short LONG128 = GEOHASH + 1;            // = 24  Limited support, few tests only
     public static final short IPv4 = LONG128 + 1;               // = 25
     public static final short VARCHAR = IPv4 + 1;               // = 26
+    public static final short ND_ARR_DOUBLE = VARCHAR + 1;      // = 27
+    public static final short ND_ARR_LONG = ND_ARR_DOUBLE + 1;  // = 28
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = VARCHAR + 1;           // = 27;
-    public static final short REGPROCEDURE = REGCLASS + 1;      // = 28;
-    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 29;
-    public static final short PARAMETER = ARRAY_STRING + 1;     // = 30;
-    public static final short INTERVAL = PARAMETER + 1;         // = 31
-    public static final short NULL = INTERVAL + 1;              // = 32; ALWAYS the last
+    public static final short REGCLASS = ND_ARR_LONG + 1;       // = 29;
+    public static final short REGPROCEDURE = REGCLASS + 1;      // = 30;
+    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 31;
+    public static final short PARAMETER = ARRAY_STRING + 1;     // = 32;
+    public static final short INTERVAL = PARAMETER + 1;         // = 33
+    public static final short NULL = INTERVAL + 1;              // = 34; ALWAYS the last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
@@ -140,6 +147,21 @@ public final class ColumnType {
         assert bits > 0 && bits <= GEOLONG_MAX_BITS;
         // this logic relies on GeoHash type value to be clustered together
         return mkGeoHashType(bits, (short) (GEOBYTE + pow2SizeOfBits(bits)));
+    }
+
+    /**
+     * Get the backing type of the N-dimensional array type,
+     * or returns `UNDEFINED` if the type is not an array.
+     */
+    public static int getNdArrayType(int columnType) {
+        switch (columnType) {
+            case ND_ARR_DOUBLE:
+                return DOUBLE;
+            case ND_ARR_LONG:
+                return LONG;
+            default:
+                return UNDEFINED;
+        }
     }
 
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
@@ -232,6 +254,19 @@ public final class ColumnType {
 
     public static boolean isInterval(int columnType) {
         return columnType == INTERVAL;
+    }
+
+    /**
+     * Is an N-dimensional array type.
+     */
+    public static boolean isNdArray(int columnType) {
+        switch (columnType) {
+            case ND_ARR_DOUBLE:
+            case ND_ARR_LONG:
+                return true;
+            default:
+                return false;
+        }
     }
 
     public static boolean isNull(int columnType) {
@@ -431,39 +466,41 @@ public final class ColumnType {
         //
         // All types must be mentioned at all times.
         OVERLOAD_PRIORITY = new short[][]{
-                /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-                /* 1  BOOLEAN   */, {BOOLEAN}
-                /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 4  CHAR      */, {CHAR, STRING, VARCHAR}
-                /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
-                /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
-                /* 7  DATE      */, {DATE, TIMESTAMP, LONG}
-                /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE}
-                /* 9  FLOAT     */, {FLOAT, DOUBLE}
-                /* 10 DOUBLE    */, {DOUBLE}
-                /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 13 LONG256   */, {LONG256}
-                /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
-                /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
-                /* 18 BINARY    */, {BINARY}
-                /* 19 UUID      */, {UUID, STRING, VARCHAR}
-                /* 20 CURSOR    */, {CURSOR}
-                /* 21 unused    */, {}
-                /* 22 unused    */, {}
-                /* 23 unused    */, {}
-                /* 24 LONG128   */, {LONG128}
-                /* 25 IPv4      */, {IPv4}
-                /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 27 unused    */, {}
-                /* 28 unused    */, {}
-                /* 29 unused    */, {}
-                /* 30 unused    */, {}
-                /* 31 INTERVAL  */, {INTERVAL, STRING}
-                /* 32 NULL      */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
+                /* 0 UNDEFINED      */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+                /* 1  BOOLEAN       */, {BOOLEAN}
+                /* 2  BYTE          */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
+                /* 3  SHORT         */, {SHORT, INT, LONG, FLOAT, DOUBLE}
+                /* 4  CHAR          */, {CHAR, STRING, VARCHAR}
+                /* 5  INT           */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
+                /* 6  LONG          */, {LONG, DOUBLE, TIMESTAMP, DATE}
+                /* 7  DATE          */, {DATE, TIMESTAMP, LONG}
+                /* 8  TIMESTAMP     */, {TIMESTAMP, LONG, DATE}
+                /* 9  FLOAT         */, {FLOAT, DOUBLE}
+                /* 10 DOUBLE        */, {DOUBLE}
+                /* 11 STRING        */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
+                /* 12 SYMBOL        */, {SYMBOL, STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
+                /* 13 LONG256       */, {LONG256}
+                /* 14 GEOBYTE       */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+                /* 15 GEOSHORT      */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+                /* 16 GEOINT        */, {GEOINT, GEOLONG, GEOHASH}
+                /* 17 GEOLONG       */, {GEOLONG, GEOHASH}
+                /* 18 BINARY        */, {BINARY}
+                /* 19 UUID          */, {UUID, STRING, VARCHAR}
+                /* 20 CURSOR        */, {CURSOR}
+                /* 21 unused        */, {}
+                /* 22 unused        */, {}
+                /* 23 unused        */, {}
+                /* 24 LONG128       */, {LONG128}
+                /* 25 IPv4          */, {IPv4}
+                /* 26 VARCHAR       */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
+                /* 27 ND_ARR_DOUBLE */, {ND_ARR_DOUBLE}
+                /* 28 ND_ARR_LONG   */, {ND_ARR_LONG}
+                /* 29 unused        */, {}
+                /* 30 unused        */, {}
+                /* 31 unused        */, {}
+                /* 32 unused        */, {}
+                /* 33 INTERVAL      */, {INTERVAL, STRING}
+                /* 34 NULL          */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
@@ -498,6 +535,8 @@ public final class ColumnType {
         typeNameMap.put(CHAR, "CHAR");
         typeNameMap.put(STRING, "STRING");
         typeNameMap.put(VARCHAR, "VARCHAR");
+        typeNameMap.put(ND_ARR_DOUBLE, "ARR{DOUBLE}");
+        typeNameMap.put(ND_ARR_LONG, "ARR{LONG}");
         typeNameMap.put(SYMBOL, "SYMBOL");
         typeNameMap.put(BINARY, "BINARY");
         typeNameMap.put(DATE, "DATE");
@@ -526,6 +565,8 @@ public final class ColumnType {
         nameTypeMap.put("char", CHAR);
         nameTypeMap.put("string", STRING);
         nameTypeMap.put("varchar", VARCHAR);
+        nameTypeMap.put("arr{double}", ND_ARR_DOUBLE);
+        nameTypeMap.put("arr{long}", ND_ARR_LONG);
         nameTypeMap.put("symbol", SYMBOL);
         nameTypeMap.put("binary", BINARY);
         nameTypeMap.put("date", DATE);
@@ -573,6 +614,8 @@ public final class ColumnType {
         TYPE_SIZE_POW2[DOUBLE] = 3;
         TYPE_SIZE_POW2[STRING] = -1;
         TYPE_SIZE_POW2[VARCHAR] = -1;
+        TYPE_SIZE_POW2[ND_ARR_DOUBLE] = -1;
+        TYPE_SIZE_POW2[ND_ARR_LONG] = -1;
         TYPE_SIZE_POW2[LONG] = 3;
         TYPE_SIZE_POW2[DATE] = 3;
         TYPE_SIZE_POW2[TIMESTAMP] = 3;
@@ -602,6 +645,8 @@ public final class ColumnType {
         TYPE_SIZE[SYMBOL] = Integer.BYTES;
         TYPE_SIZE[STRING] = 0;
         TYPE_SIZE[VARCHAR] = 0;
+        TYPE_SIZE[ND_ARR_DOUBLE] = -1;
+        TYPE_SIZE[ND_ARR_LONG] = -1;
         TYPE_SIZE[DOUBLE] = Double.BYTES;
         TYPE_SIZE[LONG] = Long.BYTES;
         TYPE_SIZE[DATE] = Long.BYTES;

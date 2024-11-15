@@ -25,9 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.InsertMethod;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -750,6 +759,17 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertNdArr() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE ndarrs (ts TIMESTAMP, a1 ARR{DOUBLE}, a2 ARR{LONG}) timestamp(ts)");
+            insert("INSERT INTO ndarrs values(1262599200000000, NULL, NULL)");
+            insert("INSERT INTO ndarrs values(1262599300000000, {}, {})");
+            insert("INSERT INTO ndarrs values(1262599300000000, {.25, .5, -1, NULL, 0}, {0, 1, 2})");
+            insert("INSERT INTO ndarrs values(1262599300000000, {{-100, 4.5}, {200, 4.75}}, { { {10, 20}, {30, 40} }, { {50, 60}, {70, 80} } }");
+        });
+    }
+
+    @Test
     public void testInsertNoSelfReference() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE trades_aapl (ts TIMESTAMP, px INT, qty int, side STRING) TIMESTAMP(ts)");
@@ -809,6 +829,19 @@ public class InsertTest extends AbstractCairoTest {
             ddl("create table tab (id int, val symbol index)");
             insert("insert into tab values (1, null::varchar)");
             assertSql("id\n1\n", "select id from tab where val = null");
+        });
+    }
+
+    @Test
+    public void testInsertSelectTwoWheres() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table result (r long)");
+
+            assertExceptionNoLeakCheck(
+                    "insert into result select * from long_sequence(1) where true where false;",
+                    61,
+                    "unexpected token [where]"
+            );
         });
     }
 
@@ -1172,19 +1205,6 @@ public class InsertTest extends AbstractCairoTest {
                             "{[pG5d^fG>v [6\tȔ\uDB75\uDF17ߚ`ŷ֪\t1970-01-01T00:00:00.000000Z\n" +
                             "Ɨ\uDA83\uDD95\uD9ED\uDF4C눻D\uDBA8\uDFB6qٽUY⚂խ:\tC>Wy;\t1970-01-01T00:00:00.000000Z\n",
                     "'*!*y' order by a, b"
-            );
-        });
-    }
-
-    @Test
-    public void testInsertSelectTwoWheres() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table result (r long)");
-
-            assertExceptionNoLeakCheck(
-                    "insert into result select * from long_sequence(1) where true where false;",
-                    61,
-                    "unexpected token [where]"
             );
         });
     }
