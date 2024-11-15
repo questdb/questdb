@@ -99,7 +99,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 } catch (SqlException e) {
                     String message = e.getMessage();
                     if (wrongName == NONE) {
-                        throw e;
+                        throw new AssertionError("Compilation failed, but there were no wrong names in SQL", e);
                     }
                     int errPos = wrongName == CAST ? castPos
                             : wrongName == INDEX ? indexPos
@@ -109,8 +109,8 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     assertEquals(withErrPos(errPos, "Invalid column: " + WRONG_NAME), message);
                     return;
                 }
-                if (!(useSelectStar || ddl.indexOf(WRONG_NAME) == -1)) {
-                    fail("SQL statement uses a wrong column name, but it compiled anyway");
+                if (ddl.indexOf(WRONG_NAME) != -1) {
+                    fail("SQL statement uses a wrong column name, yet compilation didn't fail");
                 }
                 if (messWithTableAfterCompile) {
                     messWithSourceTable();
@@ -125,9 +125,6 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                         }
                         validateCreateAsSelectException(e);
                         return;
-                    }
-                    if (ddl.indexOf(WRONG_NAME) != -1) {
-                        fail("SQL statement uses a wrong column name, but it succeeded anyway");
                     }
                     if (messWithTableAfterCompile) {
                         validateCreateAsSelectNoException();
@@ -149,9 +146,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                         validateCreateAsSelectException(e);
                         return;
                     }
-                    if (columnChaos != DROP_SYM && useCast) {
-                        fail("SQL uses CAST but it survived column chaos");
-                    }
+                    validateCreateAsSelectNoException();
                     validateCreatedTableAsSelectAfterMessing();
                 }
             }
@@ -174,9 +169,12 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     } else if (wrongName == DEDUP) {
                         assertEquals(withErrPos(dedupPos, "deduplicate key column not found [column=bork]"), message);
                     } else {
-                        throw e;
+                        throw new AssertionError("Compiling failed with unexpected reason", e);
                     }
                     return;
+                }
+                if (ddl.indexOf(WRONG_NAME) != -1) {
+                    fail("SQL statement uses a wrong column name, yet it compiled successfully");
                 }
                 try (Operation op = query.getOperation()) {
                     assertNotNull(op);
