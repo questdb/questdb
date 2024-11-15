@@ -241,9 +241,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 }
 
                 for (int i = 0; i < 10; i++) {
-                    serverMain.getEngine().compile("drop table " + tableName);
+                    serverMain.ddl("drop table " + tableName);
                     assertSql(serverMain.getEngine(), "SELECT count() from tables() where table_name='" + tableName + "'", "count\n0\n");
-                    serverMain.getEngine().compile("create table " + tableName + " (" +
+                    serverMain.ddl("create table " + tableName + " (" +
                             "balance1 symbol capacity 16, " +
                             "balance10 symbol capacity 16, " +
                             "timestamp timestamp)" +
