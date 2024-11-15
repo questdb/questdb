@@ -840,7 +840,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
             TypeManager typeManager,
-            SecurityContext securityContext) throws TextException {
+            SecurityContext securityContext
+    ) throws TextException {
         final TableWriter writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
         final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
 
@@ -998,15 +999,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             throw TextException.$("could not create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                         }
 
-                        ff.iterateDir(srcPath.$(), (long name, int type) -> {
-                            if (type == Files.DT_FILE) {
-                                srcPath.trimTo(srcPlen).concat(partitionName).concat(name);
-                                dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name);
-                                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                                    throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                        ff.iterateDir(
+                                srcPath.$(), (long name, int type) -> {
+                                    if (type == Files.DT_FILE) {
+                                        srcPath.trimTo(srcPlen).concat(partitionName).concat(name);
+                                        dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name);
+                                        if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                                            throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                                        }
+                                    }
                                 }
-                            }
-                        });
+                        );
                         srcPath.parent();
                     } else if (res != Files.FILES_RENAME_OK) {
                         throw CairoException.critical(ff.errno()).put("could not copy partition file [to=").put(dstPath).put(']');
@@ -1088,11 +1091,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void phasePartitionImport() throws TextImportException {
         if (partitions.size() == 0) {
             if (linesIndexed > 0) {
-                throw TextImportException.instance(CopyTask.PHASE_PARTITION_IMPORT,
-                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).");
+                throw TextImportException.instance(
+                        CopyTask.PHASE_PARTITION_IMPORT,
+                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k)."
+                );
             } else {
-                throw TextImportException.instance(CopyTask.PHASE_PARTITION_IMPORT,
-                        "No rows in input file to import.");
+                throw TextImportException.instance(
+                        CopyTask.PHASE_PARTITION_IMPORT,
+                        "No rows in input file to import."
+                );
             }
         }
 
@@ -1392,11 +1399,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    void prepareTable(ObjList<CharSequence> names,
-                      ObjList<TypeAdapter> types,
-                      Path path,
-                      TypeManager typeManager,
-                      SecurityContext securityContext)
+    void prepareTable(
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            Path path,
+            TypeManager typeManager,
+            SecurityContext securityContext
+    )
             throws TextException {
         if (types.size() == 0) {
             throw CairoException.nonCritical().put("cannot determine text structure");
@@ -1605,6 +1614,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public int getMaxUncommittedRows() {
             return configuration.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getMetadataVersion() {
+            // new table only
+            return 0;
         }
 
         @Override

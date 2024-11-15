@@ -141,11 +141,6 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
         }
 
         @Override
-        public boolean isSoftLink() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void refresh() {
             tableSequencerAPI.reloadMetadataConditionally(tableToken, getMetadataVersion(), this);
         }

@@ -3223,6 +3223,8 @@ public class UpdateTest extends AbstractCairoTest {
                 } catch (Exception e) {
                     e.printStackTrace(System.out);
                     Assert.fail();
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             th.start();

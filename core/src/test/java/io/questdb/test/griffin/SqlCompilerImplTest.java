@@ -67,7 +67,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -5868,12 +5867,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectConcurrentDdl() throws Exception {
-        // On Windows CI this test can fail with Metadata read timeout with small timeout.
-        Overrides overrides = node1.getConfigurationOverrides();
-        overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 30000);
         assertMemoryLeak(() -> {
             ddl("create table x (a int, b int, c int)");
 
+            // On Windows CI this test can fail with Metadata read timeout with small timeout.
+            spinLockTimeout = 30_000;
             final AtomicBoolean ddlError = new AtomicBoolean(false);
             final CyclicBarrier barrier = new CyclicBarrier(2);
             new Thread(() -> {
@@ -5886,6 +5884,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     ddlError.set(true);
                     e.printStackTrace();
                 } finally {
+                    Path.clearThreadLocals();
                     TestUtils.await(barrier);
                 }
             }).start();

@@ -112,11 +112,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public boolean isSoftLink() {
-        return false;
-    }
-
-    @Override
     public boolean isWalEnabled() {
         return walEnabled;
     }

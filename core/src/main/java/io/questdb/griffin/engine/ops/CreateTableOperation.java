@@ -117,6 +117,12 @@ public class CreateTableOperation implements TableStructure, Operation {
         this.batchO3MaxLag = 0;
     }
 
+    @Override
+    public long getMetadataVersion() {
+        // new table only
+        return 0;
+    }
+
     public CreateTableOperation(
             String sqlText,
             String tableName,

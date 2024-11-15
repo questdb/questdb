@@ -1267,6 +1267,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     exceptions.add(e);
                     LOG.error().$(e).$();
                 } finally {
+                    Path.clearThreadLocals();
                     done.incrementAndGet();
                 }
             });
@@ -1287,6 +1288,8 @@ public class TableReaderTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     exceptions.add(e);
                     LOG.error().$(e).$();
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             writerThread.start();

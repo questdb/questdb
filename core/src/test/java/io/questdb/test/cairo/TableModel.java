@@ -99,6 +99,12 @@ public class TableModel implements TableStructure {
         return configuration.getMaxUncommittedRows();
     }
 
+    @Override
+    public long getMetadataVersion() {
+        // new table only
+        return 0;
+    }
+
     public String getName() {
         return name;
     }

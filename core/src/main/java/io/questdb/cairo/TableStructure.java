@@ -45,4 +45,6 @@ public interface TableStructure extends TableDescriptor {
     boolean isIndexed(int columnIndex);
 
     boolean isWalEnabled();
+
+    long getMetadataVersion();
 }

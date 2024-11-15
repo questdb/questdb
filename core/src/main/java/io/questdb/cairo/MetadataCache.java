@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.TelemetryConfigLogger;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
@@ -443,18 +442,6 @@ public class MetadataCache implements QuietCloseable {
         }
 
         /**
-         * @see MetadataCacheWriter#hydrateTable(CharSequence)
-         */
-        @Override
-        public void hydrateTable(@NotNull CharSequence tableName) throws TableReferenceOutOfDateException {
-            final TableToken token = engine.getTableTokenIfExists(tableName);
-            if (token == null) {
-                throw TableReferenceOutOfDateException.of(tableName);
-            }
-            hydrateTable(token, true);
-        }
-
-        /**
          * @see MetadataCacheWriter#hydrateTable(TableToken, boolean)
          */
         @Override
@@ -495,7 +482,7 @@ public class MetadataCache implements QuietCloseable {
 
             int timestampIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(timestampIndex);
-            table.setIsSoftLink(tableMetadata.isSoftLink());
+            table.setIsSoftLink(engine.getConfiguration().getFilesFacade().isSoftLink(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(tableToken.getDirNameUtf8()).$()));
 
             for (int i = 0; i < columnCount; i++) {
                 final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(i);

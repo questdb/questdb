@@ -24,7 +24,12 @@
 
 package io.questdb.cutlass.line.tcp;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.ObjList;
@@ -95,6 +100,12 @@ public class TableStructureAdapter implements TableStructure {
     @Override
     public int getMaxUncommittedRows() {
         return cairoConfiguration.getMaxUncommittedRows();
+    }
+
+    @Override
+    public long getMetadataVersion() {
+        // new table only
+        return 0;
     }
 
     @Override

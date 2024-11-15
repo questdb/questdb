@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
@@ -39,15 +38,6 @@ public interface MetadataCacheWriter extends QuietCloseable {
      * state of the cache is discarded
      */
     void hydrateAllTables();
-
-    /**
-     * Updates the metadata cache using table name. If name is invalid
-     * the method will throw TableReferenceOutOfDateException.
-     *
-     * @param tableName The name of the table to read metadata.
-     * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the table name is invalid
-     */
-    void hydrateTable(@NotNull CharSequence tableName) throws TableReferenceOutOfDateException;
 
     /**
      * Updates the metadata cache with new entry for the given table. The entry values are

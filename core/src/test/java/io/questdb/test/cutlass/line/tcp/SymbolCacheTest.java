@@ -102,6 +102,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     exceptions.add(e);
                     LOG.error().$(e).$();
                 } finally {
+                    Path.clearThreadLocals();
                     done.incrementAndGet();
                 }
             });
@@ -157,6 +158,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     LOG.error().$(e).$();
                 } finally {
                     Misc.freeObjList(symbolCacheObjList);
+                    Path.clearThreadLocals();
                     Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 }
             });

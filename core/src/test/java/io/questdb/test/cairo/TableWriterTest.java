@@ -259,7 +259,10 @@ public class TableWriterTest extends AbstractCairoTest {
                         exceptions.add(e);
                         LOG.error().$(e).$();
                         throw e;
+                    } finally {
+                        Path.clearThreadLocals();
                     }
+
                 }
             });
 
@@ -285,6 +288,8 @@ public class TableWriterTest extends AbstractCairoTest {
                     exceptions.add(e);
                     LOG.error().$(e).$();
                     throw e;
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             writeDataThread.start();
