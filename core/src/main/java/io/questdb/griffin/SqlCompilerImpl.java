@@ -46,6 +46,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableNameRegistry;
 import io.questdb.cairo.TableNameRegistryStore;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -3137,7 +3138,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             boolean hasIfExists
     ) throws SqlException {
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
-        if (tableToken == null) {
+        if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (hasIfExists) {
                 compiledQuery.ofDrop();
                 return false;
