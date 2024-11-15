@@ -981,9 +981,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         for (int i = startFrom; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
             final int typeTag = ColumnType.tagOf(columnType);
-            final short fc = getPgResultSetColumnFormatCode(i, typeTag);
+            final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
             // if column is not variable size and format code is text, we can't calculate size
-            if (fc == 0 && !canEstimateTextSize(columnType)) {
+            if (columnBinaryFlag == 0 && !canEstimateTextSize(columnType)) {
+                // TODO(puzpuzpuz): we need a user-friendly error message here, e.g. "send buffer is too small [size=X, required=Y]"
                 return -1;
             }
             // number of bits or chars for geohash
@@ -1005,9 +1006,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return recordSize;
     }
 
+    // We can't estimate text length in bytes in case of number types
+    // as this would require an expensive serialization to string.
     private boolean canEstimateTextSize(int columnType) {
         final int typeTag = ColumnType.tagOf(columnType);
-        // TODO(puzpuzpuz): double check this logic
+        // We could include UUID or IPv4 into the list,
+        // but this would require a special version of getColumnValueSize().
         return ColumnType.isVarSize(typeTag)
                 || ColumnType.isGeoHash(columnType)
                 || typeTag == ColumnType.SYMBOL
