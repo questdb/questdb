@@ -104,7 +104,6 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 threads.add(new Thread(() -> {
                     try {
                         barrier.await();
-                        Rnd rnd = TestUtils.generateRandom(LOG);
                         try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                             while (!done.get()) {
                                 try {
@@ -118,6 +117,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                         throw e;
                                     }
                                 }
+                                Os.pause();
                             }
                         }
                     } catch (Throwable e) {
@@ -198,6 +198,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                     throw e;
                                 }
                             }
+                            Os.pause();
                         }
                     }
                 } catch (Throwable e) {
