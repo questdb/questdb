@@ -52,7 +52,6 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-
         Function period = args.getQuick(0);
         Function interval = args.getQuick(1);
         if (period.isConstant()) {

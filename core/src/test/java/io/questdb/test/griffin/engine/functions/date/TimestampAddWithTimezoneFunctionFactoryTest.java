@@ -27,11 +27,11 @@ package io.questdb.test.griffin.engine.functions.date;
 import org.junit.Test;
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.date.TimestampAddFunctionFactoryWithTimezone;
+import io.questdb.griffin.engine.functions.date.TimestampAddWithTimezoneFunctionFactory;
 import io.questdb.std.Numbers;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 
-public class TimestampAddFunctionFactoryWithTimezoneTest extends AbstractFunctionFactoryTest {
+public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
 
     @Test
@@ -403,6 +403,6 @@ public class TimestampAddFunctionFactoryWithTimezoneTest extends AbstractFunctio
 
     @Override
     protected FunctionFactory getFunctionFactory() {
-        return new TimestampAddFunctionFactoryWithTimezone();
+        return new TimestampAddWithTimezoneFunctionFactory();
     }
 }
