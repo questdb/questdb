@@ -55,17 +55,16 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
     @Test
     public void testInsertDropParallel() throws Exception {
         Assume.assumeTrue(walEnabled);
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        maintenanceInterval = rnd.nextLong(200);
-        minIdleMsBeforeWriterRelease = rnd.nextLong(200);
+        maintenanceInterval = random.nextLong(200);
+        minIdleMsBeforeWriterRelease = random.nextLong(200);
         initLoadParameters(
-                1 + rnd.nextInt(5000),
-                1 + rnd.nextInt(10),
-                1 + rnd.nextInt(3),
-                1 + rnd.nextInt(4),
-                1 + rnd.nextLong(500)
+                1 + random.nextInt(5000),
+                1 + random.nextInt(10),
+                1 + random.nextInt(3),
+                1 + random.nextInt(4),
+                1 + random.nextLong(500)
         );
-        initDropParameters(rnd.nextInt(8), rnd.nextInt(4));
+        initDropParameters(random.nextInt(8), random.nextInt(4));
         initFuzzParameters(
                 -1,
                 -1,
