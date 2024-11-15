@@ -1316,7 +1316,7 @@ public class WalWriter implements TableWriterAPI {
                 ff.fsyncAndClose(dirFd);
             }
             lastSegmentTxn = 0;
-            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path).$('\'').I$();
+            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
             if (oldSegmentLockFd > -1) {
                 releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldSegmentRows);
