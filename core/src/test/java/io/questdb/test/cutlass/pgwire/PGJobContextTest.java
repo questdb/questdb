@@ -8519,7 +8519,7 @@ nodejs code:
     public void testQueryTimeoutModern() throws Exception {
         skipOnWalRun(); // non-partitioned table
         Assume.assumeFalse(legacyMode);
-        maxQueryTime = 300;
+        maxQueryTime = 100;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("select sleep(120000)")) {
                 try {
