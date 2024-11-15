@@ -10024,7 +10024,7 @@ create table tab as (
         final int stringSize = sizes[1];
         final int binarySize = sizes[2];
 
-        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY | CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table x as (" +
                         "select" +
@@ -11285,7 +11285,7 @@ create table tab as (
     public void testSmallSendBufferForRowData() throws Exception {
         sendBufferSize = 512;
         // we can send wide record with binary protocol
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS & ~CONN_AWARE_EXTENDED_PREPARED_BINARY, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table x as (" +
                         "select" +
