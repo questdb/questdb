@@ -418,14 +418,14 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     .append(!useIndex).append("\t128\tfalse\tfalse\n");
         }
         if (columnChaos == RENAME_AND_ADD && useSelectStar) {
-            b.append("str_old\tSTRING\tfalse\t0\tfalse\t").append(0).append("\tfalse\tfalse\n");
+            b.append("str_old\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
         }
         if (columnChaos != DROP_STR) {
             String strColType = useCast ? "SYMBOL"
                     : columnChaos == CHANGE_TYPE || columnChaos == RENAME_AND_ADD ? "DOUBLE"
                     : "STRING";
             b.append(strCol).append("\t").append(strColType).append("\tfalse\t0\t")
-                    .append(useCast).append("\t")
+                    .append(useCast).append('\t')
                     .append(useCastSymbolCapacity ? SYMBOL_CAPACITY : useCast ? defaultSymbolCapacity : 0)
                     .append("\tfalse\tfalse\n");
         }
@@ -460,29 +460,29 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     }
 
     private void validateCreatedTableLike(boolean afterMessing) throws SqlException {
+        boolean beforeMessing = !afterMessing;
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
         b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
-        b.append(symCol).append("\tSYMBOL\tfalse\t").append(defaultIndexCapacity).append("\ttrue\t")
-                .append(defaultSymbolCapacity).append("\tfalse\tfalse\n");
-        if (afterMessing) {
-            switch (columnChaos) {
-                case CHANGE_TYPE:
-                    b.append(strCol).append("\tDOUBLE\tfalse\t").append(defaultIndexCapacity)
-                            .append("\tfalse\t0\tfalse\tfalse\n");
-                    break;
-                case RENAME_AND_ADD:
-                    b.append("str_old\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
-                    b.append("str\tDOUBLE\tfalse\t").append(defaultIndexCapacity).append("\tfalse\t0\tfalse\tfalse\n");
-                    break;
-                case DROP_STR:
-                case DROP_SYM:
+        if (beforeMessing || columnChaos != DROP_SYM) {
+            b.append(symCol).append("\tSYMBOL\tfalse\t").append(defaultIndexCapacity).append("\ttrue\t")
+                    .append(defaultSymbolCapacity).append("\tfalse\tfalse\n");
+        }
+        if (beforeMessing) {
+            b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+        } else {
+            if (columnChaos == RENAME_AND_ADD) {
+                b.append("str_old\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+            }
+            if (columnChaos != DROP_STR) {
+                boolean alteredStr = columnChaos == CHANGE_TYPE || columnChaos == RENAME_AND_ADD;
+                b.append(strCol).append('\t').append(alteredStr ? "DOUBLE" : "STRING")
+                        .append("\tfalse\t").append(alteredStr ? defaultIndexCapacity : 0)
+                        .append("\tfalse\t0\tfalse\tfalse\n");
             }
             if (addColumn) {
-                b.append("str_new\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n");
+                b.append("str_new\tSTRING\tfalse\t").append(defaultIndexCapacity).append("\tfalse\t0\tfalse\tfalse\n");
             }
-        } else {
-            b.append(strCol).append("\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
         }
         assertSql(b, "show columns from tango");
     }
