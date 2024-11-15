@@ -28,6 +28,8 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -43,6 +45,7 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -507,6 +510,75 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropPartitionRangeNotOnDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableName = createStandardWalTable(testName.getMethodName());
+
+            insert("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-24T01', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(10 * 4)");
+            drainWalQueue();
+            Path tempPath = Path.getThreadLocal(root).concat(tableName);
+            long initialTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+
+            int dropPartitions = 5;
+            for (int i = 0; i < dropPartitions; i++) {
+                long ts = initialTs + i * Timestamps.DAY_MICROS;
+                tempPath.concat(Timestamps.toString(ts).substring(0, 10)).$();
+                Assert.assertTrue(ff.rmdir(tempPath));
+                tempPath.of(root).concat(tableName);
+            }
+
+            compile("alter table " + tableName.getTableName() + " drop partition WHERE ts <= '"
+                    + Timestamps.toString(initialTs + (dropPartitions - 3) * Timestamps.DAY_MICROS) + "'");
+
+            drainWalQueue();
+
+            try {
+                try (RecordCursorFactory factory = select(tableName.getTableName())) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        cursor.hasNext();
+                        Assert.fail();
+                    }
+                }
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2022-02-27' does not exist in table '" + tableName.getTableName() + "'");
+            }
+
+            compile("alter table " + tableName.getTableName() + " drop partition WHERE ts <= '"
+                    + Timestamps.toString(initialTs + dropPartitions * Timestamps.DAY_MICROS) + "'");
+
+            drainWalQueue();
+
+            assertSql("x\tsym\tts\tsym2\n" +
+                            "25\tBC\t2022-03-02T01:00:00.000000Z\tFG\n" +
+                            "26\tCD\t2022-03-02T07:00:00.000000Z\tEF\n" +
+                            "27\tBC\t2022-03-02T13:00:00.000000Z\tDE\n" +
+                            "28\tCD\t2022-03-02T19:00:00.000000Z\tFG\n" +
+                            "29\tCD\t2022-03-03T01:00:00.000000Z\tDE\n" +
+                            "30\tCD\t2022-03-03T07:00:00.000000Z\tDE\n" +
+                            "31\tAB\t2022-03-03T13:00:00.000000Z\tEF\n" +
+                            "32\tCD\t2022-03-03T19:00:00.000000Z\tEF\n" +
+                            "33\tCD\t2022-03-04T01:00:00.000000Z\tDE\n" +
+                            "34\tCD\t2022-03-04T07:00:00.000000Z\tEF\n" +
+                            "35\tCD\t2022-03-04T13:00:00.000000Z\tFG\n" +
+                            "36\tBC\t2022-03-04T19:00:00.000000Z\tDE\n" +
+                            "37\tCD\t2022-03-05T01:00:00.000000Z\tFG\n" +
+                            "38\tAB\t2022-03-05T07:00:00.000000Z\t\n" +
+                            "39\tBC\t2022-03-05T13:00:00.000000Z\tFG\n" +
+                            "40\tBC\t2022-03-05T19:00:00.000000Z\tFG\n",
+                    tableName.getTableName()
+            );
+
+            assertSql("min\tmax\n" +
+                            "2022-03-02T01:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                    "select min(ts), max(ts) from " + tableName.getTableName()
+            );
+        });
+    }
+
+    @Test
     public void testErrorReadingWalEFileSuspendTable() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -545,6 +617,197 @@ public class WalTableFailureTest extends AbstractCairoTest {
     public void testFailToRollUncommittedToNewWalSegmentVarLenDataFile() throws Exception {
         String failToRollFile = "str.d";
         failToCopyDataToFile(failToRollFile);
+    }
+
+    @Test
+    public void testForceDropPartitionFailsAndRolledBack() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            insert("insert into " + tableToken.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-24T01', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(10 * 4)");
+
+            drainWalQueue();
+
+            assertSql("count\tmin\tmax\n" +
+                            "33\t2022-02-24T00:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableToken.getTableName() +
+                            " where ts not in '2022-03-04' and ts not in '2022-03-02'"
+            );
+            // Evict reader to simulate reader that is not able to read partition
+            engine.releaseInactive();
+
+            // Remove one but last partition from the disk
+            Path tempPath = Path.getThreadLocal(root).concat(tableToken).concat("2022-03-04");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            Assert.assertTrue(ff.rmdir(tempPath));
+
+            try {
+                // This should execute immediately, drop partition before the last one
+                compile("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-05'");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist:");
+                TestUtils.assertContains(e.getFlyweightMessage(), "2022-03-04");
+            }
+
+            try {
+                assertSql("count\tmin\tmax\n" +
+                                "20\t2022-03-01T01:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                        "select count(), min(ts), max(ts) from " + tableToken.getTableName()
+                );
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2022-03-04' does not exist in table");
+            }
+
+            // Previous command to delete 2022-03-05 is not executed because writer rolled back correctly
+            compile("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-02'");
+            tempPath = Path.getThreadLocal(root).concat(tableToken).concat("2022-03-05");
+            Assert.assertTrue(ff.exists(tempPath.$()));
+
+            // Force delete partition that is not on disk to unblock reading
+            compile("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-04'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "33\t2022-02-24T00:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableToken.getTableName()
+            );
+
+            // Check writer is healthy and can insert records to the last partition
+            insert("insert into " + tableToken.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-03-05', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(10 * 4)");
+            drainWalQueue();
+            assertSql("count\tmin\tmax\n" +
+                            "73\t2022-02-24T00:00:00.000000Z\t2022-03-14T18:00:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableToken.getTableName() + " where ts not in '2022-03-04'"
+            );
+        });
+    }
+
+    @Test
+    public void testForceDropPartitionRangeNotOnDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableName = createStandardWalTable(testName.getMethodName());
+
+            insert("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-24T01', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(10 * 4)");
+
+            drainWalQueue();
+
+            Path tempPath = Path.getThreadLocal(root).concat(tableName);
+            long initialTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+
+            int dropPartitions = 5;
+            for (int i = 0; i < dropPartitions; i++) {
+                long ts = initialTs + i * Timestamps.DAY_MICROS;
+                tempPath.concat(Timestamps.toString(ts).substring(0, 10)).$();
+                Assert.assertTrue(ff.rmdir(tempPath));
+                tempPath.of(root).concat(tableName);
+            }
+
+            // This should execute immediately
+            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-24', '2022-02-25', '2022-02-26', '2022-02-27', '2022-02-28'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "20\t2022-03-01T01:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+        });
+    }
+
+    @Test
+    public void testForceDropPartitionRangeNotOnDiskWithSplits() throws Exception {
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            TableToken tableName = createStandardWalTable(testName.getMethodName());
+
+            insert("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-24', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60 * 24 * 3 - 1)");
+
+            drainWalQueue();
+
+            insert("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-26T19', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60)");
+
+            drainWalQueue();
+
+            insert("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-26T16', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60)");
+
+            drainWalQueue();
+
+            Path tempPath = Path.getThreadLocal(root).concat(tableName).concat("2022-02-26T155900-000001.2");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            Assert.assertTrue(ff.rmdir(tempPath));
+
+            // This should execute immediately
+            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26T155900-000001'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "4200\t2022-02-24T00:00:00.000000Z\t2022-02-26T23:58:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Drop last partition
+            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26T185900-000001', '2022-02-26'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "2881\t2022-02-24T00:00:00.000000Z\t2022-02-25T23:59:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Insert more data
+            insert("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-26T16', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60)");
+
+            drainWalQueue();
+
+            // Drop all partitions
+            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-25', '2022-02-24', '2022-02-26'");
+            assertSql("count\tmin\tmax\n" +
+                            "0\t\t\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Insert more data
+            insert("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-26T16', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60 * 24)");
+
+            drainWalQueue();
+
+            assertSql("count\tmin\tmax\n" +
+                            "1440\t2022-02-26T16:00:00.000000Z\t2022-02-27T15:59:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Force drop first partition, but keep last
+            if (Os.isWindows()) {
+                engine.releaseInactive();
+            }
+            tempPath = Path.getThreadLocal(root).concat(tableName).concat("2022-02-26.6");
+            Assert.assertTrue(ff.exists(tempPath.$()));
+            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "960\t2022-02-27T00:00:00.000000Z\t2022-02-27T15:59:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Check that partitions are removed from disk, there are no open readers, directory removal should happen at the end
+            // of alter table operation
+            tempPath = Path.getThreadLocal(root).concat(tableName).concat("2022-02-26.6");
+            Assert.assertFalse(ff.exists(tempPath.$()));
+        });
     }
 
     @Test

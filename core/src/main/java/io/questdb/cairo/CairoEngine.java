@@ -573,6 +573,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return metrics;
     }
 
+    public int getNextTableId() {
+        return (int) tableIdGenerator.getNextId();
+    }
+
     public PartitionOverwriteControl getPartitionOverwriteControl() {
         return partitionOverwriteControl;
     }
@@ -682,6 +686,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableFlagResolver;
     }
 
+    @TestOnly
     public IDGenerator getTableIdGenerator() {
         return tableIdGenerator;
     }
@@ -952,7 +957,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableToken lockTableName(CharSequence tableName, boolean isWal) {
-        int tableId = (int) getTableIdGenerator().getNextId();
+        int tableId = getNextTableId();
         return lockTableName(tableName, tableId, isWal);
     }
 

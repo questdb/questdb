@@ -115,6 +115,19 @@ public interface MetadataService {
 
     boolean convertPartition(long partitionTimestamp);
 
+    void changeColumnType(
+            CharSequence columnName,
+            int newType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            SecurityContext securityContext
+    );
+
+    boolean convertPartition(long partitionTimestamp);
+
     AttachDetachStatus detachPartition(long partitionTimestamp);
 
     void disableDeduplication();
@@ -134,6 +147,8 @@ public interface MetadataService {
     TableToken getTableToken();
 
     UpdateOperator getUpdateOperator();
+
+    void forceRemovePartitions(LongList partitionTimestamps);
 
     void removeColumn(@NotNull CharSequence columnName);
 

@@ -67,7 +67,9 @@ public class AlterOperationBuilder implements Mutable {
 
     public void addPartitionToList(long timestamp, int timestampPosition) {
         extraInfo.add(timestamp);
-        extraInfo.add(timestampPosition);
+        if (command != FORCE_DROP_PARTITION) {
+            extraInfo.add(timestampPosition);
+        }
     }
 
     public AlterOperation build() {
@@ -204,6 +206,14 @@ public class AlterOperationBuilder implements Mutable {
 
     public AlterOperationBuilder ofDropPartition(int tableNamePosition, TableToken tableToken, int tableId) {
         this.command = DROP_PARTITION;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        return this;
+    }
+
+    public AlterOperationBuilder ofForceDropPartition(int tableNamePosition, TableToken tableToken, int tableId) {
+        this.command = FORCE_DROP_PARTITION;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;

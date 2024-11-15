@@ -321,6 +321,45 @@ public class SecurityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCircuitBreakerTimeoutForCrossJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.getRandom().reset();
+            ddl(" CREATE TABLE 'bench' (\n" +
+                    "    symbol SYMBOL capacity 256 CACHE,\n" +
+                    "    timestamp TIMESTAMP,\n" +
+                    "    price DOUBLE,\n" +
+                    "    amount DOUBLE\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            insert("insert into bench\n" +
+                    "select rnd_symbol('a', 'b', 'c') symbol, \n" +
+                    "rnd_timestamp('2022-03-08T00:00:00Z', '2022-03-08T23:59:59Z', 0) timestamp, \n" +
+                    "rnd_double() price, rnd_double() amount from long_sequence(100000)");
+            drainWalQueue();
+            memoryRestrictedEngine.reloadTableNames();
+
+            try {
+                setMaxCircuitBreakerChecks(Long.MAX_VALUE);
+                circuitBreakerTimeoutDeadline = MicrosecondClockImpl.INSTANCE.getTicks() + 10; // 10ms query timeout
+                TestUtils.printSql(
+                        engine,
+                        readOnlyExecutionContext,
+                        "select t1.*, t2.* from (SELECT * FROM bench LIMIT 100000) t1 \n" +
+                                "join (SELECT * FROM bench LIMIT 100000) t2 \n" +
+                                "on t1.symbol=concat(t2.price, '') and t1.symbol = cast(t2.symbol as varchar)\n" +
+                                "where t1.timestamp between '2022-03-08T00:00:00Z' and '2022-03-08T23:59:59Z'\n" +
+                                "and t2.timestamp between '2022-03-08T00:00:00Z' and '2022-03-08T23:59:59Z'",
+                        sink
+                );
+                Assert.fail();
+            } catch (Exception ex) {
+                Assert.assertTrue(ex.toString().contains("Interrupting SQL processing"));
+            } finally {
+                circuitBreakerTimeoutDeadline = Long.MAX_VALUE;
+            }
+        });
+    }
+
+    @Test
     public void testCircuitBreakerWithNonKeyedAgg() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
