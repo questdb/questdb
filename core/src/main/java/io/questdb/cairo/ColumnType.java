@@ -269,6 +269,16 @@ public final class ColumnType {
         }
     }
 
+    public static boolean isNdArrayElemType(int targetType) {
+        switch (targetType) {
+            case DOUBLE:
+            case LONG:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     public static boolean isNull(int columnType) {
         return columnType == NULL;
     }
@@ -645,8 +655,8 @@ public final class ColumnType {
         TYPE_SIZE[SYMBOL] = Integer.BYTES;
         TYPE_SIZE[STRING] = 0;
         TYPE_SIZE[VARCHAR] = 0;
-        TYPE_SIZE[ND_ARR_DOUBLE] = -1;
-        TYPE_SIZE[ND_ARR_LONG] = -1;
+        TYPE_SIZE[ND_ARR_DOUBLE] = 0;
+        TYPE_SIZE[ND_ARR_LONG] = 0;
         TYPE_SIZE[DOUBLE] = Double.BYTES;
         TYPE_SIZE[LONG] = Long.BYTES;
         TYPE_SIZE[DATE] = Long.BYTES;
