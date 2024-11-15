@@ -27,8 +27,14 @@ package io.questdb.std.str;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.functions.str.TrimType;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8StringIntHashMap;
+import io.questdb.std.Utf8StringObjHashMap;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -991,6 +997,36 @@ public final class Utf8s {
         sink.putAny(source, start, limit);
     }
 
+    // returns number of bytes required to hold UTF-16 string after conversion to UTF-8
+    public static int utf8Bytes(CharSequence sequence) {
+        int count = 0;
+        int len = sequence.length();
+
+        for (int i = 0; i < len; i++) {
+            char ch = sequence.charAt(i);
+            if (ch < 0x80) {
+                count++;
+            } else if (ch < 0x800) {
+                count += 2;
+            } else if (Character.isSurrogate(ch)) {
+                if (Character.isHighSurrogate(ch)) {
+                    if (i + 1 < len && Character.isLowSurrogate(sequence.charAt(i + 1))) {
+                        // high + low surrogate
+                        count += 4;
+                        i++;
+                    } else {
+                        count += 1; // '?' (1 byte)
+                    }
+                } else {
+                    count += 1;  // '?' (1 byte)
+                }
+            } else {
+                count += 3;
+            }
+        }
+        return count;
+    }
+
     /**
      * A specialised function to decode a single UTF-8 character.
      * Used when it doesn't make sense to allocate a temporary sink.
@@ -1350,7 +1386,11 @@ public final class Utf8s {
     }
 
     private static boolean equalPrefixBytes(
-            @NotNull Utf8Sequence l, long lSixPrefix, @NotNull Utf8Sequence r, long rSixPrefix, int prefixSize
+            @NotNull Utf8Sequence l,
+            long lSixPrefix,
+            @NotNull Utf8Sequence r,
+            long rSixPrefix,
+            int prefixSize
     ) {
         long prefixMask = (1L << 8 * Math.min(VARCHAR_INLINED_PREFIX_BYTES, prefixSize)) - 1;
         return ((lSixPrefix ^ rSixPrefix) & prefixMask) == 0
@@ -1358,7 +1398,10 @@ public final class Utf8s {
     }
 
     private static boolean equalSuffixBytes(
-            @NotNull Utf8Sequence seq, @NotNull Utf8Sequence suffix, int seqSize, int suffixSize
+            @NotNull Utf8Sequence seq,
+            @NotNull Utf8Sequence suffix,
+            int seqSize,
+            int suffixSize
     ) {
         int seqLo = seqSize - suffixSize;
         int i = 0;

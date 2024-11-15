@@ -101,7 +101,6 @@ public class GeoHashes {
         }
     }
 
-
     public static void appendBinary(long hash, int bits, CharSink<?> sink) {
         if (hash != NULL) {
             appendBinaryStringUnsafe(hash, bits, sink);
@@ -233,6 +232,16 @@ public class GeoHashes {
             throw NumericException.INSTANCE;
         }
         return widen(fromString(hash, start, start + chars), fromBits, toBits);
+    }
+
+    public static int geoHashBytes(long value, int bitFlags) {
+        if (value == GeoHashes.NULL) {
+            return Integer.BYTES;
+        } else {
+            assert bitFlags > 0;
+            // chars or bits
+            return Integer.BYTES + bitFlags;
+        }
     }
 
     public static int getBitFlags(int columnType) {

@@ -68,6 +68,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -873,28 +874,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.stateParse = stateParse;
     }
 
-    private static int charLength(char c) {
-        if (c < 0x80) {
-            return 1;
-        } else if (c < 0x800) {
-            return 2;
-        } else if (Character.isSurrogate(c)) {
-            return 1; // replaced with '?'
-        } else {
-            return 3;
-        }
-    }
-
-    private static int getGeohashSize(long value, int bitFlags) {
-        if (value == GeoHashes.NULL) {
-            return Integer.BYTES;
-        } else {
-            assert bitFlags > 0;
-            // chars or bits
-            return Integer.BYTES + bitFlags;
-        }
-    }
-
     private static void outBindComplete(PGResponseSink utf8Sink) {
         outSimpleMsg(utf8Sink, MESSAGE_TYPE_BIND_COMPLETE);
     }
@@ -946,35 +925,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         bindVariableService.setBoolean(variableIndex, valueSize == 4);
     }
 
-    private static int utf8Length(final CharSequence sequence) {
-        int count = 0;
-        int len = sequence.length();
-
-        for (int i = 0; i < len; i++) {
-            char ch = sequence.charAt(i);
-            if (ch < 0x80) {
-                count++;
-            } else if (ch < 0x800) {
-                count += 2;
-            } else if (Character.isSurrogate(ch)) {
-                if (Character.isHighSurrogate(ch)) {
-                    if (i + 1 < len && Character.isLowSurrogate(sequence.charAt(i + 1))) {
-                        // high + low surrogate
-                        count += 4;
-                        i++;
-                    } else {
-                        count += 1; // '?' (1 byte)
-                    }
-                } else {
-                    count += 1;  // '?' (1 byte)
-                }
-            } else {
-                count += 3;
-            }
-        }
-        return count;
-    }
-
     // defines bind variable from statement description types we sent to client.
     // that is a combination of types we received in the PARSE message and types the compiler inferred
     // unknown types are defined as strings
@@ -1020,7 +970,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private int calcRecordTailSize(Record record, int startFrom, int columnCount, long maxBlobSize, long sendBufferSize) throws BadProtocolException {
+    private int calculateRecordTailSize(
+            Record record,
+            int startFrom,
+            int columnCount,
+            long maxBlobSize,
+            long sendBufferSize
+    ) throws BadProtocolException {
         int recordSize = 0;
         for (int i = startFrom; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
@@ -1051,6 +1007,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private boolean canEstimateTextSize(int columnType) {
         final int typeTag = ColumnType.tagOf(columnType);
+        // TODO(puzpuzpuz): double check this logic
         return ColumnType.isVarSize(typeTag)
                 || ColumnType.isGeoHash(columnType)
                 || typeTag == ColumnType.SYMBOL
@@ -1249,7 +1206,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // Returns the size of the serialized value in bytes,
     // or -1 if the type is not supported (i.e., size cannot be estimated without serialization).
     // throws BadProtocolException if the binary value exceeds maxBlobSize
-    private int getColumnValueSize(Record record, int columnIndex, int typeTag, int bitFlags, long maxBlobSize) throws BadProtocolException {
+    private int getColumnValueSize(
+            Record record,
+            int columnIndex,
+            int typeTag,
+            int bitFlags,
+            long maxBlobSize
+    ) throws BadProtocolException {
         switch (typeTag) {
             case ColumnType.NULL:
                 return Integer.BYTES;
@@ -1260,7 +1223,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 return Integer.BYTES + Short.BYTES;
             case ColumnType.CHAR:
                 final char charValue = record.getChar(columnIndex);
-                return charValue == 0 ? Integer.BYTES : Integer.BYTES + charLength(charValue);
+                return charValue == 0 ? Integer.BYTES : Integer.BYTES + Chars.charBytes(charValue);
+            case ColumnType.IPv4:
+                final int ipValue = record.getIPv4(columnIndex);
+                return ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
             case ColumnType.INT:
                 final int value = record.getInt(columnIndex);
                 return value != Numbers.INT_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
@@ -1279,19 +1245,23 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case ColumnType.DOUBLE:
                 final double doubleValue = record.getDouble(columnIndex);
                 return Double.isNaN(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
+            case ColumnType.LONG128:
             case ColumnType.UUID:
                 final long lo = record.getLong128Lo(columnIndex);
                 final long hi = record.getLong128Hi(columnIndex);
                 return Uuid.isNull(lo, hi) ? Integer.BYTES : Integer.BYTES + Long.BYTES * 2;
+            case ColumnType.LONG256:
+                final Long256 long256Value = record.getLong256A(columnIndex);
+                return Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Long.BYTES * 4;
             case ColumnType.VARCHAR:
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
                 return vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
             case ColumnType.STRING:
                 final CharSequence strValue = record.getStrA(columnIndex);
-                return strValue == null ? Integer.BYTES : Integer.BYTES + utf8Length(strValue);
+                return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
             case ColumnType.SYMBOL:
                 final CharSequence symValue = record.getSymA(columnIndex);
-                return symValue == null ? Integer.BYTES : Integer.BYTES + utf8Length(symValue);
+                return symValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(symValue);
             case ColumnType.BINARY:
                 BinarySequence sequence = record.getBin(columnIndex);
                 if (sequence == null) {
@@ -1309,13 +1279,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     }
                 }
             case ColumnType.GEOBYTE:
-                return getGeohashSize(record.getGeoByte(columnIndex), bitFlags);
+                return GeoHashes.geoHashBytes(record.getGeoByte(columnIndex), bitFlags);
             case ColumnType.GEOSHORT:
-                return getGeohashSize(record.getGeoShort(columnIndex), bitFlags);
+                return GeoHashes.geoHashBytes(record.getGeoShort(columnIndex), bitFlags);
             case ColumnType.GEOINT:
-                return getGeohashSize(record.getGeoInt(columnIndex), bitFlags);
+                return GeoHashes.geoHashBytes(record.getGeoInt(columnIndex), bitFlags);
             case ColumnType.GEOLONG:
-                return getGeohashSize(record.getGeoLong(columnIndex), bitFlags);
+                return GeoHashes.geoHashBytes(record.getGeoLong(columnIndex), bitFlags);
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;
@@ -2177,7 +2147,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     assert sizeInBuffer > 0;
 
                     try {
-                        final int recordTailSize = calcRecordTailSize(
+                        final int recordTailSize = calculateRecordTailSize(
                                 record,
                                 outResendColumnIndex,
                                 columnCount,
@@ -2519,10 +2489,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         clearState();
         stateParseExecuted = false;
         outResendCursorRecord = false;
+        outResendRecordHeader = true;
+        outResendColumnIndex = 0;
         sqlReturnRowCountLimit = 0;
         sqlReturnRowCountToBeSent = 0;
         parameterValueArenaHi = parameterValueArenaPtr;
         compiledQuery = compiledQueryCopy;
+        isTextFormat = false;
         isCopy = false;
         preparedStatement = false;
         preparedStatementName = null;
