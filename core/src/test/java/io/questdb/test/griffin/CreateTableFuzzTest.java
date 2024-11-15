@@ -123,46 +123,14 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                         if (!messWithTableAfterCompile) {
                             throw new Exception("Didn't mess with table after compile, yet CREATE operation failed", e);
                         }
-                        String message = e.getMessage();
-                        String expected;
-                        switch (columnChaos) {
-                            case CHANGE_TYPE:
-                            case RENAME_AND_ADD:
-                                if (useCast) {
-                                    expected = withErrPos(castPos,
-                                            String.format("unsupported cast [column=%s, from=DOUBLE, to=SYMBOL]", strCol));
-                                } else {
-                                    throw new Exception("None of the CHANGE_TYPE | RENAME_AND_ADD failure cases occurred", e);
-                                }
-                                assertEquals(expected, message);
-                                return;
-                            case DROP_STR:
-                                if (!useSelectStar) {
-                                    expected = withErrPos(strPos - startOfSelect, "Invalid column: " + strCol);
-                                } else if (useCast) {
-                                    expected = withErrPos(castPos,
-                                            String.format("CAST column doesn't exist [column=%s]", castCol));
-                                } else {
-                                    throw new Exception("None of the expected DROP_STR failure cases occurred", e);
-                                }
-                                assertEquals(expected, message);
-                                return;
-                            case DROP_SYM:
-                                if (!useSelectStar) {
-                                    expected = withErrPos(symPos - startOfSelect, "Invalid column: " + symCol);
-                                } else if (useIndex) {
-                                    expected = withErrPos(indexPos,
-                                            String.format("INDEX column doesn't exist [column=%s]", indexCol));
-                                } else {
-                                    throw new Exception("None of the expected DROP_SYM failure cases occurred", e);
-                                }
-                                assertEquals(expected, message);
-                                return;
-                        }
-                        assert false : "Reached code that's supposed to be unreachable";
+                        validateCreateAsSelectException(e);
+                        return;
                     }
                     if (ddl.indexOf(WRONG_NAME) != -1) {
-                        fail("SQL statement uses a wrong column name, but it executed anyway");
+                        fail("SQL statement uses a wrong column name, but it succeeded anyway");
+                    }
+                    if (messWithTableAfterCompile) {
+                        validateCreateAsSelectNoException();
                     }
                     validateCreatedTableAsSelect(messWithTableAfterCompile);
                     if (useIfNotExists) {
@@ -178,29 +146,8 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     } catch (SqlException e) {
-                        String expected;
-                        switch (columnChaos) {
-                            case DROP_SYM:
-                                expected = useSelectStar ?
-                                        withErrPos(indexPos, String.format("INDEX column doesn't exist [column=%s]", indexCol))
-                                        : withErrPos(symPos - startOfSelect, "Invalid column: " + symCol);
-                                e.printStackTrace(System.out);
-                                assertEquals(expected, e.getMessage());
-                                return;
-                            case DROP_STR:
-                                expected = useSelectStar ?
-                                        withErrPos(castPos, String.format("CAST column doesn't exist [column=%s]", castCol))
-                                        : withErrPos(strPos - startOfSelect, "Invalid column: " + strCol);
-                                assertEquals(expected, e.getMessage());
-                                return;
-                            case CHANGE_TYPE:
-                            case RENAME_AND_ADD:
-                                assertEquals(withErrPos(castPos, String.format(
-                                        "unsupported cast [column=%s, from=DOUBLE, to=SYMBOL]", strCol
-                                )), e.getMessage());
-                                return;
-                        }
-                        throw e;
+                        validateCreateAsSelectException(e);
+                        return;
                     }
                     if (columnChaos != DROP_SYM && useCast) {
                         fail("SQL uses CAST but it survived column chaos");
@@ -391,6 +338,67 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         return result.toString();
     }
 
+    private void validateCreateAsSelectException(SqlException e) {
+        String message = e.getMessage();
+        String expected;
+        switch (columnChaos) {
+            case CHANGE_TYPE:
+            case RENAME_AND_ADD:
+                if (useCast) {
+                    expected = withErrPos(castPos,
+                            String.format("unsupported cast [column=%s, from=DOUBLE, to=SYMBOL]", strCol));
+                } else {
+                    throw new AssertionError("Error was expected only with a CAST clause present", e);
+                }
+                assertEquals(expected, message);
+                return;
+            case DROP_STR:
+                if (!useSelectStar) {
+                    expected = withErrPos(strPos - startOfSelect, "Invalid column: " + strCol);
+                } else if (useCast) {
+                    expected = withErrPos(castPos,
+                            String.format("CAST column doesn't exist [column=%s]", castCol));
+                } else {
+                    throw new AssertionError("Error isn't one of the expected DROP_STR failure cases", e);
+                }
+                assertEquals(expected, message);
+                return;
+            case DROP_SYM:
+                if (!useSelectStar) {
+                    expected = withErrPos(symPos - startOfSelect, "Invalid column: " + symCol);
+                } else if (useIndex) {
+                    expected = withErrPos(indexPos,
+                            String.format("INDEX column doesn't exist [column=%s]", indexCol));
+                } else {
+                    throw new AssertionError("Error isn't one of the expected DROP_SYM failure cases", e);
+                }
+                assertEquals(expected, message);
+                return;
+        }
+        assert false : "This code was supposed to be unreachable";
+    }
+
+    private void validateCreateAsSelectNoException() {
+        switch (columnChaos) {
+            case CHANGE_TYPE:
+            case RENAME_AND_ADD:
+                if (useCast) {
+                    fail("CAST clause present and cast column changed, yet CREATE operation succeeded");
+                }
+                break;
+            case DROP_STR:
+                if (!useSelectStar || useCast) {
+                    fail("str column dropped, yet CREATE operation succeeded");
+                }
+                break;
+            case DROP_SYM:
+                if (!useSelectStar || useIndex) {
+                    fail("sym column dropped, yet CREATE operation succeeded");
+                }
+                break;
+        }
+    }
+
     private void validateCreatedTableAsSelect(boolean afterMessing) throws SqlException {
         if (afterMessing) {
             validateCreatedTableAsSelectAfterMessing();
@@ -412,7 +420,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         if (columnChaos == RENAME_AND_ADD && useSelectStar) {
             b.append("str_old\tSTRING\tfalse\t0\tfalse\t").append(0).append("\tfalse\tfalse\n");
         }
-        if (!(columnChaos == DROP_STR && useSelectStar)) {
+        if (columnChaos != DROP_STR) {
             String strColType = useCast ? "SYMBOL"
                     : columnChaos == CHANGE_TYPE || columnChaos == RENAME_AND_ADD ? "DOUBLE"
                     : "STRING";
@@ -435,8 +443,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         b.append(symCol).append("\tSYMBOL\t").append(useIndex).append('\t')
                 .append(useIndexCapacity ? INDEX_CAPACITY : useIndex ? defaultIndexCapacity : 0).append('\t')
                 .append(!useIndex).append("\t128\tfalse\tfalse\n");
-        String strColType = useCast ? "SYMBOL" : "STRING";
-        b.append(strCol).append("\t").append(strColType).append("\tfalse\t0\t")
+        b.append(strCol).append("\t").append(useCast ? "SYMBOL" : "STRING").append("\tfalse\t0\t")
                 .append(useCast).append("\t")
                 .append(useCastSymbolCapacity ? SYMBOL_CAPACITY : useCast ? defaultSymbolCapacity : 0)
                 .append("\tfalse\tfalse\n");
