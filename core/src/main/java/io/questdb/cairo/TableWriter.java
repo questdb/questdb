@@ -771,6 +771,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (inTransaction()) {
+            assert !tableToken.isWal();
             LOG.info().$("committing open transaction before applying attach partition command [table=").utf8(tableToken.getTableName())
                     .$(", partition=").$ts(timestamp).I$();
             commit();
@@ -1184,6 +1185,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert PartitionBy.isPartitioned(partitionBy);
 
         if (inTransaction()) {
+            assert !tableToken.isWal();
             LOG.info()
                     .$("committing open transaction before applying convert partition to parquet command [table=")
                     .utf8(tableToken.getTableName())
@@ -1396,6 +1398,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert PartitionBy.isPartitioned(partitionBy);
 
         if (inTransaction()) {
+            assert !tableToken.isWal();
             LOG.info()
                     .$("committing open transaction before applying detach partition command [table=")
                     .utf8(tableToken.getTableName())
@@ -1585,6 +1588,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
         if (inTransaction()) {
+            assert !tableToken.isWal();
             LOG.info()
                     .$("committing current transaction before DROP INDEX execution [txn=").$(txWriter.getTxn())
                     .$(", table=").utf8(tableToken.getTableName())
@@ -1669,6 +1673,85 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
+        }
+    }
+
+    @Override
+    public void forceRemovePartitions(LongList partitionTimestamps) {
+        long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
+        long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
+        boolean firstPartitionDropped = false;
+        boolean activePartitionDropped = false;
+
+        txWriter.beginPartitionSizeUpdate();
+        partitionRemoveCandidates.clear();
+
+        int removedCount = 0;
+        for (int i = 0; i < partitionTimestamps.size(); i++) {
+            long timestamp = partitionTimestamps.getQuick(i);
+            final int index = txWriter.getPartitionIndex(timestamp);
+            if (index < 0) {
+                LOG.debug().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestamp).I$();
+                continue;
+            }
+
+            removedCount++;
+            if (!activePartitionDropped) {
+                activePartitionDropped = timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp);
+                if (activePartitionDropped) {
+                    // Need to do this only once
+                    closeActivePartition(false);
+                }
+            }
+
+            firstPartitionDropped |= timestamp == txWriter.getPartitionTimestampByIndex(0);
+            columnVersionWriter.removePartition(timestamp);
+            txWriter.removeAttachedPartitions(timestamp);
+            // Add the partition to partition remove list that can be deleted if there are no open readers
+            // after the commit
+            partitionRemoveCandidates.add(timestamp, txWriter.getPartitionNameTxn(index));
+        }
+
+        if (removedCount > 0) {
+            if (txWriter.getPartitionCount() > 0) {
+                if (firstPartitionDropped) {
+                    minTimestamp = readMinTimestamp(txWriter.getPartitionTimestampByIndex(1));
+                    txWriter.setMinTimestamp(minTimestamp);
+                }
+
+                if (activePartitionDropped) {
+                    long activePartitionTs = txWriter.getPartitionTimestampByIndex(txWriter.getPartitionCount() - 1);
+                    long activePartitionRows = txWriter.getPartitionSize(txWriter.getPartitionCount() - 1);
+                    setPathForPartition(path.trimTo(pathSize), partitionBy, activePartitionTs, txWriter.getPartitionNameTxn(txWriter.getPartitionCount() - 1));
+                    try {
+                        readPartitionMinMax(ff, activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), activePartitionRows);
+                        maxTimestamp = attachMaxTimestamp;
+                    } finally {
+                        path.trimTo(pathSize);
+                    }
+                }
+
+                txWriter.finishPartitionSizeUpdate(minTimestamp, maxTimestamp);
+                if (activePartitionDropped) {
+                    openLastPartition();
+                }
+                txWriter.bumpTruncateVersion();
+
+                columnVersionWriter.commit();
+                txWriter.setColumnVersion(columnVersionWriter.getVersion());
+                txWriter.commit(denseSymbolMapWriters);
+            } else {
+                // all partitions are deleted, effectively same as truncating the table
+                rowAction = ROW_ACTION_OPEN_PARTITION;
+                txWriter.resetTimestamp();
+                columnVersionWriter.truncate();
+                freeColumns(false);
+                releaseIndexerWriters();
+                txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+            }
+
+            // Call O3 methods to remove check TxnScoreboard and remove partition directly
+            processPartitionRemoveCandidates();
         }
     }
 
@@ -1907,6 +1990,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
+    }
+
+    public void markDistressed() {
+        this.distressed = true;
     }
 
     public void markSeqTxnCommitted(long seqTxn) {
@@ -2171,7 +2258,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 if (needsOrdering || needsDedup) {
                     if (needsOrdering) {
-                        LOG.info().$("sorting WAL [table=").$(tableToken)
+                        LOG.debug().$("sorting WAL [table=").$(tableToken)
                                 .$(", ordered=").$(ordered)
                                 .$(", lagRowCount=").$(walLagRowCount)
                                 .$(", walRowLo=").$(rowLo)
@@ -2547,11 +2634,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
         bumpColumnStructureVersion();
-
-//        try (MetadataCacheWriter metadataRW = engine.getCairoMetadata().write()) {
-//            metadataRW.dropTable(fromTableName);
-//            metadataRW.hydrateTable(metadata, true);
-//        }
     }
 
     @Override
@@ -2583,6 +2665,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.critical().$("could not perform rollback [name=").utf8(tableToken.getTableName()).$(", msg=").$(e).I$();
                 distressed = true;
             }
+            assert distressed || (!inTransaction() && !o3InError);
         }
     }
 
@@ -6667,7 +6750,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < n; i += 2) {
             try {
                 final long timestamp = partitionRemoveCandidates.getQuick(i);
-                final long txn = partitionRemoveCandidates.getQuick(i + 1);
+                final long txn = partitionRemoveCandidates.get(i + 1);
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as result of a rollback
                 if (!anyReadersBeforeCommittedTxn || txn >= lastCommittedTxn) {
@@ -6763,7 +6846,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.close(fd);
                 }
             } else {
-                throw CairoException.critical(0).put("Partition does not exist [path=").put(other).put(']');
+                LOG.error().$("cannot read next partition min timestamp on attempt to drop the partition, next partition does not exist [path=").$(other).I$();
+                return partitionTimestamp;
             }
         } finally {
             other.trimTo(pathSize);

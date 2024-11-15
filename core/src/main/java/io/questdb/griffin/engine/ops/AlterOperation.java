@@ -61,6 +61,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_DEDUP_DISABLE = SET_DEDUP_ENABLE + 1; // 16
     public final static short CHANGE_COLUMN_TYPE = SET_DEDUP_DISABLE + 1; // 17
     public final static short CONVERT_PARTITION = CHANGE_COLUMN_TYPE + 1; // 18
+    public final static short FORCE_DROP_PARTITION = CONVERT_PARTITION + 1; // 19
     private static final long BIT_INDEXED = 0x1L;
     private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
     private final static Log LOG = LogFactory.getLog(AlterOperation.class);
@@ -155,6 +156,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     break;
                 case ATTACH_PARTITION:
                     applyAttachPartition(svc);
+                    break;
+                case FORCE_DROP_PARTITION:
+                    applyDropPartitionForce(svc);
                     break;
                 case ADD_INDEX:
                     applyAddIndex(svc);
@@ -283,6 +287,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     public short getCommand() {
         return command;
+    }
+
+    public boolean isForceWalBypass() {
+        return command == FORCE_DROP_PARTITION;
     }
 
     @Override
@@ -497,6 +505,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         .position((int) extraInfo.getQuick(i * 2 + 1));
             }
         }
+    }
+
+    private void applyDropPartitionForce(MetadataService svc) {
+        svc.forceRemovePartitions(extraInfo);
     }
 
     private void applyParamO3MaxLag(MetadataService svc) {
