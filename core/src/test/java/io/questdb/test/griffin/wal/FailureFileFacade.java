@@ -312,15 +312,27 @@ public class FailureFileFacade implements FilesFacade {
         if (checkForFailure()) {
             return -1;
         }
-        return ff.mmap(fd, len, offset, flags, memoryTag);
+        long address = ff.mmap(fd, len, offset, flags, memoryTag);
+//        mmapAddresses.put(address, Numbers.encodeLowHighInts((int) len, memoryTag));
+        return address;
     }
 
     @Override
     public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
-        if (checkForFailure()) {
-            return -1;
+        if (newSize != previousSize) {
+            if (checkForFailure()) {
+                return -1;
+            }
+            long address = ff.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+//            long oldValue = Numbers.encodeLowHighInts((int) previousSize, memoryTag);
+//            long newValue = Numbers.encodeLowHighInts((int) newSize, memoryTag);
+//            if (!mmapAddresses.replace(addr, oldValue, Numbers.encodeLowHighInts(-(int) previousSize, memoryTag))) {
+//                new Exception("==== mremap " + address + " " + previousSize + " " + newSize).printStackTrace(System.out);
+//            }
+//            mmapAddresses.put(address, newValue);
+            return address;
         }
-        return ff.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+        return addr;
     }
 
     @Override
@@ -330,6 +342,16 @@ public class FailureFileFacade implements FilesFacade {
 
     @Override
     public void munmap(long address, long size, int memoryTag) {
+//        if (!mmapAddresses.replace(address, Numbers.encodeLowHighInts((int) size, memoryTag), Numbers.encodeLowHighInts(-(int) size, memoryTag))) {
+//            Long value = mmapAddresses.get(address);
+//            if (value != null) {
+//                int actualTag = Numbers.decodeHighInt(value);
+//                int actualSize = Numbers.decodeLowInt(value);
+//                new Exception("==== munmap " + address + " " + size).printStackTrace(System.out);
+//            } else {
+//                new Exception("==== munmap " + address + " " + size).printStackTrace(System.out);
+//            }
+//        }
         ff.munmap(address, size, memoryTag);
     }
 

@@ -497,7 +497,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
-            O3CopyJob.copyIdleQuick(
+            O3CopyJob.unmapAndClose(
                     columnCounter,
                     timestampMergeIndexAddr,
                     timestampMergeIndexSize,

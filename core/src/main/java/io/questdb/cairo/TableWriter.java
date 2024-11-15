@@ -5934,7 +5934,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (cursor > -1) {
                 O3CopyTask copyTask = copyQueue.get(cursor);
                 if (copyTask.getTableWriter() == this && o3ErrorCount.get() > 0) {
-                    O3CopyJob.copyIdle(
+                    O3CopyJob.unmapAndClose(
                             copyTask.getColumnCounter(),
                             copyTask.getPartCounter(),
                             copyTask.getTimestampMergeIndexAddr(),
