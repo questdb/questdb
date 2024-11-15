@@ -35,11 +35,6 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     public static char[] units = {'y', 'M', 'w', 'd', 'h', 'm', 's', 'T', 'u'};
 
     @Test
-    public void testCenterEmptyChar() throws Exception {
-        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('\0', 5, 1587275359886758L)");
-    }
-
-    @Test
     public void testNullStride() throws Exception {
         for (int i = 0; i < units.length; i++) {
             assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('" + units[i] + "', null, 1587275359886758L)");
@@ -51,6 +46,11 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
         for (int i = 0; i < units.length; i++) {
             assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('" + units[i] + "', 5, null)");
         }
+    }
+
+    @Test
+    public void testPeriodNullChar() throws Exception {
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('\0', 5, 1587275359886758L)");
     }
 
     @Test
