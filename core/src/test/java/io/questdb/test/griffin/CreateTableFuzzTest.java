@@ -45,10 +45,10 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private static final int INDEX_CAPACITY = 512;
     private static final int SYMBOL_CAPACITY = 64;
     private static final String WRONG_NAME = "bork";
-
+    private final boolean messWithTableAfterCompile = false; //rnd.nextBoolean();
     private final Rnd rnd = TestUtils.generateRandom(LOG);
-    private final boolean addColumn = rnd.nextBoolean();
     private final ColumnChaos columnChaos = ColumnChaos.values()[rnd.nextInt(ColumnChaos.values().length)];
+    private final boolean addColumn = rnd.nextBoolean();
     private final boolean useCast = rnd.nextBoolean();
     private final boolean useCastSymbolCapacity = useCast && rnd.nextBoolean();
     private final boolean useIfNotExists = rnd.nextBoolean();
@@ -59,16 +59,19 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private final boolean useSelectStar = rnd.nextBoolean();
     private final WrongNameChoice wrongName = WrongNameChoice.values()[rnd.nextInt(WrongNameChoice.values().length)];
     private String castCol = "str";
-    private int castPos;
-    private int dedupPos;
+    private int castPos = -1;
+    private int dedupPos = -1;
     private int defaultIndexCapacity;
     private int defaultSymbolCapacity;
-    private int indexPos;
+    private String indexCol = "sym";
+    private int indexPos = -1;
+    private int startOfSelect;
     private String strCol = "str";
-    private int strColPosWithinSelect;
+    private int strPos = -1;
     private String symCol = "sym";
+    private int symPos = -1;
     private String tsCol = "ts";
-    private int tsPos;
+    private int tsPos = -1;
 
     @Override
     @Before
@@ -83,8 +86,10 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             StringBuilder ddl = generateCreateTable(true);
             System.out.printf(
-                    "\n%s\nSelectStar %s WrongName %s Cast %s CastSymbolCapacity %s Dedup %s Index %s IndexCapacity %s PartitionBy %s\n",
-                    ddl, useSelectStar, wrongName, useCast, useCastSymbolCapacity, useDedup, useIndex, useIndexCapacity, usePartitionBy);
+                    "\n%s\nmessWithTableAfterCompile %s SelectStar %s WrongName %s Cast %s CastSymbolCapacity %s " +
+                            "Dedup %s Index %s IndexCapacity %s PartitionBy %s\n",
+                    ddl, messWithTableAfterCompile, useSelectStar, wrongName, useCast, useCastSymbolCapacity,
+                    useDedup, useIndex, useIndexCapacity, usePartitionBy);
             System.out.printf("addColumn %s ColumnChaos %s\n\n", addColumn, columnChaos);
             createSourceTable();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -101,11 +106,14 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                             : wrongName == TIMESTAMP ? tsPos
                             : wrongName == DEDUP ? dedupPos
                             : -1;
-                    assertEquals(withErrPos(errPos, "Invalid column: bork"), message);
+                    assertEquals(withErrPos(errPos, "Invalid column: " + WRONG_NAME), message);
                     return;
                 }
                 if (!(useSelectStar || ddl.indexOf(WRONG_NAME) == -1)) {
                     fail("SQL statement uses a wrong column name, but it compiled anyway");
+                }
+                if (messWithTableAfterCompile) {
+                    messWithSourceTable();
                 }
                 try (Operation op = query.getOperation()) {
                     assertNotNull(op);
@@ -113,8 +121,14 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                         fut.await();
                     } catch (SqlException e) {
                         String message = e.getMessage();
+                        if (columnChaos == CHANGE_TYPE || columnChaos == RENAME_AND_ADD) {
+                            assertEquals(withErrPos(castPos, String.format(
+                                    "unsupported cast [column=%s, from=DOUBLE, to=SYMBOL]", strCol)), message);
+                        }
                         if (wrongName == TIMESTAMP) {
-                            assertEquals(withErrPos(tsPos, "designated timestamp column doesn't exist [name=bork]"), message);
+                            assertEquals(withErrPos(tsPos, String.format(
+                                    "designated timestamp column doesn't exist [name=%s]", WRONG_NAME
+                            )), message);
                             return;
                         }
                         throw e;
@@ -122,23 +136,33 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     if (ddl.indexOf(WRONG_NAME) != -1) {
                         fail("SQL statement uses a wrong column name, but it executed anyway");
                     }
-                    validateCreatedTableAsSelect(false);
+                    validateCreatedTableAsSelect(messWithTableAfterCompile);
                     if (useIfNotExists) {
                         try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                             fut.await();
                         }
-                        validateCreatedTableAsSelect(false);
+                        validateCreatedTableAsSelect(messWithTableAfterCompile);
                     }
-                    messWithSourceTable();
+                    if (!messWithTableAfterCompile) {
+                        messWithSourceTable();
+                    }
                     drop("DROP TABLE tango");
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     } catch (SqlException e) {
+                        String expected;
                         switch (columnChaos) {
-                            case DROP:
-                                String expected = useSelectStar ?
+                            case DROP_SYM:
+                                expected = useSelectStar ?
+                                        withErrPos(indexPos, String.format("INDEX column doesn't exist [column=%s]", indexCol))
+                                        : withErrPos(symPos - startOfSelect, "Invalid column: " + symCol);
+                                e.printStackTrace(System.out);
+                                assertEquals(expected, e.getMessage());
+                                return;
+                            case DROP_STR:
+                                expected = useSelectStar ?
                                         withErrPos(castPos, String.format("CAST column doesn't exist [column=%s]", castCol))
-                                        : withErrPos(strColPosWithinSelect, "Invalid column: " + strCol);
+                                        : withErrPos(strPos - startOfSelect, "Invalid column: " + strCol);
                                 assertEquals(expected, e.getMessage());
                                 return;
                             case CHANGE_TYPE:
@@ -150,10 +174,10 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                         }
                         throw e;
                     }
-                    if (useCast) {
+                    if (columnChaos != DROP_SYM && useCast) {
                         fail("SQL uses CAST but it survived column chaos");
                     }
-                    validateCreatedTableAsSelect(true);
+                    validateCreatedTableAsSelectAfterMessing();
                 }
             }
         });
@@ -238,14 +262,15 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
 
     private void appendAsSelect(StringBuilder ddl) {
         ddl.append(" AS (");
-        int startOfSelect = ddl.length();
+        startOfSelect = ddl.length();
         ddl.append("SELECT ");
         if (useSelectStar) {
             ddl.append('*');
         } else {
-            ddl.append(tsCol = rndCase("ts")).append(", ")
-                    .append(symCol = rndCase("sym")).append(", ");
-            strColPosWithinSelect = ddl.length() - startOfSelect;
+            ddl.append(tsCol = rndCase("ts")).append(", ");
+            symPos = ddl.length();
+            ddl.append(symCol = rndCase("sym")).append(", ");
+            strPos = ddl.length();
             ddl.append(strCol = rndCase("str"));
         }
         ddl.append(" FROM ").append(rndCase("samba")).append(')');
@@ -261,7 +286,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         if (useIndex) {
             ddl.append(", INDEX(");
             indexPos = ddl.length();
-            ddl.append(wrongName == INDEX ? WRONG_NAME : rndCase("sym"));
+            ddl.append(wrongName == INDEX ? WRONG_NAME : (indexCol = rndCase("sym")));
             if (useIndexCapacity) {
                 ddl.append(" CAPACITY ").append(INDEX_CAPACITY);
             }
@@ -307,8 +332,11 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
 
     private void messWithSourceTable() throws SqlException {
         switch (columnChaos) {
-            case DROP:
+            case DROP_STR:
                 engine.ddl("ALTER TABLE samba DROP COLUMN str");
+                break;
+            case DROP_SYM:
+                engine.ddl("ALTER TABLE samba DROP COLUMN sym");
                 break;
             case CHANGE_TYPE:
                 engine.ddl("ALTER TABLE samba ALTER COLUMN str TYPE DOUBLE");
@@ -336,6 +364,42 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     }
 
     private void validateCreatedTableAsSelect(boolean afterMessing) throws SqlException {
+        if (afterMessing) {
+            validateCreatedTableAsSelectAfterMessing();
+        } else {
+            validateCreatedTableAsSelectBeforeMessing();
+        }
+    }
+
+    private void validateCreatedTableAsSelectAfterMessing() throws SqlException {
+        StringBuilder b = new StringBuilder(
+                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
+        b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
+                .append(usePartitionBy).append('\t').append(useDedup).append('\n');
+        if (columnChaos != DROP_SYM) {
+            b.append(symCol).append("\tSYMBOL\t").append(useIndex).append('\t')
+                    .append(useIndexCapacity ? INDEX_CAPACITY : useIndex ? defaultIndexCapacity : 0).append('\t')
+                    .append(!useIndex).append("\t128\tfalse\tfalse\n");
+        }
+        if (columnChaos == RENAME_AND_ADD && useSelectStar) {
+            b.append("str_old\tSTRING\tfalse\t0\tfalse\t").append(0).append("\tfalse\tfalse\n");
+        }
+        if (!(columnChaos == DROP_STR && useSelectStar)) {
+            String strColType = useCast ? "SYMBOL"
+                    : columnChaos == CHANGE_TYPE || columnChaos == RENAME_AND_ADD ? "DOUBLE"
+                    : "STRING";
+            b.append(strCol).append("\t").append(strColType).append("\tfalse\t0\t")
+                    .append(useCast).append("\t")
+                    .append(useCastSymbolCapacity ? SYMBOL_CAPACITY : useCast ? defaultSymbolCapacity : 0)
+                    .append("\tfalse\tfalse\n");
+        }
+        if (addColumn && useSelectStar) {
+            b.append("str_new\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
+        }
+        assertSql(b, "show columns from tango");
+    }
+
+    private void validateCreatedTableAsSelectBeforeMessing() throws SqlException {
         StringBuilder b = new StringBuilder(
                 "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n");
         b.append(tsCol).append("\tTIMESTAMP\tfalse\t0\tfalse\t0\t")
@@ -343,21 +407,11 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         b.append(symCol).append("\tSYMBOL\t").append(useIndex).append('\t')
                 .append(useIndexCapacity ? INDEX_CAPACITY : useIndex ? defaultIndexCapacity : 0).append('\t')
                 .append(!useIndex).append("\t128\tfalse\tfalse\n");
-        if (afterMessing && columnChaos == RENAME_AND_ADD && useSelectStar) {
-            b.append("str_old\tSTRING\tfalse\t0\tfalse\t").append(0).append("\tfalse\tfalse\n");
-        }
-        if (!(afterMessing && columnChaos == DROP && useSelectStar)) {
-            String strColType = useCast ? "SYMBOL"
-                    : afterMessing && (columnChaos == CHANGE_TYPE || columnChaos == RENAME_AND_ADD) ? "DOUBLE"
-                    : "STRING";
-            b.append(strCol).append("\t").append(strColType).append("\tfalse\t0\t")
-                    .append(useCast).append("\t")
-                    .append(useCastSymbolCapacity ? SYMBOL_CAPACITY : useCast ? defaultSymbolCapacity : 0)
-                    .append("\tfalse\tfalse\n");
-        }
-        if (afterMessing && addColumn && useSelectStar) {
-            b.append("str_new\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
-        }
+        String strColType = useCast ? "SYMBOL" : "STRING";
+        b.append(strCol).append("\t").append(strColType).append("\tfalse\t0\t")
+                .append(useCast).append("\t")
+                .append(useCastSymbolCapacity ? SYMBOL_CAPACITY : useCast ? defaultSymbolCapacity : 0)
+                .append("\tfalse\tfalse\n");
         assertSql(b, "show columns from tango");
     }
 
@@ -386,7 +440,8 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     b.append("str_old\tSTRING\tfalse\t0\tfalse\t0\tfalse\tfalse\n");
                     b.append("str\tDOUBLE\tfalse\t").append(defaultIndexCapacity).append("\tfalse\t0\tfalse\tfalse\n");
                     break;
-                case DROP:
+                case DROP_STR:
+                case DROP_SYM:
             }
             if (addColumn) {
                 b.append("str_new\tSTRING\tfalse\t256\tfalse\t0\tfalse\tfalse\n");
@@ -398,7 +453,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     }
 
     enum ColumnChaos {
-        DROP, CHANGE_TYPE, RENAME_AND_ADD
+        DROP_STR, DROP_SYM, CHANGE_TYPE, RENAME_AND_ADD
     }
 
     enum WrongNameChoice {
