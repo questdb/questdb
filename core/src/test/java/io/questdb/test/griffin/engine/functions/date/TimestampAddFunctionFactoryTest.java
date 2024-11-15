@@ -37,7 +37,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
     @Test
     public void testNullStride() throws Exception {
         for (int i = 0; i < units.length; i++) {
-            assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('" + units[i] + "', null, 1587275359886758L)");
+            assertException("select dateadd('" + units[i] + "', null, 1587275359886758L)", 20, "`null` is not a valid stride");
         }
     }
 
@@ -50,7 +50,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testPeriodNullChar() throws Exception {
-        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('\0', 5, 1587275359886758L)");
+        assertException("select dateadd('\0', 5, 1587275359886758L)", 15, "invalid time period unit");
     }
 
     @Test
@@ -96,7 +96,7 @@ public class TimestampAddFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testUnknownPeriod() throws Exception {
-        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('q', -5, 1587275359886758L)");
+        assertException("select dateadd('q', -5, 1587275359886758L)", 15, "invalid time period unit");
     }
 
     @Override

@@ -29,12 +29,12 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -51,25 +51,27 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         Function periodFunc = args.getQuick(0);
         Function strideFunc = args.getQuick(1);
         Function timestampFunc = args.getQuick(2);
+        LongAddIntFunction periodAddFunc;
+        char period;
+        int stride;
+
         if (periodFunc.isConstant()) {
-            char period = periodFunc.getChar(null);
-            if (period < addFunctionsMax) {
-                LongAddIntFunction periodAddFunc = addFunctions.getQuick(period);
-                if (periodAddFunc != null) {
-                    if (strideFunc.isConstant()) {
-                        if (strideFunc.getInt(null) != Numbers.INT_NULL) {
-                            return new TimestampAddConstConstVar(period, periodAddFunc, strideFunc.getInt(null), timestampFunc);
-                        }
-                        return TimestampConstant.NULL;
+            if ((period = periodFunc.getChar(null)) < addFunctionsMax && (periodAddFunc = addFunctions.getQuick(period)) != null) {
+                if (strideFunc.isConstant()) {
+                    if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
+                        return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc);
+                    } else {
+                        throw SqlException.$(argPositions.getQuick(1), "`null` is not a valid stride");
                     }
-                    return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc);
                 }
+                return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc);
+            } else {
+                throw SqlException.$(argPositions.getQuick(0), "invalid time period unit '" + period + "'");
             }
-            return TimestampConstant.NULL;
         }
         return new TimestampAddFunc(periodFunc, strideFunc, timestampFunc);
     }
