@@ -542,6 +542,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             // return the factory back to global cache in case of a select
             pe.cacheIfPossible(tasCache, null);
             Misc.free(pe);
+            pe.clearForPooling();
             entryPool.release(pe);
         }
         cache.clear();
