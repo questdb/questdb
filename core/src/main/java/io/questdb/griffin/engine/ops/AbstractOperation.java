@@ -146,4 +146,8 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.tableNamePosition = tableNamePosition;
         this.correlationId = NO_CORRELATION_ID;
     }
+
+    public boolean isForceWalBypass() {
+        return false;
+    }
 }
