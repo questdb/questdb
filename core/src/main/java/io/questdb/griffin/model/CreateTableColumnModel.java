@@ -56,6 +56,7 @@ public class CreateTableColumnModel implements Mutable {
         indexColumnPos = -1;
         indexValueBlockSize = 0;
         indexedFlag = false;
+        isCast = false;
         symbolCacheFlag = false;
         symbolCapacity = -1;
     }
