@@ -1345,6 +1345,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     LOG.error().$(e).$();
                 } finally {
                     done.incrementAndGet();
+                    Path.clearThreadLocals();
                 }
             });
 
@@ -1365,6 +1366,8 @@ public class TableReaderTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     exceptions.add(e);
                     LOG.error().$(e).$();
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             writerThread.start();
@@ -1421,6 +1424,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     LOG.error().$(e).$();
                 } finally {
                     done.incrementAndGet();
+                    Path.clearThreadLocals();
                 }
             });
 
@@ -1442,6 +1446,8 @@ public class TableReaderTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     exceptions.add(e);
                     LOG.error().$(e).$();
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             writerThread.start();

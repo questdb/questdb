@@ -32,10 +32,8 @@ import io.questdb.std.bytes.Bytes;
 
 class OrderedMapFixedSizeCursor implements OrderedMapCursor {
     private final long entrySize;
-    private final OrderedMap map;
     private final OrderedMapFixedSizeRecord recordA;
     private final OrderedMapFixedSizeRecord recordB;
-    private final long valueSize;
     private long heapAddr;
     private long heapStart;
     private int remaining;
@@ -45,8 +43,6 @@ class OrderedMapFixedSizeCursor implements OrderedMapCursor {
         assert map.keySize() != -1;
         this.recordA = record;
         this.recordB = record.clone();
-        this.map = map;
-        this.valueSize = map.valueSize();
         this.entrySize = Bytes.align8b(map.keySize() + map.valueSize());
     }
 

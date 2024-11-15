@@ -212,7 +212,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             long prevTxn = lastTxn - 1;
             openTxnPart(prevTxn);
             long lastPartTxn = (prevTxn) % partTransactionCount;
-            return WalUtils.DROP_TABLE_WALID == txnPartMem.getLong(lastPartTxn * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
+            return WalUtils.DROP_TABLE_WAL_ID == txnPartMem.getLong(lastPartTxn * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
         }
         return false;
     }
