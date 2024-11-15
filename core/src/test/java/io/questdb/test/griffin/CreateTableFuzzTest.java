@@ -45,8 +45,8 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private static final int INDEX_CAPACITY = 512;
     private static final int SYMBOL_CAPACITY = 64;
     private static final String WRONG_NAME = "bork";
-    private final boolean messWithTableAfterCompile = false; //rnd.nextBoolean();
     private final Rnd rnd = TestUtils.generateRandom(LOG);
+    private final boolean messWithTableAfterCompile = rnd.nextBoolean();
     private final ColumnChaos columnChaos = ColumnChaos.values()[rnd.nextInt(ColumnChaos.values().length)];
     private final boolean addColumn = rnd.nextBoolean();
     private final boolean useCast = rnd.nextBoolean();
@@ -120,18 +120,46 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     } catch (SqlException e) {
+                        if (!messWithTableAfterCompile) {
+                            throw new Exception("Didn't mess with table after compile, yet CREATE operation failed", e);
+                        }
                         String message = e.getMessage();
-                        if (columnChaos == CHANGE_TYPE || columnChaos == RENAME_AND_ADD) {
-                            assertEquals(withErrPos(castPos, String.format(
-                                    "unsupported cast [column=%s, from=DOUBLE, to=SYMBOL]", strCol)), message);
+                        String expected;
+                        switch (columnChaos) {
+                            case CHANGE_TYPE:
+                            case RENAME_AND_ADD:
+                                if (useCast) {
+                                    expected = withErrPos(castPos,
+                                            String.format("unsupported cast [column=%s, from=DOUBLE, to=SYMBOL]", strCol));
+                                } else {
+                                    throw new Exception("None of the CHANGE_TYPE | RENAME_AND_ADD failure cases occurred", e);
+                                }
+                                assertEquals(expected, message);
+                                return;
+                            case DROP_STR:
+                                if (!useSelectStar) {
+                                    expected = withErrPos(strPos - startOfSelect, "Invalid column: " + strCol);
+                                } else if (useCast) {
+                                    expected = withErrPos(castPos,
+                                            String.format("CAST column doesn't exist [column=%s]", castCol));
+                                } else {
+                                    throw new Exception("None of the expected DROP_STR failure cases occurred", e);
+                                }
+                                assertEquals(expected, message);
+                                return;
+                            case DROP_SYM:
+                                if (!useSelectStar) {
+                                    expected = withErrPos(symPos - startOfSelect, "Invalid column: " + symCol);
+                                } else if (useIndex) {
+                                    expected = withErrPos(indexPos,
+                                            String.format("INDEX column doesn't exist [column=%s]", indexCol));
+                                } else {
+                                    throw new Exception("None of the expected DROP_SYM failure cases occurred", e);
+                                }
+                                assertEquals(expected, message);
+                                return;
                         }
-                        if (wrongName == TIMESTAMP) {
-                            assertEquals(withErrPos(tsPos, String.format(
-                                    "designated timestamp column doesn't exist [name=%s]", WRONG_NAME
-                            )), message);
-                            return;
-                        }
-                        throw e;
+                        assert false : "Reached code that's supposed to be unreachable";
                     }
                     if (ddl.indexOf(WRONG_NAME) != -1) {
                         fail("SQL statement uses a wrong column name, but it executed anyway");
