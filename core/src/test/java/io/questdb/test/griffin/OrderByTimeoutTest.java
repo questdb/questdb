@@ -100,14 +100,15 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl(
                     "CREATE TABLE trips as (" +
-                            "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000000) ts from long_sequence(20)" +
+                            "select rnd_long() a, rnd_long() b, timestamp_sequence('2022-01-03', 50000000000) ts from long_sequence(100)" +
                             ") timestamp(ts) partition by day;"
             );
 
+            // this test somehow used to rely on code calling "getClock()" to decrement the breakLimit
+            // clock is cached and relying on it is not a good idea.
+            // We should select more rows than max value of the break limit.
             int breakTestLimit = 20;
-            String sql = "select * from trips " +
-                    " where ts between '2022-01-03' and '2022-02-01' and a > 1234567890L order by b desc limit 10";
-
+            String sql = "select * from trips  order by b desc limit 30";
             testSql(breakTestLimit, sql);
         });
     }

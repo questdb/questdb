@@ -1833,11 +1833,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public long getMetaO3MaxLag() {
-        return metadata.getO3MaxLag();
-    }
-
-    @Override
     public TableMetadata getMetadata() {
         return metadata;
     }

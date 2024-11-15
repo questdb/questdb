@@ -125,9 +125,6 @@ public interface MetadataService {
 
     int getMetaMaxUncommittedRows();
 
-    // todo: remove
-    long getMetaO3MaxLag();
-
     TableRecordMetadata getMetadata();
 
     int getPartitionBy();
