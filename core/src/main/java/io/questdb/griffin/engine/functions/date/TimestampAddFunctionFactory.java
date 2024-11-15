@@ -152,9 +152,9 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
     }
 
     private static class TimestampAddFunc extends TimestampFunction implements TernaryFunction {
-        final Function periodFunc;
-        final Function strideFunc;
-        final Function timestampFunc;
+        private final Function periodFunc;
+        private final Function strideFunc;
+        private final Function timestampFunc;
 
         public TimestampAddFunc(Function periodFunc, Function strideFunc, Function timestampFunc) {
             this.periodFunc = periodFunc;
