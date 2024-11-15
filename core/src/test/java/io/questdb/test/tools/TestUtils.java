@@ -1014,7 +1014,7 @@ public final class TestUtils {
     }
 
     public static TableToken createTable(CairoEngine engine, TableStructure structure) {
-        return createTable(engine, structure, (int) engine.getTableIdGenerator().getNextId());
+        return createTable(engine, structure, engine.getNextTableId());
     }
 
     public static void createTable(

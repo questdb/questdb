@@ -115,19 +115,6 @@ public interface MetadataService {
 
     boolean convertPartition(long partitionTimestamp);
 
-    void changeColumnType(
-            CharSequence columnName,
-            int newType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isSequential,
-            SecurityContext securityContext
-    );
-
-    boolean convertPartition(long partitionTimestamp);
-
     AttachDetachStatus detachPartition(long partitionTimestamp);
 
     void disableDeduplication();
@@ -138,6 +125,7 @@ public interface MetadataService {
 
     int getMetaMaxUncommittedRows();
 
+    // todo: remove
     long getMetaO3MaxLag();
 
     TableRecordMetadata getMetadata();

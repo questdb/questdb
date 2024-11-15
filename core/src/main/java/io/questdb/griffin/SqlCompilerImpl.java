@@ -1290,6 +1290,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                 }
+            } else if (SqlKeywords.isForceKeyword(tok)) {
+                tok = expectToken(lexer, "'drop'");
+                if (SqlKeywords.isDropKeyword(tok)) {
+                    tok = expectToken(lexer, "'partition'");
+                    if (SqlKeywords.isPartitionKeyword(tok)) {
+                        tok = expectToken(lexer, "'list'");
+                        if (SqlKeywords.isListKeyword(tok)) {
+                            securityContext.authorizeAlterTableDropPartition(tableToken);
+                            alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, lexer.lastTokenPosition(), PartitionAction.FORCE_DROP);
+                        } else {
+                            throw SqlException.$(lexer.lastTokenPosition(), "'list' expected");
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                    }
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'drop' expected");
+                }
             } else if (SqlKeywords.isAlterKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
                 if (SqlKeywords.isColumnKeyword(tok)) {

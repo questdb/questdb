@@ -530,7 +530,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 tempPath.of(root).concat(tableName);
             }
 
-            compile("alter table " + tableName.getTableName() + " drop partition WHERE ts <= '"
+            ddl("alter table " + tableName.getTableName() + " drop partition WHERE ts <= '"
                     + Timestamps.toString(initialTs + (dropPartitions - 3) * Timestamps.DAY_MICROS) + "'");
 
             drainWalQueue();
@@ -546,7 +546,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2022-02-27' does not exist in table '" + tableName.getTableName() + "'");
             }
 
-            compile("alter table " + tableName.getTableName() + " drop partition WHERE ts <= '"
+            ddl("alter table " + tableName.getTableName() + " drop partition WHERE ts <= '"
                     + Timestamps.toString(initialTs + dropPartitions * Timestamps.DAY_MICROS) + "'");
 
             drainWalQueue();
@@ -645,7 +645,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             try {
                 // This should execute immediately, drop partition before the last one
-                compile("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-05'");
+                ddl("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-05'");
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist:");
@@ -663,12 +663,12 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             // Previous command to delete 2022-03-05 is not executed because writer rolled back correctly
-            compile("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-02'");
+            ddl("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-02'");
             tempPath = Path.getThreadLocal(root).concat(tableToken).concat("2022-03-05");
             Assert.assertTrue(ff.exists(tempPath.$()));
 
             // Force delete partition that is not on disk to unblock reading
-            compile("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-04'");
+            ddl("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-04'");
 
             assertSql("count\tmin\tmax\n" +
                             "33\t2022-02-24T00:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
@@ -711,7 +711,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             // This should execute immediately
-            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-24', '2022-02-25', '2022-02-26', '2022-02-27', '2022-02-28'");
+            ddl("alter table " + tableName.getTableName() + " force drop partition list '2022-02-24', '2022-02-25', '2022-02-26', '2022-02-27', '2022-02-28'");
 
             assertSql("count\tmin\tmax\n" +
                             "20\t2022-03-01T01:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
@@ -749,7 +749,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             Assert.assertTrue(ff.rmdir(tempPath));
 
             // This should execute immediately
-            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26T155900-000001'");
+            ddl("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26T155900-000001'");
 
             assertSql("count\tmin\tmax\n" +
                             "4200\t2022-02-24T00:00:00.000000Z\t2022-02-26T23:58:00.000000Z\n",
@@ -757,7 +757,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             );
 
             // Drop last partition
-            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26T185900-000001', '2022-02-26'");
+            ddl("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26T185900-000001', '2022-02-26'");
 
             assertSql("count\tmin\tmax\n" +
                             "2881\t2022-02-24T00:00:00.000000Z\t2022-02-25T23:59:00.000000Z\n",
@@ -772,7 +772,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
 
             // Drop all partitions
-            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-25', '2022-02-24', '2022-02-26'");
+            ddl("alter table " + tableName.getTableName() + " force drop partition list '2022-02-25', '2022-02-24', '2022-02-26'");
             assertSql("count\tmin\tmax\n" +
                             "0\t\t\n",
                     "select count(), min(ts), max(ts) from " + tableName.getTableName()
@@ -796,7 +796,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
             tempPath = Path.getThreadLocal(root).concat(tableName).concat("2022-02-26.6");
             Assert.assertTrue(ff.exists(tempPath.$()));
-            compile("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26'");
+            ddl("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26'");
 
             assertSql("count\tmin\tmax\n" +
                             "960\t2022-02-27T00:00:00.000000Z\t2022-02-27T15:59:00.000000Z\n",
