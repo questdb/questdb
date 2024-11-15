@@ -258,7 +258,7 @@ public class CreateTableOperation implements TableStructure, Operation {
             if (model.isIndexed()) {
                 colNameToIndexClausePos.put(columnName, model.getIndexColumnPos());
             }
-            if (model.getColumnType() != ColumnType.UNDEFINED) {
+            if (model.isCast()) {
                 colNameToCastClausePos.put(columnName, model.getColumnNamePos());
             }
             TableColumnMetadata tcm = new TableColumnMetadata(

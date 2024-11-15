@@ -38,6 +38,7 @@ public class CreateTableColumnModel implements Mutable {
     private int indexColumnPos;
     private int indexValueBlockSize;
     private boolean indexedFlag;
+    private boolean isCast;
     private boolean symbolCacheFlag;
     private int symbolCapacity;
 
@@ -91,12 +92,22 @@ public class CreateTableColumnModel implements Mutable {
         return symbolCapacity;
     }
 
+    public boolean isCast() {
+        return isCast;
+    }
+
     public boolean isDedupKey() {
         return dedupKeyFlag;
     }
 
     public boolean isIndexed() {
         return indexedFlag;
+    }
+
+    public void setCastType(int columnType, int columnTypePos) {
+        this.isCast = true;
+        this.columnType = columnType;
+        this.columnTypePos = columnTypePos;
     }
 
     public void setColumnNamePos(int columnNamePos) {
@@ -123,10 +134,5 @@ public class CreateTableColumnModel implements Mutable {
 
     public void setSymbolCapacity(int symbolCapacity) {
         this.symbolCapacity = symbolCapacity;
-    }
-
-    public void setType(int columnType, int columnTypePos) {
-        this.columnType = columnType;
-        this.columnTypePos = columnTypePos;
     }
 }

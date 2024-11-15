@@ -239,8 +239,10 @@ public class CreateTableOperationBuilder implements Mutable, ExecutionModel, Sin
             int from = metadata.getColumnType(index);
             int to = touchUp.getColumnType();
             if (to == ColumnType.UNDEFINED) {
+                assert !touchUp.isCast() : "CAST TO type is UNDEFINED";
                 touchUp.setColumnType(from);
             } else if (isCompatibleCast(from, to)) {
+                assert touchUp.isCast() : "touchUp type is set, but isCast is false";
                 typeCasts.put(index, to);
             } else {
                 throw SqlException.unsupportedCast(touchUp.getColumnTypePos(), columnName, from, to);
