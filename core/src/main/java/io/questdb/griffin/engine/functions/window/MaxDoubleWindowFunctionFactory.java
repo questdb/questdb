@@ -54,7 +54,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
+public class MaxDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
 
     public static final ArrayColumnTypes MAX_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
@@ -62,9 +62,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES;
 
-    public static final String NAME = "max";
+    private static final String NAME = "max";
     private static final String SIGNATURE = NAME + "(D)";
-    public static final DoubleComparator GREATER_THAN = (a, b) -> Double.compare(a, b) > 0;
 
     @Override
     public String getSignature() {
@@ -95,13 +94,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             MAX_COLUMN_TYPES
                     );
 
-                    return new MaxMinOverPartitionFunction(
+                    return new MaxOverPartitionFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0),
-                            GREATER_THAN,
-                            NAME
+                            args.get(0)
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
@@ -111,13 +108,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             MAX_COLUMN_TYPES
                     );
 
-                    return new MaxMinOverUnboundedPartitionRowsFrameFunction(
+                    return new MaxOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0),
-                            GREATER_THAN,
-                            NAME
+                            args.get(0)
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -150,7 +145,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         }
 
                         // moving max over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
-                        return new MaxMinOverPartitionRangeFrameFunction(
+                        return new MaxOverPartitionRangeFrameFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
@@ -160,9 +155,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 mem,
                                 dequeMem,
                                 configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex,
-                                GREATER_THAN,
-                                NAME
+                                timestampIndex
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -180,17 +173,15 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             MAX_COLUMN_TYPES
                     );
 
-                    return new MaxMinOverUnboundedPartitionRowsFrameFunction(
+                    return new MaxOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0),
-                            GREATER_THAN,
-                            NAME
+                            args.get(0)
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
-                    return new MaxMinOverCurrentRowFunction(args.get(0), NAME);
+                    return new MaxOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(
@@ -199,13 +190,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             MAX_COLUMN_TYPES
                     );
 
-                    return new MaxMinOverPartitionFunction(
+                    return new MaxOverPartitionFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0),
-                            GREATER_THAN,
-                            NAME
+                            args.get(0)
                     );
                 }
                 //between [unbounded | x] preceding and [x preceding | current row]
@@ -233,7 +222,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         }
 
                         // moving max over preceding N rows
-                        return new MaxMinOverPartitionRowsFrameFunction(
+                        return new MaxOverPartitionRowsFrameFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
@@ -241,9 +230,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 rowsHi,
                                 args.get(0),
                                 mem,
-                                dequeMem,
-                                GREATER_THAN,
-                                NAME
+                                dequeMem
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -257,11 +244,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new MaxMinOverWholeResultSetFunction(args.get(0), GREATER_THAN, NAME);
+                    return new MaxOverWholeResultSetFunction(args.get(0));
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
-                    return new MaxMinOverUnboundedRowsFrameFunction(args.get(0), GREATER_THAN, NAME);
+                    return new MaxOverUnboundedRowsFrameFunction(args.get(0));
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -285,16 +272,14 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             );
                         }
                         // moving max over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
-                        return new MaxMinOverRangeFrameFunction(
+                        return new MaxOverRangeFrameFunction(
                                 rowsLo,
                                 rowsHi,
                                 args.get(0),
                                 configuration,
                                 mem,
                                 dequeMem,
-                                timestampIndex,
-                                GREATER_THAN,
-                                NAME
+                                timestampIndex
                         );
                     } catch (Throwable th) {
                         Misc.free(mem);
@@ -305,13 +290,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new MaxMinOverUnboundedRowsFrameFunction(args.get(0), GREATER_THAN, NAME);
+                    return new MaxOverUnboundedRowsFrameFunction(args.get(0));
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
-                    return new MaxMinOverCurrentRowFunction(args.get(0), NAME);
+                    return new MaxOverCurrentRowFunction(args.get(0));
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new MaxMinOverWholeResultSetFunction(args.get(0), GREATER_THAN, NAME);
+                    return new MaxOverWholeResultSetFunction(args.get(0));
                 } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     MemoryARW mem = Vm.getARWInstance(
@@ -327,14 +312,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
                     }
-                    return new MaxMinOverRowsFrameFunction(
+                    return new MaxOverRowsFrameFunction(
                             args.get(0),
                             rowsLo,
                             rowsHi,
                             mem,
-                            dequeMem,
-                            GREATER_THAN,
-                            NAME
+                            dequeMem
                     );
                 }
             }
@@ -343,21 +326,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    // Avoid autoboxing by not using the Comparator functional interface with generic parameters.
-    @FunctionalInterface
-    public interface DoubleComparator {
-        boolean compare(double a, double b);
-    }
-
     // (rows between current row and current row) processes 1-element-big set, so simply it returns expression value
-    static class MaxMinOverCurrentRowFunction extends BaseDoubleWindowFunction {
+    static class MaxOverCurrentRowFunction extends BaseDoubleWindowFunction {
 
         private double value;
-        private final String name;
 
-        MaxMinOverCurrentRowFunction(Function arg, String name) {
+        MaxOverCurrentRowFunction(Function arg) {
             super(arg);
-            this.name = name;
         }
 
         @Override
@@ -372,7 +347,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public String getName() {
-            return name;
+            return NAME;
         }
 
         @Override
@@ -389,25 +364,15 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     // handles max() over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
-    static class MaxMinOverPartitionFunction extends BasePartitionedDoubleWindowFunction {
+    static class MaxOverPartitionFunction extends BasePartitionedDoubleWindowFunction {
 
-        private final String name;
-        private final DoubleComparator comparator;
-
-        public MaxMinOverPartitionFunction(Map map,
-                                           VirtualRecord partitionByRecord,
-                                           RecordSink partitionBySink,
-                                           Function arg,
-                                           DoubleComparator comparator,
-                                           String name) {
+        public MaxOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
-            this.name = name;
-            this.comparator = comparator;
         }
 
         @Override
         public String getName() {
-            return name;
+            return NAME;
         }
 
         @Override
@@ -425,7 +390,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 MapValue value = key.createValue();
 
                 if (!value.isNew()) {
-                    if (comparator.compare(d, value.getDouble(0))) {
+                    if (compare(value.getDouble(0), d)) {
                         value.putDouble(0, d);
                     }
                 } else {
@@ -445,17 +410,19 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), val);
         }
+
+        protected boolean compare(double a, double b) {
+            return Double.compare(a, b) < 0;
+        }
     }
 
     // Handles max() over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     // When the lower bound is unbounded, we only need to keep one maximum value in history.
     // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
-    public static class MaxMinOverPartitionRangeFrameFunction extends BasePartitionedDoubleWindowFunction {
+    public static class MaxOverPartitionRangeFrameFunction extends BasePartitionedDoubleWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
-        private final String name;
-        private final DoubleComparator comparator;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
@@ -469,16 +436,15 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final int timestampIndex;
 
         // current max value
-        private double maxMin;
+        private double max;
 
         // holds another resizable ring buffers as monotonically decreasing deque
         private final MemoryARW dequeMemory;
         private final LongList dequeFreeList = new LongList();
         private final int dequeInitialBufferSize;
-        private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private static final int DEQUE_RECORD_SIZE = Double.BYTES;
 
-        public MaxMinOverPartitionRangeFrameFunction(
+        public MaxOverPartitionRangeFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
                 RecordSink partitionBySink,
@@ -488,9 +454,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 MemoryARW memory,
                 MemoryARW dequeMemory,
                 int initialBufferSize,
-                int timestampIdx,
-                DoubleComparator comparator,
-                String name
+                int timestampIdx
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -503,8 +467,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             this.dequeMemory = dequeMemory;
             this.dequeInitialBufferSize = initialBufferSize;
-            this.comparator = comparator;
-            this.name = name;
         }
 
         @Override
@@ -552,11 +514,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     memory.putDouble(startOffset + Long.BYTES, d);
 
                     if (frameIncludesCurrentValue) {
-                        this.maxMin = d;
+                        this.max = d;
                         frameSize = 1;
                         size = frameLoBounded ? 1 : 0;
                     } else {
-                        this.maxMin = Double.NaN;
+                        this.max = Double.NaN;
                         frameSize = 0;
                         size = 1;
                     }
@@ -567,7 +529,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     }
                 } else {
                     size = 0;
-                    this.maxMin = Double.NaN;
+                    this.max = Double.NaN;
                     frameSize = 0;
                 }
             } else {
@@ -610,7 +572,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 // add new element if not null
                 if (Numbers.isFinite(d)) {
                     if (size == capacity) { //buffer full
-                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                        RingBufferDesc memoryDesc = new RingBufferDesc(capacity, startOffset, size, firstIdx, freeList);
                         expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
                         capacity = memoryDesc.capacity;
                         startOffset = memoryDesc.startOffset;
@@ -632,12 +594,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         if (diff <= maxDiff && diff >= minDiff) {
                             double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
                             while (dequeStartIndex != dequeEndIndex &&
-                                    comparator.compare(value, dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeCapacity) * DEQUE_RECORD_SIZE))) {
+                                    compare(dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeCapacity) * DEQUE_RECORD_SIZE), value)) {
                                 dequeEndIndex--;
                             }
 
                             if (dequeEndIndex - dequeStartIndex == dequeCapacity) { // deque full
-                                memoryDesc.reset(dequeCapacity, dequeStartOffset, dequeEndIndex - dequeStartIndex, dequeStartIndex, dequeFreeList);
+                                RingBufferDesc memoryDesc = new RingBufferDesc(dequeCapacity, dequeStartOffset, dequeEndIndex - dequeStartIndex, dequeStartIndex, dequeFreeList);
                                 expandRingBuffer(dequeMemory, memoryDesc, DEQUE_RECORD_SIZE);
                                 dequeCapacity = memoryDesc.capacity;
                                 dequeStartOffset = memoryDesc.startOffset;
@@ -653,9 +615,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         }
                     }
                     if (dequeStartIndex == dequeEndIndex) {
-                        this.maxMin = Double.NaN;
+                        this.max = Double.NaN;
                     } else {
-                        this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE);
+                        this.max = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE);
                     }
                 } else {
                     double oldMax = mapValue.getDouble(5);
@@ -665,7 +627,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Math.abs(timestamp - ts) >= minDiff) {
                             double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            if (Double.isNaN(oldMax) || comparator.compare(val, oldMax)) {
+                            if (Double.isNaN(oldMax) || compare(oldMax, val)) {
                                 oldMax = val;
                             }
 
@@ -678,7 +640,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     }
 
                     firstIdx = newFirstIdx;
-                    this.maxMin = oldMax;
+                    this.max = oldMax;
                 }
             }
 
@@ -693,18 +655,18 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 mapValue.putLong(7, dequeStartIndex);
                 mapValue.putLong(8, dequeEndIndex);
             } else {
-                mapValue.putDouble(5, this.maxMin);
+                mapValue.putDouble(5, this.max);
             }
         }
 
         @Override
         public double getDouble(Record rec) {
-            return maxMin;
+            return max;
         }
 
         @Override
         public String getName() {
-            return name;
+            return NAME;
         }
 
         @Override
@@ -721,7 +683,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void reopen() {
             super.reopen();
             // memory will allocate on first use
-            maxMin = Double.NaN;
+            max = Double.NaN;
         }
 
         @Override
@@ -767,14 +729,16 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 dequeMemory.truncate();
             }
         }
+
+        protected boolean compare(double a, double b) {
+            return Double.compare(a, b) < 0;
+        }
     }
 
     // handles max() over (partition by x [order by o] rows between y and z)
     // removable cumulative aggregation
-    public static class MaxMinOverPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+    public static class MaxOverPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
-        private final String name;
-        private final DoubleComparator comparator;
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
         private final int bufferSize;
@@ -783,13 +747,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final int frameSize;
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
-        private double maxMin;
+        private double max;
 
         // holds another resizable ring buffers as monotonically decreasing deque
         private final MemoryARW dequeMemory;
         private final int dequeBufferSize;
 
-        public MaxMinOverPartitionRowsFrameFunction(
+        public MaxOverPartitionRowsFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
                 RecordSink partitionBySink,
@@ -797,9 +761,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 long rowsHi,
                 Function arg,
                 MemoryARW memory,
-                MemoryARW dequeMemory,
-                DoubleComparator comparator,
-                String name
+                MemoryARW dequeMemory
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
 
@@ -818,8 +780,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             this.memory = memory;
             this.dequeMemory = dequeMemory;
-            this.comparator = comparator;
-            this.name = name;
         }
 
         @Override
@@ -856,9 +816,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
-                    this.maxMin = d;
+                    this.max = d;
                 } else {
-                    this.maxMin = Double.NaN;
+                    this.max = Double.NaN;
                 }
 
                 for (int i = 0; i < bufferSize; i++) {
@@ -871,7 +831,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         dequeEndIndex++;
                     }
                 } else {
-                    value.putDouble(2, this.maxMin);
+                    value.putDouble(2, this.max);
                 }
             } else {
                 loIdx = value.getLong(0);
@@ -885,28 +845,28 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
                     if (Numbers.isFinite(hiValue)) {
                         while (dequeStartIndex != dequeEndIndex &&
-                                comparator.compare(hiValue, dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeBufferSize) * Double.BYTES))) {
+                                compare(dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeBufferSize) * Double.BYTES), hiValue)) {
                             dequeEndIndex--;
                         }
                         dequeMemory.putDouble(dequeStartOffset + (dequeEndIndex % dequeBufferSize) * Double.BYTES, hiValue);
                         dequeEndIndex++;
-                        this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Double.BYTES);
+                        this.max = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Double.BYTES);
                     } else {
                         if (dequeStartIndex != dequeEndIndex) {
-                            this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Double.BYTES);
+                            this.max = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * Double.BYTES);
                         } else {
-                            this.maxMin = Double.NaN;
+                            this.max = Double.NaN;
                         }
                     }
                 } else {
                     double max = value.getDouble(2);
                     if (Numbers.isFinite(hiValue)) {
-                        if (Double.isNaN(max) || comparator.compare(hiValue, max)) {
+                        if (Double.isNaN(max) || compare(max, hiValue)) {
                             max = hiValue;
                             value.putDouble(2, max);
                         }
                     }
-                    this.maxMin = max;
+                    this.max = max;
                 }
 
                 if (frameLoBounded) {
@@ -930,12 +890,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public double getDouble(Record rec) {
-            return maxMin;
+            return max;
         }
 
         @Override
         public String getName() {
-            return name;
+            return NAME;
         }
 
         @Override
@@ -946,7 +906,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), max);
         }
 
         @Override
@@ -994,6 +954,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 dequeMemory.truncate();
             }
         }
+
+        protected boolean compare(double a, double b) {
+            return Double.compare(a, b) < 0;
+        }
     }
 
     // Handles max() over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
@@ -1001,11 +965,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // between upper bound and current row's value.
     // When the lower bound is unbounded, we only need to keep one maximum value(max) in history.
     // However, when the lower bound is not unbounded, we need a monotonically deque to maintain the history of records.
-    public static class MaxMinOverRangeFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
-
+    public static class MaxOverRangeFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
-        private final String name;
-        private final DoubleComparator comparator;
         private final boolean frameLoBounded;
         private final long initialCapacity;
         private final long maxDiff;
@@ -1015,7 +976,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final MemoryARW memory;
         private final long minDiff;
         private final int timestampIndex;
-        private double maxMin;
+        private double max;
         private long capacity;
         private long firstIdx;
         private long frameSize;
@@ -1029,16 +990,14 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private long dequeStartIndex = 0;
         private long dequeEndIndex = 0;
 
-        public MaxMinOverRangeFrameFunction(
+        public MaxOverRangeFrameFunction(
                 long rangeLo,
                 long rangeHi,
                 Function arg,
                 CairoConfiguration configuration,
                 MemoryARW memory,
                 MemoryARW dequeMemory,
-                int timestampIdx,
-                DoubleComparator comparator,
-                String name
+                int timestampIdx
         ) {
             super(arg);
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
@@ -1052,15 +1011,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;
-            maxMin = Double.NaN;
+            max = Double.NaN;
 
             if (frameLoBounded) {
                 this.dequeMemory = dequeMemory;
                 dequeCapacity = initialCapacity;
                 dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * Double.BYTES) - dequeMemory.getPageAddress(0);
             }
-            this.comparator = comparator;
-            this.name = name;
         }
 
         @Override
@@ -1141,7 +1098,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         double value = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
 
                         while (dequeStartIndex != dequeEndIndex &&
-                                comparator.compare(value, dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeCapacity) * Double.BYTES))) {
+                                compare(dequeMemory.getDouble(dequeStartOffset + ((dequeEndIndex - 1) % dequeCapacity) * Double.BYTES), value)) {
                             dequeEndIndex--;
                         }
 
@@ -1174,9 +1131,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     }
                 }
                 if (dequeStartIndex == dequeEndIndex) {
-                    this.maxMin = Double.NaN;
+                    this.max = Double.NaN;
                 } else {
-                    this.maxMin = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * Double.BYTES);
+                    this.max = dequeMemory.getDouble(dequeStartOffset + (dequeStartIndex % dequeCapacity) * Double.BYTES);
                 }
             } else {
                 newFirstIdx = firstIdx;
@@ -1185,8 +1142,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) >= minDiff) {
                         double val = memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        if (Double.isNaN(this.maxMin) || comparator.compare(val, this.maxMin)) {
-                            this.maxMin = val;
+                        if (Double.isNaN(this.max) || compare(this.max, val)) {
+                            this.max = val;
                         }
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
@@ -1201,12 +1158,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public double getDouble(Record rec) {
-            return maxMin;
+            return max;
         }
 
         @Override
         public String getName() {
-            return name;
+            return NAME;
         }
 
         @Override
@@ -1221,7 +1178,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void reopen() {
-            maxMin = Double.NaN;
+            max = Double.NaN;
             capacity = initialCapacity;
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
@@ -1267,7 +1224,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void toTop() {
             super.toTop();
-            maxMin = Double.NaN;
+            max = Double.NaN;
             capacity = initialCapacity;
             memory.truncate();
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
@@ -1282,20 +1239,21 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 dequeStartIndex = 0;
             }
         }
+
+        protected boolean compare(double a, double b) {
+            return Double.compare(a, b) < 0;
+        }
     }
 
     // Handles max() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
-    public static class MaxMinOverRowsFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
-
-        private final String name;
-        private final DoubleComparator comparator;
+    public static class MaxOverRowsFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
         private final MemoryARW buffer;
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        private double maxMin = Double.NaN;
+        private double max = Double.NaN;
         private int loIdx = 0;
 
         // holds another resizable ring buffers as monotonically decreasing deque
@@ -1304,13 +1262,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private long dequeStartIndex = 0;
         private long dequeEndIndex = 0;
 
-        public MaxMinOverRowsFrameFunction(Function arg,
-                                           long rowsLo,
-                                           long rowsHi,
-                                           MemoryARW memory,
-                                           MemoryARW dequeMemory,
-                                           DoubleComparator comparator,
-                                           String name) {
+        public MaxOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, MemoryARW dequeMemory) {
             super(arg);
 
             assert rowsLo != Long.MIN_VALUE || rowsHi != 0; // use MaxOverUnboundedRowsFrameFunction in case of (Long.MIN_VALUE, 0) range
@@ -1337,8 +1289,6 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 this.dequeMemory = dequeMemory;
                 dequeBufferSize = rowsHi - rowsLo + 1;
             }
-            this.comparator = comparator;
-            this.name = name;
         }
 
         @Override
@@ -1364,20 +1314,20 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (Numbers.isFinite(hiValue)) {
                 if (frameLoBounded) {
                     while (dequeStartIndex != dequeEndIndex &&
-                            comparator.compare(hiValue, dequeMemory.getDouble(((dequeEndIndex - 1) % dequeBufferSize) * Double.BYTES))) {
+                            compare(dequeMemory.getDouble(((dequeEndIndex - 1) % dequeBufferSize) * Double.BYTES), hiValue)) {
                         dequeEndIndex--;
                     }
                     dequeMemory.putDouble(dequeEndIndex % dequeBufferSize * Double.BYTES, hiValue);
                     dequeEndIndex++;
                 } else {
-                    if (Double.isNaN(maxMin) || comparator.compare(hiValue, maxMin)) {
-                        maxMin = hiValue;
+                    if (Double.isNaN(max) || compare(max, hiValue)) {
+                        max = hiValue;
                     }
                 }
             }
 
             if (frameLoBounded) {
-                this.maxMin = dequeEndIndex == dequeStartIndex ? Double.NaN : dequeMemory.getDouble(dequeStartIndex % dequeBufferSize * Double.BYTES);
+                this.max = dequeEndIndex == dequeStartIndex ? Double.NaN : dequeMemory.getDouble(dequeStartIndex % dequeBufferSize * Double.BYTES);
                 //remove the oldest element with newest
                 double loValue = buffer.getDouble((long) loIdx * Double.BYTES);
                 if (Numbers.isFinite(loValue) && dequeStartIndex != dequeEndIndex && loValue ==
@@ -1393,12 +1343,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public double getDouble(Record rec) {
-            return maxMin;
+            return max;
         }
 
         @Override
         public String getName() {
-            return name;
+            return NAME;
         }
 
         @Override
@@ -1409,12 +1359,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), max);
         }
 
         @Override
         public void reopen() {
-            maxMin = Double.NaN;
+            max = Double.NaN;
             loIdx = 0;
             initBuffer();
             if (dequeMemory != null) {
@@ -1433,7 +1383,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 dequeStartIndex = 0;
             }
             loIdx = 0;
-            maxMin = Double.NaN;
+            max = Double.NaN;
         }
 
         @Override
@@ -1459,13 +1409,17 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void toTop() {
             super.toTop();
-            maxMin = Double.NaN;
+            max = Double.NaN;
             loIdx = 0;
             initBuffer();
             if (dequeMemory != null) {
                 dequeEndIndex = 0;
                 dequeStartIndex = 0;
             }
+        }
+
+        protected boolean compare(double a, double b) {
+            return Double.compare(a, b) < 0;
         }
 
         private void initBuffer() {
@@ -1479,21 +1433,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // - max(a) over (partition by x rows between unbounded preceding and current row)
     // - max(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
-    static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+    static class MaxOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
+        private double max;
 
-        private final String name;
-        private final DoubleComparator comparator;
-        private double maxMin;
-
-        public MaxMinOverUnboundedPartitionRowsFrameFunction(Map map,
-                                                             VirtualRecord partitionByRecord,
-                                                             RecordSink partitionBySink,
-                                                             Function arg,
-                                                             DoubleComparator comparator,
-                                                             String name) {
+        public MaxOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
-            this.comparator = comparator;
-            this.name = name;
         }
 
         @Override
@@ -1507,29 +1451,29 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 MapValue value = key.createValue();
                 if (value.isNew()) {
                     value.putDouble(0, d);
-                    this.maxMin = d;
+                    this.max = d;
                 } else {
                     double max = value.getDouble(0);
-                    if (comparator.compare(d, max)) {
+                    if (compare(max, d)) {
                         value.putDouble(0, d);
                         max = d;
                     }
-                    this.maxMin = max;
+                    this.max = max;
                 }
             } else {
                 MapValue value = key.findValue();
-                this.maxMin = value != null ? value.getDouble(0) : Double.NaN;
+                this.max = value != null ? value.getDouble(0) : Double.NaN;
             }
         }
 
         @Override
         public double getDouble(Record rec) {
-            return maxMin;
+            return max;
         }
 
         @Override
         public String getName() {
-            return name;
+            return NAME;
         }
 
         @Override
@@ -1540,7 +1484,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), max);
         }
 
         @Override
@@ -1552,37 +1496,37 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row )");
         }
+
+        protected boolean compare(double a, double b) {
+            return Double.compare(a, b) < 0;
+        }
     }
 
     // Handles max() over (rows between unbounded preceding and current row); there's no partition by.
-    public static class MaxMinOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
+    public static class MaxOverUnboundedRowsFrameFunction extends BaseDoubleWindowFunction {
 
-        private final String name;
-        private final DoubleComparator comparator;
-        private double maxMin = Double.NaN;
+        private double max = Double.NaN;
 
-        public MaxMinOverUnboundedRowsFrameFunction(Function arg, DoubleComparator comparator, String name) {
+        public MaxOverUnboundedRowsFrameFunction(Function arg) {
             super(arg);
-            this.comparator = comparator;
-            this.name = name;
         }
 
         @Override
         public void computeNext(Record record) {
             double d = arg.getDouble(record);
-            if (Numbers.isFinite(d) && (Double.isNaN(maxMin) || comparator.compare(d, maxMin))) {
-                maxMin = d;
+            if (Numbers.isFinite(d) && (Double.isNaN(max) || compare(max, d))) {
+                max = d;
             }
         }
 
         @Override
         public double getDouble(Record rec) {
-            return maxMin;
+            return max;
         }
 
         @Override
         public String getName() {
-            return name;
+            return NAME;
         }
 
         @Override
@@ -1593,13 +1537,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), max);
         }
 
         @Override
         public void reset() {
             super.reset();
-            maxMin = Double.NaN;
+            max = Double.NaN;
         }
 
         @Override
@@ -1612,26 +1556,25 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void toTop() {
             super.toTop();
-            maxMin = Double.NaN;
+            max = Double.NaN;
+        }
+
+        protected boolean compare(double a, double b) {
+            return Double.compare(a, b) < 0;
         }
     }
 
     // max() over () - empty clause, no partition by no order by, no frame == default frame
-    static class MaxMinOverWholeResultSetFunction extends BaseDoubleWindowFunction {
+    static class MaxOverWholeResultSetFunction extends BaseDoubleWindowFunction {
+        private double max = Double.NaN;
 
-        private final String name;
-        private final DoubleComparator comparator;
-        private double maxMin = Double.NaN;
-
-        public MaxMinOverWholeResultSetFunction(Function arg, DoubleComparator comparator, String name) {
+        public MaxOverWholeResultSetFunction(Function arg) {
             super(arg);
-            this.comparator = comparator;
-            this.name = name;
         }
 
         @Override
         public String getName() {
-            return name;
+            return NAME;
         }
 
         @Override
@@ -1642,26 +1585,31 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             double d = arg.getDouble(record);
-            if (Numbers.isFinite(d) && (Double.isNaN(maxMin) || comparator.compare(d, maxMin))) {
-                maxMin = d;
+            if (Numbers.isFinite(d) && (Double.isNaN(max) || compare(max, d))) {
+                max = d;
             }
         }
 
         @Override
         public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
+            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), max);
         }
 
         @Override
         public void reset() {
             super.reset();
-            maxMin = Double.NaN;
+            max = Double.NaN;
         }
 
         @Override
         public void toTop() {
             super.toTop();
-            maxMin = Double.NaN;
+
+            max = Double.NaN;
+        }
+
+        protected boolean compare(double a, double b) {
+            return Double.compare(a, b) < 0;
         }
     }
 
