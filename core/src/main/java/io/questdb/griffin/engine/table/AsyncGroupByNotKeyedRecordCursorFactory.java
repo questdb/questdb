@@ -57,6 +57,8 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
+import static io.questdb.griffin.engine.table.aggr.AbstractAggregator.applyCompiledFilter;
+import static io.questdb.griffin.engine.table.aggr.AbstractAggregator.applyFilter;
 
 public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::aggregate;
@@ -276,38 +278,6 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         } finally {
             atom.release(slotId);
             task.releaseFrameMemory();
-        }
-    }
-
-    static void applyCompiledFilter(
-            CompiledFilter compiledFilter,
-            MemoryCARW bindVarMemory,
-            ObjList<Function> bindVarFunctions,
-            PageFrameReduceTask task
-    ) {
-        task.populateJitData();
-        final DirectLongList data = task.getDataAddresses();
-        final DirectLongList varSizeAux = task.getAuxAddresses();
-        final DirectLongList rows = task.getFilteredRows();
-        long hi = compiledFilter.call(
-                data.getAddress(),
-                data.size(),
-                varSizeAux.getAddress(),
-                bindVarMemory.getAddress(),
-                bindVarFunctions.size(),
-                rows.getAddress(),
-                task.getFrameRowCount(),
-                0
-        );
-        rows.setPos(hi);
-    }
-
-    static void applyFilter(Function filter, DirectLongList rows, PageFrameMemoryRecord record, long frameRowCount) {
-        for (long r = 0; r < frameRowCount; r++) {
-            record.setRowIndex(r);
-            if (filter.getBool(record)) {
-                rows.add(r);
-            }
         }
     }
 

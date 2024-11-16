@@ -290,6 +290,10 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         return perWorkerFunctionUpdaters.getQuick(slotId);
     }
 
+    public Class<? extends Map> getMapClass() {
+        return ownerFragment.map.getClass();
+    }
+
     public RecordSink getMapSink(int slotId) {
         if (slotId == -1 || perWorkerMapSinks == null) {
             return ownerMapSink;

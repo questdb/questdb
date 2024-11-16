@@ -57,7 +57,7 @@ import org.jetbrains.annotations.Nullable;
  * the declared column types to guarantee memory access safety.
  */
 public class Unordered2Map implements Map, Reopenable {
-    static final long KEY_SIZE = Short.BYTES;
+    public static final long KEY_SIZE = Short.BYTES;
     private static final int TABLE_SIZE = Short.toUnsignedInt((short) -1) + 1;
 
     private final Unordered2MapCursor cursor;

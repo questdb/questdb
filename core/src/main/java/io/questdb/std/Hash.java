@@ -74,6 +74,11 @@ public final class Hash {
         return fmix64(k);
     }
 
+    // unrolled version of hashMem64() for <long, int> input
+    public static long hashLongInt64(long lv, int iv) {
+        return fmix64(lv * M2 + iv);
+    }
+
     /**
      * Calculates integer hash for the given chunk of native memory using a polynomial hash function.
      * Suitable for potentially large sequences of bytes.

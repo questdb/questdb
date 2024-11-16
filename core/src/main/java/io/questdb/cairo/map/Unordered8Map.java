@@ -79,7 +79,7 @@ import org.jetbrains.annotations.Nullable;
  * </pre>
  */
 public class Unordered8Map implements Map, Reopenable {
-    static final long KEY_SIZE = Long.BYTES;
+    public static final long KEY_SIZE = Long.BYTES;
     private static final long MAX_SAFE_INT_POW_2 = 1L << 31;
     private static final int MIN_KEY_CAPACITY = 16;
 

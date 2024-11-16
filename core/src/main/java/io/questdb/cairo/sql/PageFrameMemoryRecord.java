@@ -103,6 +103,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         auxPageSizes = null;
     }
 
+    // unsafe as it can be; use at your own risk
+    public long getAuxPageAddress(int columnIndex) {
+        return auxPageAddresses.getQuick(columnIndex);
+    }
+
     @Override
     public BinarySequence getBin(int columnIndex) {
         final long dataPageAddress = pageAddresses.getQuick(columnIndex);
@@ -312,6 +317,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     @Override
     public long getLongIPv4(int columnIndex) {
         return Numbers.ipv4ToLong(getIPv4(columnIndex));
+    }
+
+    // unsafe as it can be; use at your own risk
+    public long getPageAddress(int columnIndex) {
+        return pageAddresses.getQuick(columnIndex);
     }
 
     @Override
