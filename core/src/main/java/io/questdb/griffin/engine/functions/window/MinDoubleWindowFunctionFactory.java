@@ -41,10 +41,9 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
-public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
-    public static final String NAME = "min";
+public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
+    private static final String NAME = "min";
     private static final String SIGNATURE = NAME + "(D)";
-    public static final MaxDoubleWindowFunctionFactory.DoubleComparator LESS_THAN = (a, b) -> Double.compare(a, b) < 0;
 
     @Override
     public String getSignature() {
@@ -75,14 +74,21 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES
                     );
 
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionFunction(
+                    return new MaxDoubleWindowFunctionFactory.MaxOverPartitionFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0),
-                            LESS_THAN,
-                            NAME
-                    );
+                            args.get(0)
+                    ) {
+                        @Override
+                        public String getName() {
+                            return NAME;
+                        }
+                        @Override
+                        protected boolean compare(double a, double b) {
+                            return Double.compare(a, b) > 0;
+                        }
+                    };
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(
@@ -91,14 +97,21 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES
                     );
 
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
+                    return new MaxDoubleWindowFunctionFactory.MaxOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0),
-                            LESS_THAN,
-                            NAME
-                    );
+                            args.get(0)
+                    ) {
+                        @Override
+                        public String getName() {
+                            return NAME;
+                        }
+                        @Override
+                        protected boolean compare(double a, double b) {
+                            return Double.compare(a, b) > 0;
+                        }
+                    };
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -131,7 +144,7 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         }
 
                         // moving min over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
-                        return new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction(
+                        return new MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
@@ -141,10 +154,17 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 mem,
                                 dequeMem,
                                 configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex,
-                                LESS_THAN,
-                                NAME
-                        );
+                                timestampIndex
+                        ) {
+                            @Override
+                            public String getName() {
+                                return NAME;
+                            }
+                            @Override
+                            protected boolean compare(double a, double b) {
+                                return Double.compare(a, b) > 0;
+                            }
+                        };
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -161,17 +181,29 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES
                     );
 
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
+                    return new MaxDoubleWindowFunctionFactory.MaxOverUnboundedPartitionRowsFrameFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0),
-                            LESS_THAN,
-                            NAME
-                    );
+                            args.get(0)
+                    ) {
+                        @Override
+                        public String getName() {
+                            return NAME;
+                        }
+                        @Override
+                        protected boolean compare(double a, double b) {
+                            return Double.compare(a, b) > 0;
+                        }
+                    };
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverCurrentRowFunction(args.get(0), NAME);
+                    return new MaxDoubleWindowFunctionFactory.MaxOverCurrentRowFunction(args.get(0)) {
+                        @Override
+                        public String getName() {
+                            return NAME;
+                        }
+                    };
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(
@@ -180,14 +212,21 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES
                     );
 
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionFunction(
+                    return new MaxDoubleWindowFunctionFactory.MaxOverPartitionFunction(
                             map,
                             partitionByRecord,
                             partitionBySink,
-                            args.get(0),
-                            LESS_THAN,
-                            NAME
-                    );
+                            args.get(0)
+                    ) {
+                        @Override
+                        public String getName() {
+                            return NAME;
+                        }
+                        @Override
+                        protected boolean compare(double a, double b) {
+                            return Double.compare(a, b) > 0;
+                        }
+                    };
                 }
                 //between [unbounded | x] preceding and [x preceding | current row]
                 else {
@@ -215,7 +254,7 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         }
 
                         // moving min over preceding N rows
-                        return new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRowsFrameFunction(
+                        return new MaxDoubleWindowFunctionFactory.MaxOverPartitionRowsFrameFunction(
                                 map,
                                 partitionByRecord,
                                 partitionBySink,
@@ -223,10 +262,17 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 rowsHi,
                                 args.get(0),
                                 mem,
-                                dequeMem,
-                                LESS_THAN,
-                                NAME
-                        );
+                                dequeMem
+                        ) {
+                            @Override
+                            public String getName() {
+                                return NAME;
+                            }
+                            @Override
+                            protected boolean compare(double a, double b) {
+                                return Double.compare(a, b) > 0;
+                            }
+                        };
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -239,11 +285,29 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverWholeResultSetFunction(args.get(0), LESS_THAN, NAME);
+                    return new MaxDoubleWindowFunctionFactory.MaxOverWholeResultSetFunction(args.get(0)) {
+                        @Override
+                        public String getName() {
+                            return NAME;
+                        }
+                        @Override
+                        protected boolean compare(double a, double b) {
+                            return Double.compare(a, b) > 0;
+                        }
+                    };
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedRowsFrameFunction(args.get(0), LESS_THAN, NAME);
+                    return new MaxDoubleWindowFunctionFactory.MaxOverUnboundedRowsFrameFunction(args.get(0)) {
+                        @Override
+                        public String getName() {
+                            return NAME;
+                        }
+                        @Override
+                        protected boolean compare(double a, double b) {
+                            return Double.compare(a, b) > 0;
+                        }
+                    };
                 } // range between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -267,17 +331,24 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             );
                         }
                         // moving min over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
-                        return new MaxDoubleWindowFunctionFactory.MaxMinOverRangeFrameFunction(
+                        return new MaxDoubleWindowFunctionFactory.MaxOverRangeFrameFunction(
                                 rowsLo,
                                 rowsHi,
                                 args.get(0),
                                 configuration,
                                 mem,
                                 dequeMem,
-                                timestampIndex,
-                                LESS_THAN,
-                                NAME
-                        );
+                                timestampIndex
+                        ) {
+                            @Override
+                            public String getName() {
+                                return NAME;
+                            }
+                            @Override
+                            protected boolean compare(double a, double b) {
+                                return Double.compare(a, b) > 0;
+                            }
+                        };
                     } catch (Throwable th) {
                         Misc.free(mem);
                         Misc.free(dequeMem);
@@ -287,13 +358,36 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedRowsFrameFunction(args.get(0), LESS_THAN, NAME);
+                    return new MaxDoubleWindowFunctionFactory.MaxOverUnboundedRowsFrameFunction(args.get(0)) {
+                        @Override
+                        public String getName() {
+                            return NAME;
+                        }
+                        @Override
+                        protected boolean compare(double a, double b) {
+                            return Double.compare(a, b) > 0;
+                        }
+                    };
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverCurrentRowFunction(args.get(0), NAME);
+                    return new MaxDoubleWindowFunctionFactory.MaxOverCurrentRowFunction(args.get(0)){
+                        @Override
+                        public String getName() {
+                            return NAME;
+                        }
+                    };
                 } // whole result set
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverWholeResultSetFunction(args.get(0), LESS_THAN, NAME);
+                    return new MaxDoubleWindowFunctionFactory.MaxOverWholeResultSetFunction(args.get(0)) {
+                        @Override
+                        public String getName() {
+                            return NAME;
+                        }
+                        @Override
+                        protected boolean compare(double a, double b) {
+                            return Double.compare(a, b) > 0;
+                        }
+                    };
                 } // between [unbounded | x] preceding and [x preceding | current row]
                 else {
                     MemoryARW mem = Vm.getARWInstance(
@@ -309,15 +403,22 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
                     }
-                    return new MaxDoubleWindowFunctionFactory.MaxMinOverRowsFrameFunction(
+                    return new MaxDoubleWindowFunctionFactory.MaxOverRowsFrameFunction(
                             args.get(0),
                             rowsLo,
                             rowsHi,
                             mem,
-                            dequeMem,
-                            LESS_THAN,
-                            NAME
-                    );
+                            dequeMem
+                    ) {
+                        @Override
+                        public String getName() {
+                            return NAME;
+                        }
+                        @Override
+                        protected boolean compare(double a, double b) {
+                            return Double.compare(a, b) > 0;
+                        }
+                    };
                 }
             }
         }
