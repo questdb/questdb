@@ -552,6 +552,7 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
             engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
 
             drainWalQueue();
 
@@ -579,6 +580,7 @@ public class CheckpointTest extends AbstractCairoTest {
             ddl("checkpoint create;");
 
             ddl("rename table test to test2;");
+
             drainWalQueue();
 
             assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
@@ -590,7 +592,7 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
             engine.reloadTableNames();
-
+            engine.getMetadataCache().onStartupAsyncHydrator();
 
             drainWalQueue();
 
