@@ -150,7 +150,7 @@ public class MetadataCache implements QuietCloseable {
                 .trimTo(path.size());
 
         // create table to work with
-        CairoTable table = new CairoTable(token, false);
+        CairoTable table = new CairoTable(token);
 
         try {
             // open metadata
@@ -434,7 +434,7 @@ public class MetadataCache implements QuietCloseable {
             }
 
             final TableToken tableToken = tableMetadata.getTableToken();
-            final CairoTable table = new CairoTable(tableToken, false);
+            final CairoTable table = new CairoTable(tableToken);
             final long metadataVersion = tableMetadata.getMetadataVersion();
             table.setMetadataVersion(metadataVersion);
 
@@ -523,19 +523,7 @@ public class MetadataCache implements QuietCloseable {
             final int index = tableMap.keyIndex(tableName);
             CairoTable fromTab = tableMap.valueAt(index);
             tableMap.removeAt(index);
-            CairoTable toTab = new CairoTable(toTableToken, true);
-            toTab.setMetadataVersion(fromTab.getMetadataVersion());
-            toTab.setPartitionBy(fromTab.getPartitionBy());
-            toTab.setMaxUncommittedRows(fromTab.getMaxUncommittedRows());
-            toTab.setO3MaxLag(fromTab.getO3MaxLag());
-            toTab.setTimestampIndex(fromTab.getTimestampIndex());
-            toTab.setIsSoftLink(fromTab.getIsSoftLink());
-            toTab.setIsDedup(fromTab.getIsDedup());
-            toTab.columnOrderMap = fromTab.columnOrderMap;
-            toTab.columns = fromTab.columns;
-            toTab.columnNameIndexMap = fromTab.columnNameIndexMap;
-            toTab.setTimestampIndex(fromTab.getTimestampIndex());
-            tableMap.put(toTableToken.getTableName(), toTab);
+            tableMap.put(toTableToken.getTableName(), new CairoTable(toTableToken, fromTab));
         }
     }
 }
