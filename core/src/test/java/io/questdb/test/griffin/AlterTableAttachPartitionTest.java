@@ -156,7 +156,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '202A-01'";
                     try {
-                        ddl(alterCommand, sqlExecutionContext);
+                        execute(alterCommand, sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals("[39] 'yyyy-MM' expected, found [ts=202A-01]", e.getMessage());
@@ -176,7 +176,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST 'nono'";
                     try {
-                        ddl(alterCommand, sqlExecutionContext);
+                        execute(alterCommand, sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals("[40] 'yyyy' expected, found [ts=nono]", e.getMessage());
@@ -196,7 +196,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '202'";
                     try {
-                        ddl(alterCommand, sqlExecutionContext);
+                        execute(alterCommand, sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals("[40] 'yyyy' expected, found [ts=202]", e.getMessage());
@@ -216,7 +216,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-no'";
                     try {
-                        ddl(alterCommand, sqlExecutionContext);
+                        execute(alterCommand, sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals("[40] 'yyyy-MM' expected, found [ts=2020-no]", e.getMessage());
@@ -236,7 +236,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020'";
                     try {
-                        ddl(alterCommand, sqlExecutionContext);
+                        execute(alterCommand, sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals("[40] 'yyyy-MM' expected, found [ts=2020]", e.getMessage());
@@ -256,7 +256,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01'.'2020-02'";
                     try {
-                        ddl(alterCommand, sqlExecutionContext);
+                        execute(alterCommand, sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals("[48] ',' expected", e.getMessage());
@@ -276,7 +276,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
                     try {
-                        ddl(alterCommand, sqlExecutionContext);
+                        execute(alterCommand, sqlExecutionContext);
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
@@ -298,7 +298,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-01'";
 
                     try {
-                        ddl(alterCommand, sqlExecutionContext);
+                        execute(alterCommand, sqlExecutionContext);
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
@@ -331,7 +331,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     copyPartitionToAttachable(srcTableToken, "2020-01-01", dst.getName(), "COCONUTS");
 
                     try {
-                        ddl("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
+                        execute("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2020-01-02'", sqlExecutionContext);
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
@@ -576,7 +576,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     );
 
                     copyPartitionToAttachable(srcTableToken, "2022-08-02", dstTableToken.getDirName(), "2022-08-02");
-                    ddl("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2022-08-02'", sqlExecutionContext);
+                    execute("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2022-08-02'", sqlExecutionContext);
 
                     engine.clear();
                     assertQuery(
@@ -770,7 +770,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             "2022-08-01",
                             10);
 
-                    ddl("alter table " + dst.getName() + " drop partition list '2022-08-09'");
+                    execute("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                 }
@@ -836,7 +836,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             "2022-08-01",
                             10);
 
-                    ddl("alter table " + dst.getName() + " drop partition list '2022-08-09'");
+                    execute("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
                     attachFromSrcIntoDst(src, dst, "2022-08-09");
                 }
@@ -868,7 +868,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             "2022-08-01",
                             10);
 
-                    ddl("alter table " + dst.getName() + " drop partition list '2022-08-09'");
+                    execute("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
                     try {
                         attachFromSrcIntoDst(src, dst, "2022-08-09");
@@ -908,7 +908,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             "2022-08-01",
                             10);
 
-                    ddl("alter table " + dst.getName() + " drop partition list '2022-08-09'");
+                    execute("alter table " + dst.getName() + " drop partition list '2022-08-09'");
 
                     // remove .k
                     engine.clear();
@@ -949,7 +949,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     String alterCommand = "ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST '2022-08-09'";
 
                     try {
-                        ddl(alterCommand, sqlExecutionContext);
+                        execute(alterCommand, sqlExecutionContext);
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "could not attach partition");
@@ -1279,7 +1279,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
         int rowCount = readAllRows(dst.getName());
         engine.clear();
-        ddl("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST " + partitions + ";", sqlExecutionContext);
+        execute("ALTER TABLE " + dst.getName() + " ATTACH PARTITION LIST " + partitions + ";", sqlExecutionContext);
         int newRowCount = readAllRows(dst.getName());
         Assert.assertTrue(newRowCount > rowCount);
 

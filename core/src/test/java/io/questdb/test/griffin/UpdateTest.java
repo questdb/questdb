@@ -102,7 +102,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testInsertAfterUpdate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table up as" +
                             " (select timestamp_sequence(0, 1000000) ts," +
                             " cast(x as int) v," +
@@ -148,8 +148,8 @@ public class UpdateTest extends AbstractCairoTest {
                     "up"
             );
 
-            insert("INSERT INTO up VALUES('1970-01-01T00:00:05.000000Z', 10.0, 10.0, 10.0)");
-            insert("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
+            execute("INSERT INTO up VALUES('1970-01-01T00:00:05.000000Z', 10.0, 10.0, 10.0)");
+            execute("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
 
             assertSql(
                     "ts\tv\tx\tz\n" +
@@ -168,7 +168,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testNoRowsUpdated() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table up as" +
                             " (select timestamp_sequence(0, 1000000) ts," +
                             " cast(x as int) v," +
@@ -195,7 +195,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testNoRowsUpdated_TrivialNotEqualsFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table up as" +
                             " (select timestamp_sequence(0, 1000000) ts," +
                             " cast(x as int) v," +
@@ -222,7 +222,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testStringToIpv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table up as" +
                             " (select timestamp_sequence(0, 1000000) ts," +
                             " cast(case when x = 1 then null else rnd_ipv4() end as string) as str," +
@@ -250,7 +250,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testSymbolIndexCopyOnWrite() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)" +
@@ -305,7 +305,7 @@ public class UpdateTest extends AbstractCairoTest {
                     return super.removeQuiet(name);
                 }
             };
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 60*60*1000000L) ts," +
                     " x" +
                     " from long_sequence(5)" +
@@ -335,7 +335,7 @@ public class UpdateTest extends AbstractCairoTest {
     public void testSymbolIndexRebuiltOnColumnWithTopOverwrittenInO3() throws Exception {
         assertMemoryLeak(() -> {
             // Fill every second min from 00:00 to 02:30
-            ddl(
+            execute(
                     "create table symInd as" +
                             " (select " +
                             "timestamp_sequence(0, 2*60*1000000L) ts," +
@@ -345,10 +345,10 @@ public class UpdateTest extends AbstractCairoTest {
             );
 
             // Add indexed column in last partition
-            ddl("alter table symInd add column sym_index symbol index");
+            execute("alter table symInd add column sym_index symbol index");
 
             // More data in order
-            insert(
+            execute(
                     "insert into symInd " +
                             " select " +
                             " timestamp_sequence('1970-01-01T02:30', 60*1000000L) ts," +
@@ -358,7 +358,7 @@ public class UpdateTest extends AbstractCairoTest {
             );
 
             // O3 data in the first partition
-            insert(
+            execute(
                     "insert into symInd " +
                             " select " +
                             " timestamp_sequence(1, 2 * 60*1000000L) ts," +
@@ -426,7 +426,7 @@ public class UpdateTest extends AbstractCairoTest {
                     return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
                 }
             };
-            ddl(
+            execute(
                     "create table up as" +
                             " (select timestamp_sequence(0, 24*60*60*1000000L) ts," +
                             " cast(x as int) v," +
@@ -516,7 +516,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateAddedColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table testUpdateAddedColumn as" +
                             " (select timestamp_sequence(0, 6*60*60*1000000L) ts," +
                             " cast(x - 1 as int) x" +
@@ -525,7 +525,7 @@ public class UpdateTest extends AbstractCairoTest {
             );
 
             // Bump table version
-            ddl("alter table testUpdateAddedColumn add column y long", sqlExecutionContext);
+            execute("alter table testUpdateAddedColumn add column y long", sqlExecutionContext);
             update("UPDATE testUpdateAddedColumn SET y = x + 1 WHERE ts between '1970-01-01T12' and '1970-01-02T12'");
 
             assertSql(
@@ -543,8 +543,8 @@ public class UpdateTest extends AbstractCairoTest {
                     "testUpdateAddedColumn"
             );
 
-            ddl("alter table testUpdateAddedColumn drop column y");
-            ddl("alter table testUpdateAddedColumn add column y int");
+            execute("alter table testUpdateAddedColumn drop column y");
+            execute("alter table testUpdateAddedColumn add column y int");
             update("UPDATE testUpdateAddedColumn SET y = COALESCE(y, x + 2) WHERE x%2 = 0");
 
             assertSql(
@@ -562,7 +562,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "testUpdateAddedColumn"
             );
 
-            ddl("alter table testUpdateAddedColumn drop column x");
+            execute("alter table testUpdateAddedColumn drop column x");
             update("UPDATE testUpdateAddedColumn SET y = COALESCE(y, 1)");
 
             assertSql(
@@ -667,7 +667,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateBinaryColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_bin(10, 20, 2) as bin1," +
                     " x as lng2" +
@@ -700,7 +700,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateBinaryColumnWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_bin(10, 20, 0) as bin1," +
                     " x as lng2" +
@@ -708,8 +708,8 @@ public class UpdateTest extends AbstractCairoTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            ddl("alter table up add column bin2 binary");
-            ddl("insert into up select * from " +
+            execute("alter table up add column bin2 binary");
+            execute("insert into up select * from " +
                     " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_bin(10, 20, 0) as bin1," +
                     " x + 10 as lng2," +
@@ -746,7 +746,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateBoolean() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table up as" +
                             " (select timestamp_sequence(0, 1000000) ts," +
                             " cast(x as int) xint," +
@@ -782,7 +782,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateColumnNameCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
@@ -832,7 +832,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateDifferentColumnTypes() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) xint," +
                     " cast(x as long) xlong," +
@@ -993,7 +993,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateGeoHashColumnToLowerPrecision() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " rnd_geohash(5) g1c," +
                     " rnd_geohash(15) g3c," +
@@ -1025,7 +1025,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateGeoHashColumnToLowerPrecision2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " rnd_geohash(5) g1c," +
                     " rnd_geohash(15) g3c," +
@@ -1057,7 +1057,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateGeohashColumnWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x as lng2" +
@@ -1065,11 +1065,11 @@ public class UpdateTest extends AbstractCairoTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            ddl("alter table up add column geo1 geohash(1c)", sqlExecutionContext);
-            ddl("alter table up add column geo2 geohash(2c)", sqlExecutionContext);
-            ddl("alter table up add column geo4 geohash(5c)", sqlExecutionContext);
-            ddl("alter table up add column geo8 geohash(8c)", sqlExecutionContext);
-            ddl("insert into up select * from " +
+            execute("alter table up add column geo1 geohash(1c)", sqlExecutionContext);
+            execute("alter table up add column geo2 geohash(2c)", sqlExecutionContext);
+            execute("alter table up add column geo4 geohash(5c)", sqlExecutionContext);
+            execute("alter table up add column geo8 geohash(8c)", sqlExecutionContext);
+            execute("insert into up select * from " +
                     " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x + 10 as lng2," +
@@ -1106,7 +1106,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateGeohashToStringLiteral() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " rnd_geohash(15) as geo3," +
                     " rnd_geohash(25) as geo5 " +
@@ -1130,7 +1130,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateGeohashToVarcharConst() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " rnd_geohash(15) as geo3," +
                     " rnd_geohash(25) as geo5 " +
@@ -1154,7 +1154,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateIdentical() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
@@ -1177,13 +1177,13 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateMultiPartitionEmptyColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 25000000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(10))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            ddl("alter table up add column y long", sqlExecutionContext);
+            execute("alter table up add column y long", sqlExecutionContext);
             update("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
 
             assertSql(
@@ -1250,15 +1250,15 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateMultiPartitionsWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 25000000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(10))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // Bump table version
-            ddl("alter table up add column y long", sqlExecutionContext);
-            ddl("insert into up select * from " +
+            execute("alter table up add column y long", sqlExecutionContext);
+            execute("insert into up select * from " +
                     " (select timestamp_sequence(250000000000, 25000000000) ts," +
                     " cast(x as int) + 10 as x," +
                     " cast(x as long) * 10 as y" +
@@ -1330,7 +1330,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateNoFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
@@ -1356,7 +1356,7 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(1))" +
@@ -1372,8 +1372,8 @@ public class UpdateTest extends AbstractCairoTest {
                 Assert.assertEquals(CompiledQuery.UPDATE, cc.getType());
                 try (UpdateOperation updateOperation = cc.getUpdateOperation()) {
                     // Bump table version
-                    ddl("alter table up add column y long", sqlExecutionContext);
-                    ddl("alter table up drop column y", sqlExecutionContext);
+                    execute("alter table up add column y long", sqlExecutionContext);
+                    execute("alter table up drop column y", sqlExecutionContext);
 
                     applyUpdate(updateOperation);
                     Assert.fail();
@@ -1390,7 +1390,7 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5))" +
@@ -1413,15 +1413,15 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateOnAlteredTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(1))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // Bump table version
-            ddl("alter table up add column y long", sqlExecutionContext);
-            ddl("alter table up drop column y", sqlExecutionContext);
+            execute("alter table up add column y long", sqlExecutionContext);
+            execute("alter table up drop column y", sqlExecutionContext);
 
             update("UPDATE up SET x = 44");
 
@@ -1436,7 +1436,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateReadonlyFails() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
@@ -1451,7 +1451,7 @@ public class UpdateTest extends AbstractCairoTest {
             );
 
             try {
-                ddl("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
+                execute("UPDATE up SET x = x WHERE x > 1 and x < 4", roExecutionContext);
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "permission denied");
@@ -1463,23 +1463,23 @@ public class UpdateTest extends AbstractCairoTest {
     public void testUpdateRenamedSymbol() throws Exception {
         Assume.assumeTrue(walEnabled);
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table test (ts timestamp, x int, y string, sym symbol, symi symbol index) timestamp(ts) partition by DAY WAL"
             );
-            ddl("insert into test select timestamp_sequence('2022-02-24T01:01', 1000000L * 60 * 60), x, 'a', 'abc', 'i' from long_sequence(5)");
+            execute("insert into test select timestamp_sequence('2022-02-24T01:01', 1000000L * 60 * 60), x, 'a', 'abc', 'i' from long_sequence(5)");
 
-            ddl("alter table test add column abc int");
-            ddl("alter table test drop column x");
-            ddl("alter table test rename column y to xxx");
-            ddl("alter table test alter column sym add index");
-            ddl("alter table test dedup enable upsert keys(ts)");
-            ddl("alter table test dedup disable");
-            ddl("alter table test drop partition list '2022-02-23'");
-            ddl("alter table test detach partition list '2022-02-23'");
-            ddl("alter table test attach partition list '2022-02-23'");
-            ddl("alter table test alter column sym cache");
-            ddl("alter table test alter column symi drop index");
-            ddl("alter table test set type bypass wal");
+            execute("alter table test add column abc int");
+            execute("alter table test drop column x");
+            execute("alter table test rename column y to xxx");
+            execute("alter table test alter column sym add index");
+            execute("alter table test dedup enable upsert keys(ts)");
+            execute("alter table test dedup disable");
+            execute("alter table test drop partition list '2022-02-23'");
+            execute("alter table test detach partition list '2022-02-23'");
+            execute("alter table test attach partition list '2022-02-23'");
+            execute("alter table test alter column sym cache");
+            execute("alter table test alter column symi drop index");
+            execute("alter table test set type bypass wal");
             update("update test set sym = '2' where sym = '1'");
 
             drainWalQueue();
@@ -1500,15 +1500,15 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateSinglePartitionColumnTopAndAroundDense() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x - 1 as int) x" +
                     " from long_sequence(10))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // Bump table version
-            ddl("alter table up add column y long");
-            ddl("insert into up select * from " +
+            execute("alter table up add column y long");
+            execute("insert into up select * from " +
                     " (select timestamp_sequence(100000000, 1000000) ts," +
                     " cast(x - 1 as int) + 10 as x," +
                     " cast(x * 10 as long) as y" +
@@ -1541,15 +1541,15 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateSinglePartitionColumnTopAndAroundSparse() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x - 1 as int) x" +
                     " from long_sequence(10))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // Bump table version
-            ddl("alter table up add column y long", sqlExecutionContext);
-            ddl("insert into up select * from " +
+            execute("alter table up add column y long", sqlExecutionContext);
+            execute("insert into up select * from " +
                     " (select timestamp_sequence(100000000, 1000000) ts," +
                     " cast(x - 1 as int) + 10 as x," +
                     " cast(x * 10 as long) as y" +
@@ -1582,12 +1582,12 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateSinglePartitionEmptyColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 100000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(10))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
-            ddl("alter table up add column y long", sqlExecutionContext);
+            execute("alter table up add column y long", sqlExecutionContext);
 
             update("UPDATE up SET y = 42 where x = 2 or x = 4 or x = 6 or x = 8 or x = 13");
 
@@ -1611,15 +1611,15 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateSinglePartitionGapAroundColumnTop() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x - 1 as int) x" +
                     " from long_sequence(10))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
             // Bump table version
-            ddl("alter table up add column y long", sqlExecutionContext);
-            ddl("insert into up select * from " +
+            execute("alter table up add column y long", sqlExecutionContext);
+            execute("insert into up select * from " +
                     " (select timestamp_sequence(100000000, 1000000) ts," +
                     " cast(x - 1 as int) + 10 as x," +
                     " cast(x * 10 as long) as y" +
@@ -1652,7 +1652,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateString() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table up as" +
                             " (select" +
                             " rnd_str('foo','bar') as s," +
@@ -1703,7 +1703,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateStringColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x as lng2" +
@@ -1733,7 +1733,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateStringColumnPageSize() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x as lng2" +
@@ -1758,7 +1758,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateStringColumnUpdate1Value() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 6 * 30 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x as lng2" +
@@ -1766,9 +1766,9 @@ public class UpdateTest extends AbstractCairoTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            ddl("alter table up add column str2 string", sqlExecutionContext);
+            execute("alter table up add column str2 string", sqlExecutionContext);
 
-            ddl("insert into up select * from " +
+            execute("insert into up select * from " +
                     " (select timestamp_sequence('1970-01-01T00:30', 6 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x + 10 as lng2," +
@@ -1807,7 +1807,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateStringColumnWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x as lng2" +
@@ -1815,8 +1815,8 @@ public class UpdateTest extends AbstractCairoTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            ddl("alter table up add column str2 string", sqlExecutionContext);
-            ddl("insert into up select * from " +
+            execute("alter table up add column str2 string", sqlExecutionContext);
+            execute("insert into up select * from " +
                     " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x + 10 as lng2," +
@@ -1850,7 +1850,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateStringFixedColumnPageSize() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_str('15', null, '190232', 'rdgb', '', '1') as str1," +
                     " x as lng2" +
@@ -1880,13 +1880,13 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateStringToVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " timestamp_sequence(0, 1000000) ts1," +
                     " rnd_str(10,30,3) s" +
                     " from long_sequence(1000))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
-            ddl("alter table up add column v varchar");
+            execute("alter table up add column v varchar");
 
             update("UPDATE up SET v = s");
 
@@ -1905,7 +1905,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateSymbolToChar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table up as" +
                             " (select timestamp_sequence(0, 1000000) ts," +
                             " rnd_symbol('ab', 'bc') sym," +
@@ -1945,13 +1945,13 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateSymbolToVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " timestamp_sequence(0, 1000000) ts1," +
                     " rnd_symbol(10,10,10,3) s" +
                     " from long_sequence(1000))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
-            ddl("alter table up add column v varchar");
+            execute("alter table up add column v varchar");
 
             update("UPDATE up SET v = s");
 
@@ -1970,7 +1970,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateSymbolWithNotEqualsInWhere() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
@@ -1999,7 +1999,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateTableNameCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
@@ -2022,7 +2022,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateTableNameContainsSpace() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table \"віт ер\" as" +
+            execute("create table \"віт ер\" as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
@@ -2049,7 +2049,7 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))");
@@ -2071,7 +2071,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateTimestampFails() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
@@ -2088,7 +2088,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateTimestampToStringLiteral() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " timestamp_sequence(0, 1000000) ts1" +
                     " from long_sequence(5))" +
@@ -2111,7 +2111,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateTimestampToSymbolLiteral() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " timestamp_sequence(0, 1000000) ts1, " +
                     " cast(to_str(timestamp_sequence(1000000, 1000000), 'yyyy-MM-ddTHH:mm:ss.SSSz') as symbol) as sym" +
@@ -2135,7 +2135,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateTimestampToVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " timestamp_sequence(0, 1000000) ts1," +
                     " '1970-02-01'::varchar v" +
@@ -2159,7 +2159,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateToBindVar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(2))" +
@@ -2180,7 +2180,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateToNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(5))" +
@@ -2203,7 +2203,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateUnsupportedKeyword() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
@@ -2219,7 +2219,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "up"
             );
 
-            ddl("create table t2 as" +
+            execute("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol2)" +
@@ -2246,7 +2246,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table up as" +
                             " (select" +
                             " rnd_varchar('foo','bar') as v," +
@@ -2297,7 +2297,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateVarcharColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
                     " x as lng2" +
@@ -2327,7 +2327,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateVarcharColumnPageSize() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000L) ts," +
                     " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
                     " x as lng2" +
@@ -2352,7 +2352,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateVarcharColumnUpdate1Value() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 6 * 30 * 1000000L) ts," +
                     " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
                     " x as lng2" +
@@ -2360,9 +2360,9 @@ public class UpdateTest extends AbstractCairoTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            ddl("alter table up add column v2 varchar", sqlExecutionContext);
+            execute("alter table up add column v2 varchar", sqlExecutionContext);
 
-            ddl("insert into up select * from " +
+            execute("insert into up select * from " +
                     " (select timestamp_sequence('1970-01-01T00:30', 6 * 60 * 1000000L) ts," +
                     " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
                     " x + 10 as lng2," +
@@ -2401,7 +2401,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateVarcharColumnWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
                     " x as lng2" +
@@ -2409,8 +2409,8 @@ public class UpdateTest extends AbstractCairoTest {
                     " )" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
 
-            ddl("alter table up add column v2 varchar");
-            ddl("insert into up select * from " +
+            execute("alter table up add column v2 varchar");
+            execute("insert into up select * from " +
                     " (select timestamp_sequence(6*100000000000L, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
                     " x + 10 as lng2," +
@@ -2444,7 +2444,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateVarcharFixedColumnPageSize() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 6 * 60 * 60 * 1000000L) ts," +
                     " rnd_varchar('15', null, '190232', 'rdgb', '', '1') as v1," +
                     " x as lng2" +
@@ -2474,13 +2474,13 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateVarcharToString() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " timestamp_sequence(0, 1000000) ts1," +
                     " rnd_varchar(10,30,3) v" +
                     " from long_sequence(1000))" +
                     " timestamp(ts) partition by DAY" + (walEnabled ? " WAL" : ""));
-            ddl("alter table up add column s string");
+            execute("alter table up add column s string");
 
             update("UPDATE up SET s = v");
 
@@ -2529,7 +2529,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateWithBindVarInWhere() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x" +
                     " from long_sequence(2))" +
@@ -2550,7 +2550,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateWithFilterAndFunction() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x," +
                     " x as y" +
@@ -2574,7 +2574,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateWithFilterAndFunctionValueUpcast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(x as int) x," +
                     " x as y" +
@@ -2601,13 +2601,13 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            ddl("create table down as" +
+            execute("create table down as" +
                     " (select x * 100 as y," +
                     " timestamp_sequence(0, 1000000) ts" +
                     " from long_sequence(5))" +
@@ -2635,13 +2635,13 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            ddl("create table down as" +
+            execute("create table down as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " x * 100 as y" +
                     " from long_sequence(5))" +
@@ -2669,13 +2669,13 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            ddl("create table down as" +
+            execute("create table down as" +
                     " (select x * 100 as y," +
                     " timestamp_sequence(0, 1000000) ts" +
                     " from long_sequence(5))" +
@@ -2703,13 +2703,13 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            ddl("create table down as" +
+            execute("create table down as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " x * 100 as y" +
                     " from long_sequence(5))" +
@@ -2737,13 +2737,13 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " x * 100 as x" +
                     " from long_sequence(5))" +
                     " timestamp(ts) partition by DAY");
 
-            ddl("create table down as" +
+            execute("create table down as" +
                     " (select x * 50 as y," +
                     " timestamp_sequence(0, 1000000) ts" +
                     " from long_sequence(5))" +
@@ -2768,7 +2768,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateWithJoinUnsupported() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
@@ -2781,7 +2781,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "VTJ\t1970-01-01T00:00:03.000000Z\t4\n" +
                     "\t1970-01-01T00:00:04.000000Z\t5\n", "up");
 
-            ddl("create table t2 as" +
+            execute("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol2)" +
@@ -2808,7 +2808,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateWithLatestOnUnsupported() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
@@ -2835,7 +2835,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testUpdateWithSubSelectUnsupported() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
@@ -2851,7 +2851,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "up"
             );
 
-            ddl("create table t2 as" +
+            execute("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol2)" +
@@ -2881,7 +2881,7 @@ public class UpdateTest extends AbstractCairoTest {
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol)" +
@@ -2897,7 +2897,7 @@ public class UpdateTest extends AbstractCairoTest {
                     "up"
             );
 
-            ddl("create table t2 as" +
+            execute("create table t2 as" +
                     " (select rnd_symbol(3,3,3,3) as symCol2, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5)), index(symCol2)" +
@@ -2930,7 +2930,7 @@ public class UpdateTest extends AbstractCairoTest {
     @Test
     public void testVarcharToIpv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, 1000000) ts," +
                     " cast(case when x = 1 then null else rnd_ipv4() end as varchar) as v," +
                     " cast(null as ipv4) as ip " +
@@ -2961,20 +2961,20 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     private void createTablesToJoin(String createTableSql) throws SqlException {
-        ddl(createTableSql);
+        execute(createTableSql);
 
-        ddl("create table down1 (s symbol index, y int)" + (walEnabled ? " WAL" : ""));
-        insert("insert into down1 values ('a', 1)");
-        insert("insert into down1 values ('a', 2)");
-        insert("insert into down1 values ('b', 3)");
-        insert("insert into down1 values ('b', 4)");
-        insert("insert into down1 values (null, 5)");
-        insert("insert into down1 values (null, 6)");
+        execute("create table down1 (s symbol index, y int)" + (walEnabled ? " WAL" : ""));
+        execute("insert into down1 values ('a', 1)");
+        execute("insert into down1 values ('a', 2)");
+        execute("insert into down1 values ('b', 3)");
+        execute("insert into down1 values ('b', 4)");
+        execute("insert into down1 values (null, 5)");
+        execute("insert into down1 values (null, 6)");
 
-        ddl("create table  down2 (s symbol index, y long)" + (walEnabled ? " WAL" : ""));
-        insert("insert into down2 values ('a', 100)");
-        insert("insert into down2 values ('b', 300)");
-        insert("insert into down2 values (null, 500)");
+        execute("create table  down2 (s symbol index, y long)" + (walEnabled ? " WAL" : ""));
+        execute("insert into down2 values ('a', 100)");
+        execute("insert into down2 values ('b', 300)");
+        execute("insert into down2 values (null, 500)");
 
         // Check what will be in JOIN between down1 and down2
         assertSql(
@@ -3003,7 +3003,7 @@ public class UpdateTest extends AbstractCairoTest {
                     return TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
                 }
             };
-            ddl(
+            execute(
                     "create table up as" +
                             " (select timestamp_sequence(0, 24*60*60*1000000L) ts," +
                             " cast(x as int) v," +
@@ -3033,8 +3033,8 @@ public class UpdateTest extends AbstractCairoTest {
                     "up"
             );
 
-            insert("INSERT INTO up VALUES('1970-01-01T00:00:05.000000Z', 10.0, 10.0, 10.0)");
-            insert("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
+            execute("INSERT INTO up VALUES('1970-01-01T00:00:05.000000Z', 10.0, 10.0, 10.0)");
+            execute("INSERT INTO up VALUES('1970-01-01T00:00:06.000000Z', 100.0, 100.0, 100.0)");
 
             assertSql(
                     "ts\tv\tx\tz\n" +
@@ -3052,7 +3052,7 @@ public class UpdateTest extends AbstractCairoTest {
 
     private void testSymbol_UpdateWithExistingValue(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
@@ -3091,7 +3091,7 @@ public class UpdateTest extends AbstractCairoTest {
 
     private void testSymbolsReplacedDistinct(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
@@ -3131,7 +3131,7 @@ public class UpdateTest extends AbstractCairoTest {
 
     private void testSymbols_UpdateNull(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
@@ -3163,7 +3163,7 @@ public class UpdateTest extends AbstractCairoTest {
 
     private void testSymbols_UpdateWithNewValue(boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select rnd_symbol(3,3,3,3) as symCol, timestamp_sequence(0, 1000000) ts," +
                     " x" +
                     " from long_sequence(5))" + (indexed ? ", index(symCol)" : "") + " timestamp(ts)" +
@@ -3201,7 +3201,7 @@ public class UpdateTest extends AbstractCairoTest {
 
     private void testUpdateAsyncMode(Consumer<TableWriter> writerConsumer, String errorMsg, String expectedData) throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table up as" +
                             " (select timestamp_sequence(0, 1000000) ts," +
                             " x" +

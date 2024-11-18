@@ -157,7 +157,7 @@ public class ServerMainVectorGroupByTest extends AbstractBootstrapTest {
         sink.put(" s SYMBOL,");
         sink.put(" ts TIMESTAMP");
         sink.put(") TIMESTAMP(ts) PARTITION BY DAY");
-        engine.ddl(sink, context);
+        engine.execute(sink, context);
         TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
                 .col("l", ColumnType.LONG)
                 .col("s", ColumnType.SYMBOL)

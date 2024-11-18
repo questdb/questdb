@@ -255,7 +255,9 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
     }
 
     static void dropTable(SqlExecutionContext context, TableToken tableToken) throws Exception {
-        context.getCairoEngine().drop("DROP TABLE '" + tableToken.getTableName() + '\'', context);
+        CairoEngine cairoEngine = context.getCairoEngine();
+        CharSequence dropSql = "DROP TABLE '" + tableToken.getTableName() + '\'';
+        cairoEngine.execute(dropSql, context);
     }
 
     static String[] extendArgsWith(String[] args, String... moreArgs) {

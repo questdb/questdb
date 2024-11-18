@@ -143,7 +143,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                             sink
                     );
 
-                    ddl("create table xyz (a int)", sqlExecutionContext);
+                    execute("create table xyz (a int)", sqlExecutionContext);
                     engine.clear();
 
                     cursor.toTop();
@@ -157,12 +157,12 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                         Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
-                    ddl("create table abc (b double)");
+                    execute("create table abc (b double)");
 
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());
 
-                    drop("drop table abc;");
+                    execute("drop table abc;");
 
                     cursor.toTop();
                     Assert.assertTrue(cursor.hasNext());
@@ -299,7 +299,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                             sink
                     );
 
-                    ddl("create table xyz (a int)");
+                    execute("create table xyz (a int)");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
@@ -318,7 +318,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                         Assert.assertEquals(0, TestFilesFacadeImpl.INSTANCE.mkdirs(path, 0));
                     }
 
-                    ddl("create table автомобилей (b double)");
+                    execute("create table автомобилей (b double)");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);
@@ -333,7 +333,7 @@ public class PrefixedPgClassFunctionFactoryTest extends AbstractCairoTest {
                             sink
                     );
 
-                    drop("drop table автомобилей;");
+                    execute("drop table автомобилей;");
 
                     cursor.close();
                     cursor = factory.getCursor(sqlExecutionContext);

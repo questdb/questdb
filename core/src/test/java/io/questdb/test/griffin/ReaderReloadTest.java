@@ -70,7 +70,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
 
         assertMemoryLeak(ff, () -> {
 
-            ddl("create table x as (select x, x as y, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(100)) timestamp(ts) partition by DAY");
+            execute("create table x as (select x, x as y, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(100)) timestamp(ts) partition by DAY");
 
             TableToken xTableToken = engine.verifyTableName("x");
             TableReader reader1 = engine.getReader(xTableToken);
@@ -79,8 +79,8 @@ public class ReaderReloadTest extends AbstractCairoTest {
             assertSql("column\n" +
                     "1\n", "select sum(x) / sum(x) from x");
 
-            ddl("alter table x add column new_col int");
-            insert("insert into x select x, x, timestamp_sequence('2022-02-25T14', 1000000000) ts, x % 2 from long_sequence(100)");
+            execute("alter table x add column new_col int");
+            execute("insert into x select x, x, timestamp_sequence('2022-02-25T14', 1000000000) ts, x % 2 from long_sequence(100)");
             failToOpen.set(true);
 
             try (TableReader reader2 = engine.getReader(xTableToken)) {
@@ -110,7 +110,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
         };
 
         assertMemoryLeak(ff, () -> {
-            ddl("create table x as (select x, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(1)) timestamp(ts) partition by HOUR" + " WAL");
+            execute("create table x as (select x, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(1)) timestamp(ts) partition by HOUR" + " WAL");
 
             TableToken xTableToken = engine.verifyTableName("x");
             drainWalQueue();
@@ -130,7 +130,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
 
                 for (int i = 1; i < 50; i++) {
                     // Add PARTITION
-                    insert("insert into x(x, ts) values (1, " + (IntervalUtils.parseFloorPartialTimestamp("2024-02-24") + i * HOUR_MICROS) + "L)");
+                    execute("insert into x(x, ts) values (1, " + (IntervalUtils.parseFloorPartialTimestamp("2024-02-24") + i * HOUR_MICROS) + "L)");
                     drainWalQueue();
 
                     reader.goActive();

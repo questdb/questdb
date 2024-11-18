@@ -154,7 +154,7 @@ public class OrderByNothingRowSkippingTest extends AbstractCairoTest {
     private void runInserts(String... statements) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : statements) {
-                insert(query);
+                execute(query);
             }
         });
     }
@@ -162,7 +162,7 @@ public class OrderByNothingRowSkippingTest extends AbstractCairoTest {
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {
-                ddl(query);
+                execute(query);
             }
         });
     }

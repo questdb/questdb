@@ -116,7 +116,7 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
                     RecoverVarIndex::rebuildAll);
 
             engine.releaseAllWriters();
-            insert("insert into xxx values(500100000000L, 50001, 'D', 'I2')");
+            execute("insert into xxx values(500100000000L, 50001, 'D', 'I2')");
             int sym1D = countByFullScanWhereValueD();
             Assert.assertEquals(1, sym1D);
         });
@@ -339,9 +339,9 @@ public class RecoverVarIndexTest extends AbstractCairoTest {
     private void checkRecoverVarIndex(String createTableSql, Action<String> changeTable, Action<RecoverVarIndex> rebuildIndexAction) throws Exception {
         assertMemoryLeak(ff, () -> {
             for (String sql : createTableSql.split(";")) {
-                ddl(sql);
+                execute(sql);
             }
-            ddl("create table copytbl as (select * from xxx)", sqlExecutionContext);
+            execute("create table copytbl as (select * from xxx)", sqlExecutionContext);
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();

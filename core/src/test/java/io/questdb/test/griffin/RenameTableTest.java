@@ -34,7 +34,7 @@ public class RenameTableTest extends AbstractCairoTest {
 
     @Test
     public void testApplyRename() throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i, " +
@@ -73,7 +73,7 @@ public class RenameTableTest extends AbstractCairoTest {
         String newTableName = testName.getMethodName() + "_new";
 
         assertMemoryLeak(ff, () -> {
-            ddl("create table " + tableName + " as (" +
+            execute("create table " + tableName + " as (" +
                     "select x, " +
                     " rnd_symbol('DE', null, 'EF', 'FG') sym2, " +
                     " timestamp_sequence('2022-02-24', 24 * 60 * 60 * 1000000L) ts " +
@@ -82,9 +82,9 @@ public class RenameTableTest extends AbstractCairoTest {
             );
 
             TableToken table2directoryName = engine.verifyTableName(tableName);
-            ddl("rename table " + tableName + " to " + upperCaseName);
-            insert("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
-            insert("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
+            execute("rename table " + tableName + " to " + upperCaseName);
+            execute("insert into " + upperCaseName + " values (1, 'abc', '2022-02-25')");
+            execute("insert into " + tableName + " values (1, 'abc', '2022-02-25')");
 
             TableToken newTableDirectoryName = engine.verifyTableName(upperCaseName);
             Assert.assertEquals(table2directoryName.getDirName(), newTableDirectoryName.getDirName());
@@ -96,7 +96,7 @@ public class RenameTableTest extends AbstractCairoTest {
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n" +
                     "1\tabc\t2022-02-25T00:00:00.000000Z\n", "select * from " + upperCaseName);
 
-            ddl("rename table " + upperCaseName + " to " + newTableName);
+            execute("rename table " + upperCaseName + " to " + newTableName);
 
             assertSql("x\tsym2\tts\n" +
                     "1\tDE\t2022-02-24T00:00:00.000000Z\n" +
@@ -111,7 +111,7 @@ public class RenameTableTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     createX();
-                    ddl("rename table 'x' to 'y'");
+                    execute("rename table 'x' to 'y'");
                     assertQuery("i\tsym\tamt\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
                                     "1\tmsft\t50.938\t2018-01-01T00:12:00.000000Z\tfalse\tXYZ\t0.4621835429127854\t0.5599\t31\t2015-06-22T18:58:53.562Z\tPEHN\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ\n" +
                                     "2\tgoogl\t42.281\t2018-01-01T00:24:00.000000Z\tfalse\tABC\t0.4138164748227684\t0.5522\t493\t2015-04-09T11:42:28.332Z\tHYRX\t-8811278461560712840\t1970-01-01T00:16:40.000000Z\t29\t00000000 53 d0 fb 64 bb 1a d4 f0 2d 40 e2 4b b1 3e e3 f1\t\n" +
@@ -136,7 +136,7 @@ public class RenameTableTest extends AbstractCairoTest {
     }
 
     private void createX() throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +

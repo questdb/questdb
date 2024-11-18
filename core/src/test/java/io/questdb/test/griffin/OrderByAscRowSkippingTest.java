@@ -925,7 +925,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
 
     private void runQueries(String... queries) throws Exception {
         for (String query : queries) {
-            ddl(query);
+            execute(query);
         }
     }
 }

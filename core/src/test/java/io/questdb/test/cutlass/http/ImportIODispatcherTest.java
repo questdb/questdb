@@ -520,7 +520,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
-                    engine.ddl("create table trips as (" +
+                    engine.execute("create table trips as (" +
                             "select cast('b' as SYMBOL) Col1, " +
                             "timestamp_sequence(0, 100000L) Pickup_DateTime," +
                             "timestamp_sequence(100000000L, 10000L)" +
@@ -815,7 +815,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine, sqlExecutionContext) -> {
 
-                    engine.ddl(
+                    engine.execute(
                             "create table trips (" +
                                     "Col1 STRING," +
                                     "Pickup_DateTime TIMESTAMP," +
@@ -847,7 +847,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                             "count\n24\n"
                     );
 
-                    engine.ddl("alter table trips dedup upsert keys(Pickup_DateTime)", sqlExecutionContext);
+                    engine.execute("alter table trips dedup upsert keys(Pickup_DateTime)", sqlExecutionContext);
 
                     // resend the same request
                     new SendAndReceiveRequestBuilder().execute(request, response);
@@ -991,7 +991,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withFilesFacade(ff)
                 .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
-                    engine.ddl("create table xyz as (select x, timestamp_sequence(0, " + Timestamps.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", this.sqlExecutionContext);
+                    engine.execute("create table xyz as (select x, timestamp_sequence(0, " + Timestamps.DAY_MICROS + ") ts from long_sequence(1)) timestamp(ts) Partition by DAY ", this.sqlExecutionContext);
 
                     // Cache query plan
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
@@ -1003,7 +1003,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     );
 
                     // Add new commit
-                    engine.insert("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", this.sqlExecutionContext);
+                    engine.execute("insert into xyz select x, timestamp_sequence(" + Timestamps.DAY_MICROS + ", 1) ts from long_sequence(10) ", this.sqlExecutionContext);
 
                     // Here fail expected
                     new SendAndReceiveRequestBuilder().withCompareLength(20).executeWithStandardHeaders(
@@ -1063,7 +1063,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
-                    engine.ddl("create table trips(" +
+                    engine.execute("create table trips(" +
                             "timestamp TIMESTAMP," +
                             "str STRING," +
                             "i STRING" +
@@ -1089,9 +1089,11 @@ public class ImportIODispatcherTest extends AbstractTest {
                                             "\r\n"
                             );
 
-                    engine.insert("insert into trips values (" +
-                            "'2021-07-20T00:01:00', 'ABC', 'DEF'" +
-                            ")", this.sqlExecutionContext);
+                    engine.execute(
+                            "insert into trips values (" +
+                                        "'2021-07-20T00:01:00', 'ABC', 'DEF'" +
+                                        ")", this.sqlExecutionContext
+                    );
                 });
     }
 

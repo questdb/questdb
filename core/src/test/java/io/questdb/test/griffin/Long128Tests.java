@@ -32,7 +32,7 @@ public class Long128Tests extends AbstractCairoTest {
     @Test
     public void testFatJoinOnLong128Column() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table tab1 as " +
                             "(select" +
                             " to_long128(3 * x, 6 * x) ts, " +
@@ -42,7 +42,7 @@ public class Long128Tests extends AbstractCairoTest {
                             ")"
             );
 
-            ddl("create table tab2 as " +
+            execute("create table tab2 as " +
                     "(select" +
                     " to_long128(x, 2 * x) ts, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts1," +
@@ -128,7 +128,7 @@ public class Long128Tests extends AbstractCairoTest {
 
     @Test
     public void testJoinOnLong128Column() throws Exception {
-        ddl(
+        execute(
                 "create table tab1 as " +
                         "(select" +
                         " to_long128(3 * x, 6 * x) ts, " +
@@ -163,7 +163,7 @@ public class Long128Tests extends AbstractCairoTest {
 
     @Test
     public void testJoinWithLong128ColumnOnPrimaryAndSecondary() throws Exception {
-        ddl(
+        execute(
                 "create table tab1 as " +
                         "(select" +
                         " to_long128(x, x) ts, " +
@@ -202,10 +202,10 @@ public class Long128Tests extends AbstractCairoTest {
 
     @Test
     public void testLatestOn() throws Exception {
-        ddl("create table x (ts timestamp, l long128, i int) timestamp(ts) partition by DAY");
-        insert("insert into x values ('2020-01-01T00:00:00.000000Z', to_long128(0, 0), 0)");
-        insert("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(1, 1), 2)");
-        insert("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(2, 2), 0)");
+        execute("create table x (ts timestamp, l long128, i int) timestamp(ts) partition by DAY");
+        execute("insert into x values ('2020-01-01T00:00:00.000000Z', to_long128(0, 0), 0)");
+        execute("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(1, 1), 2)");
+        execute("insert into x values ('2020-01-02T00:01:00.000000Z', to_long128(2, 2), 0)");
 
         assertSql(
                 "ts\tl\ti\n" +
@@ -343,7 +343,7 @@ public class Long128Tests extends AbstractCairoTest {
     @Test
     public void testUpdateLong128ColumnToNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table testUpdateLong128ColumnToNull as " +
+            execute("create table testUpdateLong128ColumnToNull as " +
                     "(select" +
                     " to_long128(-x, x / 2) uuid, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts1," +
@@ -351,7 +351,7 @@ public class Long128Tests extends AbstractCairoTest {
                     " from long_sequence(10)" +
                     ")");
 
-            ddl("update testUpdateLong128ColumnToNull set uuid = null where i < 5");
+            execute("update testUpdateLong128ColumnToNull set uuid = null where i < 5");
             assertSql(
                     "uuid\tts1\ti\n" +
                             "\t2022-02-24T00:00:00.000000Z\t1\n" +

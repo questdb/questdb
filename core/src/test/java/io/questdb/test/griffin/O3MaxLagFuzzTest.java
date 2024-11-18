@@ -26,7 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -111,10 +110,10 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 " rnd_varchar(1, 1, 1) v2," +
                 " from long_sequence(" + nTotalRows + ")" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
-        engine.ddl("create table y as (select * from x order by t)", sqlExecutionContext);
-        engine.ddl("create table z as (select * from x order by t)", sqlExecutionContext);
+        engine.execute("create table y as (select * from x order by t)", sqlExecutionContext);
+        engine.execute("create table z as (select * from x order by t)", sqlExecutionContext);
 
         TestUtils.assertEquals(compiler, sqlExecutionContext, "y order by ts", "x");
 
@@ -181,11 +180,11 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 " timestamp_sequence(0L," + microsBetweenRows + "L) ts," +
                 " from long_sequence(" + nTotalRows + ")" +
                 ") timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
         // table "z" is out of order - reshuffled "x"
-        engine.ddl("create table z as (select * from x order by f)", sqlExecutionContext);
+        engine.execute("create table z as (select * from x order by f)", sqlExecutionContext);
         // table "y" is our target table, where we exercise O3 and rollbacks
-        engine.ddl("create table y as (select * from x where 1 <> 1) timestamp(ts) partition by day", sqlExecutionContext);
+        engine.execute("create table y as (select * from x where 1 <> 1) timestamp(ts) partition by day", sqlExecutionContext);
         try (TableWriter w = TestUtils.getWriter(engine, "y")) {
             insertUncommitted(compiler, sqlExecutionContext, "z limit " + (int) (nTotalRows * fraction), w);
             w.ic();
@@ -258,11 +257,11 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 " rnd_varchar(1, 1, 1) v2," +
                 " from long_sequence(" + nTotalRows + ")" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
         // table "z" is out of order - reshuffled "x"
-        engine.ddl("create table z as (select * from x order by f)", sqlExecutionContext);
+        engine.execute("create table z as (select * from x order by f)", sqlExecutionContext);
         // table "z" is our target table, where we exercise O3 and rollbacks
-        engine.ddl("create table y as (select * from x where 1 <> 1) timestamp(ts) partition by day", sqlExecutionContext);
+        engine.execute("create table y as (select * from x where 1 <> 1) timestamp(ts) partition by day", sqlExecutionContext);
 
         try (TableWriter w = TestUtils.getWriter(engine, "y")) {
 

@@ -163,12 +163,12 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             createTable("C", true);
             createTable("D", true);
 
-            insert("insert into B values (1, 'A', '2022-12-05T01', 'B')");
-            ddl("update B set x = 101");
-            insert("insert into B values (2, 'C', '2022-12-05T02', 'D')");
-            insert("insert into C values (1, 'A', '2022-12-05T01', 'B')");
-            insert("insert into C values (2, 'C', '2022-12-05T02', 'D')");
-            insert("insert into D values (1, 'A', '2022-12-05T01', 'B')");
+            execute("insert into B values (1, 'A', '2022-12-05T01', 'B')");
+            execute("update B set x = 101");
+            execute("insert into B values (2, 'C', '2022-12-05T02', 'D')");
+            execute("insert into C values (1, 'A', '2022-12-05T01', 'B')");
+            execute("insert into C values (2, 'C', '2022-12-05T02', 'D')");
+            execute("insert into D values (1, 'A', '2022-12-05T01', 'B')");
 
             drainWalQueue();
 
@@ -215,7 +215,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void createTable(final String tableName, boolean isWal) throws SqlException {
-        ddl("create table " + tableName + " (" +
+        execute("create table " + tableName + " (" +
                 "x long," +
                 "sym symbol," +
                 "ts timestamp," +
@@ -224,7 +224,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
     }
 
     private void dropTable(final String tableName) throws SqlException {
-        ddl("drop table " + tableName);
+        execute("drop table " + tableName);
     }
 
     private void testWalTablesSuspendedWithError(String suspendSql, ErrorTag expectedErrorTag, String expectedErrorMessage) throws Exception {
@@ -232,10 +232,10 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             createTable("A", false);
             createTable("B", true);
 
-            insert("insert into A values (1, 'A', '2022-12-05T01', 'A')");
-            insert("insert into B values (2, 'A', '2022-12-05T01', 'B')");
-            ddl(suspendSql);
-            insert("insert into B values (3, 'C', '2022-12-05T02', 'D')");
+            execute("insert into A values (1, 'A', '2022-12-05T01', 'A')");
+            execute("insert into B values (2, 'A', '2022-12-05T01', 'B')");
+            execute(suspendSql);
+            execute("insert into B values (3, 'C', '2022-12-05T02', 'D')");
 
             drainWalQueue();
 
@@ -244,7 +244,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             assertSql("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                     "B\ttrue\t2\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n", "wal_tables()");
 
-            ddl("alter table B resume wal");
+            execute("alter table B resume wal");
 
             drainWalQueue();
 

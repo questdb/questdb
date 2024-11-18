@@ -300,14 +300,14 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByNonPrefixedColumnNotOnSelectList1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE tab ( \n" +
+            execute("CREATE TABLE tab ( \n" +
                     "            ts TIMESTAMP,\n" +
                     "            address SYMBOL,\n" +
                     "            workspace SYMBOL,\n" +
                     "            method_id SYMBOL\n" +
                     "    ) timestamp(ts)");
 
-            insert("insert into tab " +
+            execute("insert into tab " +
                     "select dateadd('m', x::int, 0), " +
                     " 'A' || (10-x), " +
                     " case when x < 6 then 'a' else 'b' end, " +
@@ -341,14 +341,14 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByNonPrefixedColumnNotOnSelectList2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE tab (\n" +
+            execute("CREATE TABLE tab (\n" +
                     "            ts TIMESTAMP,\n" +
                     "            address SYMBOL,\n" +
                     "            workspace SYMBOL,\n" +
                     "            method_id SYMBOL\n" +
                     "    ) timestamp(ts)");
 
-            insert("insert into tab " +
+            execute("insert into tab " +
                     "select dateadd('m', x::int, 0), " +
                     " 'A' || x, " +
                     " case when x < 6 then 'a' else 'b' end, " +
@@ -381,14 +381,14 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     @Test//test with join
     public void testOrderByNonPrefixedColumnNotOnSelectList4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE tab (\n" +
+            execute("CREATE TABLE tab (\n" +
                     "            ts TIMESTAMP,\n" +
                     "            address SYMBOL,\n" +
                     "            workspace SYMBOL,\n" +
                     "            method_id SYMBOL\n" +
                     "    ) timestamp(ts)");
 
-            insert("insert into tab " +
+            execute("insert into tab " +
                     "select dateadd('m', x::int, 1), " +
                     " 'A' || x, " +
                     " case when x < 6 then 'a' else 'b' end, " +
@@ -443,14 +443,14 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByPrefixedColumnNotOnSelectList1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE trips (\n" +
+            execute("CREATE TABLE trips (\n" +
                     "  vendor_id SYMBOL,\n" +
                     "  pickup_datetime TIMESTAMP,\n" +
                     "  tax DOUBLE,\n" +
                     "  mta_tax DOUBLE\n" +
                     ") timestamp (pickup_datetime) PARTITION BY MONTH;");
 
-            insert("insert into trips " +
+            execute("insert into trips " +
                     "select 'A' || x, dateadd('s', x::int, '2019-06-30T00:00:00.000000Z'), x::timestamp, x, x%2 from long_sequence(10)");
 
             String query = "select a.vendor_id from " +
@@ -479,21 +479,21 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByPrefixedColumnNotOnSelectList2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE t1 (\n" +
+            execute("CREATE TABLE t1 (\n" +
                     "  vendor_id SYMBOL,\n" +
                     "  pickup_datetime TIMESTAMP,\n" +
                     "  tax DOUBLE,\n" +
                     "  mta_tax DOUBLE\n" +
                     ") timestamp (pickup_datetime) PARTITION BY MONTH");
-            ddl("CREATE TABLE t2 (\n" +
+            execute("CREATE TABLE t2 (\n" +
                     "  vendor_id SYMBOL,\n" +
                     "  mta_tax DOUBLE\n" +
                     ")");
 
-            insert("insert into t1 " +
+            execute("insert into t1 " +
                     "select 'A' || x, dateadd('s', x::int, '2019-06-30T00:00:00.000000Z'), x::timestamp, x, 0 from long_sequence(10)");
 
-            insert("insert into t2 " +
+            execute("insert into t2 " +
                     "select 'A' || x, -x from long_sequence(10)");
 
             String query = "select a.vendor_id " +
@@ -535,12 +535,12 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByTimestampAndOtherField() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE tab (" +
+            execute("CREATE TABLE tab (" +
                     "  ts TIMESTAMP," +
                     "  key STRING," +
                     "  value int " +
                     ") timestamp (ts) PARTITION BY DAY");
-            insert("insert into tab values (0, 'c', 1), (0, 'b', 2), (0, 'a', 3), (1, 'd', 4), (2, 'e', 5)");
+            execute("insert into tab values (0, 'c', 1), (0, 'b', 2), (0, 'a', 3), (1, 'd', 4), (2, 'e', 5)");
 
             assertPlanNoLeakCheck("SELECT key " +
                             "FROM tab " +
@@ -862,7 +862,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {
-                ddl(query);
+                execute(query);
             }
         });
     }
@@ -921,7 +921,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         .replace("#TYPE#", type)
         );
         //add new column and create more partitions to trigger jit col tops case
-        assertMemoryLeak(() -> ddl("alter table test add column y double;"));
+        assertMemoryLeak(() -> execute("alter table test add column y double;"));
         runQueries(("insert into test select #FUNC#, timestamp_sequence('2022-01-01'::timestamp + 100*100000000000, 100000000000), rnd_double() " +
                 "from long_sequence(100) ")
                 .replace("#FUNC#", function)

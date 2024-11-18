@@ -51,11 +51,11 @@ public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
             AtomicReference<Throwable> ref = new AtomicReference<>();
             CyclicBarrier barrier = new CyclicBarrier(threadCount);
 
-            ddl("create table t1 as (select x, rnd_symbol('a', 'b', 'c', null, 'd') s," +
+            execute("create table t1 as (select x, rnd_symbol('a', 'b', 'c', null, 'd') s," +
                     "timestamp_sequence('2022-02-24T04', 100000000) ts " +
                     "from long_sequence(5)) timestamp(ts) partition by DAY WAL");
 
-            ddl("create table t2 as (select x, rnd_symbol('a', 'b', 'c', null, 'd') s," +
+            execute("create table t2 as (select x, rnd_symbol('a', 'b', 'c', null, 'd') s," +
                     "timestamp_sequence('2022-02-24T04', 100000000) ts " +
                     "from long_sequence(5)) timestamp(ts) partition by DAY WAL");
 

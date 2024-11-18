@@ -402,7 +402,7 @@ public class O3MetricsTest extends AbstractO3Test {
                         ") timestamp(ts) partition by DAY",
                 MICROS_IN_HOUR,
                 rowCount);
-        engine.ddl(createTableSql, sqlExecutionContext);
+        engine.execute(createTableSql, sqlExecutionContext);
 
         Metrics metrics = engine.getMetrics();
         Assert.assertEquals(rowCount, metrics.tableWriter().getCommittedRows());

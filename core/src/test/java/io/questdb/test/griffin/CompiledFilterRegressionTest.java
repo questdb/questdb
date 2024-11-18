@@ -608,7 +608,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     private void assertGeneratedQuery(CharSequence ddl, FilterGenerator gen, boolean notNull) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                ddl(ddl);
+                execute(ddl);
             }
 
             long maxSize = 0;
@@ -661,7 +661,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     private void assertQuery(CharSequence query, CharSequence ddl, boolean notNull) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                ddl(ddl);
+                execute(ddl);
             }
 
             long size = runQuery(query);

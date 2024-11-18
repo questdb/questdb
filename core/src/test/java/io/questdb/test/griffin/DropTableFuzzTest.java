@@ -44,13 +44,13 @@ public class DropTableFuzzTest extends AbstractCairoTest {
     @Test
     public void testDropTable() throws Exception {
         assertMemoryLeak(() -> {
-            String dropDdl = "DROP TABLE " + rndCase("tango");
-            ddl("CREATE TABLE tango (ts TIMESTAMP)");
+            String dropDdl = "DROP TABLE " + rndCase();
+            execute("CREATE TABLE tango (ts TIMESTAMP)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 CompiledQuery dropQuery = compiler.compile(dropDdl, sqlExecutionContext);
                 boolean tableRenamed = rnd.nextBoolean();
                 if (tableRenamed) {
-                    ddl("RENAME TABLE tango TO samba");
+                    execute("RENAME TABLE tango TO samba");
                 }
                 try (Operation op = dropQuery.getOperation()) {
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
@@ -65,7 +65,7 @@ public class DropTableFuzzTest extends AbstractCairoTest {
                     } catch (SqlException e) {
                         assertEquals("[11] table does not exist [table=tango]", e.getMessage());
                     }
-                    ddl("CREATE TABLE tango (ts TIMESTAMP)");
+                    execute("CREATE TABLE tango (ts TIMESTAMP)");
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     }
@@ -74,7 +74,8 @@ public class DropTableFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private String rndCase(String word) {
+    private String rndCase() {
+        final String word = "tango";
         StringBuilder result = new StringBuilder(word.length());
         for (int i = 0; i < word.length(); i++) {
             char c = word.charAt(i);

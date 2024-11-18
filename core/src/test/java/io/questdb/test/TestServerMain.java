@@ -72,7 +72,7 @@ public class TestServerMain extends ServerMain {
     public void ddl(String sql) {
         try {
             ensureContext();
-            getEngine().ddl(sql, sqlExecutionContext);
+            getEngine().execute(sql, sqlExecutionContext);
         } catch (SqlException e) {
             throw new AssertionError(e);
         }

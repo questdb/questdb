@@ -113,7 +113,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 final WalEventCursor eventCursor = reader.getEventCursor();
                 assertTrue(eventCursor.hasNext());
                 assertEquals(0, eventCursor.getTxn());
-                Assert.assertEquals(WalTxnType.DATA, eventCursor.getType());
+                assertEquals(WalTxnType.DATA, eventCursor.getType());
 
                 final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                 assertEquals(0, dataInfo.getStartRowID());
@@ -657,9 +657,9 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testAlterAddChangeLag() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
-            ddl("alter table " + tableToken.getTableName() + " SET PARAM o3MaxLag = 20s");
-            ddl("alter table " + tableToken.getTableName() + " add i2 int");
-            insert("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
+            execute("alter table " + tableToken.getTableName() + " SET PARAM o3MaxLag = 20s");
+            execute("alter table " + tableToken.getTableName() + " add i2 int");
+            execute("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
@@ -672,9 +672,9 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testAlterAddChangeMaxUncommitted() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
-            ddl("alter table " + tableToken.getTableName() + " set PARAM maxUncommittedRows = 20000");
-            ddl("alter table " + tableToken.getTableName() + " add i2 int");
-            insert("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
+            execute("alter table " + tableToken.getTableName() + " set PARAM maxUncommittedRows = 20000");
+            execute("alter table " + tableToken.getTableName() + " add i2 int");
+            execute("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
@@ -687,14 +687,14 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testAlterAddDropIndex() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
-            ddl("alter table " + tableToken.getTableName() + " add sym2 symbol");
-            ddl("alter table " + tableToken.getTableName() + " alter column sym2 add index");
-            ddl("alter table " + tableToken.getTableName() + " alter column sym2 drop index");
-            ddl("alter table " + tableToken.getTableName() + " add i2 int");
+            execute("alter table " + tableToken.getTableName() + " add sym2 symbol");
+            execute("alter table " + tableToken.getTableName() + " alter column sym2 add index");
+            execute("alter table " + tableToken.getTableName() + " alter column sym2 drop index");
+            execute("alter table " + tableToken.getTableName() + " add i2 int");
 
             drainWalQueue();
 
-            insert("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
+            execute("insert into " + tableToken.getTableName() + "(ts, i2) values ('2022-02-24', 2)");
 
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
@@ -1089,7 +1089,7 @@ public class WalWriterTest extends AbstractCairoTest {
             final int numOfRows = 4000;
             final int maxRowCount = 500;
             node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, maxRowCount);
-            Assert.assertEquals(configuration.getWalSegmentRolloverRowCount(), maxRowCount);
+            assertEquals(maxRowCount, configuration.getWalSegmentRolloverRowCount());
             final int numOfSegments = numOfRows / maxRowCount;
             final int numOfThreads = 10;
             final int numOfTxn = numOfThreads * numOfSegments;
@@ -1349,7 +1349,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
                 ins.insertRow();
                 walWriter.commit();
-                Assert.assertEquals(ins.getCount(), 1);
+                assertEquals(1, ins.getCount());
 
                 // Just one segment.
                 assertWalExistence(true, tableName, 1);
@@ -1396,7 +1396,7 @@ public class WalWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());
 
-            insert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T23:00:00.000000Z')");
+            execute("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T23:00:00.000000Z')");
             tickWalQueue(1);
 
             assertSql(
@@ -1405,9 +1405,9 @@ public class WalWriterTest extends AbstractCairoTest {
                     tableToken.getTableName()
             );
 
-            insert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T22:00:00.000000Z')");
-            insert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T21:00:00.000000Z')");
-            insert("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T20:00:00.000000Z')");
+            execute("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T22:00:00.000000Z')");
+            execute("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T21:00:00.000000Z')");
+            execute("insert into " + tableToken.getTableName() + "(ts) values ('2023-08-04T20:00:00.000000Z')");
 
             // Run WAL apply job two times:
             // Tick 1. Put row 2023-08-04T22 into the lag.

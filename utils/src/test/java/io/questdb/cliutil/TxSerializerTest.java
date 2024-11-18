@@ -136,14 +136,14 @@ public class TxSerializerTest {
                 "from long_sequence(10)" +
                 ") timestamp(ts) PARTITION BY DAY";
 
-        engine.ddl(createTableSql, sqlExecutionContext);
+        engine.execute(createTableSql, sqlExecutionContext);
 
         TxSerializer serializer = new TxSerializer();
         String txPath = root.toString() + Files.SEPARATOR + "xxx" + Files.SEPARATOR + "_txn";
         String json = serializer.toJson(txPath);
         Assert.assertTrue(json.contains("\"TX_OFFSET_TRUNCATE_VERSION\": 0"));
 
-        engine.ddl("truncate table xxx", sqlExecutionContext);
+        engine.execute("truncate table xxx", sqlExecutionContext);
         json = serializer.toJson(txPath);
         Assert.assertTrue(json.contains("\"TX_OFFSET_TRUNCATE_VERSION\": 1"));
     }
@@ -195,7 +195,7 @@ public class TxSerializerTest {
     }
 
     private void testRoundTxnSerialization(String createTableSql, boolean oooSupports) throws SqlException {
-        engine.ddl(createTableSql, sqlExecutionContext);
+        engine.execute(createTableSql, sqlExecutionContext);
         assertFirstColumnValueLong("select count() from xxx", 10);
         long symCount = getColumnValueLong("select count_distinct(sym1) from xxx");
         long symCount2 = getColumnValueLong("select count_distinct(sym2) from xxx");
@@ -221,9 +221,9 @@ public class TxSerializerTest {
 
         if (oooSupports) {
             // Insert same records
-            engine.insert("insert into xxx select * from xxx", sqlExecutionContext);
+            engine.execute("insert into xxx select * from xxx", sqlExecutionContext);
         } else {
-            engine.insert("insert into xxx select sym1, sym2, x, dateadd('y', 1, ts) from xxx", sqlExecutionContext);
+            engine.execute("insert into xxx select sym1, sym2, x, dateadd('y', 1, ts) from xxx", sqlExecutionContext);
         }
         assertFirstColumnValueLong("select count() from xxx", 20);
         assertFirstColumnValueLong("select count_distinct(sym1) from xxx", symCount);

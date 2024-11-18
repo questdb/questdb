@@ -48,7 +48,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     @Test
     public void testAddColumnAndDropPartition() throws Exception {
         assertMemoryLeak(() -> {
-                    ddl(
+                    execute(
                             "create table x as (" +
                                     "select x as i," +
                                     "x as j," +
@@ -58,18 +58,18 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                                     ") timestamp (ts) partition by DAY"
                     );
 
-                    ddl("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(20)");
-                    ddl("alter table x add column new_col int");
-                    ddl("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(1000)");
-                    ddl("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(1000)");
+                    execute("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(20)");
+                    execute("alter table x add column new_col int");
+                    execute("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(1000)");
+                    execute("insert into x select x, x, x, timestamp_sequence('2018-01-02T12', 72000000L), x from long_sequence(1000)");
                     try (TableReader ignored = getReader("x")) {
                         // Open table reader and all partitions
                         assertSql("column\n" +
                                 "1\n", "select sum(i) / sum(i) from x");
                     }
 
-                    ddl("alter table x add column new_col2 int");
-                    ddl("alter table x DROP partition list '2018-01-02'");
+                    execute("alter table x add column new_col2 int");
+                    execute("alter table x DROP partition list '2018-01-02'");
 
                     try (TableReader ignored = getReader("x")) {
                         assertSql("column\n" +
@@ -85,7 +85,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     createX("DAY", 72000000);
 
                     try {
-                        ddl("alter table x drop partition list '2017-01-no'", sqlExecutionContext);
+                        execute("alter table x drop partition list '2017-01-no'", sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals(34, e.getPosition());
@@ -101,7 +101,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     createX("DAY", 72000000);
 
                     try {
-                        ddl("alter table x drop partition list '2017-01'", sqlExecutionContext);
+                        execute("alter table x drop partition list '2017-01'", sqlExecutionContext);
                         Assert.fail();
                     } catch (SqlException e) {
                         Assert.assertEquals(34, e.getPosition());
@@ -117,7 +117,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     createX("DAY", 72000000);
 
                     try {
-                        ddl("alter table x drop partition list '2017-01-05'", sqlExecutionContext);
+                        execute("alter table x drop partition list '2017-01-05'", sqlExecutionContext);
                         Assert.fail();
                     } catch (CairoException e) {
                         Assert.assertEquals(34, e.getPosition());
@@ -155,7 +155,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     @Test
     public void testDropPartitionListWithMixedWeekDayFormats() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trade as (" +
+            execute("create table trade as (" +
                     "select" +
                     "  rnd_symbol('A', 'B', 'C') sym," +
                     "  rnd_long(1, 10000000000, 0) px," +
@@ -182,7 +182,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                             "  LIMiT 10"
             );
 
-            ddl("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2023-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
+            execute("ALTER TABLE trade DROP PARTITION LIST '2023-W51', '2023-W50', '2023-12-05T23:47:21.038145Z'", sqlExecutionContext);
 
             assertSql(
                     "year\tweek_of_year\twoy\n" +
@@ -213,7 +213,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    ddl("alter table x DROP partition list '2018-01-05', '2018-01-07'");
+                    execute("alter table x DROP partition list '2018-01-05', '2018-01-07'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -236,7 +236,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
                     // names have extra characters
-                    ddl("alter table x DROP partition list '2018-01-05T23', '2018-01-07T15'");
+                    execute("alter table x DROP partition list '2018-01-05T23', '2018-01-07T15'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -258,8 +258,8 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    ddl("alter table x DROP partition list '2018-01-05';");
-                    ddl("alter table x DROP partition list '2018-01-07'; \n\n");
+                    execute("alter table x DROP partition list '2018-01-05';");
+                    execute("alter table x DROP partition list '2018-01-07'; \n\n");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -302,7 +302,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResultForTimestampColumnNameTs("count\n" +
                             "147\n", "2020");
 
-                    ddl("alter table x drop partition where ts < dateadd('d', -1, now() ) AND ts < now()");
+                    execute("alter table x drop partition where ts < dateadd('d', -1, now() ) AND ts < now()");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -325,7 +325,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult("count\n" +
                             "147\n", "2020");
 
-                    ddl("alter table x drop partition where timestamp = to_timestamp('2020-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')");
+                    execute("alter table x drop partition where timestamp = to_timestamp('2020-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -352,7 +352,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult("count\n" +
                             "147\n", "2020");
 
-                    ddl("alter table x drop partition where timestamp > 0 ");
+                    execute("alter table x drop partition where timestamp > 0 ");
 
                     String zeroCount = "count\n0\n";
                     for (int i = 2018; i < 2025; i++) {
@@ -374,7 +374,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult("count\n" +
                             "147\n", "2020");
 
-                    ddl("alter table x drop partition where timestamp = to_timestamp('2022-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')");
+                    execute("alter table x drop partition where timestamp = to_timestamp('2022-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss')");
 
                     assertPartitionResult("count\n" +
                                     "145\n",
@@ -394,13 +394,13 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
             tm.col("inn", ColumnType.INT).timestamp("ts");
             createPopulateTable(tm, 100, "2022-02-24", 3);
 
-            ddl("alter table x add column lo LONG");
-            ddl("insert into x " +
+            execute("alter table x add column lo LONG");
+            execute("insert into x " +
                     "select x, timestamp_sequence('2022-02-26T23:59:59', 1000000), x " +
                     "from long_sequence(199)");
 
-            ddl("alter table x drop partition list '2022-02-26'");
-            ddl("insert into x " +
+            execute("alter table x drop partition list '2022-02-26'");
+            execute("insert into x " +
                     "select x, timestamp_sequence('2022-02-26T12', 10*60*1000000), x " +
                     "from long_sequence(10)");
 
@@ -427,7 +427,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                 tm.timestamp();
                 TestUtils.createPopulateTable(compiler, sqlExecutionContext, tm, 100, "2020-01-01", 5);
             }
-            ddl("insert into " + tableName + " " +
+            execute("insert into " + tableName + " " +
                     "select timestamp_sequence('2020-01-01', " + Timestamps.HOUR_MICROS + "L) " +
                     "from long_sequence(50)");
 
@@ -439,7 +439,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                 Assert.assertTrue(TestFilesFacadeImpl.INSTANCE.exists(path.$()));
                 engine.releaseAllReaders();
 
-                ddl("alter table x drop partition where timestamp = '2020-01-01'", sqlExecutionContext);
+                execute("alter table x drop partition where timestamp = '2020-01-01'", sqlExecutionContext);
 
                 assertPartitionResult("count\n0\n", "2020-01-01");
                 Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(path.$()));
@@ -532,7 +532,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    ddl("alter table x drop partition where timestamp = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ");
+                    execute("alter table x drop partition where timestamp = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -554,11 +554,11 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     String expectedAfterDrop = "count\n" +
                             "0\n";
 
-                    ddl("alter table x rename column timestamp to ts ");
+                    execute("alter table x rename column timestamp to ts ");
 
                     assertPartitionResultForTimestampColumnNameTs(expectedBeforeDrop, "2018-01-05");
 
-                    ddl("alter table x drop partition where ts = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ");
+                    execute("alter table x drop partition where ts = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ");
 
                     assertPartitionResultForTimestampColumnNameTs(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResultForTimestampColumnNameTs(expectedAfterDrop, "2018-01-05");
@@ -577,11 +577,11 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     String expectedAfterDrop = "count\n" +
                             "0\n";
 
-                    ddl("alter table x rename column b to bbb ");
+                    execute("alter table x rename column b to bbb ");
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    ddl("alter table x drop partition list '2018-01-05' ");
+                    execute("alter table x drop partition list '2018-01-05' ");
 
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedAfterDrop, "2018-01-05");
@@ -595,7 +595,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     createXWithoutDesignatedColumn();
 
                     try {
-                        ddl("alter table x drop partition " +
+                        execute("alter table x drop partition " +
                                         "where timestamp = to_timestamp('2018-01-05:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ",
                                 sqlExecutionContext);
                         Assert.fail();
@@ -611,7 +611,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     public void testDropSplitLastPartition() throws Exception {
         assertMemoryLeak(() -> {
                     createXSplit(Timestamps.DAY_MICROS / 2000); // 300 records per day
-                    ddl("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
+                    execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
                     assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
                 }
         );
@@ -621,7 +621,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     public void testDropSplitMidPartition() throws Exception {
         assertMemoryLeak(() -> {
                     createXSplit(Timestamps.DAY_MICROS / 300); // 300 records per day
-                    ddl("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
+                    execute("alter table x drop partition list '2018-01-01'", sqlExecutionContext);
                     assertSql("count\n0\n", "select count() from x where timestamp in '2018-01-01'");
                 }
         );
@@ -638,7 +638,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    ddl("alter table x drop partition list '2018-01-05', '2018-01-07'");
+                    execute("alter table x drop partition list '2018-01-05', '2018-01-07'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -660,7 +660,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult(expectedBeforeDrop, "2018-01-07");
                     assertPartitionResult(expectedBeforeDrop, "2018-01-05");
 
-                    ddl("alter table x DROP partition list '2018-01-05', '2018-01-07'");
+                    execute("alter table x DROP partition list '2018-01-05', '2018-01-07'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -683,7 +683,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult("count\n" +
                             "120\n", "2018-04");
 
-                    ddl("alter table x drop partition list '2018-02', '2018-04'");
+                    execute("alter table x drop partition list '2018-02', '2018-04'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -706,7 +706,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult("count\n" +
                             "146\n", "2022");
 
-                    ddl("alter table x drop partition list '2020', '2022'");
+                    execute("alter table x drop partition list '2020', '2022'");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -838,7 +838,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     assertPartitionResult("count\n" +
                             "147\n", "2020");
 
-                    ddl("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')) ");
+                    execute("alter table x drop partition where timestamp  < to_timestamp('2020', 'yyyy')) ");
 
                     String expectedAfterDrop = "count\n" +
                             "0\n";
@@ -863,7 +863,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     private void createX(String partitionBy, long increment) throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -903,7 +903,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
         try {
             long nextTimestamp = IntervalUtils.parseFloorPartialTimestamp("2018-01-01") + increment * 200 + 1;
             String nextTsStr = Timestamps.toUSecString(nextTimestamp);
-            ddl("insert into x " +
+            execute("insert into x " +
                     "select" +
                     " cast(x as int) i," +
                     " rnd_symbol('msft','ibm', 'googl') sym," +
@@ -929,7 +929,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
 
     private void createXWithDifferentTimestampName() throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -955,7 +955,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     private void createXWithoutDesignatedColumn() throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -1070,7 +1070,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
                     }
 
                     if (partitionBy != PartitionBy.NONE) {
-                        ddl("ALTER TABLE " + src.getName() + " FORCE DROP PARTITION LIST '" + partitionDirBaseName + "';", sqlExecutionContext);
+                        execute("ALTER TABLE " + src.getName() + " FORCE DROP PARTITION LIST '" + partitionDirBaseName + "';", sqlExecutionContext);
                     }
                 }
             }

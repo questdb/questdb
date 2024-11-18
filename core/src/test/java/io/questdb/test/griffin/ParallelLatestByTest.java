@@ -142,7 +142,7 @@ public class ParallelLatestByTest extends AbstractTest {
             String ddl,
             String query
     ) throws SqlException {
-        CairoEngine.ddl(compiler, ddl, sqlExecutionContext, null);
+        CairoEngine.execute(compiler, ddl, sqlExecutionContext, null);
 
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
         RecordCursorFactory factory = cc.getRecordCursorFactory();

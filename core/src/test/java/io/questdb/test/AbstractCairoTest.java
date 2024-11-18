@@ -134,6 +134,7 @@ import java.util.function.Supplier;
 
 public abstract class AbstractCairoTest extends AbstractTest {
 
+    public static final int DEFAULT_SPIN_LOCK_TIMEOUT = 5000;
     protected static final Log LOG = LogFactory.getLog(AbstractCairoTest.class);
     protected static final PlanSink planSink = new TextPlanSink();
     protected static final StringSink sink = new StringSink();
@@ -141,7 +142,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
     private static final long[] SNAPSHOT = new long[MemoryTag.SIZE];
     private static final LongList rows = new LongList();
     public static StaticOverrides staticOverrides = new StaticOverrides();
-    public static final int DEFAULT_SPIN_LOCK_TIMEOUT = 5000;
     protected static BindVariableService bindVariableService;
     protected static NetworkSqlExecutionCircuitBreaker circuitBreaker;
     protected static SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration;
@@ -409,12 +409,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return memUsed;
     }
 
-    public static void insert(CharSequence insertSql) throws SqlException {
-        insert(insertSql, sqlExecutionContext);
-    }
-
-    public static void insert(CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        engine.insert(insertSql, sqlExecutionContext);
+    protected static void execute(CharSequence sqlText) throws SqlException {
+        engine.execute(sqlText, sqlExecutionContext);
     }
 
     public static void printFactoryMemoryUsageDiff() {
@@ -610,7 +606,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     fut.await();
                 }
             } else {
-                ddl(compiler, sql, sqlExecutionContext);
+                execute(compiler, sql, sqlExecutionContext);
             }
         }
         Assert.fail();
@@ -1118,7 +1114,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     ) throws Exception {
         assertMemoryLeak(() -> {
             if (ddl != null) {
-                ddl(ddl);
+                execute(ddl);
             }
 
             snapshotMemoryUsage();
@@ -1133,7 +1129,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 assertVariableColumns(factory, sqlExecutionContext);
 
                 if (ddl2 != null) {
-                    ddl(ddl2, sqlExecutionContext);
+                    execute(ddl2, sqlExecutionContext);
 
                     int count = 3;
                     while (count > 0) {
@@ -1219,7 +1215,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             boolean sizeCanBeVariable
     ) throws Exception {
         if (ddl != null) {
-            ddl(ddl);
+            execute(ddl);
             if (configuration.getWalEnabledDefault()) {
                 drainWalQueue();
             }
@@ -1330,29 +1326,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return new ApplyWal2TableJob(engine, 1, 1);
     }
 
-    protected static void ddl(CharSequence sql) throws SqlException {
-        engine.ddl(sql, sqlExecutionContext);
-    }
-
-    protected static void ddl(CharSequence ddl, SqlExecutionContext executionContext) throws SqlException {
-        engine.ddl(ddl, executionContext);
-    }
-
-    protected static void ddl(SqlCompiler compiler, CharSequence ddl) throws SqlException {
-        ddl(compiler, ddl, sqlExecutionContext);
-    }
-
-    protected static void ddl(SqlCompiler compiler, CharSequence ddl, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CairoEngine.ddl(compiler, ddl, sqlExecutionContext, null);
-    }
-
-    protected static void ddl(CharSequence ddlSql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.setFullFatJoins(fullFatJoins);
-            ddl(compiler, ddlSql, sqlExecutionContext);
-        }
-    }
-
     protected static void drainWalQueue(QuestDBTestNode node) {
         try (ApplyWal2TableJob walApplyJob = createWalApplyJob(node)) {
             drainWalQueue(walApplyJob, node.getEngine());
@@ -1379,21 +1352,32 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    protected static void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        engine.drop(dropSql, sqlExecutionContext);
-    }
-
-    protected static void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        engine.drop(dropSql, sqlExecutionContext, eventSubSeq);
-    }
-
-    protected static void drop(CharSequence dropSql) throws SqlException {
-        drop(dropSql, sqlExecutionContext, null);
-    }
-
     protected static void dumpMemoryUsage() {
         for (int i = MemoryTag.MMAP_DEFAULT; i < MemoryTag.SIZE; i++) {
             LOG.info().$(MemoryTag.nameOf(i)).$(": ").$(Unsafe.getMemUsedByTag(i)).$();
+        }
+    }
+
+    protected static void execute(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        engine.execute(dropSql, sqlExecutionContext);
+    }
+
+    protected static void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+        engine.execute(sqlText, sqlExecutionContext, eventSubSeq);
+    }
+
+    protected static void execute(SqlCompiler compiler, CharSequence ddl) throws SqlException {
+        execute(compiler, ddl, sqlExecutionContext);
+    }
+
+    protected static void execute(SqlCompiler compiler, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        CairoEngine.execute(compiler, sqlText, sqlExecutionContext, null);
+    }
+
+    protected static void execute(CharSequence ddlSql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(fullFatJoins);
+            execute(compiler, ddlSql, sqlExecutionContext);
         }
     }
 
@@ -1430,10 +1414,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static TableWriter getWriter(TableToken tt) {
         return engine.getWriter(tt, "testing");
-    }
-
-    protected static void insert(SqlCompiler compiler, CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CairoEngine.insert(compiler, insertSql, sqlExecutionContext);
     }
 
     protected static QuestDBTestNode newNode() {
@@ -1522,7 +1502,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             assertVariableColumns(factory, sqlExecutionContext);
 
             if (ddl2 != null) {
-                ddl(ddl2);
+                execute(ddl2);
                 if (configuration.getWalEnabledDefault()) {
                     drainWalQueue();
                 }
@@ -1651,7 +1631,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected void assertExceptionNoLeakCheck(CharSequence sql, @NotNull CharSequence ddl, int errorPos, @NotNull CharSequence contains) throws Exception {
         try {
-            ddl(ddl, sqlExecutionContext);
+            execute(ddl, sqlExecutionContext);
             assertException(sql, errorPos, contains);
             Assert.assertEquals(0, engine.getBusyReaderCount());
             Assert.assertEquals(0, engine.getBusyWriterCount());
@@ -2000,7 +1980,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ) {
             TableToken token = TestUtils.createTable(engine, mem, path, tableModel, tableId, tableModel.getTableName());
             for (int i = 0; i < insertIterations; i++) {
-                insert(TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount));
+                execute(TestUtils.insertFromSelectPopulateTableStmt(tableModel, totalRowsPerIteration, startDate, partitionCount));
             }
             return token;
         }

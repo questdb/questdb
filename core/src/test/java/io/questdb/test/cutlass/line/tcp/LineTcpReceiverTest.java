@@ -1034,7 +1034,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table weather as (" +
                             "select x as windspeed," +
                             "x*2 as timetocycle, " +
@@ -1050,7 +1050,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "2\t4\t1970-01-01T00:00:00.000002Z\n", sink);
                 }
 
-                drop("drop table weather");
+                execute("drop table weather");
 
                 runInContext((receiver) -> {
                     String lineData =
@@ -1077,7 +1077,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1108,7 +1108,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Duplicate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1136,7 +1136,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4MultiCol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "coll ipv4, " +
                     "ts timestamp " +
@@ -1168,7 +1168,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4NoMagicNumbers() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1197,7 +1197,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Null() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1228,7 +1228,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Null2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");

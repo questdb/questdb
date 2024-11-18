@@ -334,7 +334,7 @@ public class FuzzRunner {
     public TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
         if (engine.getTableTokenIfExists(tableName) == null) {
-            engine.ddl(
+            engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
@@ -350,11 +350,11 @@ public class FuzzRunner {
                     sqlExecutionContext
             );
             // force few column tops
-            engine.ddl("alter table " + tableName + " add column long_top long", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
         return engine.verifyTableName(tableName);
     }

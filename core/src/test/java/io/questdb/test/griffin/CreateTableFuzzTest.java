@@ -139,7 +139,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     if (!messWithTableAfterCompile) {
                         messWithSourceTable();
                     }
-                    drop("DROP TABLE tango");
+                    execute("DROP TABLE tango");
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     } catch (SqlException e) {
@@ -183,7 +183,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                     }
                     validateCreatedTableDirect();
                     if (!useIfNotExists) {
-                        drop("DROP TABLE tango");
+                        execute("DROP TABLE tango");
                     }
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
@@ -215,7 +215,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                         validateCreatedTableLike(false);
                     }
                     messWithSourceTable();
-                    drop("DROP TABLE tango");
+                    execute("DROP TABLE tango");
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     }
@@ -226,7 +226,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     }
 
     private static void createSourceTable() throws SqlException {
-        engine.ddl("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, str STRING)", sqlExecutionContext);
+        engine.execute("CREATE TABLE samba (ts TIMESTAMP, sym SYMBOL, str STRING)", sqlExecutionContext);
     }
 
     private static String withErrPos(int pos, String message) {
@@ -306,21 +306,21 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private void messWithSourceTable() throws SqlException {
         switch (columnChaos) {
             case DROP_STR:
-                engine.ddl("ALTER TABLE samba DROP COLUMN str");
+                engine.execute("ALTER TABLE samba DROP COLUMN str");
                 break;
             case DROP_SYM:
-                engine.ddl("ALTER TABLE samba DROP COLUMN sym");
+                engine.execute("ALTER TABLE samba DROP COLUMN sym");
                 break;
             case CHANGE_TYPE:
-                engine.ddl("ALTER TABLE samba ALTER COLUMN str TYPE DOUBLE");
+                engine.execute("ALTER TABLE samba ALTER COLUMN str TYPE DOUBLE");
                 break;
             case RENAME_AND_ADD:
-                engine.ddl("ALTER TABLE samba RENAME COLUMN str TO str_old");
-                engine.ddl("ALTER TABLE samba ADD COLUMN str DOUBLE");
+                engine.execute("ALTER TABLE samba RENAME COLUMN str TO str_old");
+                engine.execute("ALTER TABLE samba ADD COLUMN str DOUBLE");
                 break;
         }
         if (addColumn) {
-            engine.ddl("ALTER TABLE samba ADD COLUMN str_new STRING");
+            engine.execute("ALTER TABLE samba ADD COLUMN str_new STRING");
         }
     }
 

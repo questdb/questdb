@@ -86,12 +86,12 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
         executeWithPool(0, this::testFuzz0);
     }
 
-    private static void replayTransactions(Rnd rnd, CairoEngine engine, TableWriter w, ObjList<FuzzTransaction> transactions, int virtualTimestampIndex) {
+    private static void replayTransactions(Rnd rnd, CairoEngine engine, TableWriter w, ObjList<FuzzTransaction> transactions) {
         for (int i = 0, n = transactions.size(); i < n; i++) {
             FuzzTransaction tx = transactions.getQuick(i);
             ObjList<FuzzTransactionOperation> ops = tx.operationList;
             for (int j = 0, k = ops.size(); j < k; j++) {
-                ops.getQuick(j).apply(rnd, engine, w, virtualTimestampIndex);
+                ops.getQuick(j).apply(rnd, engine, w, -1);
             }
             w.ic();
         }
@@ -130,8 +130,8 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                 " from long_sequence(" + nTotalRows + ")" +
                 ") timestamp (ts) partition by HOUR";
 
-        engine.ddl(sql, sqlExecutionContext);
-        engine.ddl("create table y as (select * from x) timestamp (ts) partition by HOUR", sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
+        engine.execute("create table y as (select * from x) timestamp (ts) partition by HOUR", sqlExecutionContext);
         TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
 
         final int partitionIndex;
@@ -142,7 +142,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             partitionTs = xr.getPartitionTimestampByIndex(partitionIndex);
             int partitionBy = xr.getPartitionedBy();
             PartitionBy.setSinkForPartition(stringSink, partitionBy, partitionTs);
-            engine.ddl("alter table x convert partition to parquet list '" + stringSink + "'", sqlExecutionContext);
+            engine.execute("alter table x convert partition to parquet list '" + stringSink + "'", sqlExecutionContext);
         }
 
         long minTs = partitionTs - 3600000000L;
@@ -193,11 +193,11 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             );
 
             Rnd rnd2 = new Rnd();
-            replayTransactions(rnd2, engine, yw, transactions, -1);
+            replayTransactions(rnd2, engine, yw, transactions);
             yw.commit();
 
             Rnd rnd1 = new Rnd();
-            replayTransactions(rnd1, engine, xw, transactions, -1);
+            replayTransactions(rnd1, engine, xw, transactions);
             xw.commit();
 
             Path parquet2 = Path.getThreadLocal(root).concat(tt.getDirName());

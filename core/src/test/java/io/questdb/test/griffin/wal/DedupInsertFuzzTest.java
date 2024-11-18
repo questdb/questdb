@@ -35,7 +35,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
@@ -76,8 +75,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             createEmptyTable(tableName, "DEDUP upsert keys(ts, commit)");
-            ddl("alter table " + tableName + " dedup disable");
-            ddl("alter table " + tableName + " dedup enable upsert keys(ts)");
+            execute("alter table " + tableName + " dedup disable");
+            execute("alter table " + tableName + " dedup enable upsert keys(ts)");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             Rnd rnd = generateRandomAndProps(LOG);
@@ -126,7 +125,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
-            ddl(
+            execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int, s symbol) " +
                             " , index(s) timestamp(ts) partition by DAY WAL "
@@ -143,7 +142,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
-            ddl(
+            execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int) " +
                             " timestamp(ts) partition by DAY WAL "
@@ -159,7 +158,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
-            ddl(
+            execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int, s varchar) " +
                             " timestamp(ts) partition by DAY WAL "
@@ -176,7 +175,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
-            ddl(
+            execute(
                     "create table " + tableName +
                             " (ts timestamp, commit int) " +
                             " timestamp(ts) partition by DAY WAL "
@@ -208,7 +207,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     rnd
             );
             applyWal(transactions, tableName, 1, rnd);
-            ddl("alter table " + tableName + " dedup upsert keys(ts)");
+            execute("alter table " + tableName + " dedup upsert keys(ts)");
 
             transactions.clear();
 
@@ -262,7 +261,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             applyWal(transactions, tableName, 1, rnd);
             transactions.clear();
 
-            ddl("alter table " + tableName + " add s symbol index", sqlExecutionContext);
+            execute("alter table " + tableName + " add s symbol index", sqlExecutionContext);
 
             double deltaMultiplier = rnd.nextBoolean() ? (1 << rnd.nextInt(4)) : 1.0 / (1 << rnd.nextInt(4));
             long delta = (long) (initialDelta * deltaMultiplier);
@@ -473,7 +472,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     private void createEmptyTable(String tableName, String dedupOption) throws SqlException {
-        ddl("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL " + dedupOption
+        execute("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY WAL " + dedupOption
                 , sqlExecutionContext);
     }
 
@@ -669,8 +668,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             fuzzer.createInitialTable(tableNameDedup, true);
 
             // Add long256 type to have to be a chance of a dedup key
-            ddl("alter table " + tableNameDedup + " add column col256 long256");
-            ddl("alter table " + tableNameWalNoDedup + " add column col256 long256");
+            execute("alter table " + tableNameDedup + " add column col256 long256");
+            execute("alter table " + tableNameWalNoDedup + " add column col256 long256");
 
             drainWalQueue();
 
@@ -697,7 +696,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     tableNameDedup,
                     comaSeparatedUpsertCols
             );
-            ddl(alterStatement);
+            execute(alterStatement);
 
             WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
             sharedWorkerPool.start(LOG);
@@ -754,7 +753,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 fuzzer.applyNonWal(transactions, tableNameNoWal, rnd);
 
                 ObjList<FuzzTransaction> transactionsWithDups = duplicateInserts(transactions, rnd);
-                ddl("alter table " + tableNameDedup + " dedup upsert keys(ts)", sqlExecutionContext);
+                execute("alter table " + tableNameDedup + " dedup upsert keys(ts)", sqlExecutionContext);
                 applyWal(transactionsWithDups, tableNameDedup, 1 + rnd.nextInt(4), rnd);
 
                 String limit = "";
@@ -831,8 +830,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         applyWal(transactions, tableName, 1, rnd);
 
         LOG.info().$("adding S column after ").$ts(maxTimestamp).$();
-        ddl("alter table " + tableName + " add column s " + ColumnType.nameOf(columType));
-        ddl("alter table " + tableName + " dedup upsert keys(ts, s)");
+        execute("alter table " + tableName + " add column s " + ColumnType.nameOf(columType));
+        execute("alter table " + tableName + " dedup upsert keys(ts, s)");
 
         int rndCount = rnd.nextInt(10);
         int strLen = 4 + rnd.nextInt(20);

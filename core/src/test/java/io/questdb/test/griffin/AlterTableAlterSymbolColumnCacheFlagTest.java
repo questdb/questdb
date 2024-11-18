@@ -98,16 +98,16 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
     @Test
     public void testAlterSymbolCacheFlagToTrueCheckOpenReaderWithCursor() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i int, sym symbol nocache) ;");
-            insert("insert into x values (1, 'GBP')");
-            insert("insert into x values (2, 'CHF')");
-            insert("insert into x values (3, 'GBP')");
-            insert("insert into x values (4, 'JPY')");
-            insert("insert into x values (5, 'USD')");
-            insert("insert into x values (6, 'GBP')");
-            insert("insert into x values (7, 'GBP')");
-            insert("insert into x values (8, 'GBP')");
-            insert("insert into x values (9, 'GBP')");
+            execute("create table x (i int, sym symbol nocache) ;");
+            execute("insert into x values (1, 'GBP')");
+            execute("insert into x values (2, 'CHF')");
+            execute("insert into x values (3, 'GBP')");
+            execute("insert into x values (4, 'JPY')");
+            execute("insert into x values (5, 'USD')");
+            execute("insert into x values (6, 'GBP')");
+            execute("insert into x values (7, 'GBP')");
+            execute("insert into x values (8, 'GBP')");
+            execute("insert into x values (9, 'GBP')");
 
             String expectedOrdered = "sym\n" +
                     "CHF\n" +
@@ -176,7 +176,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
         assertMemoryLeak(() -> {
             try {
                 createX();
-                ddl(sql);
+                execute(sql);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -186,7 +186,7 @@ public class AlterTableAlterSymbolColumnCacheFlagTest extends AbstractCairoTest 
     }
 
     private void createX() throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +

@@ -58,7 +58,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 serverMain.start();
                 CairoEngine engine = serverMain.getEngine();
                 try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                    engine.ddl(
+                    engine.execute(
                             "CREATE TABLE 'betfairRunners' (\n" +
                                     "  id INT,\n" +
                                     "  runner VARCHAR,\n" +
@@ -134,7 +134,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 CairoEngine engine = serverMain.getEngine();
                 try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
 
-                    engine.ddl("create table x (ts timestamp, a int) timestamp(ts) partition by day wal", sqlExecutionContext);
+                    engine.execute("create table x (ts timestamp, a int) timestamp(ts) partition by day wal", sqlExecutionContext);
                 }
 
                 int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort();

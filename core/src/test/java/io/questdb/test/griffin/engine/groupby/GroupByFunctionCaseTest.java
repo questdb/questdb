@@ -61,7 +61,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                 String typeName = name(ColumnType.nameOf(t));
                 sqlSink.clear();
                 sqlSink.put("create table test (key int, val ").put(typeName).put(");");
-                ddl(sqlSink);
+                execute(sqlSink);
 
                 for (int f = 0; f < functions.length; f++) {
                     String function = functions[f];
@@ -81,7 +81,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                     assertExecutionPlan(sqlSink, typeName, function, planSink);
                 }
 
-                ddl("drop table test;");
+                execute("drop table test;");
             }
         });
     }
@@ -106,7 +106,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                 String typeName = name(ColumnType.nameOf(t));
                 sqlSink.clear();
                 sqlSink.put("create table test (key int, val ").put(typeName).put(");");
-                ddl(sqlSink);
+                execute(sqlSink);
 
                 for (int f = 0; f < functions.length; f++) {
                     String function = functions[f];
@@ -126,7 +126,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                     assertExecutionPlan(sqlSink, typeName, function, planSink);
                 }
 
-                ddl("drop table test;");
+                execute("drop table test;");
             }
         });
     }
@@ -140,7 +140,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                 String typeName = name(ColumnType.nameOf(t));
                 sqlSink.clear();
                 sqlSink.put("create table test ( key1 byte, key2 byte, val ").put(typeName).put(");");
-                ddl(sqlSink);
+                execute(sqlSink);
 
                 for (int f = 0; f < functions.length; f++) {
                     String function = functions[f];
@@ -164,7 +164,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                     }
                 }
 
-                ddl("drop table test;");
+                execute("drop table test;");
             }
         });
     }
@@ -172,7 +172,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
     @Test
     public void testGetPlan() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE spot_trades (\n" +
+            execute("CREATE TABLE spot_trades (\n" +
                     "  id LONG,\n" +
                     "  instrument_key SYMBOL capacity 256 CACHE,\n" +
                     "  venue SYMBOL capacity 256 CACHE,\n" +

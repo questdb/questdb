@@ -220,7 +220,7 @@ public class O3MaxLagTest extends AbstractO3Test {
             for (int length = 2; length <= dates.length; length++) {
                 String tableName = "lll" + length;
                 LOG.info().$("========= LENGTH ").$(length).$(" ================").$();
-                engine.ddl("create table " + tableName + "( " +
+                engine.execute("create table " + tableName + "( " +
                         "ts timestamp" +
                         ") timestamp(ts) partition by DAY " +
                         " WITH maxUncommittedRows=1, o3MaxLag=120s", sqlExecutionContext);
@@ -290,8 +290,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                                         maxUncommitted,
                                         new Rnd()
                                 );
-                                engine.drop("drop table x", sqlExecutionContext);
-                                engine.drop("drop table y", sqlExecutionContext);
+                                engine.execute("drop table x", sqlExecutionContext);
+                                engine.execute("drop table y", sqlExecutionContext);
                             }
                         }
                     }
@@ -315,7 +315,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, 1000);
-                        engine.drop("drop table x", sqlExecutionContext);
+                        engine.execute("drop table x", sqlExecutionContext);
                     }
                 }
         );
@@ -342,7 +342,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, 1000);
-                        engine.drop("drop table x", sqlExecutionContext);
+                        engine.execute("drop table x", sqlExecutionContext);
                     }
                 }
         );
@@ -369,8 +369,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                             0,
                             new Rnd()
                     );
-                    engine.drop("drop table x", sqlExecutionContext);
-                    engine.drop("drop table y", sqlExecutionContext);
+                    engine.execute("drop table x", sqlExecutionContext);
+                    engine.execute("drop table y", sqlExecutionContext);
                 }
         );
     }
@@ -391,7 +391,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(", max uncommitted ").$(longsPerPage).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, longsPerPage);
-                        engine.drop("drop table x", sqlExecutionContext);
+                        engine.execute("drop table x", sqlExecutionContext);
                     }
                 }
         );
@@ -414,7 +414,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(", max uncommitted ").$(maxUncommitted).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, maxUncommitted);
-                        engine.drop("drop table x", sqlExecutionContext);
+                        engine.execute("drop table x", sqlExecutionContext);
                     }
                 }
         );
@@ -617,10 +617,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(" + nTotalRows + ")" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where  i<=" + nInitialStateRows + " order by ts asc) timestamp(ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
         LOG.info().$("committed initial state").$();
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=" + nInitialStateRows, sink);
@@ -697,10 +697,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY WITH maxUncommittedRows=100, o3MaxLag=10s";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -737,10 +737,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -785,10 +785,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -832,11 +832,11 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
         sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -879,10 +879,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -940,11 +940,11 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
         sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -988,11 +988,11 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
         sql = "create table y as (select * from x where i<=150 order by ts asc) timestamp(ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=150", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -1033,11 +1033,11 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(150)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         // i=184 is the last entry in date 1970-01-06
         sql = "create table y as (select * from x) timestamp(ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -1066,7 +1066,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(50)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         // "x2" us is overlapping "x1" timestamp is offset by 2us to prevent nondeterministic
         //        // behaviour of ordering identical timestamp values
@@ -1091,7 +1091,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(50)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         try (TableWriter writer = TestUtils.getWriter(engine, "y")) {
             sql = "select * from x1 order by f";
@@ -1137,10 +1137,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=250 order by ts asc) timestamp(ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=250", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -1184,10 +1184,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where (i<=50 or i>=100) and i<=250 order by ts asc) timestamp(ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where (i<=50 or i>=100) and i<=250", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -1225,10 +1225,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 " rnd_char() t" +
                 " from long_sequence(500)" +
                 "), index(sym) timestamp (ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         sql = "create table y as (select * from x where i<=490 order by ts asc) timestamp(ts) partition by DAY";
-        engine.ddl(sql, sqlExecutionContext);
+        engine.execute(sql, sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from x where i<=490", sink);
         TestUtils.printSql(compiler, sqlExecutionContext, "select * from y", sink2);
@@ -1255,7 +1255,7 @@ public class O3MaxLagTest extends AbstractO3Test {
     ) throws SqlException, NumericException {
         // Day 1 '1970-01-01'
         int appendCount = iteration / 2;
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 'aa' as str," +
@@ -1266,9 +1266,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        sqlExecutionContext.getCairoEngine().ddl("alter table x add column str2 string", sqlExecutionContext);
-        sqlExecutionContext.getCairoEngine().ddl("alter table x add column y long", sqlExecutionContext);
-        sqlExecutionContext.getCairoEngine().insert(
+        sqlExecutionContext.getCairoEngine().execute("alter table x add column str2 string", sqlExecutionContext);
+        sqlExecutionContext.getCairoEngine().execute("alter table x add column y long", sqlExecutionContext);
+        CairoEngine cairoEngine2 = sqlExecutionContext.getCairoEngine();
+        cairoEngine2.execute(
                 "insert into x " +
                         "select" +
                         " 'aa' as str," +
@@ -1276,12 +1277,12 @@ public class O3MaxLagTest extends AbstractO3Test {
                         " x," +
                         " '77' as str2," +
                         " x * 1000 as y " +
-                        " from long_sequence(" + additionalCount + ")",
-                sqlExecutionContext
+                        " from long_sequence(" + additionalCount + ")", sqlExecutionContext
         );
 
         // Day 2 '1970-01-02'
-        sqlExecutionContext.getCairoEngine().insert(
+        CairoEngine cairoEngine1 = sqlExecutionContext.getCairoEngine();
+        cairoEngine1.execute(
                 "insert into x " +
                         "select" +
                         " 'aa' as str," +
@@ -1289,11 +1290,11 @@ public class O3MaxLagTest extends AbstractO3Test {
                         " x, " +
                         " '11' as str2," +
                         " x * 1000 as y " +
-                        " from long_sequence(" + initialCount + ")",
-                sqlExecutionContext
+                        " from long_sequence(" + initialCount + ")", sqlExecutionContext
         );
 
-        sqlExecutionContext.getCairoEngine().insert(
+        CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
+        cairoEngine.execute(
                 "insert into x " +
                         "select" +
                         " 'aa' as str," +
@@ -1301,8 +1302,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                         " x, " +
                         " '33' as str2," +
                         " x * 222 as y " +
-                        " from long_sequence(" + additionalCount + ")",
-                sqlExecutionContext
+                        " from long_sequence(" + additionalCount + ")", sqlExecutionContext
         );
 
 
@@ -1319,7 +1319,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 "count\n" +
                         aaCount + "\n"
         );
-        engine.ddl("create table y as (select * from x where str = 'aa')", sqlExecutionContext);
+        engine.execute("create table y as (select * from x where str = 'aa')", sqlExecutionContext);
 
         try (TableWriter tw = TestUtils.getWriter(engine, "x")) {
             int halfCount = appendCount / 2;
@@ -1363,7 +1363,7 @@ public class O3MaxLagTest extends AbstractO3Test {
     private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws SqlException, NumericException {
         // Day 1 '1970-01-01'
         int appendCount = iteration / 2;
-        sqlExecutionContext.getCairoEngine().ddl(
+        sqlExecutionContext.getCairoEngine().execute(
                 "create table x as (" +
                         "select" +
                         " 'aa' as str," +
@@ -1375,20 +1375,19 @@ public class O3MaxLagTest extends AbstractO3Test {
         );
 
         // Day 2 '1970-01-02'
-        engine.insert(
+        engine.execute(
                 "insert into x " +
                         "select" +
                         " 'aa' as str," +
                         " timestamp_sequence('1970-01-02T00:00:00',1000L) ts," +
                         " x " +
-                        " from long_sequence(1)",
-                sqlExecutionContext
+                        " from long_sequence(1)", sqlExecutionContext
         );
 
-        engine.ddl("alter table x add column dummy string", sqlExecutionContext);
-        engine.ddl("alter table x drop column dummy", sqlExecutionContext);
-        engine.ddl("alter table x add column str2 string", sqlExecutionContext);
-        engine.ddl("alter table x add column y long", sqlExecutionContext);
+        engine.execute("alter table x add column dummy string", sqlExecutionContext);
+        engine.execute("alter table x drop column dummy", sqlExecutionContext);
+        engine.execute("alter table x add column str2 string", sqlExecutionContext);
+        engine.execute("alter table x add column y long", sqlExecutionContext);
 
         if (iteration % 2 == 0) {
             engine.releaseAllWriters();

@@ -197,40 +197,13 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public static void compile(SqlCompiler compiler, CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
-        switch (cq.getType()) {
-            case INSERT:
-            case INSERT_AS_SELECT:
-                final InsertOperation insertOperation = cq.getInsertOperation();
-                if (insertOperation != null) {
-                    // for insert as select the operation is null
-                    try (InsertMethod insertMethod = insertOperation.createMethod(sqlExecutionContext)) {
-                        insertMethod.execute();
-                        insertMethod.commit();
-                    }
-                }
-                break;
-            case DROP:
-                drop0(sqlExecutionContext, null, cq);
-                break;
-            case SELECT:
-                throw SqlException.$(0, "use select()");
-            default:
-                try (OperationFuture future = cq.execute(null)) {
-                    future.await();
-                }
-                break;
-        }
-    }
-
-    public static void ddl(
+    public static void execute(
             SqlCompiler compiler,
-            CharSequence ddl,
+            CharSequence sqlText,
             SqlExecutionContext sqlExecutionContext,
             @Nullable SCSequence eventSubSeq
     ) throws SqlException {
-        CompiledQuery cc = compiler.compile(ddl, sqlExecutionContext);
+        CompiledQuery cc = compiler.compile(sqlText, sqlExecutionContext);
         switch (cc.getType()) {
             case CREATE_TABLE:
             case CREATE_TABLE_AS_SELECT:
@@ -244,7 +217,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 break;
             case INSERT:
-                insert(compiler, ddl, sqlExecutionContext);
+                insert(compiler, sqlText, sqlExecutionContext);
                 break;
             case SELECT:
                 throw SqlException.$(0, "use select()");
@@ -417,41 +390,17 @@ public class CairoEngine implements Closeable, WriterSource {
         return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, inVolume);
     }
 
-    public void ddl(CharSequence sql) throws SqlException {
-        ddl(sql, rootExecutionContext);
+    public void execute(CharSequence sqlText) throws SqlException {
+        execute(sqlText, rootExecutionContext);
     }
 
-    public void ddl(CharSequence ddl, SqlExecutionContext executionContext) throws SqlException {
-        ddl(ddl, executionContext, null);
+    public void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        execute(sqlText, sqlExecutionContext, null);
     }
 
-    public void ddl(CharSequence ddl, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+    public void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         try (SqlCompiler compiler = getSqlCompiler()) {
-            ddl(compiler, ddl, sqlExecutionContext, eventSubSeq);
-        }
-    }
-
-    public void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        drop(dropSql, sqlExecutionContext, null);
-    }
-
-    public void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        try (SqlCompiler compiler = getSqlCompiler()) {
-            final CompiledQuery cq = compiler.compile(dropSql, sqlExecutionContext);
-            switch (cq.getType()) {
-                case DROP:
-                    drop0(sqlExecutionContext, eventSubSeq, cq);
-                    break;
-                case INSERT:
-                case INSERT_AS_SELECT:
-                    throw SqlException.$(0, "use insert()");
-                case SELECT:
-                    throw SqlException.$(0, "use select()");
-                default:
-                    throw SqlException.$(0, "use ddl()");
-            }
-        } catch (TableReferenceOutOfDateException e) {
-            // ignore
+            execute(compiler, sqlText, sqlExecutionContext, eventSubSeq);
         }
     }
 
@@ -868,12 +817,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {
         return writerPool.get(tableToken, lockReason);
-    }
-
-    public void insert(CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        try (SqlCompiler compiler = getSqlCompiler()) {
-            insert(compiler, insertSql, sqlExecutionContext);
-        }
     }
 
     public boolean isTableDropped(TableToken tableToken) {
@@ -1335,15 +1278,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         if (!tt.equals(tableToken)) {
             throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
-        }
-    }
-
-    private static void drop0(SqlExecutionContext executionContext, @Nullable SCSequence eventSubSeq, CompiledQuery cq) throws SqlException {
-        try (
-                Operation operation = cq.getOperation();
-                OperationFuture fut = operation.execute(executionContext, eventSubSeq)
-        ) {
-            fut.await();
         }
     }
 

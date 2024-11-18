@@ -186,7 +186,7 @@ public class AbstractO3Test extends AbstractTest {
             final String o3InsertSQL
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
-        engine.ddl(referenceTableDDL, sqlExecutionContext);
+        engine.execute(referenceTableDDL, sqlExecutionContext);
 
         compiler.compile(o3InsertSQL, sqlExecutionContext);
 
@@ -225,10 +225,10 @@ public class AbstractO3Test extends AbstractTest {
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         if (referenceTableDDL != null) {
-            engine.ddl(referenceTableDDL, sqlExecutionContext);
+            engine.execute(referenceTableDDL, sqlExecutionContext);
         }
         if (o3InsertSQL != null) {
-            engine.ddl(o3InsertSQL, sqlExecutionContext);
+            engine.execute(o3InsertSQL, sqlExecutionContext);
         }
 
         TestUtils.assertEqualsExactOrder(

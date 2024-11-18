@@ -258,7 +258,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
     @Test
     public void testAlterTableCacheAndNocache() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE foo ( a SYMBOL )");
+            execute("CREATE TABLE foo ( a SYMBOL )");
             drainWalQueue();
 
             String header = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n";
@@ -268,12 +268,12 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             // check its true by default
             assertSql(header + left + "true" + right, "table_columns('foo')");
 
-            ddl("ALTER TABLE foo ALTER COLUMN a NOCACHE");
+            execute("ALTER TABLE foo ALTER COLUMN a NOCACHE");
             drainWalQueue();
             // check its false now
             assertSql(header + left + "false" + right, "table_columns('foo')");
 
-            ddl("ALTER TABLE foo ALTER COLUMN a CACHE");
+            execute("ALTER TABLE foo ALTER COLUMN a CACHE");
             drainWalQueue();
 
             // check its true again
@@ -430,7 +430,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             TableWriter writer = null;
             try {
                 String tableName = "x";
-                engine.ddl(
+                engine.execute(
                         "create table IF NOT EXISTS " + tableName + " as (" +
                                 " select rnd_symbol('a', 'b', 'c') as s," +
                                 " cast(x as timestamp) ts" +
@@ -535,7 +535,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             TableWriter writer = null;
             try {
                 String tableName = "x";
-                engine.ddl("create table IF NOT EXISTS " + tableName + " as (" +
+                engine.execute("create table IF NOT EXISTS " + tableName + " as (" +
                                 " select case when x%3 = 0 then 'a' when x%3 = 1 then 'b' else 'c' end as s," +
                                 " x," +
                                 " cast(x as timestamp) ts" +

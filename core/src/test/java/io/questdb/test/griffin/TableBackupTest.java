@@ -123,7 +123,7 @@ public class TableBackupTest {
             @NotNull CairoEngine engine,
             @NotNull SqlExecutionContext context
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "CREATE TABLE '" + tableName + "' AS (" +
                         selectGenerator(numRows) +
                         "), INDEX(symbol2 CAPACITY 32) TIMESTAMP(timestamp2) " +
@@ -140,7 +140,8 @@ public class TableBackupTest {
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.insert("INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')', sqlExecutionContext);
+        CharSequence insertSql = "INSERT INTO '" + tableToken.getTableName() + "' SELECT * FROM (" + selectGenerator(size) + ')';
+        engine.execute(insertSql, sqlExecutionContext);
     }
 
     public static String testTableName(String tableName, String tableNameSuffix) {
@@ -402,7 +403,7 @@ public class TableBackupTest {
             assertTables(tableToken);
             // Check previous backup is unaffected
             selectAll(tableToken, true, sink2);
-            Assert.assertNotEquals(firstBackup, sink2);
+            Assert.assertNotEquals(sink2, firstBackup);
         });
     }
 
@@ -529,7 +530,7 @@ public class TableBackupTest {
     }
 
     private void ddlAndDrainWalQueue(String sql) throws SqlException {
-        mainEngine.ddl(sql, mainSqlExecutionContext);
+        mainEngine.execute(sql, mainSqlExecutionContext);
         drainWalQueue();
     }
 

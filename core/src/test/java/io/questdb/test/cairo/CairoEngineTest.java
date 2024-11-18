@@ -531,7 +531,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 for (int i = 0; i < 50; i++) {
                     createTable(model);// create a table eligible for maintenance
                     Os.sleep(rnd.nextInt(10)); // give the maintenance job a chance to run
-                    drop("drop table " + tableName); // drop the table. this should always pass. regardless of the maintenance job.
+                    execute("drop table " + tableName); // drop the table. this should always pass. regardless of the maintenance job.
                 }
             }
         });

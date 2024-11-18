@@ -36,7 +36,7 @@ public class O3MaxLagRetentionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            ddl("alter table my_table add column y symbol", sqlExecutionContext);
+            execute("alter table my_table add column y symbol", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -46,8 +46,8 @@ public class O3MaxLagRetentionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            insert("insert into my_table values(0, 1000, 'a')");
-            ddl("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
+            execute("insert into my_table values(0, 1000, 'a')");
+            execute("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -57,7 +57,7 @@ public class O3MaxLagRetentionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            ddl("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
+            execute("alter TABLE my_table ALTER COLUMN s ADD INDEX", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -67,7 +67,7 @@ public class O3MaxLagRetentionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            ddl("alter table my_table drop column x", sqlExecutionContext);
+            execute("alter table my_table drop column x", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -77,10 +77,10 @@ public class O3MaxLagRetentionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            insert("insert into my_table values(to_timestamp('1970-01-01', 'yyyy-dd-MM'), 2000, 'a')");
-            insert("insert into my_table values(to_timestamp('1970-01-02', 'yyyy-dd-MM'), 2000, 'a')");
+            execute("insert into my_table values(to_timestamp('1970-01-01', 'yyyy-dd-MM'), 2000, 'a')");
+            execute("insert into my_table values(to_timestamp('1970-01-02', 'yyyy-dd-MM'), 2000, 'a')");
             assertO3MaxLagValues();
-            ddl("alter TABLE my_table DROP PARTITION LIST '1970-01-01'", sqlExecutionContext);
+            execute("alter TABLE my_table DROP PARTITION LIST '1970-01-01'", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -90,7 +90,7 @@ public class O3MaxLagRetentionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable();
             assertO3MaxLagValues();
-            ddl("alter table my_table rename column x to y", sqlExecutionContext);
+            execute("alter table my_table rename column x to y", sqlExecutionContext);
             assertO3MaxLagValues();
         });
     }
@@ -107,7 +107,7 @@ public class O3MaxLagRetentionTest extends AbstractCairoTest {
     }
 
     private void createTable() throws SqlException {
-        ddl("CREATE TABLE my_table (timestamp TIMESTAMP, x long, s symbol) timestamp(timestamp)\n" +
+        execute("CREATE TABLE my_table (timestamp TIMESTAMP, x long, s symbol) timestamp(timestamp)\n" +
                 "PARTITION BY DAY WITH maxUncommittedRows=250000, o3MaxLag=240s");
     }
 }

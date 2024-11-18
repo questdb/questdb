@@ -116,7 +116,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         withPool((engine, compiler, sqlExecutionContext) -> {
             // JIT compiler doesn't support IN operator for symbols.
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            ddl(
+            execute(
                     compiler,
                     "create table x as (select rnd_symbol('A','B') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour",
                     sqlExecutionContext
@@ -177,7 +177,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     public void testFaultToleranceImplicitCastException() throws Exception {
         withPool0((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            ddl(
+            execute(
                     compiler,
                     "create table x as (" +
                             " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
@@ -206,7 +206,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     public void testFaultToleranceNegativeLimitImplicitCastException() throws Exception {
         withPool0((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            ddl(compiler,
+            execute(compiler,
                     "create table x as (" +
                             " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
                             " from long_sequence(4)" +
@@ -234,7 +234,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     public void testFaultToleranceNegativeLimitNpe() throws Exception {
         withPool0((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            ddl(compiler,
+            execute(compiler,
                     "create table x as (" +
                             " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
                             " from long_sequence(4)" +
@@ -259,7 +259,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     public void testFaultToleranceNpe() throws Exception {
         withPool0((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            ddl(compiler,
+            execute(compiler,
                     "create table x as (" +
                             " select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 1000000) t" +
                             " from long_sequence(4)" +
@@ -285,7 +285,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testFaultToleranceSampleByFilterNpe() throws Exception {
         withPool0((engine, compiler, sqlExecutionContext) -> {
-            ddl(compiler,
+            execute(compiler,
                     "create table x as (" +
                             "select timestamp_sequence(0, 100000) timestamp," +
                             " rnd_symbol('ETH_BTC','BTC_ETH') symbol," +
@@ -316,7 +316,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     public void testFaultToleranceWrongSharedWorkerConfiguration() throws Exception {
         withPool0((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            ddl(
+            execute(
                     compiler,
                     "create table x as (select rnd_double() a, rnd_symbol('a', 'b', 'c') s, timestamp_sequence(20000000, 100000) t from long_sequence(20000)) timestamp(t) partition by hour",
                     sqlExecutionContext
@@ -400,7 +400,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     public void testLimitBinVariable() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            ddl(
+            execute(
                     compiler,
                     "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
                     sqlExecutionContext
@@ -476,7 +476,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     public void testNegativeLimit() throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            ddl(
+            execute(
                     compiler,
                     "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
                     sqlExecutionContext
@@ -548,7 +548,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             wrapper.init(new AtomicBooleanCircuitBreaker());
             withPool((engine, compiler, sqlExecutionContext) -> {
                 sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                ddl(
+                execute(
                         compiler,
                         "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
                         sqlExecutionContext
@@ -581,7 +581,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper(configuration)) {
             wrapper.init(new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2));
             withPool((engine, compiler, sqlExecutionContext) -> {
-                ddl(
+                execute(
                         compiler,
                         "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
                         sqlExecutionContext
@@ -608,7 +608,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_PRETOUCH_ENABLED, false);
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
 
-            ddl("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
+            execute("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(100000)) timestamp(t) partition by hour", sqlExecutionContext);
             final String sql = "select 'foobar' as c1, t as c2, a as c3, sqrt(a) as c4 from x where a > 0.345747032 and a < 0.34585 limit 5";
             TestUtils.assertSql(
                     engine,
@@ -642,7 +642,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         withPool((engine, compiler, sqlExecutionContext) -> {
             // JIT compiler doesn't support ~ operator for symbols.
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            ddl(
+            execute(
                     compiler,
                     "create table x as (select rnd_symbol('A','B','C') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour",
                     sqlExecutionContext
@@ -704,7 +704,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     private void testDeferredSymbolInFilter0(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         // JIT compiler doesn't support IN operator for symbols.
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        ddl(
+        execute(
                 compiler,
                 "create table x as (select rnd_symbol('A','B') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour",
                 sqlExecutionContext
@@ -758,7 +758,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            ddl(
+            execute(
                     compiler,
                     "create table x as (" +
                             "  select rnd_double() a," +
@@ -809,7 +809,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         try {
             withPool((engine, compiler, sqlExecutionContext) -> {
                 sqlExecutionContext.setJitMode(jitMode);
-                ddl(
+                execute(
                         compiler,
                         "create table x as (select x, rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
                         sqlExecutionContext
@@ -842,7 +842,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(jitMode);
 
-            ddl(
+            execute(
                     compiler,
                     "create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour",
                     sqlExecutionContext
@@ -875,7 +875,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     private void testSymbolEqualsBindVariableFilter(int jitMode, Class<?> expectedFactoryClass) throws Exception {
         withPool((engine, compiler, sqlExecutionContext) -> {
             sqlExecutionContext.setJitMode(jitMode);
-            ddl(compiler,
+            execute(compiler,
                     "create table x as (select rnd_symbol('A','B','C') s, timestamp_sequence(20000000, 100000) t from long_sequence(500000)) timestamp(t) partition by hour",
                     sqlExecutionContext
             );

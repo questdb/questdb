@@ -880,7 +880,7 @@ public final class TestUtils {
             String startDate,
             int partitionCount
     ) throws NumericException, SqlException {
-        CairoEngine.ddl(
+        CairoEngine.execute(
                 compiler,
                 createPopulateTableStmt(tableName, tableModel, totalRows, startDate, partitionCount),
                 sqlExecutionContext,
