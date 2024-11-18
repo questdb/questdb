@@ -1040,6 +1040,7 @@ public class SqlParser {
                 break;
             }
 
+            // todo: review this, maybe we can use an immutable
             tok = tok.toString();
 
             ExpressionNode expr = expr(lexer, model, sqlParserCallback);
@@ -1626,6 +1627,7 @@ public class SqlParser {
                 tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparseLast();
                 ExpressionNode n = expr(lexer, model, sqlParserCallback);
+                n = rewriteDeclaredVariables(n, model.getDecls());
                 if (n == null || (n.type != ExpressionNode.LITERAL && n.type != CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != OPERATION)) {
                     throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
                 }
@@ -1646,6 +1648,7 @@ public class SqlParser {
                 lexer.unparseLast();
 
                 ExpressionNode n = expr(lexer, model, sqlParserCallback);
+                n = rewriteDeclaredVariables(n, model.getDecls());
                 if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }

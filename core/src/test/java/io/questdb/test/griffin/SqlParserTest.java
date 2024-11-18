@@ -63,6 +63,13 @@ import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
 public class SqlParserTest extends AbstractSqlParserTest {
     private static final List<String> frameTypes = Arrays.asList("rows  ", "groups", "range ");
+    private static String tradesDdl = "CREATE TABLE 'trades' (\n" +
+            "  symbol SYMBOL,\n" +
+            "  side SYMBOL,\n" +
+            "  price DOUBLE,\n" +
+            "  amount DOUBLE,\n" +
+            "  timestamp TIMESTAMP\n" +
+            ") timestamp (timestamp) PARTITION BY DAY WAL;";
 
     @Test
     public void test2Between() throws Exception {
@@ -3468,6 +3475,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectWithGroupByNames() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))", "DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, price", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testDeclareSelectWithGroupByNumbers() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))", "DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, 3", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
     public void testDeclareSelectWithIntersect() throws Exception {
         assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) intersect select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
                 "DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT (SELECT @a + @b)", ExecutionModel.QUERY);
@@ -3478,7 +3503,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) intersect all select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
                 "DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT ALL (SELECT @a + @b)", ExecutionModel.QUERY);
     }
-
 
     @Test
     public void testDeclareSelectWithJoin() throws Exception {
@@ -3504,6 +3528,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 , ExecutionModel.QUERY);
         assertSql("col2\n" +
                 "4\n", query);
+    }
+
+    @Test
+    public void testDeclareSelectWithOrderByNames() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-choose timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp)) order by timestamp, symbol, price", "DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades ORDER BY @x, @y, price", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testDeclareSelectWithOrderByNumbers() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-choose timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp)) order by timestamp, symbol, price", "DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades ORDER BY @x, @y, 3", ExecutionModel.QUERY);
+        });
     }
 
     @Test

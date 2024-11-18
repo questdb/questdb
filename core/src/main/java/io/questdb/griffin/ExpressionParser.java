@@ -48,7 +48,6 @@ public class ExpressionParser {
     private static final int BRANCH_CAST_AS = 11;
     private static final int BRANCH_COMMA = 1;
     private static final int BRANCH_CONSTANT = 4;
-    private static final int BRANCH_DECLARATION = 20;
     private static final int BRANCH_DOT = 12;
     private static final int BRANCH_DOT_DEREFERENCE = 17;
     private static final int BRANCH_GEOHASH = 18;
@@ -541,7 +540,9 @@ public class ExpressionParser {
                         break;
 
                     case '(':
-                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS) {
+                        // check that we are handling a declare variable, and we have finished parsing it
+                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS
+                                && !(prevBranch == BRANCH_OPERATOR && Chars.equals(opStack.peek().token, ":="))) {
                             lexer.unparseLast();
                             break OUT;
                         }
@@ -809,7 +810,7 @@ public class ExpressionParser {
                         break;
                     case 's':
                     case 'S':
-                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS) {
+                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && SqlKeywords.isSelectKeyword(tok)) {
                             lexer.unparseLast();
                             break OUT;
                         }
