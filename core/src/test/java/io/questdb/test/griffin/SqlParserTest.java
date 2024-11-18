@@ -3419,9 +3419,23 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareSelectCast() throws Exception {
+    public void testDeclareSelectCast1() throws Exception {
         assertModel("select-virtual cast(2,timestamp) cast from (long_sequence(1))",
                 "DECLARE @x := 2::timestamp SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectCast2() throws Exception {
+        assertModel("select-virtual cast(5,timestamp) cast from (long_sequence(1))", "DECLARE @x := 5 SELECT CAST(@x AS timestamp)", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-distinct [symbol] symbol from (select-choose [symbol] symbol from (select [symbol] from trades timestamp (timestamp)))", "DECLARE @x := symbol SELECT DISTINCT symbol FROM trades", ExecutionModel.QUERY);
+        });
     }
 
     @Test
@@ -3442,11 +3456,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectExplainPlan() throws Exception {
+        assertModel("EXPLAIN (FORMAT TEXT) ", "EXPLAIN DECLARE @x := 5 SELECT @x", ExecutionModel.EXPLAIN);
+        assertSql("QUERY PLAN\n" +
+                "VirtualRecord\n" +
+                "  functions: [5]\n" +
+                "    long_sequence count: 1\n", "EXPLAIN DECLARE @x := 5 SELECT @x");
+    }
+
+    @Test
     public void testDeclareSelectFromSubqueryAsVariable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
             drainWalQueue();
-            assertException("DECLARE @subquery := (SELECT * FROM foo), @ts = ts, @x = x, SELECT @ts, @x FROM @subquery", 22, "function, literal or constant is expected");
+            assertException("DECLARE @subquery := (SELECT * FROM foo), @ts := ts, @x := x, SELECT @ts, @x FROM @subquery", 22, "function, literal or constant is expected");
         });
     }
 
@@ -3503,6 +3526,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectLatestBy() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp) latest by timestamp)", "DECLARE @ts := timestamp SELECT * FROM trades LATEST BY @ts;", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testDeclareSelectLatestOn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades latest on timestamp partition by symbol)", "DECLARE @ts := timestamp, @sym := symbol SELECT * FROM trades LATEST ON @ts PARTITION BY @sym;", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testDeclareSelectLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit 2,5", "DECLARE @lo := 2, @hi := 5 SELECT * FROM trades LIMIT @lo, @hi", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
     public void testDeclareSelectMultipleCTEs() throws Exception {
         String query = "DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y as col1), b AS (SELECT (@x - @y) + col1 as col2 FROM a) SELECT * FROM b";
         assertModel("select-choose col2 from (select-virtual [2 - 5 + col1 col2] 2 - 5 + col1 col2 from (select-virtual [2 + 5 col1] 2 + 5 col1 from (long_sequence(1))) a) b", query
@@ -3527,12 +3577,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareSelectOptionalComma() throws Exception {
-        assertModel("select-virtual 5 + 2 column from (long_sequence(1))", "DECLARE \n" +
-                "  @x := 5\n" +
-                "  @y := 2\n" +
-                "SELECT\n" +
-                "  @x + @y", ExecutionModel.QUERY);
+    public void testDeclareSelectNegativeLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit -(2),-(5)", "DECLARE @lo := -2, @hi := -5 SELECT * FROM trades LIMIT @lo, @hi", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testDeclareSelectNegativeLimitUnary() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit -(2),-(5)", "DECLARE @lo := 2, @hi := 5 SELECT * FROM trades LIMIT -@lo, -@hi", ExecutionModel.QUERY);
+        });
     }
 
     @Test
@@ -3556,6 +3615,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareSelectPositionalBindVariables() throws Exception {
         assertException("DECLARE @x := ?, @y := ? SELECT @x, @y", 14, "Invalid column: ?");
+    }
+
+    @Test
+    public void testDeclareSelectRequiredComma() throws Exception {
+        assertModel("select-virtual 5 + 2 column from (long_sequence(1))", "DECLARE \n" +
+                "  @x := 5,\n" +
+                "  @y := 2\n" +
+                "SELECT\n" +
+                "  @x + @y", ExecutionModel.QUERY);
     }
 
     @Test
@@ -3627,7 +3695,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
             drainWalQueue();
             assertModel("select-choose ts, x from (select [ts, x] from foo timestamp (ts))",
-                    "DECLARE @table_name := foo, @ts = ts, @x = x, SELECT @ts, @x FROM @table_name", ExecutionModel.QUERY);
+                    "DECLARE @table_name := foo, @ts := ts, @x := x, SELECT @ts, @x FROM @table_name", ExecutionModel.QUERY);
         });
     }
 
@@ -3653,6 +3721,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testDeclareSelectWhereComplex() throws Exception {
         assertModel("select-virtual cast(2,timestamp) + cast(5,timestamp) column from (long_sequence(1) where cast(2,timestamp) < cast(5,timestamp))",
                 "DECLARE @x := 2::timestamp, @y := 5::timestamp SELECT @x + @y FROM long_sequence(1) WHERE @x < @y", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectWrongAssignmentOperator() throws Exception {
+        assertException("DECLARE @x = 5 SELECT @x;", 11, "expected variable assignment operator");
     }
 
     @Test

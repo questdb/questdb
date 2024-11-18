@@ -69,9 +69,9 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet groupByStopSet = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceIntHashMap joinStartSet = new LowerCaseAsciiCharSequenceIntHashMap();
     private static final RecursiveReplacingTreeTraversalAlgo recursiveReplacingTreeTraversalAlgo = new RecursiveReplacingTreeTraversalAlgo();
+    private static final RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
-    private static RewriteDeclaredVariablesInExpressionVisitor rewriteDeclaredVariablesInExpressionVisitor = new RewriteDeclaredVariablesInExpressionVisitor();
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>();
@@ -292,11 +292,15 @@ public class SqlParser {
     }
 
     private ExpressionNode expectLiteral(GenericLexer lexer) throws SqlException {
+        return expectLiteral(lexer, null);
+    }
+
+    private ExpressionNode expectLiteral(GenericLexer lexer, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
         CharSequence tok = tok(lexer, "literal");
         int pos = lexer.lastTokenPosition();
         SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, pos);
         validateLiteral(pos, tok);
-        return nextLiteral(GenericLexer.immutableOf(GenericLexer.unquote(tok)), pos);
+        return rewriteDeclaredVariables(nextLiteral(GenericLexer.immutableOf(GenericLexer.unquote(tok)), pos), decls);
     }
 
     private long expectLong(GenericLexer lexer) throws SqlException {
@@ -1028,6 +1032,8 @@ public class SqlParser {
 
     private void parseDeclare(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         while (true) { // todo: make this a safer condition
+            int pos = lexer.getPosition();
+
             CharSequence tok = optTok(lexer);
 
             if (tok == null) {
@@ -1038,15 +1044,23 @@ public class SqlParser {
                 continue;
             }
 
-            lexer.unparseLast();
-
             if (isSelectKeyword(tok) || !(tok.charAt(0) == '@')) {
+                lexer.unparseLast();
                 break;
             }
 
             // todo: review this, maybe we can use an immutable
             tok = tok.toString();
-            
+
+            CharSequence expectWalrus = optTok(lexer);
+
+            if (expectWalrus == null || !Chars.equals(expectWalrus, ":=")) {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected variable assignment operator `:=`");
+            }
+
+            lexer.goToPosition(pos);
+
+
             ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls(), tok);
 
             if (expr == null) {
@@ -1684,12 +1698,12 @@ public class SqlParser {
         // expect [limit]
         if (tok != null && isLimitKeyword(tok)) {
             model.setLimitPosition(lexer.lastTokenPosition());
-            ExpressionNode lo = expr(lexer, model, sqlParserCallback);
+            ExpressionNode lo = expr(lexer, model, sqlParserCallback, model.getDecls());
             ExpressionNode hi = null;
 
             tok = optTok(lexer);
             if (tok != null && Chars.equals(tok, ',')) {
-                hi = expr(lexer, model, sqlParserCallback);
+                hi = expr(lexer, model, sqlParserCallback, model.getDecls());
             } else {
                 lexer.unparseLast();
             }
@@ -1938,7 +1952,7 @@ public class SqlParser {
 
         CharSequence tok;
         do {
-            model.addLatestBy(expectLiteral(lexer));
+            model.addLatestBy(expectLiteral(lexer, model.getDecls()));
             tok = SqlUtil.fetchNext(lexer);
         } while (Chars.equalsNc(tok, ','));
 
@@ -1953,7 +1967,7 @@ public class SqlParser {
         // 'latest on' is already parsed at this point
 
         // <timestamp>
-        final ExpressionNode timestamp = expectLiteral(lexer);
+        final ExpressionNode timestamp = expectLiteral(lexer, model.getDecls());
         model.setTimestamp(timestamp);
         // 'partition by'
         expectTok(lexer, "partition");
@@ -1961,7 +1975,7 @@ public class SqlParser {
         // <columns>
         CharSequence tok;
         do {
-            model.addLatestBy(expectLiteral(lexer));
+            model.addLatestBy(expectLiteral(lexer, model.getDecls()));
             tok = SqlUtil.fetchNext(lexer);
         } while (Chars.equalsNc(tok, ','));
 
@@ -2817,11 +2831,14 @@ public class SqlParser {
         }
     }
 
-    private ExpressionNode rewriteDeclaredVariables(ExpressionNode expr, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
-        return recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(decls));
+    private ExpressionNode rewriteDeclaredVariables(ExpressionNode expr, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+        return rewriteDeclaredVariables(expr, decls, null);
     }
 
-    private ExpressionNode rewriteDeclaredVariables(ExpressionNode expr, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, CharSequence exclude) throws SqlException {
+    private ExpressionNode rewriteDeclaredVariables(ExpressionNode expr, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, CharSequence exclude) throws SqlException {
+        if (decls == null || decls.size() == 0) { // short circuit null case
+            return expr;
+        }
         return recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(decls, exclude));
     }
 
@@ -3155,10 +3172,6 @@ public class SqlParser {
 
         @Override
         public ExpressionNode visit(ExpressionNode node) throws SqlException {
-            if (decls == null) {
-                return node;
-            }
-
             if (node.token == null) {
                 return node;
             }
@@ -3176,11 +3189,11 @@ public class SqlParser {
             return node;
         }
 
-        RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor of(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) {
+        RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor of(@NotNull LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) {
             return this.of(decls, null);
         }
 
-        RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor of(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+        RecursiveReplacingTreeTraversalAlgo.ReplacingVisitor of(@NotNull LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
                                                                 @Nullable CharSequence exclude) {
             this.decls = decls;
             this.exclude = exclude;
