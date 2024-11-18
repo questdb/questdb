@@ -852,13 +852,13 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     @Test
     public void testSelectWhileConcurrentlyAlteringTable_simpleStatementReused() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            try (Statement s = connection.createStatement()) {
+            try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
                 executeStatementWhileConcurrentlyChangingSchema(connection,
                         "ALTER TABLE tango RENAME COLUMN x TO y",
                         "ALTER TABLE tango RENAME COLUMN y TO x",
                         "query table",
                         "Invalid column: y", () -> {
-                            ResultSet rs = s.executeQuery("SELECT y FROM tango");
+                            ResultSet rs = s.executeQuery();
                             int rowCount = 0;
                             while (rs.next()) {
                                 rowCount++;
@@ -873,22 +873,24 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testSelectWhileConcurrentlyRecreatingTable_preparedStatement() throws Exception {
         assertWithPgServer(
                 CONN_AWARE_EXTENDED,
-                (connection, binary, mode, port) ->
+                (connection, binary, mode, port) -> {
+                    try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
                                 "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
                                 "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
                                 "query table",
                                 "Invalid column: y", () -> {
-                                    try (PreparedStatement s = connection.prepareStatement("SELECT y FROM tango")) {
-                                        ResultSet rs = s.executeQuery();
+                                    try (ResultSet rs = s.executeQuery()) {
                                         int rowCount = 0;
                                         while (rs.next()) {
                                             rowCount++;
                                         }
                                         Assert.assertEquals(10, rowCount);
                                     }
-                                }));
+                                });
+                    }
+                });
     }
 
     @Test
