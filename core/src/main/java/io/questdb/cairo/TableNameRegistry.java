@@ -108,10 +108,10 @@ public interface TableNameRegistry extends Closeable {
     /**
      * Checks that table token does not belong to a dropped table.
      *
-     * @param tableDir table directory to check
+     * @param tableToken table token to check
      * @return true if table id dropped, false otherwise
      */
-    boolean isTableDropped(CharSequence tableDir);
+    boolean isTableDropped(TableToken tableToken);
 
     /**
      * Locks table name for creation and returns table token.

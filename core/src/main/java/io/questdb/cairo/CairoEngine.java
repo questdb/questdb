@@ -870,11 +870,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean isTableDropped(TableToken tableToken) {
-        return isTableDropped(tableToken.getDirName());
-    }
-
-    public boolean isTableDropped(CharSequence dirName) {
-        return tableNameRegistry.isTableDropped(dirName);
+        return tableNameRegistry.isTableDropped(tableToken);
     }
 
     public boolean isWalTable(TableToken tableToken) {
