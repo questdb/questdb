@@ -2614,6 +2614,25 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteNegativeLimitAndHiLimitAvoidsJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("SELECT trades.timestamp, * FROM trades\n" +
+                    "ASOF JOIN (SELECT * from trades) trades2\n" +
+                    " LIMIT -3, -10;", "Limit lo: -3 hi: -10\n" +
+                    "    SelectedRecord\n" +
+                    "        AsOf Join Fast Scan\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: trades\n" +
+                    "            PageFrame\n" +
+                    "                Row forward scan\n" +
+                    "                Frame forward scan on: trades\n");
+        });
+    }
+
+    @Test
     public void testRewriteNegativeLimitAvoidsJoins() throws Exception {
         assertMemoryLeak(() -> {
             ddl(tradesDdl);
@@ -2803,6 +2822,45 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "            PageFrame\n" +
                     "                Row backward scan\n" +
                     "                Frame backward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteNegativeLimitWithHiLimitHandleTimestampAndAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select timestamp ts1, timestamp ts2 from trades limit -3, -10", "Limit lo: -3 hi: -10\n" +
+                    "    SelectedRecord\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteNegativeLimitWithHiLimitHandlesWildcardsManualAliasing() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3, -10;", "Limit lo: -3 hi: -10\n" +
+                    "    SelectedRecord\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: trades\n");
+        });
+    }
+
+    @Test
+    public void testRewriteNegativeLimitWithHiLimitHandlesWildcardsTimestampNotFirst() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("select *, timestamp from trades limit -3, -10;", "Limit lo: -3 hi: -10\n" +
+                    "    SelectedRecord\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: trades\n");
         });
     }
 
