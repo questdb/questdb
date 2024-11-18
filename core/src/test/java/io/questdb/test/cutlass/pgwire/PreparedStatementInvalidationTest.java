@@ -1365,7 +1365,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                     if (acceptedErrorRegex != null) {
                         assertMessageMatches(e, acceptedErrorRegex);
                     } else {
-                        Assert.fail("Did not expect any failure");
+                        throw new AssertionError("Did not expect any failure", e);
                     }
                     LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
                 }
