@@ -124,7 +124,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
     private InsertOperation insertOp = null;
-    private boolean isTextFormat = false;
     private int msgBindParameterValueCount;
     private short msgBindSelectFormatCodeCount = 0;
     private int outResendColumnIndex = 0;
@@ -1899,9 +1898,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } else {
             this.sqlReturnRowCountToBeSent = Long.MAX_VALUE;
         }
-
-        // pre-cache the requested format
-        isTextFormat = isTextFormat();
     }
 
     private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink)
@@ -2027,9 +2023,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.put(MESSAGE_TYPE_DATA_ROW);
             messageLengthAddress = utf8Sink.skipInt();
             utf8Sink.putNetworkShort((short) columnCount);
-            if (!isTextFormat) {
-                utf8Sink.bookmark();
-            }
+            utf8Sink.bookmark();
         }
         final boolean isMsgLengthRequired = messageLengthAddress > 0;
         try {
@@ -2151,16 +2145,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         assert false;
                 }
                 outResendColumnIndex++;
-                if (!isTextFormat) {
-                    utf8Sink.bookmark();
-                }
+                utf8Sink.bookmark();
             }
         } catch (NoSpaceLeftInResponseBufferException e) {
-            utf8Sink.resetToBookmark();
-            if (isTextFormat) {
-                outResendColumnIndex = 0;
-                outResendRecordHeader = true;
+            if (isTextFormat()) {
+                assert messageLengthAddress > 0;
+                resetIncompleteRecord(utf8Sink, messageLengthAddress);
             } else {
+                utf8Sink.resetToBookmark();
                 if (isMsgLengthRequired) {
                     final int sizeInBuffer = (int) (utf8Sink.getSendBufferPtr() - messageLengthAddress);
                     assert sizeInBuffer > 0;
@@ -2514,7 +2506,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         sqlReturnRowCountToBeSent = 0;
         parameterValueArenaHi = parameterValueArenaPtr;
         compiledQuery = compiledQueryCopy;
-        isTextFormat = false;
         isCopy = false;
         preparedStatement = false;
         preparedStatementName = null;
