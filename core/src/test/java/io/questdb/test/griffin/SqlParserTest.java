@@ -3559,6 +3559,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectSampleByBasic() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-group-by timestamp_floor('1h',timestamp) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp", "DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testDeclareSelectSampleByFirstObservation() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp)) sample by 1h", "DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit ALIGN TO FIRST OBSERVATION", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testDeclareSelectSampleByFromToFill() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) where timestamp >= '2008-12-28' and timestamp < '2009-01-05') sample by 1h from '2008-12-28' to '2009-01-05' fill(null) align to calendar with offset '00:00'", "DECLARE @unit := 1h, @from := '2008-12-28', @to := '2009-01-05', @fill := null SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit FROM @from TO @to FILL(@fill)", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
     public void testDeclareSelectSubQuery() throws Exception {
         assertModel("select-choose column from (select-virtual [2 + 5 column] 2 + 5 column from (long_sequence(1)))",
                 "DECLARE @x := 2, @y := 5 SELECT * FROM (SELECT @x + @y)", ExecutionModel.QUERY);

@@ -331,7 +331,7 @@ public class SqlParser {
     }
 
     private void expectSample(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
-        final ExpressionNode n = expr(lexer, (QueryModel) null, sqlParserCallback);
+        final ExpressionNode n = expr(lexer, (QueryModel) null, sqlParserCallback, model.getDecls());
         if (isFullSampleByPeriod(n)) {
             model.setSampleBy(n);
             return;
@@ -1046,7 +1046,7 @@ public class SqlParser {
 
             // todo: review this, maybe we can use an immutable
             tok = tok.toString();
-
+            
             ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls(), tok);
 
             if (expr == null) {
@@ -1538,7 +1538,7 @@ public class SqlParser {
             ExpressionNode fromNode = null, toNode = null;
             // support `SAMPLE BY 5m FROM foo TO bah`
             if (tok != null && isFromKeyword(tok)) {
-                fromNode = expr(lexer, model, sqlParserCallback);
+                fromNode = expr(lexer, model, sqlParserCallback, model.getDecls());
                 if (fromNode == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'timestamp' expression expected");
                 }
@@ -1546,7 +1546,7 @@ public class SqlParser {
             }
 
             if (tok != null && isToKeyword(tok)) {
-                toNode = expr(lexer, model, sqlParserCallback);
+                toNode = expr(lexer, model, sqlParserCallback, model.getDecls());
                 if (toNode == null) {
                     throw SqlException.$(lexer.lastTokenPosition(), "'timestamp' expression expected");
                 }
@@ -1558,7 +1558,7 @@ public class SqlParser {
             if (tok != null && isFillKeyword(tok)) {
                 expectTok(lexer, '(');
                 do {
-                    final ExpressionNode fillNode = expr(lexer, model, sqlParserCallback);
+                    final ExpressionNode fillNode = expr(lexer, model, sqlParserCallback, model.getDecls());
                     if (fillNode == null) {
                         throw SqlException.$(lexer.lastTokenPosition(), "'none', 'prev', 'mid', 'null' or number expected");
                     }
