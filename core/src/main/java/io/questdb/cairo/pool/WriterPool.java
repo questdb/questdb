@@ -263,27 +263,7 @@ public class WriterPool extends AbstractPool {
                 throw CairoException.critical(0).put("Writer ").put(tableToken.getDirName()).put(" is not locked");
             }
 
-            if (newTable) {
-                // Note that the TableUtils.createTable method will create files, but on some OS's these files
-                // will not immediately become visible on all threads, only in this thread will they definitely
-                // be visible. To prevent spurious file system errors (or even allowing the same table to be
-                // created twice), we cache the writer in the WriterPool whose access via the engine is thread safe.
-                assert writer == null && e.lockFd != -1;
-                LOG.info().$("created [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
-                writer = new TableWriter(
-                        configuration,
-                        tableToken,
-                        engine.getMessageBus(),
-                        null,
-                        false,
-                        e,
-                        root,
-                        engine.getDdlListener(tableToken),
-                        engine.getCheckpointStatus(),
-                        engine.getMetrics(),
-                        engine
-                );
-            }
+            assert !newTable || writer == null && e.lockFd != -1;
 
             if (writer == null) {
                 // unlock must remove entry because pool does not deal with null writer
@@ -520,7 +500,7 @@ public class WriterPool extends AbstractPool {
     }
 
     private TableWriter logAndReturn(Entry e, short event) {
-        LOG.info().$(">> [table=`").utf8(e.writer.getTableToken().getDirName()).$("`, thread=").$(e.owner).$(']').$();
+        LOG.debug().$(">> [table=`").utf8(e.writer.getTableToken().getDirName()).$("`, thread=").$(e.owner).$(']').$();
         notifyListener(e.owner, e.writer.getTableToken(), event);
         return e.writer;
     }
@@ -557,7 +537,7 @@ public class WriterPool extends AbstractPool {
         }
 
         if (e.owner != UNALLOCATED) {
-            LOG.info().$("<< [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
+            LOG.debug().$("<< [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
 
             e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();

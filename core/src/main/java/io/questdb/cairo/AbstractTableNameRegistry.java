@@ -103,7 +103,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
         for (Map.Entry<CharSequence, TableToken> e : tableNameToTableTokenMap.entrySet()) {
             TableToken tableNameTableToken = e.getValue();
 
-            if (tableNameTableToken == LOCKED_TOKEN) {
+            if (TableNameRegistry.isLocked(tableNameTableToken)) {
                 continue;
             }
 
