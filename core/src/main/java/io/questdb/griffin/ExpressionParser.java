@@ -70,17 +70,17 @@ public class ExpressionParser {
     private final OperatorRegistry activeRegistry;
     private final IntStack argStackDepthStack = new IntStack();
     private final IntStack backupArgStackDepthStack = new IntStack();
-    private final IntStack backupCaseBraceCountStack = new IntStack();
-    private final IntStack backupCastBraceCountStack = new IntStack();
+    private final IntStack backupCaseParensCountStack = new IntStack();
+    private final IntStack backupCastParensCountStack = new IntStack();
     private final IntStack backupParamCountStack = new IntStack();
-    private final IntStack braceCountStack = new IntStack();
     private final IntStack bracketCountStack = new IntStack();
-    private final IntStack caseBraceCountStack = new IntStack();
-    private final IntStack castBraceCountStack = new IntStack();
+    private final IntStack caseParensCountStack = new IntStack();
+    private final IntStack castParensCountStack = new IntStack();
     private final CharacterStore characterStore;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
     private final IntStack paramCountStack = new IntStack();
+    private final IntStack parensCountStack = new IntStack();
     private final OperatorRegistry shadowRegistry;
     private final SqlParser sqlParser;
 
@@ -201,8 +201,8 @@ public class ExpressionParser {
 
         final int paramCountStackSize = copyToBackup(paramCountStack, backupParamCountStack);
         final int argStackDepthStackSize = copyToBackup(argStackDepthStack, backupArgStackDepthStack);
-        final int castBraceCountStackSize = copyToBackup(castBraceCountStack, backupCastBraceCountStack);
-        final int caseBraceCountStackSize = copyToBackup(caseBraceCountStack, backupCaseBraceCountStack);
+        final int castParensCountStackSize = copyToBackup(castParensCountStack, backupCastParensCountStack);
+        final int caseParensCountStackSize = copyToBackup(caseParensCountStack, backupCaseParensCountStack);
 
         int pos = lexer.lastTokenPosition();
         // allow sub-query to parse "select" keyword
@@ -223,8 +223,8 @@ public class ExpressionParser {
 
         backupParamCountStack.copyTo(paramCountStack, paramCountStackSize);
         backupArgStackDepthStack.copyTo(argStackDepthStack, argStackDepthStackSize);
-        backupCastBraceCountStack.copyTo(castBraceCountStack, castBraceCountStackSize);
-        backupCaseBraceCountStack.copyTo(caseBraceCountStack, caseBraceCountStackSize);
+        backupCastParensCountStack.copyTo(castParensCountStack, castParensCountStackSize);
+        backupCaseParensCountStack.copyTo(caseParensCountStack, caseParensCountStackSize);
         return argStackDepth;
     }
 
@@ -232,14 +232,14 @@ public class ExpressionParser {
         try {
             int shadowParseMismatchFirstPosition = -1;
             int paramCount = 0;
-            int braceCount = 0;
+            int parensCount = 0;
             int bracketCount = 0;
             int betweenCount = 0;
             int betweenAndCount = 0;
             int caseCount = 0;
             int argStackDepth = 0;
             int castAsCount = 0;
-            int castBraceCount = 0;
+            int castParensCount = 0;
             int betweenStartCaseCount = 0;
 
             ExpressionNode node;
@@ -310,13 +310,13 @@ public class ExpressionParser {
                         }
                         thisBranch = BRANCH_COMMA;
 
-                        if (braceCount == 0) {
-                            // comma outside of braces
+                        if (parensCount == 0) {
+                            // comma outside of parens
                             lexer.unparseLast();
                             break OUT;
                         }
 
-                        if (castBraceCount > 0 && castBraceCountStack.peek() == castBraceCount) {
+                        if (castParensCount > 0 && castParensCountStack.peek() == castParensCount) {
                             throw SqlException.$(lastPos, "',' is not expected here");
                         }
 
@@ -367,8 +367,8 @@ public class ExpressionParser {
                             opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "[", Integer.MAX_VALUE, lastPos));
                             bracketCount++;
 
-                            braceCountStack.push(braceCount);
-                            braceCount = 0;
+                            parensCountStack.push(parensCount);
+                            parensCount = 0;
                         }
 
                         break;
@@ -403,8 +403,8 @@ public class ExpressionParser {
                                 paramCount = paramCountStack.pop();
                             }
 
-                            if (braceCountStack.notEmpty()) {
-                                braceCount = braceCountStack.pop();
+                            if (parensCountStack.notEmpty()) {
+                                parensCount = parensCountStack.pop();
                             }
 
                             node = expressionNodePool.next().of(
@@ -561,16 +561,16 @@ public class ExpressionParser {
                         // consumed as parameter to a greedy function
                         opStack.push(expressionNodePool.next().of(ExpressionNode.CONTROL, "(", Integer.MAX_VALUE, lastPos));
 
-                        // check if this brace was opened after 'cast'
-                        if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == -1) {
-                            castBraceCountStack.update(castBraceCount + 1);
+                        // check if this parens was opened after 'cast'
+                        if (castParensCountStack.size() > 0 && castParensCountStack.peek() == -1) {
+                            castParensCountStack.update(castParensCount + 1);
                         }
-                        // if this brace is inside a 'cast', use the helper counter to parse inner braces
-                        if (castBraceCountStack.size() > 0) {
-                            castBraceCount++;
+                        // if this parens is inside a 'cast', use the helper counter to parse inner parens
+                        if (castParensCountStack.size() > 0) {
+                            castParensCount++;
                         }
 
-                        braceCount++;
+                        parensCount++;
                         break;
 
                     case ')':
@@ -578,7 +578,7 @@ public class ExpressionParser {
                             throw missingArgs(lastPos);
                         }
 
-                        if (braceCount == 0) {
+                        if (parensCount == 0) {
                             lexer.unparseLast();
                             break OUT;
                         }
@@ -587,23 +587,23 @@ public class ExpressionParser {
                         int localParamCount = (prevBranch == BRANCH_LEFT_PARENTHESIS ? 0 : paramCount + 1);
                         final boolean thisWasCast;
 
-                        if (castBraceCountStack.size() > 0 && castBraceCountStack.peek() == castBraceCount) {
+                        if (castParensCountStack.size() > 0 && castParensCountStack.peek() == castParensCount) {
                             if (castAsCount == 0) {
                                 throw SqlException.$(lastPos, "'as' missing");
                             }
 
                             castAsCount--;
-                            castBraceCountStack.pop();
+                            castParensCountStack.pop();
                             thisWasCast = true;
                         } else {
                             thisWasCast = false;
                         }
 
-                        if (castBraceCount > 0) {
-                            castBraceCount--;
+                        if (castParensCount > 0) {
+                            castParensCount--;
                         }
 
-                        braceCount--;
+                        parensCount--;
                         // If the token is a right parenthesis:
                         // Until the token at the top of the stack is a left parenthesis, pop operators off the stack onto the output queue.
                         // Pop the left parenthesis from the stack, but not onto the output queue.
@@ -689,7 +689,7 @@ public class ExpressionParser {
                             lexer.backTo(lastPos + SqlKeywords.CASE_KEYWORD_LENGTH, caseTok);
                             tok = caseTok;
                             if (prevBranch != BRANCH_DOT_DEREFERENCE) {
-                                castBraceCountStack.push(-1);
+                                castParensCountStack.push(-1);
                                 thisBranch = BRANCH_OPERATOR;
                                 opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, "cast", Integer.MIN_VALUE, lastPos));
                                 break;
@@ -702,7 +702,7 @@ public class ExpressionParser {
                     case 'a':
                     case 'A':
                         if (SqlKeywords.isAsKeyword(tok)) {
-                            if (castAsCount < castBraceCountStack.size()) {
+                            if (castAsCount < castParensCountStack.size()) {
 
                                 thisBranch = BRANCH_CAST_AS;
 
@@ -935,7 +935,7 @@ public class ExpressionParser {
 
                                 // there is one case for valid dangling expression - when we create an alias for column (`'value' 'x'` equivalent to `'value' as 'x'`)
                                 // this helper works for simple cases leaving unparsed last token and gives a chance for the caller to analyze aliasing
-                                // although for complex cases it will not work (`'a' || 'b' 'x'` will not be parsed as `'a' || 'b' as 'x'` without explicit braces)
+                                // although for complex cases it will not work (`'a' || 'b' 'x'` will not be parsed as `'a' || 'b' as 'x'` without explicit parens)
                                 if (opStack.size() > 1) {
                                     throw SqlException.$(lastPos, "dangling expression");
                                 }
@@ -1151,8 +1151,8 @@ public class ExpressionParser {
                                 paramCountStack.push(paramCount);
                                 paramCount = 0;
 
-                                caseBraceCountStack.push(braceCount);
-                                braceCount = 0;
+                                caseParensCountStack.push(parensCount);
+                                parensCount = 0;
 
                                 argStackDepthStack.push(argStackDepth);
                                 argStackDepth = 0;
@@ -1198,8 +1198,8 @@ public class ExpressionParser {
                                             argStackDepth += argStackDepthStack.pop();
                                         }
 
-                                        if (caseBraceCountStack.notEmpty()) {
-                                            braceCount = caseBraceCountStack.pop();
+                                        if (caseParensCountStack.notEmpty()) {
+                                            parensCount = caseParensCountStack.pop();
                                         }
 
                                         node.paramCount = paramCount;
@@ -1336,7 +1336,7 @@ public class ExpressionParser {
                                         int zoneTokPosition = lexer.getTokenHi();
                                         tok = SqlUtil.fetchNext(lexer);
                                         // Next token is string literal, or we are in 'as' part of cast function
-                                        boolean isInActiveCastAs = (castBraceCountStack.size() > 0 && (castBraceCountStack.size() == castAsCount));
+                                        boolean isInActiveCastAs = (castParensCountStack.size() > 0 && (castParensCountStack.size() == castAsCount));
                                         if (tok != null && (isInActiveCastAs || tok.charAt(0) == '\'')) {
                                             lexer.backTo(zoneTokPosition, zoneTok);
                                             continue;
@@ -1401,7 +1401,7 @@ public class ExpressionParser {
                         }
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
-                        if (braceCount > 0) {
+                        if (parensCount > 0) {
                             throw SqlException.$(lastPos, "dangling literal");
                         }
                         lexer.unparseLast();
@@ -1448,15 +1448,15 @@ public class ExpressionParser {
             }
         } catch (SqlException e) {
             opStack.clear();
-            backupCastBraceCountStack.clear();
+            backupCastParensCountStack.clear();
             backupParamCountStack.clear();
             backupArgStackDepthStack.clear();
             throw e;
         } finally {
             argStackDepthStack.clear();
             paramCountStack.clear();
-            castBraceCountStack.clear();
-            caseBraceCountStack.clear();
+            castParensCountStack.clear();
+            caseParensCountStack.clear();
         }
     }
 

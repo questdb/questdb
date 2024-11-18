@@ -761,11 +761,11 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testInsertNdArr() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE ndarrs (ts TIMESTAMP, a1 ARR{DOUBLE}, a2 ARR{LONG}) timestamp(ts)");
-            insert("INSERT INTO ndarrs values(1262599200000000, NULL, NULL)");
-            insert("INSERT INTO ndarrs values(1262599300000000, {}, {})");
-            insert("INSERT INTO ndarrs values(1262599300000000, {.25, .5, -1, NULL, 0}, {0, 1, 2})");
-            insert("INSERT INTO ndarrs values(1262599300000000, {{-100, 4.5}, {200, 4.75}}, { { {10, 20}, {30, 40} }, { {50, 60}, {70, 80} } }");
+            ddl("CREATE TABLE ndarrs (ts TIMESTAMP, v DOUBLE, a1 ARRAY(DOUBLE), a2 ARRAY(LONG)) timestamp(ts)");
+            insert("INSERT INTO ndarrs values(1262599200000000, 2.5, NULL, NULL)");
+            insert("INSERT INTO ndarrs values(1262599300000000,  2.5, {}, {})");
+            insert("INSERT INTO ndarrs values(1262599300000000,  2.5, {.25, .5, -1, NULL, 0}, {0, 1, 2})");
+            insert("INSERT INTO ndarrs values(1262599300000000,  2.5, {{-100, 4.5}, {200, 4.75}}, { { {10, 20}, {30, 40} }, { {50, 60}, {70, 80} } }");
         });
     }
 

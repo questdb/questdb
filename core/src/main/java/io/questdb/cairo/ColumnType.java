@@ -90,17 +90,16 @@ public final class ColumnType {
     public static final short LONG128 = GEOHASH + 1;            // = 24  Limited support, few tests only
     public static final short IPv4 = LONG128 + 1;               // = 25
     public static final short VARCHAR = IPv4 + 1;               // = 26
-    public static final short ND_ARR_DOUBLE = VARCHAR + 1;      // = 27
-    public static final short ND_ARR_LONG = ND_ARR_DOUBLE + 1;  // = 28
+    public static final short ND_ARRAY = VARCHAR + 1;           // = 27
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = ND_ARR_LONG + 1;       // = 29;
-    public static final short REGPROCEDURE = REGCLASS + 1;      // = 30;
-    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 31;
-    public static final short PARAMETER = ARRAY_STRING + 1;     // = 32;
-    public static final short INTERVAL = PARAMETER + 1;         // = 33
-    public static final short NULL = INTERVAL + 1;              // = 34; ALWAYS the last
+    public static final short REGCLASS = ND_ARRAY + 1;          // = 28;
+    public static final short REGPROCEDURE = REGCLASS + 1;      // = 29;
+    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 30;
+    public static final short PARAMETER = ARRAY_STRING + 1;     // = 31;
+    public static final short INTERVAL = PARAMETER + 1;         // = 32
+    public static final short NULL = INTERVAL + 1;              // = 33; ALWAYS the last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
@@ -153,15 +152,19 @@ public final class ColumnType {
      * Get the backing type of the N-dimensional array type,
      * or returns `UNDEFINED` if the type is not an array.
      */
-    public static int getNdArrayType(int columnType) {
-        switch (columnType) {
-            case ND_ARR_DOUBLE:
-                return DOUBLE;
-            case ND_ARR_LONG:
-                return LONG;
-            default:
-                return UNDEFINED;
+    public static int getNdArrayElementType(int type) {
+        if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
+            final int elementType = getGeoHashBits(type);
+            assert elementType == ColumnType.DOUBLE || elementType == ColumnType.LONG;
+            return elementType;
         }
+        return UNDEFINED;
+    }
+
+    /** Build an array type from an element type. */
+    public static int buildNdArrayType(int elementType) {
+        assert elementType == ColumnType.DOUBLE || elementType == ColumnType.LONG;
+        return getGeoHashTypeWithBits(elementType);
     }
 
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
@@ -260,13 +263,7 @@ public final class ColumnType {
      * Is an N-dimensional array type.
      */
     public static boolean isNdArray(int columnType) {
-        switch (columnType) {
-            case ND_ARR_DOUBLE:
-            case ND_ARR_LONG:
-                return true;
-            default:
-                return false;
-        }
+        return ColumnType.tagOf(columnType) == ColumnType.ND_ARRAY;
     }
 
     public static boolean isNdArrayElemType(int targetType) {
@@ -503,14 +500,13 @@ public final class ColumnType {
                 /* 24 LONG128       */, {LONG128}
                 /* 25 IPv4          */, {IPv4}
                 /* 26 VARCHAR       */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 27 ND_ARR_DOUBLE */, {ND_ARR_DOUBLE}
-                /* 28 ND_ARR_LONG   */, {ND_ARR_LONG}
+                /* 27 ND_ARR_DOUBLE */, {ND_ARRAY}
+                /* 28 unused        */, {}
                 /* 29 unused        */, {}
                 /* 30 unused        */, {}
                 /* 31 unused        */, {}
-                /* 32 unused        */, {}
-                /* 33 INTERVAL      */, {INTERVAL, STRING}
-                /* 34 NULL          */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
+                /* 32 INTERVAL      */, {INTERVAL, STRING}
+                /* 33 NULL          */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
@@ -545,8 +541,7 @@ public final class ColumnType {
         typeNameMap.put(CHAR, "CHAR");
         typeNameMap.put(STRING, "STRING");
         typeNameMap.put(VARCHAR, "VARCHAR");
-        typeNameMap.put(ND_ARR_DOUBLE, "ARR{DOUBLE}");
-        typeNameMap.put(ND_ARR_LONG, "ARR{LONG}");
+        typeNameMap.put(ND_ARRAY, "ARRAY");
         typeNameMap.put(SYMBOL, "SYMBOL");
         typeNameMap.put(BINARY, "BINARY");
         typeNameMap.put(DATE, "DATE");
@@ -575,8 +570,7 @@ public final class ColumnType {
         nameTypeMap.put("char", CHAR);
         nameTypeMap.put("string", STRING);
         nameTypeMap.put("varchar", VARCHAR);
-        nameTypeMap.put("arr{double}", ND_ARR_DOUBLE);
-        nameTypeMap.put("arr{long}", ND_ARR_LONG);
+        nameTypeMap.put("array", ND_ARRAY);
         nameTypeMap.put("symbol", SYMBOL);
         nameTypeMap.put("binary", BINARY);
         nameTypeMap.put("date", DATE);
@@ -624,8 +618,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[DOUBLE] = 3;
         TYPE_SIZE_POW2[STRING] = -1;
         TYPE_SIZE_POW2[VARCHAR] = -1;
-        TYPE_SIZE_POW2[ND_ARR_DOUBLE] = -1;
-        TYPE_SIZE_POW2[ND_ARR_LONG] = -1;
+        TYPE_SIZE_POW2[ND_ARRAY] = -1;
         TYPE_SIZE_POW2[LONG] = 3;
         TYPE_SIZE_POW2[DATE] = 3;
         TYPE_SIZE_POW2[TIMESTAMP] = 3;
@@ -655,8 +648,7 @@ public final class ColumnType {
         TYPE_SIZE[SYMBOL] = Integer.BYTES;
         TYPE_SIZE[STRING] = 0;
         TYPE_SIZE[VARCHAR] = 0;
-        TYPE_SIZE[ND_ARR_DOUBLE] = 0;
-        TYPE_SIZE[ND_ARR_LONG] = 0;
+        TYPE_SIZE[ND_ARRAY] = 0;
         TYPE_SIZE[DOUBLE] = Double.BYTES;
         TYPE_SIZE[LONG] = Long.BYTES;
         TYPE_SIZE[DATE] = Long.BYTES;
