@@ -1963,33 +1963,39 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outError(PGResponseSink utf8Sink, ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) {
-        rollback(pendingWriters);
-        utf8Sink.resetToBookmark();
-        // todo: we need to test scenario, when sync does not fit the buffer
-        final int position = getErrorMessagePosition();
-        utf8Sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-        long addr = utf8Sink.skipInt();
+        try {
+            rollback(pendingWriters);
+            utf8Sink.resetToBookmark();
+            // todo: we need to test scenario, when sync does not fit the buffer
+            final int position = getErrorMessagePosition();
+            utf8Sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+            long addr = utf8Sink.skipInt();
 
-        utf8Sink.putAscii('C'); // C = SQLSTATE
-        if (stalePlanError) {
-            // this is what PostgreSQL sends when recompiling a query produces a different resultset.
-            // some clients acts on it by restarting the query from the beginning.
-            utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
-            utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgreSQL here
-            utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
-        } else {
-            utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
-        }
+            utf8Sink.putAscii('C'); // C = SQLSTATE
+            if (stalePlanError) {
+                // this is what PostgreSQL sends when recompiling a query produces a different resultset.
+                // some clients acts on it by restarting the query from the beginning.
+                utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
+                utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgreSQL here
+                utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
+            } else {
+                utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
+            }
 
-        utf8Sink.putAscii('M');
-        utf8Sink.putZ(getErrorMessageSink());
-        utf8Sink.putAscii('S');
-        utf8Sink.putZ("ERROR");
-        if (position > -1) {
-            utf8Sink.putAscii('P').put(position + 1).put((byte) 0);
+            utf8Sink.putAscii('M');
+            utf8Sink.putZ(getErrorMessageSink());
+            utf8Sink.putAscii('S');
+            utf8Sink.putZ("ERROR");
+            if (position > -1) {
+                utf8Sink.putAscii('P').put(position + 1).put((byte) 0);
+            }
+            utf8Sink.put((byte) 0);
+            utf8Sink.putLen(addr);
+        } catch (Throwable e) {
+            System.out.println("OOPSIE, buffer overflow in sending errors");
+            e.printStackTrace();
+            throw e;
         }
-        utf8Sink.put((byte) 0);
-        utf8Sink.putLen(addr);
     }
 
     private void outParameterTypeDescription(PGResponseSink utf8Sink) {
