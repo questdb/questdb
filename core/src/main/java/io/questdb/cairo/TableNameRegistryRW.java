@@ -106,7 +106,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
         // This most unsafe, can throw, run it first.
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-            metadataRW.hydrateTable(tableToken, true);
+            metadataRW.hydrateTable(tableToken);
         }
 
         if (tableToken.isWal()) {

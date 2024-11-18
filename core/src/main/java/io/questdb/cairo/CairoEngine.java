@@ -1076,11 +1076,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public boolean reloadTableNames(@Nullable ObjList<TableToken> convertedTables) {
-        boolean consistent = tableNameRegistry.reload(convertedTables);
-        try (MetadataCacheWriter metadataRW = getMetadataCache().writeLock()) {
-            metadataRW.hydrateAllTables();
-        }
-        return consistent;
+        return tableNameRegistry.reload(convertedTables);
     }
 
     public void removeTableToken(TableToken tableToken) {

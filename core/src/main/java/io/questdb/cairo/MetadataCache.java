@@ -251,6 +251,7 @@ public class MetadataCache implements QuietCloseable {
             try {
                 log
                         .$("could not hydrate metadata [table=").$(token)
+                        .$(", errno=").$(e instanceof CairoException ? ((CairoException) e).errno : 0)
                         .$(", message=");
 
                 if (e instanceof FlyweightMessageContainer) {
@@ -422,27 +423,7 @@ public class MetadataCache implements QuietCloseable {
         }
 
         /**
-         * Rehydrates all tables in the database.
-         */
-        @Override
-        public void hydrateAllTables() {
-            clearCache();
-            ObjHashSet<TableToken> tableTokensSet = new ObjHashSet<>();
-            engine.getTableTokens(tableTokensSet, false);
-            ObjList<TableToken> tableTokens = tableTokensSet.getList();
-
-            if (tableTokens.size() == 0) {
-                LOG.error().$("could not hydrate, there are no table tokens").$();
-                return;
-            }
-
-            for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                hydrateTable(tableTokens.getQuick(i), false);
-            }
-        }
-
-        /**
-         * @see MetadataCacheWriter#hydrateTable(TableToken, boolean)
+         * @see MetadataCacheWriter#hydrateTable(TableToken)
          */
         @Override
         public void hydrateTable(@NotNull TableWriterMetadata tableMetadata) {
@@ -532,8 +513,8 @@ public class MetadataCache implements QuietCloseable {
         }
 
         @Override
-        public void hydrateTable(@NotNull TableToken token, boolean throwError) {
-            hydrateTable0(token, throwError);
+        public void hydrateTable(@NotNull TableToken token) {
+            hydrateTable0(token, true);
         }
 
         @Override

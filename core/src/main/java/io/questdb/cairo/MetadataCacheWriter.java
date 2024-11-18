@@ -34,18 +34,12 @@ public interface MetadataCacheWriter extends QuietCloseable {
     void dropTable(@NotNull TableToken tableToken);
 
     /**
-     * Updates the entire cache sourcing table names from the Engine. The previous
-     * state of the cache is discarded
-     */
-    void hydrateAllTables();
-
-    /**
      * Updates the metadata cache with new entry for the given table. The entry values are
      * read from the _meta file.
      *
      * @param token The table token for the table to read metadata.
      */
-    void hydrateTable(@NotNull TableToken token, boolean throwError);
+    void hydrateTable(@NotNull TableToken token);
 
     /**
      * Updates the metadata cache with new entry, which content is provided by
