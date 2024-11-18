@@ -14,54 +14,33 @@ The manual Java impl is derived from this onwards as a recursive descent parser 
 
 Usage:
 
-echo "{1, 2, 3}" |  ./core/src/main/java/io/questdb/std/ndarr/nd_arr_grammar.py stdin                                                                                                                                                                                                                                                                                                                                      📦:nd_arr  [ ! M + ]
-<Node called "array_lit" matching "{1, 2, 3}
-">
-    <Node matching "">
-        <RegexNode called "ws" matching "">
-    <Node matching "{1, 2, 3}">
-        <Node called "array_def" matching "{1, 2, 3}">
-            <Node matching "{">
-            <Node matching "">
-                <RegexNode called "ws" matching "">
-            <Node matching "1, 2, 3">
-                <Node called "elements" matching "1, 2, 3">
-                    <Node called "element" matching "1">
-                        <Node called "number" matching "1">
-                            <Node called "long" matching "1">
-                                <Node matching "">
-                                <RegexNode called "digits" matching "1">
-                    <Node matching ", 2, 3">
-                        <Node matching ", 2">
+echo "{1,2,3}" |  ./core/src/main/java/io/questdb/std/ndarr/nd_arr_grammar.py stdin
+<Node called "array_lit" matching "{1,2,3}">
+    <Node called "array_def" matching "{1,2,3}">
+        <Node matching "{">
+        <Node matching "1,2,3">
+            <Node called "elements" matching "1,2,3">
+                <Node called "element" matching "1">
+                    <Node called "number" matching "1">
+                        <Node called "long" matching "1">
                             <Node matching "">
-                                <RegexNode called "ws" matching "">
-                            <Node matching ",">
-                            <Node matching " ">
-                                <RegexNode called "ws" matching " ">
-                            <Node called "element" matching "2">
-                                <Node called "number" matching "2">
-                                    <Node called "long" matching "2">
-                                        <Node matching "">
-                                        <RegexNode called "digits" matching "2">
-                        <Node matching ", 3">
-                            <Node matching "">
-                                <RegexNode called "ws" matching "">
-                            <Node matching ",">
-                            <Node matching " ">
-                                <RegexNode called "ws" matching " ">
-                            <Node called "element" matching "3">
-                                <Node called "number" matching "3">
-                                    <Node called "long" matching "3">
-                                        <Node matching "">
-                                        <RegexNode called "digits" matching "3">
-            <Node matching "">
-                <RegexNode called "ws" matching "">
-            <Node matching "}">
-    <Node matching "
-    ">
-        <RegexNode called "ws" matching "
-        ">
-
+                            <RegexNode called "digits" matching "1">
+                <Node matching ",2,3">
+                    <Node matching ",2">
+                        <Node matching ",">
+                        <Node called "element" matching "2">
+                            <Node called "number" matching "2">
+                                <Node called "long" matching "2">
+                                    <Node matching "">
+                                    <RegexNode called "digits" matching "2">
+                    <Node matching ",3">
+                        <Node matching ",">
+                        <Node called "element" matching "3">
+                            <Node called "number" matching "3">
+                                <Node called "long" matching "3">
+                                    <Node matching "">
+                                    <RegexNode called "digits" matching "3">
+        <Node matching "}">
 """
 
 import sys
@@ -99,7 +78,7 @@ def main():
     # echo "{1, 2, 3}" | ./grammar.py stdin
     parse_stdin = (len(sys.argv) == 2) and (sys.argv[1].lower() == 'stdin')
     if parse_stdin:
-        nd_arr_str = sys.stdin.read()
+        nd_arr_str = sys.stdin.read().rstrip()
         print(parse(nd_arr_str))
     else:
         unittest.main()
