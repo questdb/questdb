@@ -148,6 +148,10 @@ public interface CairoConfiguration {
 
     int getCreateAsSelectRetryCount();
 
+    int getCreateMatViewModelPoolCapacity();
+
+    int getCreateMatViewRetryCount();
+
     long getCreateTableModelBatchSize();
 
     int getCreateTableModelPoolCapacity();
@@ -204,9 +208,9 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
-    long getGroupByPresizeMaxHeapSize();
-
     long getGroupByPresizeMaxCapacity();
+
+    long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
 
@@ -618,6 +622,8 @@ public interface CairoConfiguration {
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
+
+    boolean isMatViewEnabled();
 
     boolean isMultiKeyDedupEnabled();
 

@@ -30,6 +30,7 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Rnd;
 
 public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPool.C> {
@@ -187,6 +188,11 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException {
             delegate.testParseExpression(expression, listener);
+        }
+
+        @Override
+        public BytecodeAssembler getAsm() {
+            return delegate.getAsm();
         }
 
         @Override

@@ -222,6 +222,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getCreateMatViewModelPoolCapacity() {
+        return 8;
+    }
+
+    @Override
+    public int getCreateMatViewRetryCount() {
+        return 5;
+    }
+
+    @Override
     public long getCreateTableModelBatchSize() {
         return 1_000_000;
     }
@@ -1131,6 +1141,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isMatViewEnabled() {
+        return false;
     }
 
     @Override

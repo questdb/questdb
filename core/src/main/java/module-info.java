@@ -118,6 +118,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.json;
     exports io.questdb.std.filewatch;
     exports io.questdb.griffin.engine.table.parquet;
+    exports io.questdb.cairo.mv;
 
     provides io.questdb.griffin.FunctionFactory with
 
@@ -876,6 +877,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PrefixedVersionFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.CheckpointStatusFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.RefreshMaterializedViewFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.ViewsFunctionFactory,
 
 //            PostgreSQL advisory locks functions
             io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll,

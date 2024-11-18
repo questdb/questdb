@@ -196,6 +196,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getCreateMatViewModelPoolCapacity() {
+        return getDelegate().getCreateMatViewModelPoolCapacity();
+    }
+
+    @Override
+    public int getCreateMatViewRetryCount() {
+        return getDelegate().getCreateMatViewRetryCount();
+    }
+
+    @Override
     public long getCreateTableModelBatchSize() {
         return getDelegate().getCreateTableModelBatchSize();
     }
@@ -1113,6 +1123,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isIOURingEnabled() {
         return getDelegate().isIOURingEnabled();
+    }
+
+    @Override
+    public boolean isMatViewEnabled() {
+        return getDelegate().isMatViewEnabled();
     }
 
     @Override

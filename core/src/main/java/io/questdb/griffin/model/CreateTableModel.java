@@ -28,7 +28,14 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -56,7 +63,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private boolean walEnabled;
 
     private CreateTableModel() {
-
     }
 
     public void addColumn(CharSequence name, int type, int symbolCapacity) throws SqlException {
@@ -193,6 +199,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return name.token;
     }
 
+    @Override
+    public ExpressionNode getTableNameExpr() {
+        return name;
+    }
+
     public ExpressionNode getTimestamp() {
         return timestamp;
     }
@@ -290,7 +301,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     public void setVolumeAlias(CharSequence volumeAlias) {
-        // set if the create table statement contains IN VOLUME 'volumeAlias'.
+        // set if the CREATE TABLE statement contains IN VOLUME 'volumeAlias'.
         // volumePath will be resolved by the compiler
         this.volumeAlias = Chars.toString(volumeAlias);
     }

@@ -56,6 +56,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.VacuumColumnVersions;
+import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -80,6 +81,7 @@ import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.ColumnCastModel;
 import io.questdb.griffin.model.CopyModel;
+import io.questdb.griffin.model.CreateMatViewModel;
 import io.questdb.griffin.model.CreateTableModel;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
@@ -160,8 +162,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final FilesFacade ff;
     private final FunctionParser functionParser;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
+    private final MatViewStructureAdapter matViewStructureAdapter = new MatViewStructureAdapter();
     private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getMARWInstance();
+    private final ExecutableMethod createMatViewMethod = this::createMatView;
     private final MessageBus messageBus;
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
@@ -373,6 +377,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
         }
+    }
+
+    @Override
+    public BytecodeAssembler getAsm() {
+        return asm;
     }
 
     public CairoEngine getEngine() {
@@ -1500,7 +1509,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private CharSequence authorizeInsertForCopy(SecurityContext securityContext, CopyModel model) {
-        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
+        final CharSequence tableName = GenericLexer.unquote(model.getTableName());
         final TableToken tt = engine.getTableTokenIfExists(tableName);
         if (tt != null) {
             // for existing table user have to have INSERT permission
@@ -1534,6 +1543,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofCancelQuery();
         } catch (NumericException e) {
             throw SqlException.$(position, "non-negative integer literal expected as query id");
+        }
+    }
+
+    private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
+        final CharSequence name = executionModel.getTableName();
+        final TableToken tt = engine.getTableTokenIfExists(name);
+        if (tt != null && tt.isMatView()) {
+            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
         }
     }
 
@@ -1590,7 +1607,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assert model.isCancel();
 
         long cancelCopyID;
-        String cancelCopyIDStr = Chars.toString(GenericLexer.unquote(model.getTarget().token));
+        String cancelCopyIDStr = Chars.toString(GenericLexer.unquote(model.getTableName()));
         try {
             cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
         } catch (NumericException e) {
@@ -1763,18 +1780,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
                     copy(executionContext, (CopyModel) executionModel);
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 case ExecutionModel.RENAME_TABLE:
                     sqlId = queryRegistry.register(sqlText, executionContext);
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
                     final RenameTableModel rtm = (RenameTableModel) executionModel;
                     engine.rename(executionContext.getSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
                     compiledQuery.ofRenameTable();
                     break;
                 case ExecutionModel.UPDATE:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
                     final QueryModel updateQueryModel = (QueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
@@ -1790,9 +1810,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
-                default:
-                    final InsertModel insertModel = (InsertModel) executionModel;
+                case ExecutionModel.CREATE_MAT_VIEW:
+                    sqlId = queryRegistry.register(sqlText, executionContext);
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    createMatViewWithRetries(executionModel, executionContext);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
+                    break;
+                default:
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
+                    final InsertModel insertModel = (InsertModel) executionModel;
                     if (insertModel.getQueryModel() != null) {
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         executeWithRetries(
@@ -1815,6 +1842,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             || type == CompiledQuery.EXPLAIN
                             || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
                             || type == CompiledQuery.CREATE_TABLE || type == CompiledQuery.CREATE_TABLE_AS_SELECT // create table is complete at this point
+                            || type == CompiledQuery.CREATE_MAT_VIEW // create mat view is complete at this point
             ) {
                 queryRegistry.unregister(sqlId, executionContext);
             }
@@ -2130,16 +2158,80 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
+    private void createMatView(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
+        final CreateMatViewModel matViewModel = (CreateMatViewModel) model;
+        final CreateTableModel viewTableModel = matViewModel.getTableModel();
+
+        final ExpressionNode name = viewTableModel.getName();
+        final int status = executionContext.getTableStatus(path, name.token);
+        if (status == TableUtils.TABLE_EXISTS) {
+            final TableToken tt = executionContext.getTableTokenIfExists(name.token);
+            if (tt != null && !tt.isMatView()) {
+                throw SqlException.$(name.position, "a table already exists with the requested name");
+            }
+            if (viewTableModel.isIgnoreIfExists()) {
+                compiledQuery.ofCreateMatView(tt);
+            } else {
+                throw SqlException.$(name.position, "view already exists");
+            }
+        } else {
+            assert matViewModel.getQueryModel() != null;
+
+            final MaterializedViewDefinition matViewDefinition = createMatViewFromCursorExecutor(matViewModel, executionContext);
+            final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+            engine.getMaterializedViewGraph().createView(baseTableToken, matViewDefinition);
+            compiledQuery.ofCreateMatView(matViewDefinition.getMatViewToken());
+        }
+    }
+
+    private MaterializedViewDefinition createMatViewFromCursorExecutor(CreateMatViewModel matViewModel, SqlExecutionContext executionContext) throws SqlException {
+        final CreateTableModel viewTableModel = matViewModel.getTableModel();
+        try (
+                final RecordCursorFactory factory = generate(viewTableModel.getQueryModel(), executionContext);
+                final RecordCursor cursor = factory.getCursor(executionContext)
+        ) {
+            final RecordMetadata metadata = factory.getMetadata();
+            validateMatViewModel(viewTableModel, metadata);
+
+            // Now we should know the designated timestamp index
+            // Enable dedup
+            viewTableModel.setDedupKeyFlag(viewTableModel.getTimestampIndex());
+
+            // at the time of view creation we do not insert any data, just validate that the query works
+            cursor.hasNext();
+
+            return engine.createMatView(
+                    executionContext.getSecurityContext(),
+                    mem,
+                    path,
+                    false,
+                    matViewStructureAdapter.of(matViewModel, metadata),
+                    false,
+                    viewTableModel.getVolumeAlias() != null
+            );
+        }
+    }
+
+    private void createMatViewWithRetries(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        executeWithRetries(createMatViewMethod, executionModel, configuration.getCreateMatViewRetryCount(), executionContext);
+    }
+
     private void createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
         final ExpressionNode name = createTableModel.getName();
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
         final int status = executionContext.getTableStatus(path, name.token);
-        if (createTableModel.isIgnoreIfExists() && status == TableUtils.TABLE_EXISTS) {
-            compiledQuery.ofCreateTable(executionContext.getTableTokenIfExists(name.token));
-        } else if (status == TableUtils.TABLE_EXISTS) {
-            throw SqlException.$(name.position, "table already exists");
+        if (status == TableUtils.TABLE_EXISTS) {
+            final TableToken tt = executionContext.getTableTokenIfExists(name.token);
+            if (tt != null && tt.isMatView()) {
+                throw SqlException.$(name.position, "a view already exists with the requested name");
+            }
+            if (createTableModel.isIgnoreIfExists()) {
+                compiledQuery.ofCreateTable(tt);
+            } else {
+                throw SqlException.$(name.position, "table already exists");
+            }
         } else {
             // create table (...) ... in volume volumeAlias;
             CharSequence volumeAlias = createTableModel.getVolumeAlias();
@@ -2161,25 +2253,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (createTableModel.getLikeTableName() != null) {
                         copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                     }
-                    if (volumeAlias == null) {
-                        tableToken = engine.createTable(
-                                executionContext.getSecurityContext(),
-                                mem,
-                                path,
-                                createTableModel.isIgnoreIfExists(),
-                                createTableModel,
-                                false
-                        );
-                    } else {
-                        tableToken = engine.createTableInVolume(
-                                executionContext.getSecurityContext(),
-                                mem,
-                                path,
-                                createTableModel.isIgnoreIfExists(),
-                                createTableModel,
-                                false
-                        );
-                    }
+                    tableToken = engine.createTable(
+                            executionContext.getSecurityContext(),
+                            mem,
+                            path,
+                            createTableModel.isIgnoreIfExists(),
+                            createTableModel,
+                            false,
+                            volumeAlias != null
+                    );
                 } catch (EntryUnavailableException e) {
                     throw SqlException.$(name.position, "table already exists");
                 } catch (CairoException e) {
@@ -2222,27 +2304,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
             boolean keepLock = !model.isWalEnabled();
 
-            final TableToken tableToken;
-
-            if (volumeAlias == null) {
-                tableToken = engine.createTable(
-                        executionContext.getSecurityContext(),
-                        mem,
-                        path,
-                        false,
-                        tableStructureAdapter.of(model, metadata, typeCast),
-                        keepLock
-                );
-            } else {
-                tableToken = engine.createTableInVolume(
-                        executionContext.getSecurityContext(),
-                        mem,
-                        path,
-                        false,
-                        tableStructureAdapter.of(model, metadata, typeCast),
-                        keepLock
-                );
-            }
+            final TableToken tableToken = engine.createTable(
+                    executionContext.getSecurityContext(),
+                    mem,
+                    path,
+                    false,
+                    tableStructureAdapter.of(model, metadata, typeCast),
+                    keepLock,
+                    volumeAlias != null
+            );
 
             SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try {
@@ -2587,7 +2657,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         executionContext.setUseSimpleCircuitBreaker(true);
         try (
-                TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect");
+                TableWriterAPI writer = executionContext.getTableWriterAPI(tableToken, "insertAsSelect");
                 RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
                 TableMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)
         ) {
@@ -3065,6 +3135,53 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         model.setQueryModel(queryModel);
     }
 
+    private void validateMatViewModel(@Transient CreateTableModel model, @Transient RecordMetadata metadata) throws SqlException {
+        // validate that all indexes are specified only on columns with symbol type
+        for (int i = 0, n = model.getColumnCount(); i < n; i++) {
+            CharSequence columnName = model.getColumnName(i);
+            int index = metadata.getColumnIndexQuiet(columnName);
+            assert index > -1 : "wtf2? " + columnName;
+            if (!ColumnType.isSymbol(metadata.getColumnType(index)) && model.isIndexed(i)) {
+                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
+            }
+
+            if (ColumnType.isNull(metadata.getColumnType(index))) {
+                throw SqlException.$(0, "cannot create NULL-type column, please use type cast, e.g. ").put(columnName).put("::").put("type");
+            }
+        }
+
+        // Validate designated of timestamp column
+        ExpressionNode timestamp;
+        if (metadata.getTimestampIndex() != -1) {
+            if (model.getTimestampIndex() != -1) {
+                if (model.getTimestampIndex() != metadata.getTimestampIndex()) {
+                    // TODO: check that these timestamp column are equivalent
+                }
+                timestamp = model.getTimestamp();
+            } else {
+                timestamp = model.getQueryModel().getBottomUpColumns().get(metadata.getTimestampIndex()).getAst();
+                model.setTimestamp(timestamp);
+            }
+        } else {
+            if (model.getTimestampIndex() == -1) {
+                // Designated timestamp does not exist at query factory and not in the query model
+                throw SqlException.position(0).put("Designated timestamp required");
+            } else {
+                timestamp = model.getQueryModel().getBottomUpColumns().get(metadata.getTimestampIndex()).getAst();
+                model.setTimestamp(timestamp);
+            }
+        }
+
+        // validate type of timestamp column
+        if (metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
+            throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
+        }
+
+        if (!PartitionBy.isPartitioned(model.getPartitionBy())) {
+            throw SqlException.position(0).put("Materialized view has to be partitioned");
+        }
+    }
+
     private void validateTableModelAndCreateTypeCast(
             @Transient CreateTableModel model,
             @Transient RecordMetadata metadata,
@@ -3316,6 +3433,116 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @FunctionalInterface
     public interface KeywordBasedExecutor {
         void execute(SqlExecutionContext executionContext) throws SqlException;
+    }
+
+    private static class MatViewStructureAdapter implements TableStructure {
+        private MaterializedViewDefinition matViewDefinition;
+        private CreateMatViewModel matViewModel;
+        private RecordMetadata metadata;
+        private int timestampIndex;
+        private CreateTableModel viewTableModel;
+
+        @Override
+        public int getColumnCount() {
+            return viewTableModel.getColumnCount();
+        }
+
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+            return viewTableModel.getColumnName(columnIndex);
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            return metadata.getColumnType(columnIndex);
+        }
+
+        @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+            return viewTableModel.getIndexBlockCapacity(columnIndex);
+        }
+
+        @Override
+        public MaterializedViewDefinition getMatViewDefinition() {
+            return matViewDefinition;
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+            return viewTableModel.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            return viewTableModel.getO3MaxLag();
+        }
+
+        @Override
+        public int getPartitionBy() {
+            return viewTableModel.getPartitionBy();
+        }
+
+        @Override
+        public boolean getSymbolCacheFlag(int columnIndex) {
+            return viewTableModel.getSymbolCacheFlag(columnIndex);
+        }
+
+        @Override
+        public int getSymbolCapacity(int columnIndex) {
+            return viewTableModel.getSymbolCapacity(columnIndex);
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return viewTableModel.getTableName();
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return timestampIndex;
+        }
+
+        @Override
+        public void init(TableToken tableToken) {
+            matViewDefinition = matViewModel.generateDefinition(tableToken);
+        }
+
+        @Override
+        public boolean isDedupKey(int columnIndex) {
+            return viewTableModel.isDedupKey(columnIndex);
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            return viewTableModel.isIndexed(columnIndex);
+        }
+
+        @Override
+        public boolean isMatView() {
+            return true;
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return viewTableModel.isSequential(columnIndex);
+        }
+
+        @Override
+        public boolean isWalEnabled() {
+            return viewTableModel.isWalEnabled();
+        }
+
+        MatViewStructureAdapter of(CreateMatViewModel matViewModel, RecordMetadata metadata) {
+            this.viewTableModel = matViewModel.getTableModel();
+            if (viewTableModel.getTimestampIndex() != -1) {
+                timestampIndex = viewTableModel.getTimestampIndex();
+            } else {
+                timestampIndex = metadata.getTimestampIndex();
+            }
+            this.matViewModel = matViewModel;
+            this.metadata = metadata;
+            return this;
+        }
     }
 
     public final static class PartitionAction {
@@ -3598,6 +3825,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     metadata
                             );
                             mem.close(true, Vm.TRUNCATE_TO_POINTER);
+                        }
+
+                        if (tableToken.isMatView()) {
+                            // todo: clone mat view meta files
                         }
                     } finally {
                         mem.close();
