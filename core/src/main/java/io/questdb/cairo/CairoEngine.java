@@ -765,7 +765,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableToken getTableTokenIfExists(CharSequence tableName) {
         final TableToken token = tableNameRegistry.getTableToken(tableName);
-        if (token == TableNameRegistry.LOCKED_TOKEN) {
+        if (TableNameRegistry.isLocked(token)) {
             return null;
         }
         return token;

@@ -95,7 +95,11 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     @Override
     public boolean isTableDropped(CharSequence tableDir) {
         ReverseTableMapItem rmi = dirNameToTableTokenMap.get(tableDir);
-        return rmi != null && rmi.isDropped();
+        if (rmi == null || rmi.isDropped()) {
+            return true;
+        }
+        TableToken currentTableToken = tableNameToTableTokenMap.get(rmi.getToken().getTableName());
+        return currentTableToken == LOCKED_DROP_TOKEN;
     }
 
     @Override

@@ -421,7 +421,7 @@ public class MetadataCache implements QuietCloseable {
             ObjList<TableToken> tableTokens = tableTokensSet.getList();
 
             if (tableTokens.size() == 0) {
-                LOG.error().$("could not hydrate, there are no table tokens").$();
+                LOG.info().$("no table tokens").$();
                 return;
             }
 
