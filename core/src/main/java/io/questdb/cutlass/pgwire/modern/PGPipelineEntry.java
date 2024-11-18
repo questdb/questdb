@@ -1239,6 +1239,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 return charValue == 0 ? Integer.BYTES : Integer.BYTES + Chars.charBytes(charValue);
             case ColumnType.IPv4:
                 final int ipValue = record.getIPv4(columnIndex);
+                // todo: IPv4 is text encoded and has variable length
                 return ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
             case ColumnType.INT:
                 final int value = record.getInt(columnIndex);
@@ -1263,6 +1264,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 final long hi = record.getLong128Hi(columnIndex);
                 return Uuid.isNull(lo, hi) ? Integer.BYTES : Integer.BYTES + Long.BYTES * 2;
             case ColumnType.LONG256:
+                // todo: Long256 is text encoded and has variable length
                 final Long256 long256Value = record.getLong256A(columnIndex);
                 return Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Long.BYTES * 4;
             case ColumnType.VARCHAR:
