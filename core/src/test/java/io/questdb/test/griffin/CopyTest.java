@@ -95,6 +95,15 @@ public class CopyTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyCancelExtras() throws Exception {
+        assertException(
+                "copy 'foobar' cancel aw beans;",
+                21,
+                "unexpected token [aw]"
+        );
+    }
+
+    @Test
     public void testCopyEmptyFileName() throws Exception {
         assertException(
                 "copy x from ''",

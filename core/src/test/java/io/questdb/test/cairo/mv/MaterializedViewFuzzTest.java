@@ -250,20 +250,21 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
                 5 + rnd.nextInt(10)
         );
 
-        // Easy, not column manupulations
+        // Easy, not column manipulations
         fuzzer.setFuzzProbabilities(
-                0,
-                0,
-                0,
-                0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
                 collAddProb,
-                0,
-                0,
+                0.0,
+                0.0,
                 0.5,
-                0,
                 0.5,
-                0,
-                0
+                0.0,
+                0.0,
+                0.0,
+                0.0
         );
     }
 

@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
@@ -157,7 +158,6 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
             }
         });
     }
-
 
     @Test
     public void testColumnTruncate() throws Exception {
@@ -325,6 +325,31 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expected, CVStringTable.asTable(w.getCachedColumnVersionList()));
                 r.readSafe(configuration.getMillisecondClock(), 1);
                 TestUtils.assertEquals(expected, CVStringTable.asTable(r.getCachedColumnVersionList()));
+            }
+        });
+    }
+
+    @Test
+    public void testToString() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    Path path = new Path();
+                    ColumnVersionWriter w = new ColumnVersionWriter(configuration, path.of(root).concat("_cv").$(), true);
+                    ColumnVersionReader r = new ColumnVersionReader().ofRO(TestFilesFacadeImpl.INSTANCE, path.$())
+            ) {
+                for (int i = 0; i < 3; i += 2) {
+                    w.upsert(i, i % 10, -1, i * 10L);
+                }
+                w.upsertDefaultTxnName(4, 123, IntervalUtils.parseFloorPartialTimestamp("2024-02-24"));
+
+                w.commit();
+
+                r.readSafe(configuration.getMillisecondClock(), 1);
+                Assert.assertEquals("{[\n" +
+                        "{columnIndex: 4, defaultNameTxn: 123, addedPartition: '2024-02-24T00:00:00.000Z'},\n" +
+                        "{columnIndex: 0, nameTxn: -1, partition: '1970-01-01T00:00:00.000Z', columnTop: 0},\n" +
+                        "{columnIndex: 2, nameTxn: -1, partition: '1970-01-01T00:00:00.000Z', columnTop: 20}\n" +
+                        "]}", r.toString());
             }
         });
     }

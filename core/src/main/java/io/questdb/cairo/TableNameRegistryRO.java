@@ -82,10 +82,10 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
     }
 
     @Override
-    public synchronized void reload(@Nullable ObjList<TableToken> convertedTables) {
+    public synchronized boolean reload(@Nullable ObjList<TableToken> convertedTables) {
         tableNameToTableTokenMap2.clear();
         dirNameToTableTokenMap2.clear();
-        nameStore.reload(tableNameToTableTokenMap2, dirNameToTableTokenMap2, convertedTables);
+        boolean consistent = nameStore.reload(tableNameToTableTokenMap2, dirNameToTableTokenMap2, convertedTables);
 
         // Swap the maps
         setNameMaps(tableNameToTableTokenMap2, dirNameToTableTokenMap2);
@@ -99,6 +99,7 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
         dirNameToTableTokenMap1 = tmp2;
 
         lastReloadTimestampMs = clockMs.getTicks();
+        return consistent;
     }
 
     @Override

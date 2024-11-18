@@ -949,9 +949,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 formatErrorPartitionDirName(partitionIndex, exception.message);
                 exception.put("' does not exist in table '")
                         .put(tableToken.getTableName())
-                        .put("' directory. Run [ALTER TABLE ").put(tableToken.getTableName()).put(" DROP PARTITION LIST '");
+                        .put("' directory. Run [ALTER TABLE ").put(tableToken.getTableName()).put(" FORCE DROP PARTITION LIST '");
                 formatErrorPartitionDirName(partitionIndex, exception.message);
-                exception.put("'] to repair the table or restore the partition directory.");
+                exception.put("'] to repair the table or the database from the backup.");
                 throw exception;
             } else {
                 throw CairoException.critical(0).put("Table '").put(tableToken.getTableName())

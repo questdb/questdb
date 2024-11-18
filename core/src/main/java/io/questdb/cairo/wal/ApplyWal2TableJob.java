@@ -27,7 +27,15 @@ package io.questdb.cairo.wal;
 import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoKeywords;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.mv.MvRefreshTask;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
@@ -39,7 +47,12 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Job;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
+import io.questdb.std.Transient;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
@@ -50,6 +63,7 @@ import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -104,7 +118,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         Misc.free(walEventReader);
     }
 
-    private static boolean cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
+    private static void cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
         // Clean all the files inside table folder name except WAL directories and SEQ_DIR directory
         boolean allClean = true;
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -138,15 +152,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (allClean) {
                     // Remove _txn and _meta files when all other files are removed
                     if (!removeOrLog(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME), ff)) {
-                        return false;
+                        return;
                     }
-                    return ff.removeQuiet(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
+                    ff.removeQuiet(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
                 }
             } finally {
                 ff.findClose(p);
             }
         }
-        return false;
     }
 
     private static boolean matchesWalLock(Utf8Sequence name) {
@@ -168,15 +181,23 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return true;
     }
 
-    private static boolean removeOrLog(Path path, FilesFacade ff) {
-        if (!ff.removeQuiet(path.$())) {
-            LOG.info().$("could not remove, will retry [path=").utf8(", errno=").$(ff.errno()).I$();
-            return false;
-        }
-        return true;
-    }
-
-    private static boolean tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
+    /**
+     * Attempts to remove writer from the pool and delete the files. In that order,
+     * specifically for windows. Sometimes there is writer in the context of this call.
+     * In any case, this method will try to lock the writer and hold the lock until
+     * table's files are removed.
+     *
+     * @param tableToken table token of the table to be purged
+     * @param writer     writer instance if we have one
+     * @param engine     the engine, used for its writer pool
+     * @param tempPath   path used to check table dir existence
+     */
+    private static void purgeTableFiles(
+            TableToken tableToken,
+            @Nullable TableWriter writer,
+            CairoEngine engine,
+            @Transient Path tempPath
+    ) {
         if (engine.lockReadersAndMetadata(tableToken)) {
             TableWriter writerToClose = null;
             try {
@@ -186,27 +207,37 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON);
                     } catch (EntryUnavailableException ex) {
                         // Table is being written to, we cannot destroy it at the moment
-                        return false;
+                        return;
                     } catch (CairoException ex) {
                         // Ignore it, table can be half deleted.
                     }
                 }
+                // we want to release files, so that we can remove them, but we do not want
+                // the writer to go back to the pool, in case someone else is about to use it.
                 if (writer != null) {
                     // Force writer to close all the files.
                     writer.destroy();
                 }
-                return cleanDroppedTableDirectory(engine, tempPath, tableToken);
+
+                // while holding the writer and essentially the lock on the table,
+                // we can remove the files.
+                cleanDroppedTableDirectory(engine, tempPath, tableToken);
             } finally {
-                if (writerToClose != null) {
-                    writerToClose.close();
-                }
+                Misc.free(writerToClose);
                 engine.unlockReadersAndMetadata(tableToken);
             }
         } else {
             LOG.info().$("table '").utf8(tableToken.getDirName())
                     .$("' is dropped, waiting to acquire Table Readers lock to delete the table files").$();
         }
-        return false;
+    }
+
+    private static boolean removeOrLog(Path path, FilesFacade ff) {
+        if (!ff.removeQuiet(path.$())) {
+            LOG.info().$("could not remove, will retry [path=").utf8(", errno=").$(ff.errno()).I$();
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -313,9 +344,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             }
                             break;
 
-                        case DROP_TABLE_WALID:
+                        case DROP_TABLE_WAL_ID:
                             engine.notifyDropped(tableToken);
-                            tryDestroyDroppedTable(tableToken, writer, engine, tempPath);
+                            purgeTableFiles(tableToken, writer, engine, tempPath);
                             return;
 
                         case 0:
@@ -383,7 +414,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$(", rows=").$(rowsAdded)
                             .$(", time=").$(insertTimespan / 1000)
                             .$("ms, rate=").$(rowsAdded * 1000000L / Math.max(1, insertTimespan))
-                            .$("rows/s, physicalWrittenRowsMultiplier=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
+                            .$("rows/s, ampl=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
                             .I$();
                 }
 
@@ -408,6 +439,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private void handleWalApplyFailure(TableToken tableToken, Throwable throwable, SeqTxnTracker txnTracker) {
         ErrorTag errorTag;
         String errorMessage;
+
+        if (engine.isTableDropped(tableToken) |
+                ((throwable instanceof CairoException) && ((CairoException) throwable).isTableDropped())) {
+            // Sometimes we can have SQL exceptions when re-compiling ALTER or UPDATE statements
+            // that the table we work on is already dropped. In this case, we can ignore the exception.
+            purgeTableFiles(tableToken, null, engine, Path.PATH.get());
+            return;
+        }
+
         if (throwable instanceof CairoException) {
             CairoException cairoException = (CairoException) throwable;
             if (cairoException.isOutOfMemory()) {
@@ -570,13 +610,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             final TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
             if (engine.isTableDropped(tableToken) || updatedToken == null) {
                 if (engine.isTableDropped(tableToken)) {
-                    tryDestroyDroppedTable(tableToken, null, engine, tempPath);
+                    purgeTableFiles(tableToken, null, engine, tempPath);
                 }
                 // else: table is dropped and fully cleaned, this is late notification.
             } else {
                 long lastWriterTxn;
                 txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
+                TableWriter writer = null;
+                try {
+                    writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON);
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
                     if (txnTracker.shouldBackOffDueToMemoryPressure(MicrosecondClockImpl.INSTANCE.getTicks())) {
                         // rely on CheckWalTransactionsJob to notify us when to apply transactions
@@ -599,19 +641,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // We do not suspend table because of having initial value on lastWriterTxn. It will either be
                     // "ignore" or last txn we applied.
                     return;
+                } catch (Throwable th) {
+                    // There is some unexpected error and table will likely to be suspended.
+                    // It is safer to create new TableWriter after exceptions.
+                    if (writer != null) {
+                        writer.markDistressed();
+                    }
+                    throw th;
+                } finally {
+                    Misc.free(writer);
                 }
 
                 if (engine.getTableSequencerAPI().notifyCommitReadable(tableToken, lastWriterTxn)) {
                     engine.notifyWalTxnCommitted(tableToken);
                 }
-            }
-        } catch (CairoException ex) {
-            if (ex.isTableDropped() || engine.isTableDropped(tableToken)) {
-                engine.notifyDropped(tableToken);
-                // Table is dropped, and we received cairo exception in the middle of apply
-                tryDestroyDroppedTable(tableToken, null, engine, tempPath);
-            } else {
-                handleWalApplyFailure(tableToken, ex, txnTracker);
             }
         } catch (Throwable ex) {
             handleWalApplyFailure(tableToken, ex, txnTracker);

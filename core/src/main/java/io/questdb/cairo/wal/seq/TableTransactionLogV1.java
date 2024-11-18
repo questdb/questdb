@@ -180,7 +180,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     public boolean isDropped() {
         long lastTxn = maxTxn.get();
         if (lastTxn > 0) {
-            return WalUtils.DROP_TABLE_WALID == txnMem.getInt(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
+            return WalUtils.DROP_TABLE_WAL_ID == txnMem.getInt(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_WAL_ID_OFFSET);
         }
         return false;
     }
