@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -31,9 +32,42 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
+/**
+ * Operation represents immutable user request to execute a DDL against the database. It aims to
+ * separate compilation and execution phases of SQL query processing. Compilation phase is
+ * text parsing with parse results stored in the Operation object. Execution phase is a process
+ * of applying the request to the current context. Operation can be executed multiple times.
+ * <p>
+ * When operation is no longer needed, it must be closed to release resources.
+ */
 public interface Operation extends QuietCloseable {
 
-    int getOperationCode();
+    /**
+     * Executes the operation. Typically, to execute an operation a compiler
+     * infrastructure is going to be required. Operation objects are kept lightweight and
+     * rely on shared compilers to execute. To keep things simple, compiler instance is
+     * retrieved from the execution context.
+     *
+     * Execution will typically cast the operation to the type it is familiar with using the
+     * operation code.
+     *
+     * @param sqlExecutionContext execution context, which encapsulates security context and cairo engine
+     * @param eventSubSeq         sequence to notify of operation completion
+     * @return future that represents the result of the operation
+     * @throws SqlException   if execution fails validation, for example creating table that already exists
+     * @throws CairoException if execution fails are runtime, OS error etc.
+     */
+    OperationFuture execute(
+            SqlExecutionContext sqlExecutionContext,
+            @Nullable SCSequence eventSubSeq
+    ) throws SqlException, CairoException;
 
-    OperationFuture execute(SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException;
+    /**
+     * Code of the operation to chose code execution branch. One can think of this code as a lambda,
+     * expect the lambda would be hardcoded somewhere in the code.
+     *
+     * @return one of the operation codes
+     * @see io.questdb.cairo.OperationCodes
+     */
+    int getOperationCode();
 }

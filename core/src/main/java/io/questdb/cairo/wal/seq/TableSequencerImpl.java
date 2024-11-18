@@ -179,8 +179,10 @@ public class TableSequencerImpl implements TableSequencer {
     public void dropTable() {
         checkDropped();
         final long timestamp = microClock.getTicks();
-        final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
-                0, 0, timestamp, 0, 0, 0);
+        final long txn = tableTransactionLog.addEntry(
+                getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
+                0, 0, timestamp, 0, 0, 0
+        );
         metadata.dropTable();
         notifyTxnCommitted(Long.MAX_VALUE);
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);

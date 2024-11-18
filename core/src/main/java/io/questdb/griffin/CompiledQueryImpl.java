@@ -104,6 +104,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
             case CREATE_TABLE:
             case CREATE_TABLE_AS_SELECT:
                 assert false;
+                doneFuture.of(0);
             case UPDATE:
                 updateOp.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);

@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
@@ -41,15 +42,26 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
 
-    void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException;
-
-    QueryBuilder query();
+    /**
+     * SPI for operation execution. Typical execution will rely on the compiler infrastructure, such paths, engine, configuration etc.
+     * We use compiler to avoid cluttering the operation (which is immutable copy of user's request).
+     *
+     * @param op               the operation to execute
+     * @param executionContext the context, required for logging and also for recompiling the operation's SQL text
+     * @throws SqlException   in case of known, typically validation, errors
+     * @throws CairoException in case of unexpected, typically runtime, errors
+     */
+    void execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
     RecordCursorFactory generateSelectWithRetries(
             @Transient QueryModel queryModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException;
+
+    CairoEngine getEngine();
+
+    QueryBuilder query();
 
     @TestOnly
     void setEnableJitNullChecks(boolean value);
@@ -65,6 +77,4 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     @TestOnly
     void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException;
-
-    CairoEngine getEngine();
 }

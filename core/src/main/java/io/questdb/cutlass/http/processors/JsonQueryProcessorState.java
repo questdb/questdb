@@ -113,7 +113,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private boolean noMeta = false;
     // Operation is stored here to be retried
     private Operation operation;
-    // todo: remove
     private OperationFuture operationFuture;
     private boolean pausedQuery = false;
     private boolean queryCacheable = false;
@@ -236,6 +235,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void freeAsyncOperation() {
         operationFuture = Misc.free(operationFuture);
+        operation = Misc.free(operation);
     }
 
     public byte getApiVersion() {

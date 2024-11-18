@@ -436,7 +436,6 @@ public class CairoEngine implements Closeable, WriterSource {
         try (SqlCompiler compiler = getSqlCompiler()) {
             final CompiledQuery cq = compiler.compile(dropSql, sqlExecutionContext);
             switch (cq.getType()) {
-                case UPDATE:
                 case DROP:
                     drop0(sqlExecutionContext, eventSubSeq, cq);
                     break;
@@ -1341,7 +1340,10 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private static void drop0(SqlExecutionContext executionContext, @Nullable SCSequence eventSubSeq, CompiledQuery cq) throws SqlException {
-        try (Operation operation = cq.getOperation(); OperationFuture fut = operation.execute(executionContext, eventSubSeq)) {
+        try (
+                Operation operation = cq.getOperation();
+                OperationFuture fut = operation.execute(executionContext, eventSubSeq)
+        ) {
             fut.await();
         }
     }

@@ -77,7 +77,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         runAddColumnRace(
                 barrier, tableName, iterations, 1, exception,
                 () -> {
-                    try  {
+                    try {
                         TestUtils.await(barrier);
 
                         TableToken tableToken = engine.verifyTableName(tableName);
