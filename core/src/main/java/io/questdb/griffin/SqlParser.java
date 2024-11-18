@@ -262,12 +262,16 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'by' expected");
     }
 
-    private ExpressionNode expectExpr(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
-        final ExpressionNode n = expr(lexer, (QueryModel) null, sqlParserCallback);
+    private ExpressionNode expectExpr(GenericLexer lexer, SqlParserCallback sqlParserCallback, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+        final ExpressionNode n = expr(lexer, null, sqlParserCallback, decls);
         if (n != null) {
             return n;
         }
         throw SqlException.$(lexer.hasUnparsed() ? lexer.lastTokenPosition() : lexer.getPosition(), "Expression expected");
+    }
+
+    private ExpressionNode expectExpr(GenericLexer lexer, SqlParserCallback sqlParserCallback) throws SqlException {
+        return expectExpr(lexer, sqlParserCallback, null);
     }
 
     private int expectInt(GenericLexer lexer) throws SqlException {
@@ -1043,7 +1047,7 @@ public class SqlParser {
             // todo: review this, maybe we can use an immutable
             tok = tok.toString();
 
-            ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+            ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls(), tok);
 
             if (expr == null) {
                 throw SqlException.$(lexer.lastTokenPosition(), "empty declaration");
@@ -1355,8 +1359,7 @@ public class SqlParser {
 
             // [where]
             if (tok != null && isWhereKeyword(tok)) {
-                ExpressionNode expr = expr(lexer, fromModel, sqlParserCallback);
-                expr = rewriteDeclaredVariables(expr, decls);
+                ExpressionNode expr = expr(lexer, fromModel, sqlParserCallback, decls);
                 if (expr != null) {
                     nestedModel.setWhereClause(expr);
                 } else {
@@ -1505,8 +1508,7 @@ public class SqlParser {
             if (model.getLatestByType() == QueryModel.LATEST_BY_NEW) {
                 throw SqlException.$((lexer.lastTokenPosition()), "unexpected where clause after 'latest on'");
             }
-            ExpressionNode expr = expr(lexer, model, sqlParserCallback);
-            expr = rewriteDeclaredVariables(expr, model.getDecls());
+            ExpressionNode expr = expr(lexer, model, sqlParserCallback, model.getDecls());
             if (expr != null) {
                 model.setWhereClause(expr);
                 tok = optTok(lexer);
@@ -1583,7 +1585,7 @@ public class SqlParser {
                         model.setSampleByOffset(ZERO_OFFSET);
                     } else if (isTimeKeyword(tok)) {
                         expectZone(lexer);
-                        model.setSampleByTimezoneName(expectExpr(lexer, sqlParserCallback));
+                        model.setSampleByTimezoneName(expectExpr(lexer, sqlParserCallback, model.getDecls()));
                         tok = optTok(lexer);
                         if (tok != null && isWithKeyword(tok)) {
                             tok = parseWithOffset(lexer, model, sqlParserCallback);
@@ -1626,8 +1628,7 @@ public class SqlParser {
             do {
                 tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparseLast();
-                ExpressionNode n = expr(lexer, model, sqlParserCallback);
-                n = rewriteDeclaredVariables(n, model.getDecls());
+                ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
                 if (n == null || (n.type != ExpressionNode.LITERAL && n.type != CONSTANT && n.type != ExpressionNode.FUNCTION && n.type != OPERATION)) {
                     throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "literal expected");
                 }
@@ -1647,8 +1648,7 @@ public class SqlParser {
                 tokIncludingLocalBrace(lexer, "literal");
                 lexer.unparseLast();
 
-                ExpressionNode n = expr(lexer, model, sqlParserCallback);
-                n = rewriteDeclaredVariables(n, model.getDecls());
+                ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
                 if (n == null || (n.type == ExpressionNode.QUERY || n.type == ExpressionNode.SET_OPERATION)) {
                     throw SqlException.$(lexer.lastTokenPosition(), "literal or expression expected");
                 }
@@ -1887,14 +1887,12 @@ public class SqlParser {
                         case 1:
                             expr = expressionTreeBuilder.poll();
 
-                            expr = rewriteDeclaredVariables(expr, decls);
-
                             if (expr.type == ExpressionNode.LITERAL) {
                                 do {
-                                    joinModel.addJoinColumn(expr);
+                                    joinModel.addJoinColumn(rewriteDeclaredVariables(expr, decls));
                                 } while ((expr = expressionTreeBuilder.poll()) != null);
                             } else {
-                                joinModel.setJoinCriteria(rewriteKnownStatements(expr));
+                                joinModel.setJoinCriteria(rewriteKnownStatements(expr, decls));
                             }
                             break;
                         default:
@@ -1903,7 +1901,7 @@ public class SqlParser {
                                 if (expr.type != ExpressionNode.LITERAL) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "Column name expected");
                                 }
-                                joinModel.addJoinColumn(expr);
+                                joinModel.addJoinColumn(rewriteDeclaredVariables(expr, decls));
                             }
                             break;
                     }
@@ -2068,7 +2066,7 @@ public class SqlParser {
                     }
 
                     lexer.unparseLast();
-                    expr = expr(lexer, model, sqlParserCallback);
+                    expr = expr(lexer, model, sqlParserCallback, model.getDecls());
 
                     if (expr == null) {
                         throw SqlException.$(lexer.lastTokenPosition(), "missing expression");
@@ -2078,8 +2076,6 @@ public class SqlParser {
                         throw SqlException.$(expr.position + expr.token.length(), "'*' or column name expected");
                     }
 
-                    // crawl for decls
-                    expr = rewriteDeclaredVariables(expr, model.getDecls());
                 }
 
                 final CharSequence alias;
@@ -2114,7 +2110,7 @@ public class SqlParser {
                                     break;
                                 }
                                 lexer.unparseLast();
-                                partitionBy.add(expectExpr(lexer, sqlParserCallback));
+                                partitionBy.add(expectExpr(lexer, sqlParserCallback, model.getDecls()));
                                 tok = tok(lexer, "'order' or ')'");
                             } while (Chars.equals(tok, ','));
                         }
@@ -2123,7 +2119,7 @@ public class SqlParser {
                             expectTok(lexer, "by");
 
                             do {
-                                final ExpressionNode orderByExpr = expectExpr(lexer, sqlParserCallback);
+                                final ExpressionNode orderByExpr = expectExpr(lexer, sqlParserCallback, model.getDecls());
 
                                 tok = tokIncludingLocalBrace(lexer, "'asc' or 'desc'");
 
@@ -2212,7 +2208,7 @@ public class SqlParser {
                                 } else {
                                     int pos = lexer.lastTokenPosition();
                                     lexer.unparseLast();
-                                    winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback), pos);
+                                    winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
                                         long timeUnit = parseTimeUnit(lexer);
                                         if (timeUnit != -1) {
@@ -2256,7 +2252,7 @@ public class SqlParser {
                                     } else {
                                         int pos = lexer.lastTokenPosition();
                                         lexer.unparseLast();
-                                        winCol.setRowsHiExpr(expectExpr(lexer, sqlParserCallback), pos);
+                                        winCol.setRowsHiExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                         if (framingMode == WindowColumn.FRAMING_RANGE) {
                                             long timeUnit = parseTimeUnit(lexer);
                                             if (timeUnit != -1) {
@@ -2293,7 +2289,7 @@ public class SqlParser {
                                     throw SqlException.$(pos, "integer expression expected");
                                 } else {
                                     lexer.unparseLast();
-                                    winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback), pos);
+                                    winCol.setRowsLoExpr(expectExpr(lexer, sqlParserCallback, model.getDecls()), pos);
                                     if (framingMode == WindowColumn.FRAMING_RANGE) {
                                         long timeUnit = parseTimeUnit(lexer);
                                         if (timeUnit != -1) {
@@ -2670,7 +2666,7 @@ public class SqlParser {
     private CharSequence parseWithOffset(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         expectOffset(lexer);
-        model.setSampleByOffset(expectExpr(lexer, sqlParserCallback));
+        model.setSampleByOffset(expectExpr(lexer, sqlParserCallback, model.getDecls()));
         tok = optTok(lexer);
         return tok;
     }
@@ -2902,18 +2898,35 @@ public class SqlParser {
         }
     }
 
-    private ExpressionNode rewriteKnownStatements(ExpressionNode parent) throws SqlException {
-        return rewriteJsonExtractCast(
-                rewritePgCast(
-                        rewriteConcat(
-                                rewriteCase(
-                                        rewriteCount(
-                                                parent
+    private ExpressionNode rewriteKnownStatements(ExpressionNode parent, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, @Nullable CharSequence exclude) throws SqlException {
+        return rewriteDeclaredVariables(
+                rewriteJsonExtractCast(
+                        rewritePgCast(
+                                rewriteConcat(
+                                        rewriteCase(
+                                                rewriteCount(
+                                                        parent
+                                                )
                                         )
                                 )
                         )
-                )
-        );
+                ), decls, exclude);
+    }
+
+
+    private ExpressionNode rewriteKnownStatements(ExpressionNode parent, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+        return rewriteDeclaredVariables(
+                rewriteJsonExtractCast(
+                        rewritePgCast(
+                                rewriteConcat(
+                                        rewriteCase(
+                                                rewriteCount(
+                                                        parent
+                                                )
+                                        )
+                                )
+                        )
+                ), decls, null);
     }
 
     private ExpressionNode rewritePgCast(ExpressionNode parent) throws SqlException {
@@ -3043,17 +3056,25 @@ public class SqlParser {
         digit = 1;
     }
 
-    ExpressionNode expr(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+    ExpressionNode expr(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, @Nullable CharSequence exclude) throws SqlException {
         try {
             expressionTreeBuilder.pushModel(model);
             expressionParser.parseExpr(lexer, expressionTreeBuilder, sqlParserCallback);
-            return rewriteKnownStatements(expressionTreeBuilder.poll());
+            return rewriteKnownStatements(expressionTreeBuilder.poll(), decls, exclude);
         } catch (SqlException e) {
             expressionTreeBuilder.reset();
             throw e;
         } finally {
             expressionTreeBuilder.popModel();
         }
+    }
+
+    ExpressionNode expr(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback, @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+        return expr(lexer, model, sqlParserCallback, decls, null);
+    }
+
+    ExpressionNode expr(GenericLexer lexer, QueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
+        return expr(lexer, model, sqlParserCallback, null, null);
     }
 
     // test only
@@ -3134,6 +3155,10 @@ public class SqlParser {
 
         @Override
         public ExpressionNode visit(ExpressionNode node) throws SqlException {
+            if (decls == null) {
+                return node;
+            }
+
             if (node.token == null) {
                 return node;
             }

@@ -3396,17 +3396,49 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareOptionalComma() throws Exception {
-        assertModel("select-virtual 5 + 2 column from (long_sequence(1))", "DECLARE \n" +
-                "  @x := 5\n" +
-                "  @y := 2\n" +
-                "SELECT\n" +
-                "  @x + @y", ExecutionModel.QUERY);
+    public void testDeclareSelectAsofJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
+            ddl("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) asof join bah timestamp (ts))",
+                    "DECLARE @foo := foo, @bah := bah SELECT foo.ts, foo.x FROM @foo ASOF JOIN @bah", ExecutionModel.QUERY);
+
+        });
+    }
+
+    @Test
+    public void testDeclareSelectCTE() throws Exception {
+        assertModel("select-choose column from (select-virtual [2 + 5 column] 2 + 5 column from (long_sequence(1))) a",
+                "DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y) SELECT * FROM a", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectCase() throws Exception {
+        assertModel("select-virtual case(1 = 1,5,2) case from (long_sequence(1))", "DECLARE @x := 1, @y := 5, @z := 2 SELECT CASE WHEN @x = @X THEN @y ELSE @z END", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectCast() throws Exception {
+        assertModel("select-virtual cast(2,timestamp) cast from (long_sequence(1))",
+                "DECLARE @x := 2::timestamp SELECT @x", ExecutionModel.QUERY);
     }
 
     @Test
     public void testDeclareSelectDouble() throws Exception {
         assertModel("select-virtual 123.456 column1 from (long_sequence(1))", "DECLARE @x := 123.456 SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectExcept() throws Exception {
+        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) except select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) EXCEPT (SELECT @a + @b)", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectExceptAll() throws Exception {
+        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) except all select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) EXCEPT ALL (SELECT @a + @b)", ExecutionModel.QUERY);
     }
 
     @Test
@@ -3419,8 +3451,64 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectGroupByNames() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))", "DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, price", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
+    public void testDeclareSelectGroupByNumbers() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))", "DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, 3", ExecutionModel.QUERY);
+        });
+    }
+
+    @Test
     public void testDeclareSelectInt() throws Exception {
         assertModel("select-virtual 5 5 from (long_sequence(1))", "DECLARE @x := 5 SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectIntersect() throws Exception {
+        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) intersect select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT (SELECT @a + @b)", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectIntersectAll() throws Exception {
+        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) intersect all select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT ALL (SELECT @a + @b)", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
+            ddl("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) join select [y] from bah timestamp (ts) on bah.y = foo.x)",
+                    "DECLARE @x := foo.x, @y := bah.y SELECT foo.ts, foo.x FROM foo JOIN bah on @x = @y", ExecutionModel.QUERY);
+
+        });
+    }
+
+    @Test
+    public void testDeclareSelectKeyedBindVariables() throws Exception {
+        assertModel("select-virtual $1 $1, $2 $2 from (long_sequence(1))", "DECLARE @x := $1, @y := $2 SELECT @x, @y", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectMultipleCTEs() throws Exception {
+        String query = "DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y as col1), b AS (SELECT (@x - @y) + col1 as col2 FROM a) SELECT * FROM b";
+        assertModel("select-choose col2 from (select-virtual [2 - 5 + col1 col2] 2 - 5 + col1 col2 from (select-virtual [2 + 5 col1] 2 + 5 col1 from (long_sequence(1))) a) b", query
+                , ExecutionModel.QUERY);
+        assertSql("col2\n" +
+                "4\n", query);
     }
 
     @Test
@@ -3439,99 +3527,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareSelectWithAsofJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
-            ddl("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
-            drainWalQueue();
-            assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) asof join bah timestamp (ts))",
-                    "DECLARE @foo := foo, @bah := bah SELECT foo.ts, foo.x FROM @foo ASOF JOIN @bah", ExecutionModel.QUERY);
-
-        });
+    public void testDeclareSelectOptionalComma() throws Exception {
+        assertModel("select-virtual 5 + 2 column from (long_sequence(1))", "DECLARE \n" +
+                "  @x := 5\n" +
+                "  @y := 2\n" +
+                "SELECT\n" +
+                "  @x + @y", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareSelectWithCTE() throws Exception {
-        assertModel("select-choose column from (select-virtual [2 + 5 column] 2 + 5 column from (long_sequence(1))) a",
-                "DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y) SELECT * FROM a", ExecutionModel.QUERY);
-    }
-
-    @Test
-    public void testDeclareSelectWithCast() throws Exception {
-        assertModel("select-virtual cast(2,timestamp) cast from (long_sequence(1))",
-                "DECLARE @x := 2::timestamp SELECT @x", ExecutionModel.QUERY);
-    }
-
-    @Test
-    public void testDeclareSelectWithExcept() throws Exception {
-        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) except select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
-                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) EXCEPT (SELECT @a + @b)", ExecutionModel.QUERY);
-    }
-
-    @Test
-    public void testDeclareSelectWithExceptAll() throws Exception {
-        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) except all select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
-                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) EXCEPT ALL (SELECT @a + @b)", ExecutionModel.QUERY);
-    }
-
-    @Test
-    public void testDeclareSelectWithGroupByNames() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl(tradesDdl);
-            drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))", "DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, price", ExecutionModel.QUERY);
-        });
-    }
-
-    @Test
-    public void testDeclareSelectWithGroupByNumbers() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl(tradesDdl);
-            drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))", "DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, 3", ExecutionModel.QUERY);
-        });
-    }
-
-    @Test
-    public void testDeclareSelectWithIntersect() throws Exception {
-        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) intersect select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
-                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT (SELECT @a + @b)", ExecutionModel.QUERY);
-    }
-
-    @Test
-    public void testDeclareSelectWithIntersectAll() throws Exception {
-        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) intersect all select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
-                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT ALL (SELECT @a + @b)", ExecutionModel.QUERY);
-    }
-
-    @Test
-    public void testDeclareSelectWithJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
-            ddl("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
-            drainWalQueue();
-            assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) join select [y] from bah timestamp (ts) on bah.y = foo.x)",
-                    "DECLARE @x := foo.x, @y := bah.y SELECT foo.ts, foo.x FROM foo JOIN bah on @x = @y", ExecutionModel.QUERY);
-
-        });
-    }
-
-    @Test
-    public void testDeclareSelectWithKeyedBindVariables() throws Exception {
-        assertModel("select-virtual $1 $1, $2 $2 from (long_sequence(1))", "DECLARE @x := $1, @y := $2 SELECT @x, @y", ExecutionModel.QUERY);
-    }
-
-    @Test
-    public void testDeclareSelectWithMultipleCTEs() throws Exception {
-        String query = "DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y as col1), b AS (SELECT (@x - @y) + col1 as col2 FROM a) SELECT * FROM b";
-        assertModel("select-choose col2 from (select-virtual [2 - 5 + col1 col2] 2 - 5 + col1 col2 from (select-virtual [2 + 5 col1] 2 + 5 col1 from (long_sequence(1))) a) b", query
-                , ExecutionModel.QUERY);
-        assertSql("col2\n" +
-                "4\n", query);
-    }
-
-    @Test
-    public void testDeclareSelectWithOrderByNames() throws Exception {
+    public void testDeclareSelectOrderByNames() throws Exception {
         assertMemoryLeak(() -> {
             ddl(tradesDdl);
             drainWalQueue();
@@ -3540,7 +3545,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareSelectWithOrderByNumbers() throws Exception {
+    public void testDeclareSelectOrderByNumbers() throws Exception {
         assertMemoryLeak(() -> {
             ddl(tradesDdl);
             drainWalQueue();
@@ -3549,30 +3554,30 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareSelectWithPositionalBindVariables() throws Exception {
+    public void testDeclareSelectPositionalBindVariables() throws Exception {
         assertException("DECLARE @x := ?, @y := ? SELECT @x, @y", 14, "Invalid column: ?");
     }
 
     @Test
-    public void testDeclareSelectWithSubQuery() throws Exception {
+    public void testDeclareSelectSubQuery() throws Exception {
         assertModel("select-choose column from (select-virtual [2 + 5 column] 2 + 5 column from (long_sequence(1)))",
                 "DECLARE @x := 2, @y := 5 SELECT * FROM (SELECT @x + @y)", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareSelectWithSubQueryAndShadowedVariable() throws Exception {
+    public void testDeclareSelectSubQueryAndShadowedVariable() throws Exception {
         assertModel("select-choose column from (select-virtual [7 + 5 column] 7 + 5 column from (long_sequence(1)))",
                 "DECLARE @x := 2, @y := 5 SELECT * FROM (DECLARE @x:= 7 SELECT @x + @y)", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareSelectWithSubQueryAndShadowedVariableAndOuterUsage() throws Exception {
+    public void testDeclareSelectSubQueryAndShadowedVariableAndOuterUsage() throws Exception {
         assertModel("select-virtual 2 - 5 foo, column from (select-virtual [7 + 5 column] 7 + 5 column from (long_sequence(1)))",
                 "DECLARE @x := 2, @y := 5 SELECT @x - @y as foo, * FROM (DECLARE @x:= 7 SELECT @x + @y)", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareSelectWithTableNameInFrom() throws Exception {
+    public void testDeclareSelectTableNameInFrom() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
             drainWalQueue();
@@ -3582,31 +3587,31 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareSelectWithUnion() throws Exception {
+    public void testDeclareSelectUnion() throws Exception {
         assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) union select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
                 "DECLARE @a := 1, @b := 2 (SELECT @a + @b) UNION (SELECT @a + @b)", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareSelectWithUnionAll() throws Exception {
+    public void testDeclareSelectUnionAll() throws Exception {
         assertModel("select-choose column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) union all select-choose column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
                 "DECLARE @a := 1, @b := 2 (SELECT @a + @b) UNION ALL (SELECT @a + @b)", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareSelectWithWhere() throws Exception {
+    public void testDeclareSelectWhere() throws Exception {
         assertModel("select-virtual 2 + 5 column from (long_sequence(1) where 2 < 5)",
                 "DECLARE @x := 2, @y := 5 SELECT @x + @y FROM long_sequence(1) WHERE @x < @y", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareSelectWithWhereComplex() throws Exception {
+    public void testDeclareSelectWhereComplex() throws Exception {
         assertModel("select-virtual cast(2,timestamp) + cast(5,timestamp) column from (long_sequence(1) where cast(2,timestamp) < cast(5,timestamp))",
                 "DECLARE @x := 2::timestamp, @y := 5::timestamp SELECT @x + @y FROM long_sequence(1) WHERE @x < @y", ExecutionModel.QUERY);
     }
 
     @Test
-    public void testDeclareWithVariableDefinedByAnotherVariable() throws Exception {
+    public void testDeclareVariableDefinedByAnotherVariable() throws Exception {
         assertModel("select-virtual 2 2, 2 * 2 column from (long_sequence(1))",
                 "DECLARE @y := 2, @y2 := (@y * @y) SELECT @y, @y2", ExecutionModel.QUERY);
     }
