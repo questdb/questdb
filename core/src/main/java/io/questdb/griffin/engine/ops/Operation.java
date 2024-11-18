@@ -47,7 +47,7 @@ public interface Operation extends QuietCloseable {
      * infrastructure is going to be required. Operation objects are kept lightweight and
      * rely on shared compilers to execute. To keep things simple, compiler instance is
      * retrieved from the execution context.
-     *
+     * <p>
      * Execution will typically cast the operation to the type it is familiar with using the
      * operation code.
      *
