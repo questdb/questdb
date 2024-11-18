@@ -234,16 +234,6 @@ public class GeoHashes {
         return widen(fromString(hash, start, start + chars), fromBits, toBits);
     }
 
-    public static int geoHashBytes(long value, int bitFlags) {
-        if (value == GeoHashes.NULL) {
-            return Integer.BYTES;
-        } else {
-            assert bitFlags > 0;
-            // chars or bits
-            return Integer.BYTES + bitFlags;
-        }
-    }
-
     public static int getBitFlags(int columnType) {
         if (!ColumnType.isGeoHash(columnType)) {
             return 0;

@@ -1207,6 +1207,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 .put(']');
     }
 
+    private static int geoHashBytes(long value, int bitFlags) {
+        if (value == GeoHashes.NULL) {
+            return Integer.BYTES;
+        } else {
+            assert bitFlags > 0;
+            // chars or bits
+            return Integer.BYTES + bitFlags;
+        }
+    }
+
     // Returns the size of the serialized value in bytes,
     // or -1 if the type is not supported (i.e., size cannot be estimated without serialization).
     // throws BadProtocolException if the binary value exceeds maxBlobSize
@@ -1282,13 +1292,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     }
                 }
             case ColumnType.GEOBYTE:
-                return GeoHashes.geoHashBytes(record.getGeoByte(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoByte(columnIndex), bitFlags);
             case ColumnType.GEOSHORT:
-                return GeoHashes.geoHashBytes(record.getGeoShort(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoShort(columnIndex), bitFlags);
             case ColumnType.GEOINT:
-                return GeoHashes.geoHashBytes(record.getGeoInt(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoInt(columnIndex), bitFlags);
             case ColumnType.GEOLONG:
-                return GeoHashes.geoHashBytes(record.getGeoLong(columnIndex), bitFlags);
+                return geoHashBytes(record.getGeoLong(columnIndex), bitFlags);
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;
