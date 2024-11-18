@@ -390,20 +390,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, inVolume);
     }
 
-    public void execute(CharSequence sqlText) throws SqlException {
-        execute(sqlText, rootExecutionContext);
-    }
-
-    public void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        execute(sqlText, sqlExecutionContext, null);
-    }
-
-    public void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        try (SqlCompiler compiler = getSqlCompiler()) {
-            execute(compiler, sqlText, sqlExecutionContext, eventSubSeq);
-        }
-    }
-
     public void dropTable(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
@@ -436,6 +422,20 @@ public class CairoEngine implements Closeable, WriterSource {
     public void enablePartitionOverwriteControl() {
         LOG.info().$("partition overwrite control is enabled").$();
         partitionOverwriteControl.enable();
+    }
+
+    public void execute(CharSequence sqlText) throws SqlException {
+        execute(sqlText, rootExecutionContext);
+    }
+
+    public void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        execute(sqlText, sqlExecutionContext, null);
+    }
+
+    public void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            execute(compiler, sqlText, sqlExecutionContext, eventSubSeq);
+        }
     }
 
     public TableWriter getBackupWriter(TableToken tableToken, CharSequence backupDirName) {
@@ -619,11 +619,9 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableRecordMetadata getSequencerMetadata(TableToken tableToken, long desiredVersion) {
         assert tableToken.isWal();
         verifyTableToken(tableToken);
-        return validateDesiredMetadataVersion(
-                tableToken,
-                sequencerMetadataPool.get(tableToken),
-                desiredVersion
-        );
+        final TableRecordMetadata metadata = sequencerMetadataPool.get(tableToken);
+        validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
+        return metadata;
     }
 
     public SqlCompiler getSqlCompiler() {
@@ -670,7 +668,9 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableMetadata getTableMetadata(TableToken tableToken, long desiredVersion) {
         verifyTableToken(tableToken);
         try {
-            return validateDesiredMetadataVersion(tableToken, tableMetadataPool.get(tableToken), desiredVersion);
+            final TableMetadata metadata = tableMetadataPool.get(tableToken);
+            validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
+            return metadata;
         } catch (CairoException e) {
             if (tableToken.isWal()) {
                 throw e;
@@ -678,7 +678,9 @@ public class CairoEngine implements Closeable, WriterSource {
                 tryRepairTable(tableToken, e);
             }
         }
-        return validateDesiredMetadataVersion(tableToken, tableMetadataPool.get(tableToken), desiredVersion);
+        TableMetadata metadata = tableMetadataPool.get(tableToken);
+        validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
+        return metadata;
     }
 
     public TableSequencerAPI getTableSequencerAPI() {
@@ -1484,8 +1486,8 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    private TableRecordMetadata validateDesiredMetadataVersion(TableToken tableToken, TableRecordMetadata metadata, long desiredVersion) {
-        if (desiredVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != desiredVersion) {
+    private void validateDesiredMetadataVersion(TableToken tableToken, TableRecordMetadata metadata, long desiredVersion) {
+        if ((desiredVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != desiredVersion) || tableToken.getTableId() != metadata.getTableId()) {
             final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
                     tableToken,
                     tableToken.getTableId(),
@@ -1496,22 +1498,6 @@ public class CairoEngine implements Closeable, WriterSource {
             metadata.close();
             throw ex;
         }
-        return metadata;
-    }
-
-    private TableMetadata validateDesiredMetadataVersion(TableToken tableToken, TableMetadata metadata, long desiredVersion) {
-        if (desiredVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != desiredVersion) {
-            final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
-                    tableToken,
-                    tableToken.getTableId(),
-                    metadata.getTableId(),
-                    desiredVersion,
-                    metadata.getMetadataVersion()
-            );
-            metadata.close();
-            throw ex;
-        }
-        return metadata;
     }
 
     @NotNull

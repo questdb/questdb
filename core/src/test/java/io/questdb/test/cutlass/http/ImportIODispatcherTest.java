@@ -198,11 +198,15 @@ public class ImportIODispatcherTest extends AbstractTest {
     private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+VARCHAR)";
     private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
     private final String ImportCreateParamRequestFalse = ValidImportRequest1
-            .replace("POST /upload?name=trips HTTP",
-                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=false HTTP");
+            .replace(
+                    "POST /upload?name=trips HTTP",
+                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=false HTTP"
+            );
     private final String ImportCreateParamRequestTrue = ValidImportRequest1
-            .replace("POST /upload?name=trips HTTP",
-                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=true HTTP");
+            .replace(
+                    "POST /upload?name=trips HTTP",
+                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=true HTTP"
+            );
     private final String ValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -520,12 +524,14 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
-                    engine.execute("create table trips as (" +
-                            "select cast('b' as SYMBOL) Col1, " +
-                            "timestamp_sequence(0, 100000L) Pickup_DateTime," +
-                            "timestamp_sequence(100000000L, 10000L)" +
-                            "from long_sequence(1)" +
-                            ")", this.sqlExecutionContext);
+                    engine.execute(
+                            "create table trips as (" +
+                                    "select cast('b' as SYMBOL) Col1, " +
+                                    "timestamp_sequence(0, 100000L) Pickup_DateTime," +
+                                    "timestamp_sequence(100000000L, 10000L)" +
+                                    "from long_sequence(1)" +
+                                    ")", this.sqlExecutionContext
+                    );
 
                     new SendAndReceiveRequestBuilder().executeMany(executor -> {
                         executor.execute(
@@ -1063,11 +1069,13 @@ public class ImportIODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .run((engine, sqlExecutionContext) -> {
                     setupSql(engine);
-                    engine.execute("create table trips(" +
-                            "timestamp TIMESTAMP," +
-                            "str STRING," +
-                            "i STRING" +
-                            ") timestamp(timestamp)", this.sqlExecutionContext);
+                    engine.execute(
+                            "create table trips(" +
+                                    "timestamp TIMESTAMP," +
+                                    "str STRING," +
+                                    "i STRING" +
+                                    ") timestamp(timestamp)", this.sqlExecutionContext
+                    );
                     String request = PostHeader.replace("name=trips", "name=trips&skipLev=true") +
                             Request1DataHeader +
                             generateImportCsv(0, rowCount, "aaaaaaaaaaaaaaaaa,22222222222222222222,33333333333333333") +
@@ -1091,8 +1099,8 @@ public class ImportIODispatcherTest extends AbstractTest {
 
                     engine.execute(
                             "insert into trips values (" +
-                                        "'2021-07-20T00:01:00', 'ABC', 'DEF'" +
-                                        ")", this.sqlExecutionContext
+                                    "'2021-07-20T00:01:00', 'ABC', 'DEF'" +
+                                    ")", this.sqlExecutionContext
                     );
                 });
     }
