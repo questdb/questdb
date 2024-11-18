@@ -52,10 +52,22 @@ import io.questdb.std.str.Utf8s;
  * {2.5, 3},  -- very nice
  * }
  * <p>
- * A few things to note:
- * * Whitespace is allowed anywhere.
- * * SQL comments are allowed.
- * * The type is inferred, but can also be set during `.of` construction.
+ * There is also support for specifying the array as a CSC or CSR 1D vectors and 2D matrices.
+ * For example:
+ * {R{0,1,3,4,5}{2,3,0,4,1,4}{3,4,5,7,8}}
+ * is equivalent to
+ * {{0,0,3,0,0},
+ *  {0,0,0,4,0},
+ *  {5,0,0,0,6},
+ *  {0,7,0,0,0},
+ *  {0,0,0,0,8}}
+ * "R" implies CSR and "C" implies CSC.
+ * The three following arrays of numbers indicate:
+ *   * {row_pointers/col_pointers}
+ *   * {column_indices/row_indices}
+ *   * {values}
+ * <p>
+ * NOTE: The element type is inferred, but can also be fixed during parsing.
  */
 public class NdArrLiteralParser implements QuietCloseable {
 
@@ -180,17 +192,20 @@ public class NdArrLiteralParser implements QuietCloseable {
      * The `str` and `size` indicate the UTF-8 bytes to parse.
      * <p>
      * The parser can operate in one of two modes:
-     *   * `sqlMode==true`
+     *   * `sqlMode==true` (for SQL)
      *       * NULL keyword supported.
      *       * White space allowed.
-     *       * Comments allowed
-     *   * `sqlMode==false` (used for ILP), disables these human-friendly features.
+     *       * Comments allowed.
+     *   * `sqlMode==false` (for ILP), disables these human-friendly features.
      * <p>
      * Grammar:
-     *
+     * See the `nd_arr_grammar.py` for reference. It is more intended for syntax highlighting etc.
+     * There are a few differences with the implementation here:
+     *   * That grammar performs no validation, such as checking that all rows have the same element count.
+     *   * That grammar does not support whitespace or comments.
      */
     public long parse(int elementType, long str, long size, boolean sqlMode) {
         reset(elementType);
-
+        throw new UnsupportedOperationException("nyi");
     }
 }

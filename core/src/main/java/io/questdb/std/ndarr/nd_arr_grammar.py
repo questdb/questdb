@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --no-project
+
+# /// script
+# dependencies = ["parsimonious"]
+# ///
 
 """
 PROTOTYPE!
@@ -69,10 +73,13 @@ import unittest
 from parsimonious.grammar import Grammar
 
 GRAMMAR = r"""
-array_lit   = ws* (null / array_def) ws*
+array_lit   = (null / array_def / csr / csc )
 element     = number / array_def
-elements    = element (ws? "," ws? element)*
-array_def   = "{" ws? elements? ws? "}"
+elements    = element ("," element)*
+array_def   = "{" elements? "}"
+flat_arr    = "{" number ("," number)* "}"
+csr         = "{R" flat_arr  flat_arr  flat_arr "}"
+csc         = "{C" flat_arr  flat_arr  flat_arr "}"
 null        = ~r"null"i
 ws          = ~r"\s*"
 number      = long / double
