@@ -10161,9 +10161,8 @@ create table tab as (
                 "rnd_geohash(8) f13",
                 "rnd_geohash(16) f14",
                 "rnd_geohash(32) f15",
-                // Todo: add ip4 and long256 after been implemented
-                //"rnd_ipv4() f16",
-                //"rnd_long256() f17",
+                "rnd_ipv4() f16",
+                "rnd_long256() f17",
                 "timestamp_sequence(500000000000L,100000000L) ts"
         ));
 

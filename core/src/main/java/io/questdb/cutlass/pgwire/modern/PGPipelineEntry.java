@@ -1012,6 +1012,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // We could include UUID or IPv4 into the list,
         // but this would require a special version of getColumnValueSize().
         return ColumnType.isVarSize(typeTag)
+                || typeTag == ColumnType.IPv4
+                || typeTag == ColumnType.LONG256
                 || ColumnType.isGeoHash(columnType)
                 || typeTag == ColumnType.SYMBOL
                 || typeTag == ColumnType.CHAR
@@ -1239,8 +1241,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 return charValue == 0 ? Integer.BYTES : Integer.BYTES + Chars.charBytes(charValue);
             case ColumnType.IPv4:
                 final int ipValue = record.getIPv4(columnIndex);
-                // todo: IPv4 is text encoded and has variable length
-                return ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
+                return ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Numbers.sinkSizeIPv4(ipValue) : Integer.BYTES;
             case ColumnType.INT:
                 final int value = record.getInt(columnIndex);
                 return value != Numbers.INT_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
@@ -1266,7 +1267,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case ColumnType.LONG256:
                 // todo: Long256 is text encoded and has variable length
                 final Long256 long256Value = record.getLong256A(columnIndex);
-                return Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Long.BYTES * 4;
+                return Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Numbers.hexDigitsLong256(long256Value);
             case ColumnType.VARCHAR:
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
                 return vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();

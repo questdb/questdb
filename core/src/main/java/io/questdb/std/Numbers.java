@@ -34,12 +34,9 @@ import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;import org.jetbrains.annotations.NotNull;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
+import io.questdb.std.str.Utf8s;
 import jdk.internal.math.FDBigInteger;
-//#endif
+import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
@@ -163,6 +160,12 @@ public final class Numbers {
             // ten
             appendInt10(sink, i);
         }
+    }
+
+    public static int hexDigitNumber(long num) {
+        int mag = 63 - Long.numberOfLeadingZeros(num|1);
+        int v = (mag + 3) / 4;
+        return v + (v & 1); // round up to even number of digits 0x123 -> 0x0123
     }
 
     public static void append(CharSink<?> sink, final long value) {
@@ -497,6 +500,31 @@ public final class Numbers {
         appendHex(sink, a, false);
     }
 
+    public static int hexDigitsLong256(Long256 long256) {
+       return hexDigitsLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3());
+    }
+
+    public static int hexDigitsLong256(long a, long b, long c, long d) {
+        int digits = 0;
+        digits += hexDigitNumber(d);
+        digits += hexDigitNumber(c);
+        digits += hexDigitNumber(b);
+        digits += hexDigitNumber(a);
+        return digits + 2; // 0x
+    }
+
+    public static int sinkSizeIPv4(int value) {
+        // NULL handling should be done outside
+        int sz = Numbers.sinkSizeInt((value >> 24) & 0xff);
+        sz += 1; // '.'
+        sz += Numbers.sinkSizeInt((value >> 16) & 0xff);
+        sz += 1; // '.'
+        sz += Numbers.sinkSizeInt((value >> 8) & 0xff);
+        sz += 1; // '.'
+        sz += Numbers.sinkSizeInt(value & 0xff);
+        return sz;
+    }
+
     public static void appendUuid(long lo, long hi, CharSink<?> sink) {
         appendHexPadded(sink, (hi >> 32) & 0xFFFFFFFFL, 4);
         sink.putAscii('-');
@@ -743,6 +771,26 @@ public final class Numbers {
         append(sink, (value >> 8) & 0xff);
         sink.putAscii('.');
         append(sink, value & 0xff);
+    }
+
+    public static int sinkSizeInt(int value) {
+        if (value == Numbers.INT_NULL) {
+            return 4; // "null"
+        }
+
+        int sz = (value < 0) ? 1 : 0;
+        value = Math.abs(value);
+
+        if (value < 10) return sz + 1;
+        if (value < 100) return sz + 2;
+        if (value < 1000) return sz + 3;
+        if (value < 10000) return sz + 4;
+        if (value < 100000) return sz + 5;
+        if (value < 1000000) return sz + 6;
+        if (value < 10000000) return sz + 7;
+        if (value < 100000000) return sz + 8;
+        if (value < 1000000000) return sz + 9;
+        return sz + 10;
     }
 
     public static long intToLong(int value) {
