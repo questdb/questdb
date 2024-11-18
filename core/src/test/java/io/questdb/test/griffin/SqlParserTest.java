@@ -3515,6 +3515,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectWithUnion() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
+            ddl("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) union select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                    "DECLARE @a := 1, @b := 2 (SELECT @a + @b) UNION (SELECT @a + @b)", ExecutionModel.QUERY);
+
+        });
+    }
+
+    @Test
     public void testDeclareSelectWithWhere() throws Exception {
         assertModel("select-virtual 2 + 5 column from (long_sequence(1) where 2 < 5)",
                 "DECLARE @x := 2, @y := 5 SELECT @x + @y FROM long_sequence(1) WHERE @x < @y", ExecutionModel.QUERY);

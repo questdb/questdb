@@ -541,6 +541,11 @@ public class ExpressionParser {
                         break;
 
                     case '(':
+                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS) {
+                            lexer.unparseLast();
+                            break OUT;
+                        }
+
                         if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
                             throw SqlException.$(lastPos, "not a method call");
                         }
@@ -878,7 +883,7 @@ public class ExpressionParser {
                                                     lastPos
                                             )
                                     );
-                                    
+
                                     break;
                                 }
                             }

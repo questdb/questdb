@@ -1110,6 +1110,12 @@ public class SqlParser {
                     lexer.unparseLast();
                     modelPosition = lexer.lastTokenPosition();
                 }
+
+                // check for decls
+                if (prevModel.getDecls() != null && prevModel.getDecls().size() > 0
+                        && decls == null) {
+                    decls = prevModel.getDecls();
+                }
                 continue;
             }
 
@@ -1154,7 +1160,7 @@ public class SqlParser {
         model.setModelPosition(modelPosition);
 
         // copy decls
-        if (decls != null && decls.size() > 0) {
+        if (decls != null && decls.size() > 0) { // todo: maybe this check should be in the function or everywhere else this is used
             model.copyDeclsFrom(decls);
         }
 
@@ -1430,7 +1436,7 @@ public class SqlParser {
         // expect "(" in case of sub-query
 
         if (Chars.equals(tok, '(')) {
-            // copy decls across
+
             QueryModel proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
             tok = optTok(lexer);
 
