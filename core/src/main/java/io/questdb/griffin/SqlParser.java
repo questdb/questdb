@@ -1110,13 +1110,6 @@ public class SqlParser {
                     lexer.unparseLast();
                     modelPosition = lexer.lastTokenPosition();
                 }
-
-                // check for decls
-                if (prevModel.getDecls() != null && prevModel.getDecls().size() > 0
-                        && decls == null) {
-                    decls = prevModel.getDecls();
-                }
-                continue;
             }
 
             if (isExceptKeyword(tok)) {
@@ -1129,7 +1122,6 @@ public class SqlParser {
                     lexer.unparseLast();
                     modelPosition = lexer.lastTokenPosition();
                 }
-                continue;
             }
 
             if (isIntersectKeyword(tok)) {
@@ -1142,6 +1134,12 @@ public class SqlParser {
                     lexer.unparseLast();
                     modelPosition = lexer.lastTokenPosition();
                 }
+            }
+
+            // check for decls
+            if (prevModel.getDecls() != null && prevModel.getDecls().size() > 0
+                    && decls == null) {
+                decls = prevModel.getDecls();
             }
         }
     }

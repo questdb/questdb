@@ -3456,6 +3456,31 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectWithExcept() throws Exception {
+        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) except select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) EXCEPT (SELECT @a + @b)", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectWithExceptAll() throws Exception {
+        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) except all select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) EXCEPT ALL (SELECT @a + @b)", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectWithIntersect() throws Exception {
+        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) intersect select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT (SELECT @a + @b)", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectWithIntersectAll() throws Exception {
+        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) intersect all select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT ALL (SELECT @a + @b)", ExecutionModel.QUERY);
+    }
+
+
+    @Test
     public void testDeclareSelectWithJoin() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
@@ -3516,14 +3541,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectWithUnion() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
-            ddl("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
-            drainWalQueue();
-            assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) union select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
-                    "DECLARE @a := 1, @b := 2 (SELECT @a + @b) UNION (SELECT @a + @b)", ExecutionModel.QUERY);
+        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) union select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) UNION (SELECT @a + @b)", ExecutionModel.QUERY);
+    }
 
-        });
+    @Test
+    public void testDeclareSelectWithUnionAll() throws Exception {
+        assertModel("select-choose column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) union all select-choose column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) UNION ALL (SELECT @a + @b)", ExecutionModel.QUERY);
     }
 
     @Test
@@ -3537,11 +3562,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertModel("select-virtual cast(2,timestamp) + cast(5,timestamp) column from (long_sequence(1) where cast(2,timestamp) < cast(5,timestamp))",
                 "DECLARE @x := 2::timestamp, @y := 5::timestamp SELECT @x + @y FROM long_sequence(1) WHERE @x < @y", ExecutionModel.QUERY);
     }
-
-//    @Test
-//    public void testDeclareWithMissingColon() throws Exception {
-//        assertException("DECLARE @x = 1, @y = 2 SELECT @x * @y + @x / @y", 11, "incorrect declare variable syntax, expected `:=`");
-//    }
 
     @Test
     public void testDeclareWithVariableDefinedByAnotherVariable() throws Exception {
