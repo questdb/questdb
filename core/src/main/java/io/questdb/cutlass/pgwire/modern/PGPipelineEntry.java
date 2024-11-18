@@ -1249,7 +1249,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case ColumnType.DOUBLE:
                 final double doubleValue = record.getDouble(columnIndex);
                 return Double.isNaN(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
-            case ColumnType.LONG128:
             case ColumnType.UUID:
                 final long lo = record.getLong128Lo(columnIndex);
                 final long hi = record.getLong128Hi(columnIndex);
