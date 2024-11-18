@@ -26,5 +26,9 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableStructure;
 
+/**
+ * Interface that fully describes storage of an existing table, including its column structure and
+ * table-level metadata.
+ */
 public interface TableMetadata extends TableRecordMetadata, TableStructure {
 }

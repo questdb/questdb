@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -123,7 +124,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
         int rowCount = Math.max(1, txCount * rnd.nextInt(200) * 1000);
         try (
                 TableWriter w = TestUtils.getWriter(engine, "x");
-                TableMetadata sequencerMetadata = engine.getLegacyMetadata(w.getTableToken());
+                TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(w.getTableToken());
                 TableWriter w2 = TestUtils.getWriter(engine, "y")
         ) {
             ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(

@@ -26,15 +26,16 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.DynamicTableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.TableMetadata;
 
-class TableReaderMetadataTenantImpl extends DynamicTableReaderMetadata implements MetadataPoolTenant {
+class TableReaderMetadataTenantImpl extends DynamicTableReaderMetadata implements TableMetadata, PoolTenant<TableReaderMetadataTenantImpl> {
     private final int index;
-    private AbstractMultiTenantPool.Entry<MetadataPoolTenant> entry;
-    private AbstractMultiTenantPool<MetadataPoolTenant> pool;
+    private AbstractMultiTenantPool.Entry<TableReaderMetadataTenantImpl> entry;
+    private AbstractMultiTenantPool<TableReaderMetadataTenantImpl> pool;
 
     TableReaderMetadataTenantImpl(
-            AbstractMultiTenantPool<MetadataPoolTenant> pool,
-            AbstractMultiTenantPool.Entry<MetadataPoolTenant> entry,
+            AbstractMultiTenantPool<TableReaderMetadataTenantImpl> pool,
+            AbstractMultiTenantPool.Entry<TableReaderMetadataTenantImpl> entry,
             int index,
             TableToken tableToken,
             boolean lazy
@@ -56,7 +57,7 @@ class TableReaderMetadataTenantImpl extends DynamicTableReaderMetadata implement
     }
 
     @Override
-    public AbstractMultiTenantPool.Entry<MetadataPoolTenant> getEntry() {
+    public AbstractMultiTenantPool.Entry<TableReaderMetadataTenantImpl> getEntry() {
         return entry;
     }
 

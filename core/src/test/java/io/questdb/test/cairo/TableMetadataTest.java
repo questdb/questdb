@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -107,7 +108,7 @@ public class TableMetadataTest extends AbstractCairoTest {
             }
 
             ddl("alter table x add column f int");
-            try (TableMetadata m1 = engine.getLegacyMetadata(tt)) {
+            try (TableRecordMetadata m1 = engine.getLegacyMetadata(tt)) {
                 // No delay in meta changes for WAL tables
                 Assert.assertEquals(m1.getColumnCount() - 1, m1.getColumnIndex("f"));
             }

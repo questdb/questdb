@@ -227,7 +227,7 @@ public class O3MaxLagTest extends AbstractO3Test {
 
                 try (TableWriter writer = TestUtils.getWriter(engine, tableName)) {
                     int effectiveMaxUncommitted;
-                    try (TableMetadata tableMetadata = engine.getLegacyMetadata(engine.verifyTableName(tableName))) {
+                    try (TableMetadata tableMetadata = engine.getTableMetadata(engine.verifyTableName(tableName))) {
                         effectiveMaxUncommitted = tableMetadata.getMaxUncommittedRows();
                     }
 

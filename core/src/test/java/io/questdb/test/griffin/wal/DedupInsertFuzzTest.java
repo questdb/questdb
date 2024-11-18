@@ -681,7 +681,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             try (
                     TableReader reader = getReader(tableNameWalNoDedup);
-                    TableMetadata sequencerMetadata = engine.getSequencerMetadata(reader.getTableToken())
+                    TableRecordMetadata sequencerMetadata = engine.getSequencerMetadata(reader.getTableToken())
             ) {
                 TableReaderMetadata readerMetadata = reader.getMetadata();
                 chooseUpsertKeys(readerMetadata, dedupKeys, rnd, upsertKeyIndexes);
@@ -738,7 +738,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             fuzzer.createInitialTable(tableNameNoWal, false);
 
             String timestampColumnName;
-            try (TableMetadata meta = engine.getSequencerMetadata(dedupTt)) {
+            try (TableRecordMetadata meta = engine.getSequencerMetadata(dedupTt)) {
                 timestampColumnName = meta.getColumnName(meta.getTimestampIndex());
             }
 

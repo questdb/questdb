@@ -2840,7 +2840,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         ObjList<Function> valueFunctions = null;
         TableToken token = tableExistsOrFail(tableNameExpr.position, tableNameExpr.token, executionContext);
 
-        try (TableMetadata metadata = executionContext.getMetadataForWrite(token)) {
+        try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token)) {
             final long metadataVersion = metadata.getMetadataVersion();
             final InsertOperationImpl insertOperation = new InsertOperationImpl(engine, metadata.getTableToken(), metadataVersion);
             final int metadataTimestampIndex = metadata.getTimestampIndex();
@@ -2956,7 +2956,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryModel queryModel = model.getQueryModel();
             try (
                     RecordCursorFactory factory = generateSelectOneShot(queryModel, executionContext, false);
-                    TableMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)
+                    TableRecordMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)
             ) {
                 final RecordMetadata cursorMetadata = factory.getMetadata();
                 // Convert sparse writer metadata into dense

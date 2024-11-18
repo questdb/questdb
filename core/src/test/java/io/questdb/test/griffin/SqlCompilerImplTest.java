@@ -38,6 +38,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -3534,7 +3535,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             try (
                     TableWriter writer = getWriter("x");
-                    TableMetadata tableMetadata = engine.getLegacyMetadata(writer.getTableToken())
+                    TableMetadata tableMetadata = engine.getTableMetadata(writer.getTableToken())
             ) {
                 sink.clear();
                 tableMetadata.toJson(sink);

@@ -24,11 +24,19 @@
 
 package io.questdb.cairo;
 
-public interface TableStructure extends TableDescriptor {
+public interface TableStructure {
+
+    int getColumnCount();
+
+    CharSequence getColumnName(int columnIndex);
+
+    int getColumnType(int columnIndex);
 
     int getIndexBlockCapacity(int columnIndex);
 
     int getMaxUncommittedRows();
+
+    long getMetadataVersion();
 
     long getO3MaxLag();
 
@@ -40,11 +48,11 @@ public interface TableStructure extends TableDescriptor {
 
     CharSequence getTableName();
 
+    int getTimestampIndex();
+
     boolean isDedupKey(int columnIndex);
 
     boolean isIndexed(int columnIndex);
 
     boolean isWalEnabled();
-
-    long getMetadataVersion();
 }

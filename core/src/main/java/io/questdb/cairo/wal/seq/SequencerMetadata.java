@@ -27,7 +27,6 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableDescriptor;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -49,7 +48,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
-public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
+public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable {
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
     private final IntList readColumnOrder = new IntList();

@@ -22,14 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.cairo.pool;
 
-public interface TableDescriptor {
-    int getColumnCount();
+import io.questdb.cairo.sql.TableRecordMetadata;
 
-    CharSequence getColumnName(int columnIndex);
-
-    int getColumnType(int columnIndex);
-
-    int getTimestampIndex();
+public interface SequencerMetadataPoolTenant extends TableRecordMetadata, PoolTenant<SequencerMetadataPoolTenant> {
 }

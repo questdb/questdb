@@ -46,6 +46,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
@@ -542,7 +543,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return ffCache;
     }
 
-    public TableMetadata getLegacyMetadata(TableToken tableToken) {
+    public TableRecordMetadata getLegacyMetadata(TableToken tableToken) {
         return getLegacyMetadata(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
 
@@ -554,7 +555,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * @return returns {@link SequencerMetadata} for WAL tables and {@link TableMetadata}
      * for non-WAL, which would be metadata of the {@link TableReader}
      */
-    public TableMetadata getLegacyMetadata(TableToken tableToken, long desiredVersion) {
+    public TableRecordMetadata getLegacyMetadata(TableToken tableToken, long desiredVersion) {
         if (!tableToken.isWal()) {
             return getTableMetadata(tableToken, desiredVersion);
         }
@@ -647,7 +648,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableMetadata getSequencerMetadata(TableToken tableToken) {
+    public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
         return getSequencerMetadata(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
 
@@ -664,7 +665,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * @param desiredVersion version of table metadata used previously if consistent metadata reads are required
      * @return sequence metadata instance
      */
-    public TableMetadata getSequencerMetadata(TableToken tableToken, long desiredVersion) {
+    public TableRecordMetadata getSequencerMetadata(TableToken tableToken, long desiredVersion) {
         assert tableToken.isWal();
         verifyTableToken(tableToken);
         return validateDesiredMetadataVersion(
@@ -1546,6 +1547,21 @@ public class CairoEngine implements Closeable, WriterSource {
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
         }
+    }
+
+    private TableRecordMetadata validateDesiredMetadataVersion(TableToken tableToken, TableRecordMetadata metadata, long desiredVersion) {
+        if (desiredVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != desiredVersion) {
+            final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
+                    tableToken,
+                    tableToken.getTableId(),
+                    metadata.getTableId(),
+                    desiredVersion,
+                    metadata.getMetadataVersion()
+            );
+            metadata.close();
+            throw ex;
+        }
+        return metadata;
     }
 
     private TableMetadata validateDesiredMetadataVersion(TableToken tableToken, TableMetadata metadata, long desiredVersion) {

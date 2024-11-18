@@ -30,7 +30,7 @@ import io.questdb.cairo.GenericTableRecordMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 
-public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolTenant> {
+public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMetadataPoolTenant> {
     private final CairoEngine engine;
 
     public SequencerMetadataPool(CairoConfiguration configuration, CairoEngine engine) {
@@ -44,20 +44,20 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
     }
 
     @Override
-    protected MetadataPoolTenant newTenant(TableToken tableToken, Entry<MetadataPoolTenant> entry, int index) {
+    protected SequencerMetadataPoolTenant newTenant(TableToken tableToken, Entry<SequencerMetadataPoolTenant> entry, int index) {
         return new SequencerMetadataTenantImpl(this, entry, index, tableToken, engine.getTableSequencerAPI());
     }
 
-    private static class SequencerMetadataTenantImpl extends GenericTableRecordMetadata implements MetadataPoolTenant {
+    private static class SequencerMetadataTenantImpl extends GenericTableRecordMetadata implements SequencerMetadataPoolTenant {
         private final int index;
         private final TableSequencerAPI tableSequencerAPI;
         private final TableToken tableToken;
-        private AbstractMultiTenantPool.Entry<MetadataPoolTenant> entry;
-        private AbstractMultiTenantPool<MetadataPoolTenant> pool;
+        private AbstractMultiTenantPool.Entry<SequencerMetadataPoolTenant> entry;
+        private AbstractMultiTenantPool<SequencerMetadataPoolTenant> pool;
 
         public SequencerMetadataTenantImpl(
-                AbstractMultiTenantPool<MetadataPoolTenant> pool,
-                Entry<MetadataPoolTenant> entry,
+                AbstractMultiTenantPool<SequencerMetadataPoolTenant> pool,
+                Entry<SequencerMetadataPoolTenant> entry,
                 int index,
                 TableToken tableToken,
                 TableSequencerAPI tableSequencerAPI
@@ -81,7 +81,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
         }
 
         @Override
-        public AbstractMultiTenantPool.Entry<MetadataPoolTenant> getEntry() {
+        public AbstractMultiTenantPool.Entry<SequencerMetadataPoolTenant> getEntry() {
             return entry;
         }
 
@@ -90,40 +90,6 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
             return index;
         }
 
-        @Override
-        public int getIndexBlockCapacity(int columnIndex) {
-            return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
-        }
-
-        @Override
-        public int getMaxUncommittedRows() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public long getO3MaxLag() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public int getPartitionBy() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean getSymbolCacheFlag(int columnIndex) {
-            return getColumnMetadata(columnIndex).isSymbolCacheFlag();
-        }
-
-        @Override
-        public int getSymbolCapacity(int columnIndex) {
-            return getColumnMetadata(columnIndex).getSymbolCapacity();
-        }
-
-        @Override
-        public CharSequence getTableName() {
-            return tableToken.getTableName();
-        }
 
         public void goodbye() {
             entry = null;
@@ -135,10 +101,6 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
             throw new UnsupportedOperationException();
         }
 
-        @Override
-        public boolean isIndexed(int columnIndex) {
-            return getColumnMetadata(columnIndex).isSymbolIndexFlag();
-        }
 
         @Override
         public void refresh() {
