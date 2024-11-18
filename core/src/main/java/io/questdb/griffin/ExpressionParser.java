@@ -229,6 +229,8 @@ public class ExpressionParser {
     }
 
     void parseExpr(GenericLexer lexer, ExpressionParserListener listener, SqlParserCallback sqlParserCallback) throws SqlException {
+        System.err.println("ExpressionParser.parseExpr :: (A) " + lexer.getContent());
+        System.err.println("                                  " + new String(new char[lexer.getPosition()]).replace("\0", " ") + "^");
         try {
             int shadowParseMismatchFirstPosition = -1;
             int paramCount = 0;
@@ -250,6 +252,7 @@ public class ExpressionParser {
             boolean asPoppedNull = false;
             OUT:
             while ((tok = SqlUtil.fetchNext(lexer)) != null) {
+                System.err.println("ExpressionParser.parseExpr :: (B) tok: " + tok);
                 thisChar = tok.charAt(0);
                 prevBranch = thisBranch;
                 boolean processDefaultBranch = false;
@@ -901,7 +904,7 @@ public class ExpressionParser {
                                             lastPos
                                     );
                                     constNode.paramCount = 2;
-                                    // fall thru
+                                    // fall through
                                 }
                                 opStack.push(constNode);
                                 break;

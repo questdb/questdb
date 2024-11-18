@@ -32,6 +32,7 @@ import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -1704,7 +1705,10 @@ public class SqlParser {
                 expectTok(lexer, '(');
                 ObjList<ExpressionNode> rowValues = new ObjList<>();
                 do {
+                    System.err.println("SqlParser.parseInsert :: (A) " + lexer.getContent());
+                    System.err.println("                             " + new String(new char[lexer.getPosition()]).replace("\0", " ") + "^");
                     rowValues.add(expectExpr(lexer, sqlParserCallback));
+                    final StringSink added = new StringSink(); rowValues.getQuick(rowValues.size() - 1).toSink(added); System.err.println("SqlParser.parseInt :: (B) rowValues[-1]: " + added);
                 } while (Chars.equals((tok = tok(lexer, "','")), ','));
                 expectTok(tok, lexer.lastTokenPosition(), ')');
                 model.addRowTupleValues(rowValues);
