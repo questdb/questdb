@@ -61,7 +61,6 @@ public class ExpressionParser {
     private static final int BRANCH_RIGHT_BRACKET = 16;
     private static final int BRANCH_RIGHT_PARENTHESIS = 3;
     private static final int BRANCH_TIMESTAMP_ZONE = 19;
-    private static final int BRANCH_VARIABLE_BIND = 21;
     private static final int IDX_ELSE = 2;
     private static final int IDX_THEN = 1;
     private static final int IDX_WHEN = 0;
@@ -879,19 +878,7 @@ public class ExpressionParser {
                                                     lastPos
                                             )
                                     );
-
-                                    if (prevBranch == BRANCH_VARIABLE_BIND) {
-                                        // should be a variable name, bind op, and constant on stack
-                                        ExpressionNode var, op, c;
-                                        c = opStack.pop();
-                                        op = opStack.pop();
-                                        var = opStack.pop();
-                                        op.lhs = var;
-                                        op.rhs = c;
-                                        op.paramCount = 2;
-                                        opStack.push(op);
-                                        break OUT;
-                                    }
+                                    
                                     break;
                                 }
                             }

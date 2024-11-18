@@ -1034,10 +1034,6 @@ public class SqlParser {
                 continue;
             }
 
-            if (model.getDecls().contains(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(), "duplicate declaration for `" + tok + "`");
-            }
-
             lexer.unparseLast();
 
             if (isSelectKeyword(tok) || !(tok.charAt(0) == '@')) {
