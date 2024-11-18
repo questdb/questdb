@@ -1703,7 +1703,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColLong256(PGResponseSink utf8Sink, Record record, int columnIndex) {
+    private void outColTxtLong256(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final Long256 long256Value = record.getLong256A(columnIndex);
         if (long256Value.getLong0() == Numbers.LONG_NULL && long256Value.getLong1() == Numbers.LONG_NULL && long256Value.getLong2() == Numbers.LONG_NULL && long256Value.getLong3() == Numbers.LONG_NULL) {
             utf8Sink.setNullValue();
@@ -2121,7 +2121,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         break;
                     case ColumnType.LONG256:
                     case BINARY_TYPE_LONG256:
-                        outColLong256(utf8Sink, record, i);
+                        outColTxtLong256(utf8Sink, record, i);
                         break;
                     case ColumnType.GEOBYTE:
                         outColTxtGeoByte(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
