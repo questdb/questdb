@@ -3432,6 +3432,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectWithAsofJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
+            ddl("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) asof join bah timestamp (ts))",
+                    "DECLARE @foo := foo, @bah := bah SELECT foo.ts, foo.x FROM @foo ASOF JOIN @bah", ExecutionModel.QUERY);
+
+        });
+    }
+
+    @Test
     public void testDeclareSelectWithCTE() throws Exception {
         assertModel("select-choose column from (select-virtual [2 + 5 column] 2 + 5 column from (long_sequence(1))) a",
                 "DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y) SELECT * FROM a", ExecutionModel.QUERY);
@@ -3441,6 +3453,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testDeclareSelectWithCast() throws Exception {
         assertModel("select-virtual cast(2,timestamp) cast from (long_sequence(1))",
                 "DECLARE @x := 2::timestamp SELECT @x", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectWithJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
+            ddl("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) join select [y] from bah timestamp (ts) on bah.y = foo.x)",
+                    "DECLARE @x := foo.x, @y := bah.y SELECT foo.ts, foo.x FROM foo JOIN bah on @x = @y", ExecutionModel.QUERY);
+
+        });
     }
 
     @Test

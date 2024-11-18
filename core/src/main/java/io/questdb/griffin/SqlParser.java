@@ -1054,8 +1054,7 @@ public class SqlParser {
             }
 
             if (model.getDecls().size() > 0) {
-                expr = recursiveReplacingTreeTraversalAlgo.traverse(expr,
-                        rewriteDeclaredVariablesInExpressionVisitor.of(model.getDecls(), tok));
+                expr = rewriteDeclaredVariables(expr, model.getDecls(), tok);
             }
 
             model.getDecls().put(tok, expr);
@@ -1156,7 +1155,7 @@ public class SqlParser {
 
         // copy decls
         if (decls != null && decls.size() > 0) {
-            model.getDecls().putAll(decls);
+            model.copyDeclsFrom(decls);
         }
 
         if (parentWithClauses != null) {
@@ -1340,7 +1339,7 @@ public class SqlParser {
                         throw SqlException.$(lexer.lastTokenPosition(), "JOIN is not supported on UPDATE statement");
                     }
                     // expect multiple [[inner | outer | cross] join]
-                    nestedModel.addJoinModel(parseJoin(lexer, tok, joinType, topLevelWithModel, sqlParserCallback));
+                    nestedModel.addJoinModel(parseJoin(lexer, tok, joinType, topLevelWithModel, sqlParserCallback, decls));
                     tok = optTok(lexer);
                 }
             } else if (tok != null && isSemicolon(tok)) {
@@ -1352,7 +1351,7 @@ public class SqlParser {
             // [where]
             if (tok != null && isWhereKeyword(tok)) {
                 ExpressionNode expr = expr(lexer, fromModel, sqlParserCallback);
-                expr = recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(decls));
+                expr = rewriteDeclaredVariables(expr, decls);
                 if (expr != null) {
                     nestedModel.setWhereClause(expr);
                 } else {
@@ -1426,8 +1425,7 @@ public class SqlParser {
         CharSequence tok = expectTableNameOrSubQuery(lexer);
 
         // copy decls down
-        model.getDecls().putAll(masterModel.getDecls());
-
+        model.copyDeclsFrom(masterModel);
 
         // expect "(" in case of sub-query
 
@@ -1490,7 +1488,7 @@ public class SqlParser {
         // expect multiple [[inner | outer | cross] join]
         int joinType;
         while (tok != null && (joinType = joinStartSet.get(tok)) != -1) {
-            model.addJoinModel(parseJoin(lexer, tok, joinType, masterModel.getWithClauses(), sqlParserCallback));
+            model.addJoinModel(parseJoin(lexer, tok, joinType, masterModel.getWithClauses(), sqlParserCallback, model.getDecls()));
             tok = optTok(lexer);
         }
 
@@ -1503,7 +1501,7 @@ public class SqlParser {
                 throw SqlException.$((lexer.lastTokenPosition()), "unexpected where clause after 'latest on'");
             }
             ExpressionNode expr = expr(lexer, model, sqlParserCallback);
-            expr = recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(model.getDecls()));
+            expr = rewriteDeclaredVariables(expr, model.getDecls());
             if (expr != null) {
                 model.setWhereClause(expr);
                 tok = optTok(lexer);
@@ -1706,6 +1704,7 @@ public class SqlParser {
         }
         final CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition());
         ExpressionNode tableNameExpr = expressionNodePool.next().of(ExpressionNode.LITERAL, tableName, 0, lexer.lastTokenPosition());
+        tableNameExpr = rewriteDeclaredVariables(tableNameExpr, model.getDecls());
         model.setTableNameExpr(tableNameExpr);
     }
 
@@ -1816,9 +1815,12 @@ public class SqlParser {
             CharSequence tok,
             int joinType,
             LowerCaseCharSequenceObjHashMap<WithClauseModel> parent,
-            SqlParserCallback sqlParserCallback
+            SqlParserCallback sqlParserCallback,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
         QueryModel joinModel = queryModelPool.next();
+
+        joinModel.copyDeclsFrom(decls);
 
         int errorPos = lexer.lastTokenPosition();
 
@@ -1877,6 +1879,9 @@ public class SqlParser {
                             throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
                         case 1:
                             expr = expressionTreeBuilder.poll();
+
+                            expr = rewriteDeclaredVariables(expr, decls);
+
                             if (expr.type == ExpressionNode.LITERAL) {
                                 do {
                                     joinModel.addJoinColumn(expr);
@@ -2067,9 +2072,8 @@ public class SqlParser {
                     }
 
                     // crawl for decls
-                    expr = recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(model.getDecls()));
+                    expr = rewriteDeclaredVariables(expr, model.getDecls());
                 }
-
 
                 final CharSequence alias;
 
@@ -2808,6 +2812,14 @@ public class SqlParser {
                 }
             }
         }
+    }
+
+    private ExpressionNode rewriteDeclaredVariables(ExpressionNode expr, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) throws SqlException {
+        return recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(decls));
+    }
+
+    private ExpressionNode rewriteDeclaredVariables(ExpressionNode expr, LowerCaseCharSequenceObjHashMap<ExpressionNode> decls, CharSequence exclude) throws SqlException {
+        return recursiveReplacingTreeTraversalAlgo.traverse(expr, rewriteDeclaredVariablesInExpressionVisitor.of(decls, exclude));
     }
 
     private ExpressionNode rewriteJsonExtractCast(ExpressionNode parent) throws SqlException {
