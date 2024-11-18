@@ -3403,6 +3403,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectFromSubqueryAsVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            assertException("DECLARE @subquery := (SELECT * FROM foo), @ts = ts, @x = x, SELECT @ts, @x FROM @subquery", 22, "function, literal or constant is expected");
+        });
+    }
+
+    @Test
     public void testDeclareSelectInt() throws Exception {
         assertModel("select-virtual 5 5 from (long_sequence(1))", "DECLARE @x := 5 SELECT @x", ExecutionModel.QUERY);
     }
@@ -3469,6 +3478,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testDeclareSelectWithSubQueryAndShadowedVariableAndOuterUsage() throws Exception {
         assertModel("select-virtual 2 - 5 foo, column from (select-virtual [7 + 5 column] 7 + 5 column from (long_sequence(1)))",
                 "DECLARE @x := 2, @y := 5 SELECT @x - @y as foo, * FROM (DECLARE @x:= 7 SELECT @x + @y)", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareSelectWithTableNameInFrom() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            assertModel("select-choose ts, x from (select [ts, x] from foo timestamp (ts))",
+                    "DECLARE @table_name := foo, @ts = ts, @x = x, SELECT @ts, @x FROM @table_name", ExecutionModel.QUERY);
+        });
     }
 
     @Test

@@ -1034,6 +1034,10 @@ public class SqlParser {
                 continue;
             }
 
+            if (model.getDecls().contains(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "duplicate declaration for `" + tok + "`");
+            }
+
             lexer.unparseLast();
 
             if (isSelectKeyword(tok) || !(tok.charAt(0) == '@')) {
@@ -1047,6 +1051,12 @@ public class SqlParser {
             if (expr == null) {
                 throw SqlException.$(lexer.lastTokenPosition(), "empty declaration");
             }
+
+            if (expr.queryModel != null) {
+                // throw because we don't support variables as subqueries
+                throw SqlException.$(lexer.lastTokenPosition(), "variables cannot be subqueries");
+            }
+
             if (model.getDecls().size() > 0) {
                 expr = recursiveReplacingTreeTraversalAlgo.traverse(expr,
                         rewriteDeclaredVariablesInExpressionVisitor.of(model.getDecls(), tok));
@@ -1422,11 +1432,12 @@ public class SqlParser {
         // copy decls down
         model.getDecls().putAll(masterModel.getDecls());
 
+
         // expect "(" in case of sub-query
 
         if (Chars.equals(tok, '(')) {
             // copy decls across
-            QueryModel proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, masterModel.getDecls());
+            QueryModel proposedNested = parseAsSubQueryAndExpectClosingBrace(lexer, masterModel.getWithClauses(), true, sqlParserCallback, model.getDecls());
             tok = optTok(lexer);
 
             // do not collapse aliased sub-queries or those that have timestamp()
@@ -2434,10 +2445,25 @@ public class SqlParser {
             LowerCaseCharSequenceObjHashMap<WithClauseModel> masterModel,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+
         if (expr == null) {
             throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
         }
+
+        // check if its a decl
+        if (model.getDecls().contains(expr.token)) {
+            if (expr.type == LITERAL) {
+                // replace it if so
+                expr = model.getDecls().get(expr.token).rhs;
+            } else if (expr.queryModel != null) {
+                // throw because we don't support variables as subqueries
+                throw SqlException.$(lexer.lastTokenPosition(), "variables cannot be subqueries");
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "expected literal table name");
+            }
+        }
+
         CharSequence tableName = expr.token;
 
         // todo: validate table name for overlap with keywords

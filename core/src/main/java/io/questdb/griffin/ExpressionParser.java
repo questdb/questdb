@@ -805,7 +805,7 @@ public class ExpressionParser {
                         break;
                     case 's':
                     case 'S':
-                        if (parsedDeclaration) {
+                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS) {
                             lexer.unparseLast();
                             break OUT;
                         }
