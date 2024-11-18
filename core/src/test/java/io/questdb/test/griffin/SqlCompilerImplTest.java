@@ -2680,7 +2680,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "underlying cursor is extremely volatile");
+                TestUtils.assertContains(e.getFlyweightMessage(), "too many cached query plan cannot be used because table schema has changed");
             }
         });
     }

@@ -410,7 +410,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return generateSelectOneShot(queryModel, executionContext, generateProgressLogger);
             } catch (TableReferenceOutOfDateException e) {
                 if (--remainingRetries < 0) {
-                    throw SqlException.$(0, "underlying cursor is extremely volatile");
+                    throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
                 }
                 LOG.info().$("retrying plan [q=`").$(queryModel).$("`, fd=").$(executionContext.getRequestFd()).$(']').$();
                 clear();
@@ -2639,10 +2639,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 clear();
                 lexer.restart();
                 executionModel = compileExecutionModel(executionContext);
+                if (attemptsLeft < 0) {
+                    throw SqlException.position(0).put("too many ").put(e.getFlyweightMessage());
+                }
             }
-        } while (attemptsLeft > 0);
+        } while (true);
 
-        throw SqlException.position(0).put("underlying cursor is extremely volatile");
     }
 
     private int filterApply(
