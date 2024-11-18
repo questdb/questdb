@@ -102,7 +102,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                     7,
                     "could not open, file does not exist"
             );
-       });
+        });
     }
 
     @Test

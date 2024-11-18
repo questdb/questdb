@@ -113,9 +113,9 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
     }
 
     private static class HydrateTableMetadataFunction extends BooleanFunction {
+        private final int functionPosition;
         private final ObjList<TableToken> tableTokens;
         private CairoEngine engine;
-        private final int functionPosition;
 
         public HydrateTableMetadataFunction(@NotNull ObjList<TableToken> tableTokens, @NotNull CairoEngine engine, int functionPosition) {
             this.tableTokens = tableTokens;
@@ -140,7 +140,7 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
                         metadataRW.hydrateTable(tableTokens.getQuick(i));
                     } catch (Throwable e) {
                         if (e instanceof CairoException) {
-                            ((CairoException)e).position(functionPosition);
+                            ((CairoException) e).position(functionPosition);
                         }
                         throw e;
                     }
