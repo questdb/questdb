@@ -384,6 +384,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                         isIndexed,
                         indexValueBlockCapacity,
                         false,
+                        isDedupKey,
                         securityContext
                 );
             } catch (CairoException e) {

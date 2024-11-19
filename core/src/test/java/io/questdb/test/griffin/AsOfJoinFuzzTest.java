@@ -84,7 +84,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
         testFuzz(10);
     }
 
-    private void assertResultSetsMatch(String leftTable, String rightTable) throws Exception {
+    private void assertResultSetsMatch() throws Exception {
         String join;
         String onSuffix = "";
         switch (joinType) {
@@ -105,10 +105,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
 
         final StringSink expectedSink = new StringSink();
         // equivalent of the below query, but uses slow factory
-        printSql("select * from " + leftTable + join + " JOIN (" + rightTable + " where i >= 0)" + onSuffix, expectedSink);
+        printSql("select * from " + "t1" + join + " JOIN (" + "t2" + " where i >= 0)" + onSuffix, expectedSink);
 
         final StringSink actualSink = new StringSink();
-        printSql("select * from " + leftTable + join + " JOIN " + rightTable + onSuffix, actualSink);
+        printSql("select * from " + "t1" + join + " JOIN " + "t2" + onSuffix, actualSink);
 
         TestUtils.assertEquals(expectedSink, actualSink);
     }
@@ -119,7 +119,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table1Size = rnd.nextPositiveInt() % 1000;
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
             long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
             ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
             for (int i = 0; i < table1Size; i++) {
@@ -127,10 +127,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
                 }
                 String symbol = "s_" + rnd.nextInt(10);
-                insert("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
+                execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
             ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
             ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
             for (int i = 0; i < table2Size; i++) {
@@ -138,10 +138,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
                 }
                 String symbol = "s_" + rnd.nextInt(10);
-                insert("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
+                execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch("t1", "t2");
+            assertResultSetsMatch();
         });
     }
 
@@ -151,7 +151,7 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
             final int table1Size = rnd.nextPositiveInt() % 1000;
             final int table2Size = rnd.nextPositiveInt() % 1000;
 
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
             long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
             ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
             for (int i = 0; i < table1Size; i++) {
@@ -159,10 +159,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
                 }
                 String symbol = "s_" + rnd.nextInt(10);
-                insert("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
+                execute("INSERT INTO t1 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
             ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
             ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
             for (int i = 0; i < table2Size; i++) {
@@ -170,10 +170,10 @@ public class AsOfJoinFuzzTest extends AbstractCairoTest {
                     ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
                 }
                 String symbol = "s_" + rnd.nextInt(10);
-                insert("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
+                execute("INSERT INTO t2 values (" + ts + ", " + i + ", '" + symbol + "');");
             }
 
-            assertResultSetsMatch("t1", "t2");
+            assertResultSetsMatch();
         });
     }
 

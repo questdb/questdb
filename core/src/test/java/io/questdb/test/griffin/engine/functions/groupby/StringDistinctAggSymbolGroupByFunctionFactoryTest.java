@@ -191,7 +191,7 @@ public class StringDistinctAggSymbolGroupByFunctionFactoryTest extends AbstractC
                 false
         );
 
-        drop("drop table x");
+        execute("drop table x");
 
         assertQuery(
                 expected,

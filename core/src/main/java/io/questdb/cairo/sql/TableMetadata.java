@@ -24,12 +24,11 @@
 
 package io.questdb.cairo.sql;
 
-public interface TableMetadata extends TableRecordMetadata {
-    int getMaxUncommittedRows();
+import io.questdb.cairo.TableStructure;
 
-    long getO3MaxLag();
-
-    int getPartitionBy();
-
-    boolean isSoftLink();
+/**
+ * Interface that fully describes storage of an existing table, including its column structure and
+ * table-level metadata.
+ */
+public interface TableMetadata extends TableRecordMetadata, TableStructure {
 }

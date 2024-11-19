@@ -27,12 +27,15 @@ package io.questdb.test.cutlass.http;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestProcessor;
 import io.questdb.cutlass.http.HttpRequestProcessorFactory;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.processors.HealthCheckProcessor;
 import io.questdb.cutlass.http.processors.PrometheusMetricsProcessor;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Scrapable;
@@ -70,7 +73,8 @@ public class HttpMinTestBuilder {
 
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, Metrics.disabled());
-                    HttpServer httpServer = new HttpServer(httpConfiguration, Metrics.disabled(), workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, Metrics.disabled(), workerPool, PlainSocketFactory.INSTANCE);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 final PrometheusMetricsProcessor.RequestStatePool requestStatePool = prometheusRequestStatePool != null
                         ? prometheusRequestStatePool
@@ -106,7 +110,7 @@ public class HttpMinTestBuilder {
                 workerPool.start(LOG);
 
                 try {
-                    code.run(engine);
+                    code.run(engine, sqlExecutionContext);
                 } finally {
                     workerPool.halt();
                 }
