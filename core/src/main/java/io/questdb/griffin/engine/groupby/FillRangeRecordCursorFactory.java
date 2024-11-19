@@ -44,6 +44,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.BitSet;
+import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -71,6 +72,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int timestampIndex;
     private final Function toFunc;
     private final ObjList<Function> valueFuncs;
+    private final IntList valueFuncsPos;
 
     public FillRangeRecordCursorFactory(
             RecordMetadata metadata,
@@ -81,6 +83,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             char samplingIntervalUnit,
             TimestampSampler timestampSampler,
             ObjList<Function> fillValues,
+            IntList fillValuesPos,
             int timestampIndex
     ) throws SqlException {
         super(metadata);
@@ -93,12 +96,13 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.samplingIntervalUnit = samplingIntervalUnit;
         this.timestampIndex = timestampIndex;
         this.valueFuncs = fillValues;
+        this.valueFuncsPos = fillValuesPos;
         this.metadata = metadata;
 
         // only do this for value fill
         if (!(valueFuncs.size() == 1 && valueFuncs.get(0).isNullConstant())) {
             if (metadata.getColumnCount() - 1 > valueFuncs.size()) {
-                throw SqlException.$(0, "not enough fill values");
+                throw SqlException.$(fillValuesPos.getLast(), "not enough fill values");
             }
 
             int passedTimestamp = 0;
@@ -114,14 +118,14 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
                 int fillColumnType = valueFuncs.get(i - passedTimestamp).getType();
                 if (fillColumnType != columnType && !ColumnType.isBuiltInWideningCast(fillColumnType, columnType)) {
-                    throw SqlException.$(0, "invalid fill value, cannot cast " + ColumnType.nameOf(fillColumnType) + " to " + ColumnType.nameOf(columnType));
+                    throw SqlException.$(fillValuesPos.getQuick(i), "invalid fill value, cannot cast ")
+                            .put(ColumnType.nameOf(fillColumnType)).put(" to ")
+                            .put(ColumnType.nameOf(columnType));
                 }
             }
         }
 
-
         this.cursor = new FillRangeRecordCursor(timestampSampler, fromFunc, toFunc, fillValues, timestampIndex);
-
     }
 
     @Override
@@ -139,7 +143,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     valueFuncs.add(NullConstant.NULL);
                 }
             } else {
-                throw SqlException.$(-1, "not enough fill values");
+                throw SqlException.$(valueFuncsPos.getQuick(valueFuncsPos.getLast()), "not enough fill values");
             }
         }
 

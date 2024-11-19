@@ -1947,17 +1947,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ExpressionNode fillFrom = curr.getFillFrom();
         final ExpressionNode fillTo = curr.getFillTo();
         final ExpressionNode fillStride = curr.getFillStride();
+
         ObjList<ExpressionNode> fillValuesExprs = curr.getFillValues();
+        int fillValuesExprsSize = fillValuesExprs.size();
 
         try {
             if (fillValuesExprs == null) {
                 throw SqlException.$(-1, "fill values were null");
             }
 
+            IntList fillValuesPos = new IntList(fillValuesExprsSize);
+
+            for (int i = 0; i < fillValuesExprsSize; i++) {
+                fillValuesPos.set(i, fillValuesExprs.getQuick(i).position);
+            }
+
             fillValues = new ObjList<>(fillValuesExprs.size());
 
             ExpressionNode expr;
-            for (int i = 0, n = fillValuesExprs.size(); i < n; i++) {
+            for (int i = 0; i < fillValuesExprsSize; i++) {
                 expr = fillValuesExprs.getQuick(0);
                 if (isNoneKeyword(expr.token)) {
                     Misc.freeObjList(fillValues);
@@ -2028,6 +2036,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     samplingIntervalUnit,
                     timestampSampler,
                     fillValues,
+                    fillValuesPos,
                     timestampIndex
             );
         } catch (Throwable e) {
