@@ -36,7 +36,7 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             execute("create table B(col0 long, col1 string, col2 float)");
             execute("create table C(col0 double, col1 char, col2 byte)");
             drainWalQueue();
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
                             "qdb\tpublic\tA\tcol0\t0\t\tyes\tINT\n" +
                             "qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL\n" +

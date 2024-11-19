@@ -188,7 +188,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
-    private ServerConfiguration serverConfiguration;
+    private final ServerConfiguration serverConfiguration;
     private SuspendEvent suspendEvent;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsertModern> taiCache;
