@@ -25,14 +25,17 @@
 package io.questdb.std.str;
 
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.Bytes;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.DigestException;
 
 
-public class Digest {
+public class Digest implements Utf8Sink {
     public enum DigestAlgorithm {
         MD5,
         SHA1,
@@ -71,6 +74,30 @@ public class Digest {
         this.buffer = new byte[digest.getDigestLength()];
     }
 
+    @Override
+    public Utf8Sink put(@Nullable Utf8Sequence us) {
+        if (us != null) {
+            for (int i = 0, n = us.size(); i < n; i++) {
+                this.digest.update(us.byteAt(i));
+            }
+        }
+        return this;
+    }
+
+    @Override
+    public Utf8Sink put(byte b) {
+        this.digest.update(b);
+        return this;
+    }
+
+    @Override
+    public Utf8Sink putNonAscii(long lo, long hi) {
+        for (long p = lo; p < hi; p++) {
+            this.digest.update(Unsafe.getUnsafe().getByte(p));
+        }
+        return this;
+    }
+
     public void hash(@NotNull BinarySequence sequence, @NotNull CharSink<?> sink) {
         for (int i = 0; i < sequence.length(); i++) {
             this.digest.update(sequence.byteAt(i));
@@ -79,18 +106,29 @@ public class Digest {
             this.digest.digest(this.buffer, 0, this.buffer.length);
         } catch (DigestException e) {
             // buffer always has enough space
+            throw new RuntimeException("unreachable");
         }
         hexencode(sink);
     }
 
     public void hash(@NotNull CharSequence sequence, @NotNull CharSink<?> sink) {
-        for (int i = 0; i < sequence.length(); i++) {
-            this.digest.update((byte) sequence.charAt(i));
-        }
+        this.put(sequence);
         try {
             this.digest.digest(this.buffer, 0, this.buffer.length);
         } catch (DigestException e) {
             // buffer always has enough space
+            throw new RuntimeException("unreachable");
+        }
+        hexencode(sink);
+    }
+
+    public void hash(@NotNull Utf8Sequence sequence, @NotNull CharSink<?> sink) {
+        this.put(sequence);
+        try {
+            this.digest.digest(this.buffer, 0, this.buffer.length);
+        } catch (DigestException e) {
+            // buffer always has enough space
+            throw new RuntimeException("unreachable");
         }
         hexencode(sink);
     }

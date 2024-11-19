@@ -77,8 +77,8 @@ public class SHA1FunctionFactoryTest extends AbstractCairoTest {
         assertQuery(
                 "v\tsha1\n" +
                         "abc\ta9993e364706816aba3e25717850c26c9cd0d89d\n" +
-                        "едно-две-три\t1a0d39575b103ab989cb98ee3a948d045eb992ff\n" +
-                        "едно-две-три\t1a0d39575b103ab989cb98ee3a948d045eb992ff\n" +
+                        "едно-две-три\t3c5c42ebd4b836889894f81551fab5eee6b9270b\n" +
+                        "едно-две-три\t3c5c42ebd4b836889894f81551fab5eee6b9270b\n" +
                         "x\t11f6ad8ec52a2984abaafd7c3b516503785c2072\n" +
                         "x\t11f6ad8ec52a2984abaafd7c3b516503785c2072\n",
                 "select v,sha1(v) from x",

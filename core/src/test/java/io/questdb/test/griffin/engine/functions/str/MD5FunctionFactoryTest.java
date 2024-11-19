@@ -77,8 +77,8 @@ public class MD5FunctionFactoryTest extends AbstractCairoTest {
         assertQuery(
                 "v\tmd5\n" +
                         "abc\t900150983cd24fb0d6963f7d28e17f72\n" +
-                        "едно-две-три\t90439813c31a538b58160c99c74db10e\n" +
-                        "едно-две-три\t90439813c31a538b58160c99c74db10e\n" +
+                        "едно-две-три\t6c9f2d4ac2b6442dd685906b5d61aeb8\n" +
+                        "едно-две-три\t6c9f2d4ac2b6442dd685906b5d61aeb8\n" +
                         "x\t9dd4e461268c8034f5c8564e155c67a6\n" +
                         "x\t9dd4e461268c8034f5c8564e155c67a6\n",
                 "select v,md5(v) from x",

@@ -87,9 +87,9 @@ public class SHA256FunctionFactoryTest extends AbstractCairoTest {
                 "v\tsha256\n" +
                         "abc\tba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n"
                         +
-                        "едно-две-три\t29a9ffc14d3e974737db5152e42b3b88743528a7085d496d9db6edeecec8fcf4\n"
+                        "едно-две-три\t8f6a2a5c5f0bbee2c776eaff26e5c244a39d9e60a65fed2e1dfc5e91b0260279\n"
                         +
-                        "едно-две-три\t29a9ffc14d3e974737db5152e42b3b88743528a7085d496d9db6edeecec8fcf4\n"
+                        "едно-две-три\t8f6a2a5c5f0bbee2c776eaff26e5c244a39d9e60a65fed2e1dfc5e91b0260279\n"
                         +
                         "x\t2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\n"
                         +
