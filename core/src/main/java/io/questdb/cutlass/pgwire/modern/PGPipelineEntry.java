@@ -128,6 +128,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private InsertOperation insertOp = null;
     private int msgBindParameterValueCount;
     private short msgBindSelectFormatCodeCount = 0;
+    private Operation operation = null;
     private int outResendColumnIndex = 0;
     private boolean outResendCursorRecord = false;
     private boolean outResendRecordHeader = true;
@@ -222,6 +223,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         if (!isCopy) {
             insertOp = Misc.free(insertOp);
+            operation = Misc.free(operation);
             Misc.free(compiledQuery.getUpdateOperation());
             // hack: remove me!
         }
@@ -541,19 +543,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.ROLLBACK:
                     rollback(pendingWriters);
                     return IMPLICIT_TRANSACTION;
-
-                // todo - merging from master in progress
-//                case CompiledQuery.CREATE_TABLE:
-//                    // fall-through
-//                case CompiledQuery.DROP:
-//                    try (
-//                            Operation op = cq.getOperation();
-//                            OperationFuture fut = op.execute(sqlExecutionContext, tempSequence)
-//                    ) {
-//                        fut.await();
-//                    }
-//                    queryTag = TAG_OK;
-//                    break;
+                case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                    try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
+                        fut.await();
+                        sqlAffectedRowCount = fut.getAffectedRowsCount();
+                    }
+                    break;
+                case CompiledQuery.CREATE_TABLE:
+                    // fall-through
+                case CompiledQuery.DROP:
+                    try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
+                        fut.await();
+                    }
+                    break;
                 default:
                     // execute DDL that has not been parse-executed
                     if (!empty) {
@@ -1032,6 +1034,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.cacheHit = blueprint.cacheHit;
         this.empty = blueprint.empty;
         this.insertOp = blueprint.insertOp;
+        this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.preparedStatement = blueprint.preparedStatement;
         this.preparedStatementName = blueprint.preparedStatementName;
@@ -2353,11 +2356,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlType = cq.getType();
         switch (sqlType) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                sqlAffectedRowCount = cq.getAffectedRowsCount();
                 // fall-through
             case CompiledQuery.DROP:
                 // fall-through
             case CompiledQuery.CREATE_TABLE:
+                operation = cq.getOperation();
                 sqlTag = TAG_OK;
                 break;
             case CompiledQuery.EXPLAIN:

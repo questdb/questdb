@@ -10306,7 +10306,10 @@ create table tab as (
     @Test
     public void testSqlBatchTimeout() throws Exception {
         maxQueryTime = TIMEOUT_FAIL_ON_FIRST_CHECK;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        // Exclude quirks, because they send P(arse) message for all SQL statements in the script
+        // and only then (E)xecute them. This means at the time when it's parsing 'select count(*) from tab;'
+        // the 'tab' table does not exist yet. because the CREATE TABLE was not yet (E)xecuted.
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try (final Statement statement = connection.createStatement()) {
                 statement.execute("create table tab (d double);" +
                         "select count(*) from tab;" +

@@ -380,7 +380,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCachedTextFormatPgStatementReturnsDataUsingBinaryFormatWhenClientRequestsIt() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        // Exclude quirks, because they send P(arse) message for all SQL statements in the script
+        // and only then (E)xecute them. This means at the time when it's parsing 'insert into mytable ...'
+        // the 'mytable' table does not exist yet. because the CREATE TABLE was not yet (E)xecuted.
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try (
                     Statement stmt = connection.createStatement()
             ) {
@@ -566,7 +569,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         // @Ignore in legacy mode
         // ERROR: row value count does not match column count [expected=3, actual=2, tuple=1]
         Assume.assumeFalse(legacyMode);
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
             boolean hasResult =
@@ -1141,7 +1144,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test // test interleaved extended query execution they don't spill bind formats
     public void testDifferentExtendedQueriesExecutedInExtendedModeDoNotSpillFormats() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        // Exclude quirks, because they send P(arse) message for all SQL statements in the script
+        // and only then (E)xecute them. This means at the time when it's parsing 'INSERT INTO mytable...;'
+        // the 'mytable' table does not exist yet. because the CREATE TABLE was not yet (E)xecuted.
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try (Statement stmt = connection.createStatement()) {
                 connection.setAutoCommit(true);
 
@@ -1323,7 +1329,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test // edge case - run the same query with binary protocol in extended mode and then the same in query block
     public void testQueryExecutedInBatchModeDoesNotUseCachedStatementBinaryFormat() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        // Exclude quirks, because they send P(arse) message for all SQL statements in the script
+        // and only then (E)xecute them. This means at the time when it's parsing 'INSERT INTO mytable...;'
+        // the 'mytable' table does not exist yet. because the CREATE TABLE was not yet (E)xecuted.
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try (Statement stmt = connection.createStatement()) {
                 connection.setAutoCommit(true);
 
