@@ -68,7 +68,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long128;
 import io.questdb.std.Long256;
-import io.questdb.std.Long256Impl;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -95,6 +94,8 @@ import java.util.function.Consumer;
 
 import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
+import static io.questdb.cutlass.pgwire.modern.PGUtils.calculateColumnBinSize;
+import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {
@@ -873,16 +874,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.stateParse = stateParse;
     }
 
-    private static int geoHashBytes(long value, int bitFlags) {
-        if (value == GeoHashes.NULL) {
-            return Integer.BYTES;
-        } else {
-            assert bitFlags > 0;
-            // chars or bits
-            return Integer.BYTES + bitFlags;
-        }
-    }
-
     private static void outBindComplete(PGResponseSink utf8Sink) {
         outSimpleMsg(utf8Sink, MESSAGE_TYPE_BIND_COMPLETE);
     }
@@ -979,29 +970,28 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private int calculateRecordTailSize(
+    private long calculateRecordTailSize(
             Record record,
             int startFrom,
             int columnCount,
             long maxBlobSize,
             long sendBufferSize
     ) throws BadProtocolException {
-        int recordSize = 0;
+        long recordSize = 0;
         for (int i = startFrom; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
             final int typeTag = ColumnType.tagOf(columnType);
             final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
             // if column is not variable size and format code is text, we can't calculate size
-            if (columnBinaryFlag == 0 && !canEstimateTextSize(columnType)) {
+            if (columnBinaryFlag == 0 && !sameTxtAndBinColumnSizes(columnType)) {
                 return -1;
             }
             // number of bits or chars for geohash
             final int bitFlags = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
-            final int columnValueSize = getColumnValueSize(record, i, typeTag, bitFlags, maxBlobSize);
+            final int columnValueSize = calculateColumnBinSize(this, record, i, typeTag, bitFlags, maxBlobSize);
 
             if (columnValueSize < 0) {
-                // unsupported type
-                return -1;
+                return -1; // unsupported type
             }
 
             if (columnValueSize >= sendBufferSize) {
@@ -1012,21 +1002,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             recordSize += columnValueSize;
         }
         return recordSize;
-    }
-
-    // We can't estimate text length in bytes in case of number types
-    // as this would require an expensive serialization to string.
-    private boolean canEstimateTextSize(int columnType) {
-        final int typeTag = ColumnType.tagOf(columnType);
-        // We could include UUID into the list, but this would require a special
-        // version of getColumnValueSize() to estimate rows in text format.
-        return ColumnType.isVarSize(typeTag)
-                || ColumnType.isGeoHash(columnType)
-                || typeTag == ColumnType.BOOLEAN
-                || typeTag == ColumnType.CHAR
-                || typeTag == ColumnType.IPv4
-                || typeTag == ColumnType.LONG256
-                || typeTag == ColumnType.SYMBOL;
     }
 
     private void copyOf(PGPipelineEntry blueprint) {
@@ -1217,118 +1192,35 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 .put(']');
     }
 
-    // used to estimate required column size (or full record size in case of text format)
-    // to be reported to the user
-    private int estimateRecordTailSize(Record record, int columnCount) throws BadProtocolException {
-        int recordSize = 0;
+    // Used to estimate required column size (or full record size in case of text format)
+    // to be reported to the user in the insufficient send buffer size case.
+    private long estimateRecordSize(Record record, int columnCount) throws BadProtocolException {
+        long maxColumnSize = 0;
+        long recordSize = 0;
         for (int i = 0; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
             final int typeTag = ColumnType.tagOf(columnType);
             final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
-            // if column is not variable size and format code is text, we can't calculate size
-            if (columnBinaryFlag == 0 && !canEstimateTextSize(columnType)) {
-                return -1;
-            }
+
             // number of bits or chars for geohash
             final int bitFlags = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
-            final int columnValueSize = getColumnValueSize(record, i, typeTag, bitFlags, Long.MAX_VALUE);
 
-            if (columnValueSize < 0) {
-                // unsupported type
-                return Integer.MIN_VALUE;
+            final long columnValueSize;
+            // if column is not variable size and format code is text, we can't calculate size
+            if (columnBinaryFlag == 0 && !sameTxtAndBinColumnSizes(columnType)) {
+                columnValueSize = estimateColumnTxtSize(record, i, typeTag);
+            } else {
+                columnValueSize = calculateColumnBinSize(this, record, i, typeTag, bitFlags, Long.MAX_VALUE);
             }
 
+            if (columnValueSize < 0) {
+                return Long.MIN_VALUE; // unsupported type
+            }
+
+            maxColumnSize = Math.max(maxColumnSize, columnValueSize);
             recordSize += columnValueSize;
         }
-        return recordSize;
-    }
-
-    // Returns the size of the serialized value in bytes,
-    // or -1 if the type is not supported (i.e., size cannot be estimated without serialization).
-    // throws BadProtocolException if the binary value exceeds maxBlobSize
-    private int getColumnValueSize(
-            Record record,
-            int columnIndex,
-            int typeTag,
-            int bitFlags,
-            long maxBlobSize
-    ) throws BadProtocolException {
-        switch (typeTag) {
-            case ColumnType.NULL:
-                return Integer.BYTES;
-            case ColumnType.BOOLEAN:
-                return Integer.BYTES + Byte.BYTES;
-            case ColumnType.BYTE:
-            case ColumnType.SHORT:
-                return Integer.BYTES + Short.BYTES;
-            case ColumnType.CHAR:
-                final char charValue = record.getChar(columnIndex);
-                return charValue == 0 ? Integer.BYTES : Integer.BYTES + Chars.charBytes(charValue);
-            case ColumnType.IPv4:
-                final int ipValue = record.getIPv4(columnIndex);
-                return ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Numbers.sinkSizeIPv4(ipValue) : Integer.BYTES;
-            case ColumnType.INT:
-                final int value = record.getInt(columnIndex);
-                return value != Numbers.INT_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
-            case ColumnType.LONG:
-                final long longValue = record.getLong(columnIndex);
-                return longValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
-            case ColumnType.DATE:
-                final long dateValue = record.getDate(columnIndex);
-                return dateValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
-            case ColumnType.TIMESTAMP:
-                final long tsValue = record.getTimestamp(columnIndex);
-                return tsValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
-            case ColumnType.FLOAT:
-                final float floatValue = record.getFloat(columnIndex);
-                return Float.isNaN(floatValue) ? Integer.BYTES : Integer.BYTES + Float.BYTES;
-            case ColumnType.DOUBLE:
-                final double doubleValue = record.getDouble(columnIndex);
-                return Double.isNaN(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
-            case ColumnType.UUID:
-                final long lo = record.getLong128Lo(columnIndex);
-                final long hi = record.getLong128Hi(columnIndex);
-                return Uuid.isNull(lo, hi) ? Integer.BYTES : Integer.BYTES + Long.BYTES * 2;
-            case ColumnType.LONG256:
-                final Long256 long256Value = record.getLong256A(columnIndex);
-                return Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Numbers.hexDigitsLong256(long256Value);
-            case ColumnType.VARCHAR:
-                final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
-                return vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
-            case ColumnType.STRING:
-                final CharSequence strValue = record.getStrA(columnIndex);
-                return strValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(strValue);
-            case ColumnType.SYMBOL:
-                final CharSequence symValue = record.getSymA(columnIndex);
-                return symValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(symValue);
-            case ColumnType.BINARY:
-                BinarySequence sequence = record.getBin(columnIndex);
-                if (sequence == null) {
-                    return Integer.BYTES;
-                } else {
-                    long blobSize = sequence.length();
-                    if (blobSize < maxBlobSize) {
-                        return Integer.BYTES + (int) blobSize;
-                    } else {
-                        throw kaput()
-                                .put("blob is too large [blobSize=").put(blobSize)
-                                .put(", maxBlobSize=").put(maxBlobSize)
-                                .put(", columnIndex=").put(columnIndex)
-                                .put(']');
-                    }
-                }
-            case ColumnType.GEOBYTE:
-                return geoHashBytes(record.getGeoByte(columnIndex), bitFlags);
-            case ColumnType.GEOSHORT:
-                return geoHashBytes(record.getGeoShort(columnIndex), bitFlags);
-            case ColumnType.GEOINT:
-                return geoHashBytes(record.getGeoInt(columnIndex), bitFlags);
-            case ColumnType.GEOLONG:
-                return geoHashBytes(record.getGeoLong(columnIndex), bitFlags);
-            default:
-                assert false : "unsupported type: " + typeTag;
-                return -1;
-        }
+        return Math.max(maxColumnSize, recordSize);
     }
 
     private short getPgResultSetColumnFormatCode(int columnIndex) {
@@ -2184,23 +2076,26 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             } else {
                 utf8Sink.resetToBookmark();
                 if (isMsgLengthRequired) {
-                    final int sizeInBuffer = (int) (utf8Sink.getSendBufferPtr() - messageLengthAddress);
+                    final long sizeInBuffer = utf8Sink.getSendBufferPtr() - messageLengthAddress;
                     assert sizeInBuffer > 0;
 
                     try {
-                        final int recordTailSize = calculateRecordTailSize(
+                        final long recordTailSize = calculateRecordTailSize(
                                 record,
                                 outResendColumnIndex,
                                 columnCount,
                                 utf8Sink.getMaxBlobSize(),
                                 utf8Sink.getSendBufferSize()
                         );
-                        if (recordTailSize > 0) {
-                            putInt(messageLengthAddress, sizeInBuffer + recordTailSize);
+                        if (recordTailSize > 0 && sizeInBuffer + recordTailSize <= Integer.MAX_VALUE) {
+                            putInt(messageLengthAddress, (int) (sizeInBuffer + recordTailSize));
                             outResendRecordHeader = false;
                         } else {
                             resetIncompleteRecord(utf8Sink, messageLengthAddress);
-                            e.setBytesRequired(-recordTailSize);
+                            // Estimate the required size to be reported to the user.
+                            // TODO(puzpuzpuz): skip when possible
+                            final long estimatedSize = estimateRecordSize(record, columnCount);
+                            e.setBytesRequired(estimatedSize);
                         }
                     } catch (BadProtocolException bpe) {
                         // we have binary data blob size > maxBlobSize
@@ -2261,6 +2156,20 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         outResendRecordHeader = true;
         // reset to the message start
         utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
+    }
+
+    // Returns true if column size is known to be the same in both text and binary formats.
+    // Note: certain column types, e.g. LONG256, don't have a matching column type in Postgres,
+    //       so we always serialize them in text format.
+    private boolean sameTxtAndBinColumnSizes(int columnType) {
+        final int typeTag = ColumnType.tagOf(columnType);
+        return ColumnType.isVarSize(typeTag)
+                || ColumnType.isGeoHash(columnType)
+                || typeTag == ColumnType.BOOLEAN
+                || typeTag == ColumnType.CHAR
+                || typeTag == ColumnType.IPv4
+                || typeTag == ColumnType.LONG256
+                || typeTag == ColumnType.SYMBOL;
     }
 
     private void setBindVariableAsChar(
