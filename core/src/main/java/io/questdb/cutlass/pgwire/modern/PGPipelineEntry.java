@@ -54,7 +54,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -645,6 +644,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         case 3:
                             // named prepared statement
                             outParameterTypeDescription(utf8Sink);
+                            // row description can be sent in parts
+                            // do not resend parameter description
+                            stateDesc = 2;
                             // fall through
                         case 2:
                         case 1:
@@ -2162,36 +2164,76 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outRowDescription(PGResponseSink utf8Sink) {
-        //todo: wide table metadata can overflow the send buffer and corrupt communication
         final RecordMetadata metadata = factory.getMetadata();
-        utf8Sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
-        final long addr = utf8Sink.skipInt();
         final int n = pgResultSetColumnTypes.size() / 2;
-        utf8Sink.putNetworkShort((short) n);
-        for (int i = 0; i < n; i++) {
-            final int typeFlag = pgResultSetColumnTypes.getQuick(2 * i);
-            final int columnType = toColumnType(ColumnType.isNull(typeFlag) ? ColumnType.STRING : typeFlag);
-            utf8Sink.putZ(metadata.getColumnName(i));
-            utf8Sink.putIntDirect(0); //tableOid ?
-            utf8Sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
-            utf8Sink.putNetworkInt(PGOids.getTypeOid(columnType)); // type
-            if (ColumnType.tagOf(columnType) < ColumnType.STRING) {
-                // type size
-                // todo: cache small endian type sizes and do not check if type is valid - its coming from metadata, must be always valid
-                utf8Sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
-            } else {
-                // type size
-                utf8Sink.putNetworkShort((short) -1);
-            }
-
-            // type modifier
-            utf8Sink.putIntDirect(INT_NULL_X);
-            // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
-            // format code
-            utf8Sink.putNetworkShort(getPgResultSetColumnFormatCode(i)); // format code
+        long messageLengthAddress = 0;
+        if (outResendColumnIndex == 0 && outResendRecordHeader) {
+            utf8Sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
+            messageLengthAddress = utf8Sink.skipInt();
+            utf8Sink.putNetworkShort((short) n);
+            utf8Sink.bookmark();
         }
-        utf8Sink.putLen(addr);
+        final boolean isMsgLengthRequired = messageLengthAddress > 0;
+        try {
+            while (outResendColumnIndex < n) {
+                final int i = outResendColumnIndex;
+                final int typeFlag = pgResultSetColumnTypes.getQuick(2 * i);
+                final int columnType = toColumnType(ColumnType.isNull(typeFlag) ? ColumnType.STRING : typeFlag);
+                utf8Sink.putZ(metadata.getColumnName(i));
+                utf8Sink.putIntDirect(0); //tableOid ?
+                utf8Sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
+                utf8Sink.putNetworkInt(PGOids.getTypeOid(columnType)); // type
+                if (ColumnType.tagOf(columnType) < ColumnType.STRING) {
+                    // type size
+                    // todo: cache small endian type sizes and do not check if type is valid - its coming from metadata, must be always valid
+                    utf8Sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
+                } else {
+                    // type size
+                    utf8Sink.putNetworkShort((short) -1);
+                }
+
+                // type modifier
+                utf8Sink.putIntDirect(INT_NULL_X);
+                // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
+                // format code
+                utf8Sink.putNetworkShort(getPgResultSetColumnFormatCode(i)); // format code
+                utf8Sink.bookmark();
+                outResendColumnIndex++;
+            }
+        } catch (NoSpaceLeftInResponseBufferException e) {
+            utf8Sink.resetToBookmark();
+            if (isMsgLengthRequired) {
+                final long sizeInBuffer = utf8Sink.getSendBufferPtr() - messageLengthAddress;
+                assert sizeInBuffer > 0;
+                // tableOid + column number + type + type size + type modifier + format code
+                final int fixedSize = 3 * Short.BYTES + 3 * Integer.BYTES;
+                long tailSize = 0;
+                for (int i = outResendColumnIndex; i < n; i++) {
+                    final String columnName = metadata.getColumnName(i);
+                    assert columnName != null && !columnName.isEmpty();
+                    final int utf8Bytes = Utf8s.utf8Bytes(columnName);
+                    tailSize += utf8Bytes + 1 + fixedSize;
+                }
+                assert tailSize > 0;
+                final long messageSizeWithHeader = sizeInBuffer + tailSize;
+                if (messageSizeWithHeader <= Integer.MAX_VALUE) {
+                    putInt(messageLengthAddress, (int) messageSizeWithHeader);
+                    outResendRecordHeader = false;
+                } else {
+                    resetIncompleteRecord(utf8Sink, messageLengthAddress);
+                    if (utf8Sink.getWrittenBytes() == 0) {
+                        e.setBytesRequired(messageSizeWithHeader + 1); // +1 for the message type
+                    }
+                }
+            }
+            throw e;
+        }
+        if (isMsgLengthRequired) {
+            utf8Sink.putLen(messageLengthAddress);
+        }
         utf8Sink.bookmark();
+        outResendColumnIndex = 0;
+        outResendRecordHeader = true;
     }
 
     private void resetIncompleteRecord(PGResponseSink utf8Sink, long messageLengthAddress) {
