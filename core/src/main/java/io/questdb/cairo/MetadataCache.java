@@ -124,6 +124,11 @@ public class MetadataCache implements QuietCloseable {
     }
 
     private void hydrateTable0(@NotNull TableToken token) {
+        if (engine.isTableDropped(token)) {
+            // Table writer can still process some transactions when DROP table has already
+            // been executed, essentially updating dropped table. We should ignore such updates.
+            return;
+        }
 
         Path path = Path.getThreadLocal(engine.getConfiguration().getRoot());
 
@@ -442,6 +447,12 @@ public class MetadataCache implements QuietCloseable {
          */
         @Override
         public void hydrateTable(@NotNull TableWriterMetadata tableMetadata) {
+            if (engine.isTableDropped(tableMetadata.getTableToken())) {
+                // Table writer can still process some transactions when DROP table has already
+                // been executed, essentially updating dropped table. We should ignore such updates.
+                return;
+            }
+
             final TableToken tableToken = tableMetadata.getTableToken();
             final CairoTable table = new CairoTable(tableToken);
             final long metadataVersion = tableMetadata.getMetadataVersion();
