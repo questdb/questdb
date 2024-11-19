@@ -3602,18 +3602,18 @@ public class SqlOptimiser implements Mutable {
 
         if (
                 model.getSelectModelType() == SELECT_MODEL_CHOOSE
-                        && nested != null
-                        && nested.getSelectModelType() == SELECT_MODEL_NONE
-                        && nested.getOrderBy().size() > 1 // only for multi-sort case, to get limited size cursor
-                        && nested.getWhereClause() == null
                         && model.getLimitLo() != null
                         && model.getLimitHi() == null
                         && model.getUnionModel() == null
                         && model.getJoinModels().size() == 1
                         && model.getGroupBy().size() == 0
                         && model.getSampleBy() == null
-                        && !hasAggregateQueryColumn(model)
                         && !model.isDistinct()
+                        && !hasAggregateQueryColumn(model)
+                        && nested != null
+                        && nested.getSelectModelType() == SELECT_MODEL_NONE
+                        && nested.getOrderBy().size() > 1 // only for multi-sort case, to get limited size cursor
+                        && nested.getWhereClause() == null
                         && nested.getTimestamp() != null
                         && Chars.equalsIgnoreCase(nested.getTimestamp().token, nested.getOrderBy().get(0).token)
                         && nested.getOrderByDirection().get(0) == ORDER_DIRECTION_DESCENDING
