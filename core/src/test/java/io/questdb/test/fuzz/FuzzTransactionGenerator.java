@@ -29,8 +29,10 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import org.junit.Assert;
 
 import static io.questdb.std.datetime.microtime.Timestamps.DAY_MICROS;
 
@@ -39,7 +41,7 @@ public class FuzzTransactionGenerator {
 
     public static ObjList<FuzzTransaction> generateSet(
             long initialRowCount,
-            TableMetadata sequencerMetadata,
+            TableRecordMetadata sequencerMetadata,
             TableMetadata tableMetadata,
             Rnd rnd,
             long minTimestamp,
@@ -136,6 +138,8 @@ public class FuzzTransactionGenerator {
             aggregateProbability += probabilityOfDropPartition;
             boolean wantToDropPartition = !wantSomething && rndDouble < aggregateProbability;
 
+            Assert.assertNotNull(meta);
+
             if (wantToRemoveColumn) {
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {
@@ -230,7 +234,7 @@ public class FuzzTransactionGenerator {
         to.setTimestampIndex(from.getTimestampIndex());
     }
 
-    private static GenericRecordMetadata deepMetadataCopyOf(TableMetadata sequencerMetadata, TableMetadata tableMetadata) {
+    private static GenericRecordMetadata deepMetadataCopyOf(TableRecordMetadata sequencerMetadata, TableMetadata tableMetadata) {
         if (sequencerMetadata != null && tableMetadata != null) {
             GenericRecordMetadata metadata = new GenericRecordMetadata();
             for (int i = 0, n = sequencerMetadata.getColumnCount(); i < n; i++) {
@@ -272,8 +276,6 @@ public class FuzzTransactionGenerator {
     private static int generateNewColumnType(Rnd rnd) {
         int columnType = FuzzInsertOperation.SUPPORTED_COLUMN_TYPES[rnd.nextInt(FuzzInsertOperation.SUPPORTED_COLUMN_TYPES.length)];
         switch (columnType) {
-            default:
-                return columnType;
             case ColumnType.GEOBYTE:
                 return ColumnType.getGeoHashTypeWithBits(5);
             case ColumnType.GEOSHORT:
@@ -282,6 +284,8 @@ public class FuzzTransactionGenerator {
                 return ColumnType.getGeoHashTypeWithBits(25);
             case ColumnType.GEOLONG:
                 return ColumnType.getGeoHashTypeWithBits(35);
+            default:
+                return columnType;
         }
     }
 

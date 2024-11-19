@@ -37,6 +37,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -380,7 +381,7 @@ public class FuzzRunner {
     public TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
         if (engine.getTableTokenIfExists(tableName) == null) {
-            engine.ddl(
+            engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
@@ -396,11 +397,11 @@ public class FuzzRunner {
                     sqlExecutionContext
             );
             // force few column tops
-            engine.ddl("alter table " + tableName + " add column long_top long", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
         return engine.verifyTableName(tableName);
     }
@@ -421,7 +422,7 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateSet(
             Rnd rnd,
-            TableMetadata sequencerMetadata,
+            TableRecordMetadata sequencerMetadata,
             TableMetadata tableMetadata,
             long start,
             long end,
@@ -464,7 +465,7 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        try (TableMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);
+        try (TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);
              TableMetadata tableMetadata = engine.getTableMetadata(tableToken)
         ) {
             return generateSet(rnd, sequencerMetadata, tableMetadata, start, end, tableName);
@@ -755,10 +756,6 @@ public class FuzzRunner {
         }
     }
 
-    private int getRndParallelWalCount(Rnd rnd) {
-        return 1 + rnd.nextInt(4);
-    }
-
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
         try {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
@@ -917,7 +914,6 @@ public class FuzzRunner {
         long endNonWalMicro = System.nanoTime() / 1000;
         long nonWalTotal = endNonWalMicro - startMicro;
 
-        int rndParallelWalCount = getRndParallelWalCount(rnd);
         applyWal(transactions, tableNameWal, 1, rnd);
 
         long endWalMicro = System.nanoTime() / 1000;

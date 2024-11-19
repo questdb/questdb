@@ -500,7 +500,7 @@ public class WriterPool extends AbstractPool {
     }
 
     private TableWriter logAndReturn(Entry e, short event) {
-        LOG.info().$(">> [table=`").utf8(e.writer.getTableToken().getDirName()).$("`, thread=").$(e.owner).$(']').$();
+        LOG.debug().$(">> [table=`").utf8(e.writer.getTableToken().getDirName()).$("`, thread=").$(e.owner).$(']').$();
         notifyListener(e.owner, e.writer.getTableToken(), event);
         return e.writer;
     }
@@ -546,7 +546,7 @@ public class WriterPool extends AbstractPool {
         }
 
         if (e.owner != UNALLOCATED) {
-            LOG.info().$("<< [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
+            LOG.debug().$("<< [table=`").utf8(tableToken.getDirName()).$("`, thread=").$(thread).$(']').$();
 
             e.ownershipReason = OWNERSHIP_REASON_NONE;
             e.lastReleaseTime = configuration.getMicrosecondClock().getTicks();

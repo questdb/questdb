@@ -31,19 +31,17 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAll() throws Exception {
-        assertMemoryLeak(() -> {
-            assertSql("vwap\n" +
-                            "0.4601797676425299\n",
-                    "select vwap(rnd_double(), rnd_double()) from long_sequence(10)"
-            );
-        });
+        assertMemoryLeak(() -> assertSql("vwap\n" +
+                        "0.4601797676425299\n",
+                "select vwap(rnd_double(), rnd_double()) from long_sequence(10)"
+        ));
     }
 
     @Test
     public void testIgnoreNullAndZeroOrNegativeQty() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (p double, q double)");
-            insert("insert into tab values (null,null),(1,null),(100,10),(null,1),(105,40),(1,0),(1,-1)");
+            execute("create table tab (p double, q double)");
+            execute("insert into tab values (null,null),(1,null),(100,10),(null,1),(105,40),(1,0),(1,-1)");
             assertSql(
                     "vwap\n" +
                             "104.0\n",
@@ -64,8 +62,8 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (a0 double, a1 double)");
-            insert("insert into tab values (null,null),(null,1),(1,null)");
+            execute("create table tab (a0 double, a1 double)");
+            execute("insert into tab values (null,null),(null,1),(1,null)");
             assertSql("vwap\n" +
                             "null\n",
                     "select vwap(a0, a1) from tab"
@@ -76,8 +74,8 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVwap() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (a0 double, a1 double)");
-            insert("insert into tab values (100,10),(105,40)");
+            execute("create table tab (a0 double, a1 double)");
+            execute("insert into tab values (100,10),(105,40)");
             assertSql("vwap\n" +
                             "104.0\n",
                     "select vwap(a0, a1) from tab"
@@ -88,8 +86,8 @@ public class VwapDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testVwapGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (price double, volume double, ticker symbol)");
-            insert("insert into tab values (100,10,'a'),(105,40,'a'),(102,20,'b'),(103,60,'b')");
+            execute("create table tab (price double, volume double, ticker symbol)");
+            execute("insert into tab values (100,10,'a'),(105,40,'a'),(102,20,'b'),(103,60,'b')");
             assertSql("ticker\tvwap\n" +
                             "a\t104.0\n" +
                             "b\t102.75\n",

@@ -691,7 +691,7 @@ public class ClickBenchTest extends AbstractCairoTest {
     @Test
     public void testExecutionPlans() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(DDL);
+            execute(DDL);
 
             for (TestCase testCase : TEST_CASES) {
                 LOG.info().$("verifying exec plan for ").$(testCase.name).$();

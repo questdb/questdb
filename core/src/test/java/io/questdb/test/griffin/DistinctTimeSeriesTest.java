@@ -32,7 +32,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
     @Test
     public void testAllTypes() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -57,10 +57,10 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                             ") timestamp (ts) partition by DAY");
 
             // create a copy of 'x' as our expected result set
-            ddl("create table y as (select * from x)");
+            execute("create table y as (select * from x)");
 
             // copy 'x' into itself, thus duplicating every row
-            ddl("insert into x select * from x");
+            execute("insert into x select * from x");
 
             assertSqlCursors(
                     "y",
@@ -104,7 +104,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
     @Test
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
