@@ -89,7 +89,7 @@ public class PGErrorHandlingTest extends BootstrapTest {
                 serverMain.start();
 
                 try (Connection conn = getConnection()) {
-                    conn.createStatement().execute("create table x(y long)");
+                    conn.createStatement().execute("create table x as (select 1L y)");
                     Assert.fail("Expected exception is missing");
                 } catch (PSQLException e) {
                     TestUtils.assertContains(e.getMessage(), "ERROR: Test error");
