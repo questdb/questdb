@@ -1304,6 +1304,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                         responseUtf8Sink.reset();
                         pipelineCurrentEntry.getErrorMessageSink()
                                 .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize())
+                                .put(", requiredSize=").put(Math.max(e.getBytesRequired(), 2 * responseUtf8Sink.getSendBufferSize()))
                                 .put(']');
                         pipelineCurrentEntry.msgSync(
                                 sqlExecutionContext,
@@ -1529,7 +1530,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     }
 
     private class ResponseUtf8Sink implements PGResponseSink, Mutable {
-
         private long bookmarkPtr = -1;
 
         public ResponseUtf8Sink() {
@@ -1550,7 +1550,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             if (sendBufferPtr + size < sendBufferLimit) {
                 return;
             }
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            throw NoSpaceLeftInResponseBufferException.instance(size);
         }
 
         @Override
@@ -1564,8 +1564,18 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
 
         @Override
+        public long getSendBufferPtr() {
+            return sendBufferPtr;
+        }
+
+        @Override
         public long getSendBufferSize() {
             return sendBufferSize;
+        }
+
+        @Override
+        public long getWrittenBytes() {
+            return sendBufferPtr - sendBuffer;
         }
 
         @Override
@@ -1692,6 +1702,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 sendBufferPtr = bookmarkPtr;
                 bookmarkPtr = -1;
             }
+        }
+
+        @Override
+        public void resetToBookmark(long address) {
+            sendBufferPtr = address;
+            bookmarkPtr = -1;
         }
 
         @Override

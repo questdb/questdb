@@ -109,8 +109,10 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.GregorianCalendar;
 import java.util.List;
 import java.util.Properties;
@@ -3415,7 +3417,7 @@ if __name__ == "__main__":
                                             if (command.startsWith("select")) {
                                                 try (ResultSet result = stmt.executeQuery()) {
                                                     while (result.next()) {
-                                                        //ignore
+                                                        // ignore
                                                     }
                                                 }
                                             } else {
@@ -3425,8 +3427,8 @@ if __name__ == "__main__":
                                     }
                                 } catch (SQLException e) {
                                     // ignore errors showing that statement has been cancelled
-                                    if (!Chars.contains(e.getMessage(), "Could not create table") &&
-                                            !Chars.contains(e.getMessage(), "cancelled by user")) {
+                                    if (!Chars.contains(e.getMessage(), "Could not create table")
+                                            && !Chars.contains(e.getMessage(), "cancelled by user")) {
                                         queryError.set(e);
                                     }
                                 } catch (Exception e) {
@@ -3512,7 +3514,7 @@ if __name__ == "__main__":
                                     "\n query: " + command +
                                     "\n exception: ", t);
                         } finally {
-                            queryError.set(new Exception());//stop wal thread
+                            queryError.set(new Exception()); // stop wal thread
                             stopped.await();
                         }
                     }
@@ -9787,7 +9789,6 @@ create table tab as (
                 }
             }
 
-
             // NOT IN
             try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
                 sink.clear();
@@ -10034,9 +10035,117 @@ create table tab as (
     }
 
     @Test
+    public void testSmallSendBufferBigColumnValueNotEnoughSpace1() throws Exception {
+        sendBufferSize = 256 + bufferSizeRnd.nextInt(256);
+
+        // varchar, string, binary
+        int[] sizes = {sendBufferSize / 4, sendBufferSize / 2, sendBufferSize - 4 - 1};
+        sizes[bufferSizeRnd.nextInt(sizes.length)] = 2 * sendBufferSize;
+
+        final int varcharSize = sizes[0];
+        final int stringSize = sizes[1];
+        final int binarySize = sizes[2];
+
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("create table x as (" +
+                        "select" +
+                        " rnd_boolean() f1," +
+                        " rnd_str(" + stringSize + "," + stringSize + ",2) s1," +
+                        " rnd_varchar(" + varcharSize + "," + varcharSize + ",2) v1," +
+                        " rnd_bin(" + binarySize + "," + binarySize + ",2) b1," +
+                        " timestamp_sequence(500000000000L,100000000L) ts" +
+                        " from long_sequence(10)" +
+                        ") timestamp (ts) partition by DAY");
+
+                mayDrainWalQueue();
+
+                String sql = "SELECT * FROM x";
+                try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+                    try (ResultSet ignore = stmt.executeQuery()) {
+                        Assert.fail("exception expected");
+                    }
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "not enough space in send buffer");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferBigColumnValueNotEnoughSpace2() throws Exception {
+        // Here we test user-friendly error messages which are only present in the modern PGWire.
+        Assume.assumeFalse(legacyMode);
+        Assume.assumeFalse(walEnabled);
+
+        recvBufferSize = 1024;
+        sendBufferSize = 512;
+        final int varcharSize = 600;
+
+        final String ddl = "create table x as (" +
+                "select " +
+                "  rnd_boolean() f1," +
+                "  rnd_byte(1,10) f2," +
+                "  rnd_short(1,10) f3," +
+                "  rnd_char() f4," +
+                "  rnd_int(1,10,2) f5," +
+                "  rnd_long(1,10,2) f6," +
+                "  rnd_float(2) f7," +
+                "  rnd_double(2) f8," +
+                "  rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) f9," +
+                "  to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 f10," +
+                "  rnd_uuid4(2) f11," +
+                "  rnd_geohash(4) f12," +
+                "  rnd_geohash(8) f13," +
+                "  rnd_geohash(16) f14," +
+                "  rnd_geohash(32) f15," +
+                "  rnd_ipv4() f16," +
+                "  rnd_long256() f17," +
+                "  rnd_symbol(4,4,4,2) f18," +
+                "  rnd_str(10,10,0) f19," +
+                "  rnd_bin(16,16,0) f20," +
+                "  rnd_varchar(" + varcharSize + "," + varcharSize + ",2) f21," +
+                "  timestamp_sequence(500000000000L,100000000L) ts " +
+                "from long_sequence(1)" +
+                ") timestamp (ts) partition by DAY";
+
+        // We need to be in full control of binary/text format since the buffer size depends on that,
+        // so we run just a few combinations.
+        assertWithPgServer(Mode.SIMPLE, false, -1, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate(ddl);
+
+                try (PreparedStatement stmt = connection.prepareStatement("x")) {
+                    try (ResultSet ignore = stmt.executeQuery()) {
+                        Assert.fail("exception expected");
+                    }
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1782]");
+                }
+            }
+        });
+
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate(ddl);
+
+                try (PreparedStatement stmt = connection.prepareStatement("x")) {
+                    try (ResultSet ignore = stmt.executeQuery()) {
+                        Assert.fail("exception expected");
+                    }
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1629]");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSmallSendBufferForRowData() throws Exception {
-        sendBufferSize = 300;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        // WAL is irrelevant here, we are checking result sending code path
+        skipOnWalRun();
+        sendBufferSize = 512;
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table x as (" +
                         "select" +
@@ -10048,7 +10157,7 @@ create table tab as (
                         " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
                         " rnd_str(5,16,2) d," +
                         " rnd_str(5,16,2) e," +
-                        " rnd_str(300,300,2) f," + // <-- really long string
+                        " rnd_str(450,450,0) f," + // <-- really long string
                         " rnd_str(5,16,2) g," +
                         " rnd_str(5,16,2) ik," +
                         " rnd_str(5,16,2) j," +
@@ -10076,45 +10185,122 @@ create table tab as (
 
     @Test
     public void testSmallSendBufferForRowDescription() throws Exception {
+        // legacy code fails this test in SIMPLE protocol, modern code does not
+        Assume.assumeFalse(legacyMode);
+        // WAL is irrelevant here, we are checking result sending code path
         skipOnWalRun();
-        // WAL is irrelevant here, we are checking result sending codepath
         sendBufferSize = 256;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            if (!legacyMode) {
-                // legacy code fails this test in SIMPLE protocol, modern code does not
-                try (Statement statement = connection.createStatement()) {
-                    statement.executeUpdate("create table x as (" +
-                            "select" +
-                            " rnd_str(5,16,2) i," +
-                            " rnd_str(5,16,2) sym," +
-                            " rnd_str(5,16,2) amt," +
-                            " rnd_str(5,16,2) timestamp," +
-                            " rnd_str(5,16,2) b," +
-                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                            " rnd_str(5,16,2) d," +
-                            " rnd_str(5,16,2) e," +
-                            " rnd_str(5,16,2) f," +
-                            " rnd_str(5,16,2) g," +
-                            " rnd_str(5,16,2) ik," +
-                            " rnd_str(5,16,2) j," +
-                            " timestamp_sequence(500000000000L,100000000L) ts," +
-                            " rnd_str(5,16,2) l," +
-                            " rnd_str(5,16,2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_str(5,16,2) t," +
-                            " rnd_str(5,16,2) l256" +
-                            " from long_sequence(10000)" +
-                            ") timestamp (ts) partition by DAY");
-                    String sql = "SELECT * FROM x";
-                    try {
-                        statement.execute(sql);
-                        Assert.fail();
-                    } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "not enough space in send buffer");
-                    }
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("create table x as (" +
+                        "select" +
+                        " rnd_str(5,16,2) i," +
+                        " rnd_str(5,16,2) sym," +
+                        " rnd_str(5,16,2) amt," +
+                        " rnd_str(5,16,2) timestamp," +
+                        " rnd_str(5,16,2) b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_str(5,16,2) d," +
+                        " rnd_str(5,16,2) e," +
+                        " rnd_str(5,16,2) f," +
+                        " rnd_str(5,16,2) g," +
+                        " rnd_str(5,16,2) ik," +
+                        " rnd_str(5,16,2) j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_str(5,16,2) l," +
+                        " rnd_str(5,16,2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_str(5,16,2) t," +
+                        " rnd_str(5,16,2) l256" +
+                        " from long_sequence(10000)" +
+                        ") timestamp (ts) partition by DAY");
+                String sql = "SELECT * FROM x";
+                try {
+                    statement.execute(sql);
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "not enough space in send buffer");
                 }
             }
         });
+    }
+
+    @Test
+    public void testSmallSendBufferWideRecordPermute() throws Exception {
+        // legacy code fails this test, modern code does not
+        Assume.assumeFalse(legacyMode);
+        // WAL is irrelevant here, we are checking result sending code path
+        skipOnWalRun();
+
+        // 256 is not enough for the row description message
+        int[] bufferSizes = {512, 1024, 2048, 4096, 8192};
+        final int numIteration = 10;
+        final int numRow = 10;
+
+        List<String> fixed = new ArrayList<>(Arrays.asList(
+                "rnd_boolean() f1",
+                "rnd_byte(1,10) f2",
+                "rnd_short(1,10) f3",
+                "rnd_char() f4",
+                "rnd_int(1,10,2) f5",
+                "rnd_long(1,10,2) f6",
+                "rnd_float(2) f7",
+                "rnd_double(2) f8",
+                "rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) f9",
+                "to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 f10",
+                "rnd_uuid4(2) f11",
+                "rnd_geohash(4) f12",
+                "rnd_geohash(8) f13",
+                "rnd_geohash(16) f14",
+                "rnd_geohash(32) f15",
+                "rnd_ipv4() f16",
+                "rnd_long256() f17",
+                "timestamp_sequence(500000000000L,100000000L) ts"
+        ));
+
+        recvBufferSize = 1024; // big enough for a wide create table sql
+
+        for (int i = 0; i < numIteration; i++) {
+            // enough space for describe message
+            sendBufferSize = bufferSizes[bufferSizeRnd.nextInt(bufferSizes.length)];
+
+            final int varcharSize = sendBufferSize / 4;
+            final int stringSize = sendBufferSize / 2;
+            final int binarySize = sendBufferSize - 4 - 1;
+
+            List<String> permutedColumns = new ArrayList<>(fixed);
+            permutedColumns.add("rnd_symbol(4," + stringSize + "," + stringSize + ",2) e1");
+            permutedColumns.add("rnd_str(" + stringSize + "," + stringSize + ",0) s1");
+            permutedColumns.add("rnd_varchar(" + varcharSize + "," + varcharSize + ",2) v1");
+            permutedColumns.add("rnd_bin(" + binarySize + "," + binarySize + ",0) b1");
+
+            Collections.shuffle(permutedColumns);
+
+            String columnsSql = String.join(",", permutedColumns);
+            String createSql = "create table x as ( " +
+                    "select " + columnsSql + " " +
+                    "from long_sequence(" + numRow + ") " +
+                    ") timestamp (ts) partition by DAY";
+
+            String selectSql = "SELECT * FROM x";
+            assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute(createSql);
+                    mayDrainWalQueue();
+                }
+
+                try (PreparedStatement stmt = connection.prepareStatement(selectSql)) {
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        long rows = 0;
+                        while (rs.next()) {
+                            rows++;
+                        }
+                        // no need to assert generated random junk
+                        Assert.assertEquals(numRow, rows);
+                    }
+                }
+            });
+        }
     }
 
     @Test

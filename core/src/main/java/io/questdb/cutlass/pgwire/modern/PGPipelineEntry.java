@@ -94,6 +94,8 @@ import java.util.function.Consumer;
 
 import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
+import static io.questdb.cutlass.pgwire.modern.PGUtils.calculateColumnBinSize;
+import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {
@@ -125,7 +127,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private InsertOperation insertOp = null;
     private int msgBindParameterValueCount;
     private short msgBindSelectFormatCodeCount = 0;
+    private int outResendColumnIndex = 0;
     private boolean outResendCursorRecord = false;
+    private boolean outResendRecordHeader = true;
     private long parameterValueArenaHi;
     private long parameterValueArenaLo;
     private long parameterValueArenaPtr = 0;
@@ -966,6 +970,40 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    private long calculateRecordTailSize(
+            Record record,
+            int startFrom,
+            int columnCount,
+            long maxBlobSize,
+            long sendBufferSize
+    ) throws BadProtocolException {
+        long recordSize = 0;
+        for (int i = startFrom; i < columnCount; i++) {
+            final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
+            final int typeTag = ColumnType.tagOf(columnType);
+            final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
+            // if column is not variable size and format code is text, we can't calculate size
+            if (columnBinaryFlag == 0 && !sameTxtAndBinColumnSizes(columnType)) {
+                return -1;
+            }
+            // number of bits or chars for geohash
+            final int bitFlags = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
+            final int columnValueSize = calculateColumnBinSize(this, record, i, typeTag, bitFlags, maxBlobSize);
+
+            if (columnValueSize < 0) {
+                return -1; // unsupported type
+            }
+
+            if (columnValueSize >= sendBufferSize) {
+                // doesn't fit into send buffer
+                return -1;
+            }
+
+            recordSize += columnValueSize;
+        }
+        return recordSize;
+    }
+
     private void copyOf(PGPipelineEntry blueprint) {
         this.msgParseParameterTypeOIDs.clear();
         this.msgParseParameterTypeOIDs.addAll(blueprint.msgParseParameterTypeOIDs);
@@ -1154,12 +1192,50 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 .put(']');
     }
 
+    // Used to estimate required column size (or full record size in case of text format)
+    // to be reported to the user in the insufficient send buffer size case.
+    private long estimateRecordSize(Record record, int columnCount) throws BadProtocolException {
+        long recordSize = 0;
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
+            final int typeTag = ColumnType.tagOf(columnType);
+            final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
+
+            // number of bits or chars for geohash
+            final int bitFlags = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
+
+            final long columnValueSize;
+            // if column is not variable size and format code is text, we can't calculate size
+            if (columnBinaryFlag == 0 && !sameTxtAndBinColumnSizes(columnType)) {
+                columnValueSize = estimateColumnTxtSize(record, i, typeTag);
+            } else {
+                columnValueSize = calculateColumnBinSize(this, record, i, typeTag, bitFlags, Long.MAX_VALUE);
+            }
+
+            if (columnValueSize < 0) {
+                return Long.MIN_VALUE; // unsupported type
+            }
+
+            recordSize += columnValueSize;
+        }
+        return recordSize;
+    }
+
     private short getPgResultSetColumnFormatCode(int columnIndex) {
+        final int columnType = pgResultSetColumnTypes.getQuick(columnIndex * 2);
+        return getPgResultSetColumnFormatCode(columnIndex, columnType);
+    }
+
+    private short getPgResultSetColumnFormatCode(int columnIndex, int columnType) {
         // binary is always sent as binary (e.g.) we never Base64 encode that
-        if (pgResultSetColumnTypes.getQuick(columnIndex * 2) != ColumnType.BINARY) {
+        if (columnType != ColumnType.BINARY) {
             return (msgBindSelectFormatCodeCount > 1 ? msgBindSelectFormatCodes.get(columnIndex) : msgBindSelectFormatCodes.get(0)) ? (short) 1 : 0;
         }
         return 1;
+    }
+
+    private boolean isTextFormat() {
+        return msgBindSelectFormatCodeCount == 0 || (msgBindSelectFormatCodeCount == 1 && !msgBindSelectFormatCodes.get(0));
     }
 
     private BadProtocolException kaput() {
@@ -1544,17 +1620,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColLong256(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        final Long256 long256Value = record.getLong256A(columnIndex);
-        if (long256Value.getLong0() == Numbers.LONG_NULL && long256Value.getLong1() == Numbers.LONG_NULL && long256Value.getLong2() == Numbers.LONG_NULL && long256Value.getLong3() == Numbers.LONG_NULL) {
-            utf8Sink.setNullValue();
-        } else {
-            final long a = utf8Sink.skipInt();
-            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), utf8Sink);
-            utf8Sink.putLenEx(a);
-        }
-    }
-
     private void outColString(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final CharSequence strValue = record.getStrA(columnIndex);
         if (strValue == null) {
@@ -1684,6 +1749,20 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    private void outColTxtLong256(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final Long256 long256Value = record.getLong256A(columnIndex);
+        if (long256Value.getLong0() == Numbers.LONG_NULL
+                && long256Value.getLong1() == Numbers.LONG_NULL
+                && long256Value.getLong2() == Numbers.LONG_NULL
+                && long256Value.getLong3() == Numbers.LONG_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), utf8Sink);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
     private void outColTxtShort(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final long a = utf8Sink.skipInt();
         utf8Sink.put(record.getShort(columnIndex));
@@ -1741,52 +1820,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outCursor(
-            SqlExecutionContext sqlExecutionContext,
-            PGResponseSink utf8Sink,
-            Record record,
-            int columnCount
-    ) throws QueryPausedException {
-        if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
-            sqlExecutionContext.getCircuitBreaker().resetTimer();
-        }
-
-        try {
-            if (outResendCursorRecord) {
-                outRecord(utf8Sink, record, columnCount);
-            }
-
-            while (sqlReturnRowCount < sqlReturnRowCountToBeSent && cursor.hasNext()) {
-                outResendCursorRecord = true;
-                outRecord(utf8Sink, record, columnCount);
-            }
-        } catch (DataUnavailableException e) {
-            utf8Sink.resetToBookmark();
-            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
-        } catch (NoSpaceLeftInResponseBufferException e) {
-            throw e;
-        } catch (Throwable e) {
-            utf8Sink.resetToBookmark();
-            if (e instanceof FlyweightMessageContainer) {
-                getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
-            } else {
-                String msg = e.getMessage();
-                getErrorMessageSink().put(msg != null ? msg : "no message provided (internal error)");
-            }
-        }
-
-        // the above loop may have exited due to the return row limit as prescribed by the portal
-        // either way, the result set was sent out as intended. The difference is in what we
-        // send as the suffix.
-
-        if (sqlReturnRowCount < sqlReturnRowCountToBeSent) {
-            stateSync = 20;
-        } else {
-            // we sent as many rows as was requested, but we have more to send
-            stateSync = 30;
-        }
-    }
-
     private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink)
             throws QueryPausedException {
         switch (stateSync) {
@@ -1804,6 +1837,57 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             default:
                 assert false;
+        }
+    }
+
+    private void outCursor(
+            SqlExecutionContext sqlExecutionContext,
+            PGResponseSink utf8Sink,
+            Record record,
+            int columnCount
+    ) throws QueryPausedException {
+        if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
+            sqlExecutionContext.getCircuitBreaker().resetTimer();
+        }
+
+        long recordStartAddress = utf8Sink.getSendBufferPtr();
+        try {
+            if (outResendCursorRecord) {
+                outRecord(utf8Sink, record, columnCount);
+                recordStartAddress = utf8Sink.getSendBufferPtr();
+            }
+
+            while (sqlReturnRowCount < sqlReturnRowCountToBeSent && cursor.hasNext()) {
+                outResendCursorRecord = true;
+                outResendRecordHeader = true;
+                outRecord(utf8Sink, record, columnCount);
+                recordStartAddress = utf8Sink.getSendBufferPtr();
+            }
+        } catch (DataUnavailableException e) {
+            utf8Sink.resetToBookmark();
+            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+        } catch (NoSpaceLeftInResponseBufferException e) {
+            throw e;
+        } catch (Throwable th) {
+            // We'll be sending an error to the client, so reset to the start of the last sent message.
+            utf8Sink.resetToBookmark(recordStartAddress);
+            if (th instanceof FlyweightMessageContainer) {
+                getErrorMessageSink().put(((FlyweightMessageContainer) th).getFlyweightMessage());
+            } else {
+                String msg = th.getMessage();
+                getErrorMessageSink().put(msg != null ? msg : "no message provided (internal error)");
+            }
+        }
+
+        // the above loop may have exited due to the return row limit as prescribed by the portal
+        // either way, the result set was sent out as intended. The difference is in what we
+        // send as the suffix.
+
+        if (sqlReturnRowCount < sqlReturnRowCountToBeSent) {
+            stateSync = 20;
+        } else {
+            // we sent as many rows as was requested, but we have more to send
+            stateSync = 30;
         }
     }
 
@@ -1857,129 +1941,190 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outRecord(PGResponseSink utf8Sink, Record record, int columnCount) throws BadProtocolException {
-        utf8Sink.put(MESSAGE_TYPE_DATA_ROW); // data
-        final long offset = utf8Sink.skipInt();
-        utf8Sink.putNetworkShort((short) columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            final int type = pgResultSetColumnTypes.getQuick(2 * i);
-            final int typeTag = ColumnType.tagOf(type);
-            final short columnBinaryFlag = getPgResultSetColumnFormatCode(i);
-
-            final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
-            switch (tagWithFlag) {
-                case BINARY_TYPE_INT:
-                    outColBinInt(utf8Sink, record, i);
-                    break;
-                case ColumnType.INT:
-                    outColTxtInt(utf8Sink, record, i);
-                    break;
-                case ColumnType.IPv4:
-                    outColTxtIPv4(utf8Sink, record, i);
-                    break;
-                case ColumnType.INTERVAL:
-                case BINARY_TYPE_INTERVAL:
-                    outColInterval(utf8Sink, record, i);
-                    break;
-                case ColumnType.VARCHAR:
-                case BINARY_TYPE_VARCHAR:
-                    outColVarchar(utf8Sink, record, i);
-                    break;
-                case ColumnType.STRING:
-                case BINARY_TYPE_STRING:
-                    outColString(utf8Sink, record, i);
-                    break;
-                case ColumnType.SYMBOL:
-                case BINARY_TYPE_SYMBOL:
-                    outColSymbol(utf8Sink, record, i);
-                    break;
-                case BINARY_TYPE_LONG:
-                    outColBinLong(utf8Sink, record, i);
-                    break;
-                case ColumnType.LONG:
-                    outColTxtLong(utf8Sink, record, i);
-                    break;
-                case ColumnType.SHORT:
-                    outColTxtShort(utf8Sink, record, i);
-                    break;
-                case BINARY_TYPE_DOUBLE:
-                    outColBinDouble(utf8Sink, record, i);
-                    break;
-                case ColumnType.DOUBLE:
-                    outColTxtDouble(utf8Sink, record, i);
-                    break;
-                case BINARY_TYPE_FLOAT:
-                    outColBinFloat(utf8Sink, record, i);
-                    break;
-                case BINARY_TYPE_SHORT:
-                    outColBinShort(utf8Sink, record, i);
-                    break;
-                case BINARY_TYPE_DATE:
-                    outColBinDate(utf8Sink, record, i);
-                    break;
-                case BINARY_TYPE_TIMESTAMP:
-                    outColBinTimestamp(utf8Sink, record, i);
-                    break;
-                case BINARY_TYPE_BYTE:
-                    outColBinByte(utf8Sink, record, i);
-                    break;
-                case BINARY_TYPE_UUID:
-                    outColBinUuid(utf8Sink, record, i);
-                    break;
-                case ColumnType.FLOAT:
-                    outColTxtFloat(utf8Sink, record, i);
-                    break;
-                case ColumnType.TIMESTAMP:
-                    outColTxtTimestamp(utf8Sink, record, i);
-                    break;
-                case ColumnType.DATE:
-                    outColTxtDate(utf8Sink, record, i);
-                    break;
-                case ColumnType.BOOLEAN:
-                    outColTxtBool(utf8Sink, record, i);
-                    break;
-                case BINARY_TYPE_BOOLEAN:
-                    outColBinBool(utf8Sink, record, i);
-                    break;
-                case ColumnType.BYTE:
-                    outColTxtByte(utf8Sink, record, i);
-                    break;
-                case ColumnType.BINARY:
-                case BINARY_TYPE_BINARY:
-                    outColBinary(utf8Sink, record, i);
-                    break;
-                case ColumnType.CHAR:
-                case BINARY_TYPE_CHAR:
-                    outColChar(utf8Sink, record, i);
-                    break;
-                case ColumnType.LONG256:
-                case BINARY_TYPE_LONG256:
-                    outColLong256(utf8Sink, record, i);
-                    break;
-                case ColumnType.GEOBYTE:
-                    outColTxtGeoByte(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
-                    break;
-                case ColumnType.GEOSHORT:
-                    outColTxtGeoShort(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
-                    break;
-                case ColumnType.GEOINT:
-                    outColTxtGeoInt(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
-                    break;
-                case ColumnType.GEOLONG:
-                    outColTxtGeoLong(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
-                    break;
-                case ColumnType.NULL:
-                    utf8Sink.setNullValue();
-                    break;
-                case ColumnType.UUID:
-                    outColTxtUuid(utf8Sink, record, i);
-                    break;
-                default:
-                    assert false;
-            }
+        long messageLengthAddress = 0;
+        // message header can be sent alone if we run out of space on the first column
+        if (outResendColumnIndex == 0 && outResendRecordHeader) {
+            utf8Sink.put(MESSAGE_TYPE_DATA_ROW);
+            messageLengthAddress = utf8Sink.skipInt();
+            utf8Sink.putNetworkShort((short) columnCount);
+            utf8Sink.bookmark();
         }
-        utf8Sink.putLen(offset);
+        final boolean isMsgLengthRequired = messageLengthAddress > 0;
+        try {
+            while (outResendColumnIndex < columnCount) {
+                final int i = outResendColumnIndex;
+                final int type = pgResultSetColumnTypes.getQuick(2 * i);
+                final int typeTag = ColumnType.tagOf(type);
+                final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, type);
+
+                final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
+                switch (tagWithFlag) {
+                    case BINARY_TYPE_INT:
+                        outColBinInt(utf8Sink, record, i);
+                        break;
+                    case ColumnType.INT:
+                        outColTxtInt(utf8Sink, record, i);
+                        break;
+                    case ColumnType.IPv4:
+                        outColTxtIPv4(utf8Sink, record, i);
+                        break;
+                    case ColumnType.INTERVAL:
+                    case BINARY_TYPE_INTERVAL:
+                        outColInterval(utf8Sink, record, i);
+                        break;
+                    case ColumnType.VARCHAR:
+                    case BINARY_TYPE_VARCHAR:
+                        outColVarchar(utf8Sink, record, i);
+                        break;
+                    case ColumnType.STRING:
+                    case BINARY_TYPE_STRING:
+                        outColString(utf8Sink, record, i);
+                        break;
+                    case ColumnType.SYMBOL:
+                    case BINARY_TYPE_SYMBOL:
+                        outColSymbol(utf8Sink, record, i);
+                        break;
+                    case BINARY_TYPE_LONG:
+                        outColBinLong(utf8Sink, record, i);
+                        break;
+                    case ColumnType.LONG:
+                        outColTxtLong(utf8Sink, record, i);
+                        break;
+                    case ColumnType.SHORT:
+                        outColTxtShort(utf8Sink, record, i);
+                        break;
+                    case BINARY_TYPE_DOUBLE:
+                        outColBinDouble(utf8Sink, record, i);
+                        break;
+                    case ColumnType.DOUBLE:
+                        outColTxtDouble(utf8Sink, record, i);
+                        break;
+                    case BINARY_TYPE_FLOAT:
+                        outColBinFloat(utf8Sink, record, i);
+                        break;
+                    case BINARY_TYPE_SHORT:
+                        outColBinShort(utf8Sink, record, i);
+                        break;
+                    case BINARY_TYPE_DATE:
+                        outColBinDate(utf8Sink, record, i);
+                        break;
+                    case BINARY_TYPE_TIMESTAMP:
+                        outColBinTimestamp(utf8Sink, record, i);
+                        break;
+                    case BINARY_TYPE_BYTE:
+                        outColBinByte(utf8Sink, record, i);
+                        break;
+                    case BINARY_TYPE_UUID:
+                        outColBinUuid(utf8Sink, record, i);
+                        break;
+                    case ColumnType.FLOAT:
+                        outColTxtFloat(utf8Sink, record, i);
+                        break;
+                    case ColumnType.TIMESTAMP:
+                        outColTxtTimestamp(utf8Sink, record, i);
+                        break;
+                    case ColumnType.DATE:
+                        outColTxtDate(utf8Sink, record, i);
+                        break;
+                    case ColumnType.BOOLEAN:
+                        outColTxtBool(utf8Sink, record, i);
+                        break;
+                    case BINARY_TYPE_BOOLEAN:
+                        outColBinBool(utf8Sink, record, i);
+                        break;
+                    case ColumnType.BYTE:
+                        outColTxtByte(utf8Sink, record, i);
+                        break;
+                    case ColumnType.BINARY:
+                    case BINARY_TYPE_BINARY:
+                        outColBinary(utf8Sink, record, i);
+                        break;
+                    case ColumnType.CHAR:
+                    case BINARY_TYPE_CHAR:
+                        outColChar(utf8Sink, record, i);
+                        break;
+                    case ColumnType.LONG256:
+                    case BINARY_TYPE_LONG256:
+                        outColTxtLong256(utf8Sink, record, i);
+                        break;
+                    case ColumnType.GEOBYTE:
+                        outColTxtGeoByte(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                        break;
+                    case ColumnType.GEOSHORT:
+                        outColTxtGeoShort(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                        break;
+                    case ColumnType.GEOINT:
+                        outColTxtGeoInt(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                        break;
+                    case ColumnType.GEOLONG:
+                        outColTxtGeoLong(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                        break;
+                    case ColumnType.NULL:
+                        utf8Sink.setNullValue();
+                        break;
+                    case ColumnType.UUID:
+                        outColTxtUuid(utf8Sink, record, i);
+                        break;
+                    default:
+                        assert false;
+                }
+                outResendColumnIndex++;
+                utf8Sink.bookmark();
+            }
+        } catch (NoSpaceLeftInResponseBufferException e) {
+            if (isTextFormat()) {
+                assert messageLengthAddress > 0;
+                resetIncompleteRecord(utf8Sink, messageLengthAddress);
+                if (utf8Sink.getWrittenBytes() == 0) {
+                    // We had nothing but the record in the send buffer,
+                    // so we can estimate the required size to be reported to the user.
+                    final long estimatedSize = estimateRecordSize(record, columnCount);
+                    e.setBytesRequired(estimatedSize);
+                }
+            } else {
+                utf8Sink.resetToBookmark();
+                if (isMsgLengthRequired) {
+                    final long sizeInBuffer = utf8Sink.getSendBufferPtr() - messageLengthAddress;
+                    assert sizeInBuffer > 0;
+
+                    try {
+                        final long recordTailSize = calculateRecordTailSize(
+                                record,
+                                outResendColumnIndex,
+                                columnCount,
+                                utf8Sink.getMaxBlobSize(),
+                                utf8Sink.getSendBufferSize()
+                        );
+                        if (recordTailSize > 0 && sizeInBuffer + recordTailSize <= Integer.MAX_VALUE) {
+                            putInt(messageLengthAddress, (int) (sizeInBuffer + recordTailSize));
+                            outResendRecordHeader = false;
+                        } else {
+                            resetIncompleteRecord(utf8Sink, messageLengthAddress);
+                            if (utf8Sink.getWrittenBytes() == 0) {
+                                // We had nothing but the record in the send buffer,
+                                // so we can estimate the required size to be reported to the user.
+                                final long estimatedSize = estimateRecordSize(record, columnCount);
+                                e.setBytesRequired(estimatedSize);
+                            }
+                        }
+                    } catch (BadProtocolException bpe) {
+                        // we have binary data blob size > maxBlobSize
+                        resetIncompleteRecord(utf8Sink, messageLengthAddress);
+                        throw bpe;
+                    }
+                }
+            }
+            throw e;
+        }
+
+        // no overflow, the full record is in the buffer
+        if (isMsgLengthRequired) {
+            utf8Sink.putLen(messageLengthAddress);
+        }
         utf8Sink.bookmark();
         outResendCursorRecord = false;
+        outResendColumnIndex = 0;
+        outResendRecordHeader = true;
         sqlReturnRowCount++;
     }
 
@@ -2014,6 +2159,27 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         utf8Sink.putLen(addr);
         utf8Sink.bookmark();
+    }
+
+    private void resetIncompleteRecord(PGResponseSink utf8Sink, long messageLengthAddress) {
+        outResendColumnIndex = 0;
+        outResendRecordHeader = true;
+        // reset to the message start
+        utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
+    }
+
+    // Returns true if column size is known to be the same in both text and binary formats.
+    // Note: certain column types, e.g. LONG256, don't have a matching column type in Postgres,
+    //       so we always serialize them in text format.
+    private boolean sameTxtAndBinColumnSizes(int columnType) {
+        final int typeTag = ColumnType.tagOf(columnType);
+        return ColumnType.isVarSize(typeTag)
+                || ColumnType.isGeoHash(columnType)
+                || typeTag == ColumnType.BOOLEAN
+                || typeTag == ColumnType.CHAR
+                || typeTag == ColumnType.IPv4
+                || typeTag == ColumnType.LONG256
+                || typeTag == ColumnType.SYMBOL;
     }
 
     private void setBindVariableAsChar(
@@ -2283,6 +2449,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         clearState();
         stateParseExecuted = false;
         outResendCursorRecord = false;
+        outResendRecordHeader = true;
+        outResendColumnIndex = 0;
         sqlReturnRowCountLimit = 0;
         sqlReturnRowCountToBeSent = 0;
         parameterValueArenaHi = parameterValueArenaPtr;
