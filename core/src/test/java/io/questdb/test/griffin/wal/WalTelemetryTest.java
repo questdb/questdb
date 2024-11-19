@@ -47,7 +47,7 @@ public class WalTelemetryTest extends AbstractCairoTest {
             setCurrentMicros(1000);
             try (TelemetryJob telemetryJob = new TelemetryJob(engine)) {
                 String tableName = testName.getMethodName();
-                compile("create table " + tableName + " as (" +
+                execute("create table " + tableName + " as (" +
                         "select x, " +
                         " rnd_symbol('AB', 'BC', 'CD') sym, " +
                         " timestamp_sequence('2022-02-24', 1000000L) ts, " +
@@ -56,7 +56,7 @@ public class WalTelemetryTest extends AbstractCairoTest {
                         ") timestamp(ts) partition by DAY WAL");
 
                 setCurrentMicros(2000);
-                insert("insert into " + tableName +
+                execute("insert into " + tableName +
                         " values (101, 'dfd', '2022-02-24T01', 'asd')");
 
                 setCurrentMicros(3000);

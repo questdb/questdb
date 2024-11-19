@@ -108,7 +108,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                         }
                     }
 
-                    ddl("cancel query " + queryId, adminUserContext1);
+                    execute("cancel query " + queryId, adminUserContext1);
                 }
 
             } finally {
@@ -124,7 +124,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     public void testAdminUserCanNotCancelQueriesNotInRegistry() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                ddl("cancel query 123456789", adminUserContext1);
+                execute("cancel query 123456789", adminUserContext1);
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getMessage(), "query to cancel not found in registry [id=123456789]");
@@ -204,7 +204,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                             false
                     );
 
-                    ddl("cancel query " + queryId, adminUserContext2);
+                    execute("cancel query " + queryId, adminUserContext2);
                 }
             } finally {
                 stopped.await();

@@ -36,12 +36,12 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testExcept() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events2 (contact symbol, groupid symbol, eventid string)");
-            insert("insert into events2 values ('amy', 'grp1', 'flash')");
-            insert("insert into events2 values ('joey', 'grp2', 'sit')");
-            insert("insert into events2 values ('stewy', 'grp1', 'stand')");
-            insert("insert into events2 values ('bobby', 'grp1', 'flash')");
-            insert("insert into events2 values ('stewy', 'grp1', 'flash')");
+            execute("create table events2 (contact symbol, groupid symbol, eventid string)");
+            execute("insert into events2 values ('amy', 'grp1', 'flash')");
+            execute("insert into events2 values ('joey', 'grp2', 'sit')");
+            execute("insert into events2 values ('stewy', 'grp1', 'stand')");
+            execute("insert into events2 values ('bobby', 'grp1', 'flash')");
+            execute("insert into events2 values ('stewy', 'grp1', 'flash')");
 
             assertQueryNoLeakCheck(
                     "groupid\tcontact\n" +
@@ -82,19 +82,19 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testExceptSymbolsDifferentTables() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid symbol, eventid string)");
-            insert("insert into events1 values ('1', 'grp1', 'flash')");
-            insert("insert into events1 values ('2', 'grp1', 'stand')");
-            insert("insert into events1 values ('3', 'grp1', 'flash')");
-            insert("insert into events1 values ('4', 'grp1', 'flash')");
-            insert("insert into events1 values ('5', 'grp2', 'sit')");
+            execute("create table events1 (contact symbol, groupid symbol, eventid string)");
+            execute("insert into events1 values ('1', 'grp1', 'flash')");
+            execute("insert into events1 values ('2', 'grp1', 'stand')");
+            execute("insert into events1 values ('3', 'grp1', 'flash')");
+            execute("insert into events1 values ('4', 'grp1', 'flash')");
+            execute("insert into events1 values ('5', 'grp2', 'sit')");
 
-            ddl("create table events2 (contact symbol, groupid symbol, eventid string)");
-            insert("insert into events2 values ('5', 'grp2', 'sit')");
-            insert("insert into events2 values ('4', 'grp1', 'flash')");
-            insert("insert into events2 values ('3', 'grp1', 'flash')");
-            insert("insert into events2 values ('2', 'grp1', 'stand')");
-            insert("insert into events2 values ('1', 'grp1', 'flash')");
+            execute("create table events2 (contact symbol, groupid symbol, eventid string)");
+            execute("insert into events2 values ('5', 'grp2', 'sit')");
+            execute("insert into events2 values ('4', 'grp1', 'flash')");
+            execute("insert into events2 values ('3', 'grp1', 'flash')");
+            execute("insert into events2 values ('2', 'grp1', 'stand')");
+            execute("insert into events2 values ('1', 'grp1', 'flash')");
 
             assertQueryNoLeakCheck(
                     "contact\teventid\n" +
@@ -116,7 +116,7 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testFilteredUnionAll() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE', NULL) t, " +
@@ -124,7 +124,7 @@ public class UnionTest extends AbstractCairoTest {
                             " FROM long_sequence(20) x)"
             );
 
-            ddl(
+            execute(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('BUS', 'BIKE', NULL) t, " +
@@ -148,12 +148,12 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testIntersect() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events2 (contact symbol, groupid symbol, eventid string)");
-            insert("insert into events2 values ('amy', 'grp1', 'flash')");
-            insert("insert into events2 values ('joey', 'grp2', 'sit')");
-            insert("insert into events2 values ('stewy', 'grp1', 'stand')");
-            insert("insert into events2 values ('bobby', 'grp1', 'flash')");
-            insert("insert into events2 values ('stewy', 'grp1', 'flash')");
+            execute("create table events2 (contact symbol, groupid symbol, eventid string)");
+            execute("insert into events2 values ('amy', 'grp1', 'flash')");
+            execute("insert into events2 values ('joey', 'grp2', 'sit')");
+            execute("insert into events2 values ('stewy', 'grp1', 'stand')");
+            execute("insert into events2 values ('bobby', 'grp1', 'flash')");
+            execute("insert into events2 values ('stewy', 'grp1', 'flash')");
 
             assertQueryNoLeakCheck(
                     "groupid\tcontact\n" +
@@ -429,7 +429,7 @@ public class UnionTest extends AbstractCairoTest {
                 "select * from (select 2 from t #CLAUSE2# ) ";
 
         assertMemoryLeak(() -> {
-            ddl("create table t as (select x, 's' || x from long_sequence(1) )");
+            execute("create table t as (select x, 's' || x from long_sequence(1) )");
 
             for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
                 for (int i = 0; i <= 2; i++) {
@@ -458,7 +458,7 @@ public class UnionTest extends AbstractCairoTest {
                 "#SET# " +
                 "select 2 from t ";
 
-        assertMemoryLeak(() -> ddl("create table t as (select x, 's' || x from long_sequence(1))"));
+        assertMemoryLeak(() -> execute("create table t as (select x, 's' || x from long_sequence(1))"));
 
         for (String setOperation : Arrays.asList("union    ", "union all", "intersect", "except   ")) {
             for (int i = 0; i <= 1; i++) {
@@ -551,7 +551,7 @@ public class UnionTest extends AbstractCairoTest {
                     "-772867311\tfalse\tQ\t0.7653255982993546\tnull\t681\t2015-05-07T02:45:07.603Z\t\t4794469881975683047\t1970-01-01T02:30:00.000000Z\t31\t00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
                     "00000010 a0 dd\tVTNPIW\t0x2d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe19b2faa4e8255a0d\tP\n";
 
-            ddl("create table x as " +
+            execute("create table x as " +
                     "(" +
                     "select" +
                     " rnd_int() a," +
@@ -580,7 +580,7 @@ public class UnionTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl("create table y as " +
+            execute("create table y as " +
                     "(" +
                     "select" +
                     " rnd_int() a," +
@@ -658,7 +658,7 @@ public class UnionTest extends AbstractCairoTest {
                     "SCOOTER\n" +
                     "VAN\n";
 
-            ddl(
+            execute(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
@@ -671,7 +671,7 @@ public class UnionTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl(
+            execute(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
@@ -722,7 +722,7 @@ public class UnionTest extends AbstractCairoTest {
                     "MOTORBIKE\n" +
                     "HELICOPTER\n";
 
-            ddl(
+            execute(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
@@ -735,14 +735,14 @@ public class UnionTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl(
+            execute(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
                             " FROM long_sequence(7) x)"
             ); // produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
-            ddl(
+            execute(
                     "CREATE TABLE z as " +
                             "(SELECT " +
                             " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
@@ -768,21 +768,21 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testUnionAllOfSymbolOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
                             " FROM long_sequence(7) x)"
             );
 
-            ddl(
+            execute(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
                             " FROM long_sequence(7) x)"
             );
 
-            ddl(
+            execute(
                     "CREATE TABLE z as " +
                             "(SELECT " +
                             " rnd_symbol('BUS', NULL) t " +
@@ -896,7 +896,7 @@ public class UnionTest extends AbstractCairoTest {
                     "VAN\n" +
                     "VAN\n";
 
-            ddl(
+            execute(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'PLANE') t " +
@@ -905,14 +905,14 @@ public class UnionTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl(
+            execute(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'BICYCLE', 'SCOOTER') t " +
                             " FROM long_sequence(7) x)"
             ); // produces PLANE PLANE BICYCLE SCOOTER SCOOTER SCOOTER SCOOTER
 
-            ddl(
+            execute(
                     "CREATE TABLE z as " +
                             "(SELECT " +
                             " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
@@ -998,7 +998,7 @@ public class UnionTest extends AbstractCairoTest {
                     "1996219179\ttrue\tZ\t0.7022152611814457\t0.3258\t410\t2015-10-24T06:25:39.828Z\t\t-8698821645604291033\t1970-01-01T00:33:20.000000Z\t25\t00000000 2a 42 71 a3 7a 58 e5 78 b8 1c d6 fc\tGZTOY\t0x6eb1dd50a390ca7e2c60ac400987268c77962e845080f34354377431fb8f0a1d\tS\n" +
                     "1403475204\tfalse\tR\t0.981074259037815\t0.9892\t483\t2015-05-09T04:42:23.511Z\t\t-4912776313422450773\t1970-01-01T00:50:00.000000Z\t48\t\tFCYQWPKLHTIIGQ\t0xb58ffdb93190ab917fb4298ae30f186b48c87eff38ac95a63fbc031330b2396e\tD\n";
 
-            ddl("create table x as " +
+            execute("create table x as " +
                     "(" +
                     "select" +
                     " rnd_int() a," +
@@ -1027,7 +1027,7 @@ public class UnionTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl("create table y as " +
+            execute("create table y as " +
                     "(" +
                     "select" +
                     " rnd_int() a," +
@@ -1050,7 +1050,7 @@ public class UnionTest extends AbstractCairoTest {
             );
 
 
-            ddl("create table z as " +
+            execute("create table z as " +
                     "(" +
                     "select" +
                     " rnd_int() a," +
@@ -1143,7 +1143,7 @@ public class UnionTest extends AbstractCairoTest {
                     "-1604872342\ttrue\tF\t0.9674352881185491\t0.3088\t643\t2015-12-07T03:56:58.742Z\tHYRX\t-6544713176186588811\t1970-01-01T06:06:40.000000Z\t35\t00000000 87 88 45 b9 9d 20 13 51 c0 e0 b7\tSNSXH\t0x5ae63bdf09a84e32bac4484bdeec40e887ec84d0151017668c17a681e308fd4d\tE\n" +
                     "172654235\tfalse\tM\tnull\t0.8643\t184\t2015-10-10T03:50:18.267Z\t\t-6196664199248241482\t1970-01-01T06:23:20.000000Z\t50\t00000000 27 66 94 89 db 3c 1a 23 f3 88 83 73\tGJBFQ\t0xcfd0f01a76fbe32b8e7fd4a84ba9813349e5a0f99d31a104a75dd7280fc9b66b\tI\n";
 
-            ddl("create table x as " +
+            execute("create table x as " +
                     "(" +
                     "select" +
                     " rnd_int() a," +
@@ -1172,7 +1172,7 @@ public class UnionTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl("create table y as " +
+            execute("create table y as " +
                     "(" +
                     "select" +
                     " rnd_int() a," +
@@ -1197,7 +1197,7 @@ public class UnionTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl("create table z as " +
+            execute("create table z as " +
                     "(" +
                     "select" +
                     " rnd_int() a," +
@@ -1228,8 +1228,8 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testUnionGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
-            ddl("create table x2 as (select rnd_symbol('c', 'a', 'b') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
+            execute("create table x1 as (select rnd_symbol('b', 'c', 'a') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
+            execute("create table x2 as (select rnd_symbol('c', 'a', 'b') s, rnd_double() val from long_sequence(20))", sqlExecutionContext);
 
             assertQuery("typeof\ts\tsum\n" +
                             "STRING\tb\t9.711630235623893\n" +
@@ -1246,12 +1246,12 @@ public class UnionTest extends AbstractCairoTest {
     @Test
     public void testUnionSymbolAndString() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table table1 as \n" +
+            execute("create table table1 as \n" +
                     "(\n" +
                     "  select cast(x as symbol) as sym1 \n" +
                     "  from long_sequence(3)\n" +
                     ")");
-            compile("create table table3 as \n" +
+            execute("create table table3 as \n" +
                     "(\n" +
                     "  select cast(x+2 as string) as str3\n" +
                     "  from long_sequence(3)\n" +

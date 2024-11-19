@@ -26,11 +26,12 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.ops.AlterOperation.*;
 
-public class AlterOperationBuilder {
+public class AlterOperationBuilder implements Mutable {
     private final LongList extraInfo = new LongList();
     private final ObjList<CharSequence> extraStrInfo = new ObjList<>();
     private final AlterOperation op;
@@ -75,6 +76,7 @@ public class AlterOperationBuilder {
         return op.of(command, tableToken, tableId, tableNamePosition);
     }
 
+    @Override
     public void clear() {
         op.clear();
         extraStrInfo.clear();

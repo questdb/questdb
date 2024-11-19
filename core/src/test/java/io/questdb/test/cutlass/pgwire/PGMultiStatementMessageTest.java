@@ -1400,19 +1400,19 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testRestartDueToStaleCompilationDoesNotDuplicate() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, Integer.MAX_VALUE - 1);
-            engine.ddl("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
+            engine.execute("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
 
             CyclicBarrier barrier = new CyclicBarrier(2);
             long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
             new Thread(() -> {
                 try {
                     while (System.nanoTime() < deadlineNanos && barrier.getNumberWaiting() == 0) {
-                        engine.ddl("alter table x add column distraction int", sqlExecutionContext);
+                        engine.execute("alter table x add column distraction int", sqlExecutionContext);
                         Os.sleep(1); // give compiler a chance to compile and execute
                         if (barrier.getNumberWaiting() != 0) {
                             break;
                         }
-                        engine.ddl("alter table x drop column distraction", sqlExecutionContext);
+                        engine.execute("alter table x drop column distraction", sqlExecutionContext);
                         Os.sleep(1);
                     }
                 } catch (SqlException e) {
@@ -1694,9 +1694,22 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    public void testShowTableInBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            engine.execute("create table test (i int);", sqlExecutionContext);
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+
+                boolean hasResult = statement.execute("SHOW TABLES; SELECT '15';");
+                assertResults(statement, hasResult, data(row("test")), data(row(15L)));
+            }
+        });
+    }
+
+    @Test
     public void testShowTablesThenSelect() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            engine.ddl("create table test (i int);", sqlExecutionContext);
+            engine.execute("create table test (i int);", sqlExecutionContext);
             Statement statement = connection.createStatement();
 
             boolean hasResult = statement.execute("SHOW TABLES; SELECT '15';");

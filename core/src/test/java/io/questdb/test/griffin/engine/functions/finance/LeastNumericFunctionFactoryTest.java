@@ -94,7 +94,7 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
     @Test
     public void testLeastNumericFunctionFactoryWithData() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
+            execute("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
             drainWalQueue();
             assertSqlWithTypes("least\n" +
                     "-1148479920:INT\n" +

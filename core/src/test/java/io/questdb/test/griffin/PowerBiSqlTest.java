@@ -30,8 +30,17 @@ import org.junit.Test;
 
 public class PowerBiSqlTest extends AbstractCairoTest {
     @Test
+    public void testCharSet() throws SqlException {
+        assertSql(
+                "character_set_name\n" +
+                        "UTF8\n",
+                "select character_set_name from INFORMATION_SCHEMA.character_sets"
+        );
+    }
+
+    @Test
     public void testCheckConstraints1() throws SqlException {
-        ddl("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
+        execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
         assertSql("PK_COLUMN_NAME\tFK_TABLE_SCHEMA\tFK_TABLE_NAME\tFK_COLUMN_NAME\tORDINAL\tFK_NAME\n",
                 "select\n" +
                         "    pkcol.COLUMN_NAME as PK_COLUMN_NAME,\n" +
@@ -57,7 +66,7 @@ public class PowerBiSqlTest extends AbstractCairoTest {
 
     @Test
     public void testCheckConstraints2() throws SqlException {
-        ddl("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
+        execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
         assertSql(
                 "INDEX_NAME\tCOLUMN_NAME\tORDINAL_POSITION\tPRIMARY_KEY\n",
                 "select i.CONSTRAINT_SCHEMA || '_' || i.CONSTRAINT_NAME as INDEX_NAME, ii.COLUMN_NAME, ii.ORDINAL_POSITION, case when i.CONSTRAINT_TYPE = 'PRIMARY KEY' then 'Y' else 'N' end as PRIMARY_KEY\n" +
@@ -69,8 +78,20 @@ public class PowerBiSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEnum() throws SqlException {
+        assertSql(
+                "oid\tenumlabel\n",
+                "/*** Load enum fields ***/\n" +
+                        "SELECT pg_type.oid, enumlabel\n" +
+                        "FROM pg_enum\n" +
+                        "JOIN pg_type ON pg_type.oid=enumtypid\n" +
+                        "ORDER BY oid, enumsortorder"
+        );
+    }
+
+    @Test
     public void testParanoidTableSelect() throws SqlException {
-        ddl("create table trades as (select rnd_int() a, rnd_double() b, 0::timestamp t from long_sequence(10)) timestamp(t) partition by hour");
+        execute("create table trades as (select rnd_int() a, rnd_double() b, 0::timestamp t from long_sequence(10)) timestamp(t) partition by hour");
         assertSql(
                 "a\tb\tt\n" +
                         "-1148479920\t0.8043224099968393\t1970-01-01T00:00:00.000000Z\n" +
@@ -91,48 +112,8 @@ public class PowerBiSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTableColumns() throws SqlException {
-        ddl("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
-        assertSql(
-                "COLUMN_NAME\tORDINAL_POSITION\tIS_NULLABLE\tDATA_TYPE\n" +
-                        "a\t0\tyes\tINT\n" +
-                        "b\t1\tyes\tDOUBLE\n" +
-                        "t\t2\tyes\tTIMESTAMP\n",
-                "select COLUMN_NAME, ORDINAL_POSITION, IS_NULLABLE, case when (data_type like '%unsigned%') then DATA_TYPE || ' unsigned' else DATA_TYPE end as DATA_TYPE\n" +
-                        "from INFORMATION_SCHEMA.columns\n" +
-                        "where TABLE_SCHEMA = 'public' and TABLE_NAME = 'trades'\n" +
-                        "order by TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION"
-        );
-    }
-
-    @Test
-    public void testTableListing() throws SqlException {
-        ddl("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
-        assertSql(
-                "TABLE_SCHEMA\tTABLE_NAME\tTABLE_TYPE\n" +
-                        "public\ttrades\tBASE TABLE\n",
-                "select TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE\n" +
-                        "from INFORMATION_SCHEMA.tables\n" +
-                        "where TABLE_SCHEMA not in ('information_schema', 'pg_catalog')\n" +
-                        "order by TABLE_SCHEMA, TABLE_NAME"
-        );
-    }
-
-    @Test
-    public void testEnum() throws SqlException {
-        assertSql(
-                "oid\tenumlabel\n",
-                "/*** Load enum fields ***/\n" +
-                        "SELECT pg_type.oid, enumlabel\n" +
-                        "FROM pg_enum\n" +
-                        "JOIN pg_type ON pg_type.oid=enumtypid\n" +
-                        "ORDER BY oid, enumsortorder"
-        );
-    }
-
-    @Test
     public void testSelectParanoidEnvelope() throws SqlException {
-        ddl("create table trades as (select rnd_int() a, rnd_double() b, 0::timestamp t from long_sequence(10)) timestamp(t) partition by hour");
+        execute("create table trades as (select rnd_int() a, rnd_double() b, 0::timestamp t from long_sequence(10)) timestamp(t) partition by hour");
         assertSql(
                 "a\tb\tt\n" +
                         "-1148479920\t0.8043224099968393\t1970-01-01T00:00:00.000000Z\n" +
@@ -157,11 +138,30 @@ public class PowerBiSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCharSet() throws SqlException {
+    public void testTableColumns() throws SqlException {
+        execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
         assertSql(
-                "character_set_name\n" +
-                        "UTF8\n",
-                "select character_set_name from INFORMATION_SCHEMA.character_sets"
+                "COLUMN_NAME\tORDINAL_POSITION\tIS_NULLABLE\tDATA_TYPE\n" +
+                        "a\t0\tyes\tINT\n" +
+                        "b\t1\tyes\tDOUBLE\n" +
+                        "t\t2\tyes\tTIMESTAMP\n",
+                "select COLUMN_NAME, ORDINAL_POSITION, IS_NULLABLE, case when (data_type like '%unsigned%') then DATA_TYPE || ' unsigned' else DATA_TYPE end as DATA_TYPE\n" +
+                        "from INFORMATION_SCHEMA.columns\n" +
+                        "where TABLE_SCHEMA = 'public' and TABLE_NAME = 'trades'\n" +
+                        "order by TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION"
+        );
+    }
+
+    @Test
+    public void testTableListing() throws SqlException {
+        execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
+        assertSql(
+                "TABLE_SCHEMA\tTABLE_NAME\tTABLE_TYPE\n" +
+                        "public\ttrades\tBASE TABLE\n",
+                "select TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE\n" +
+                        "from INFORMATION_SCHEMA.tables\n" +
+                        "where TABLE_SCHEMA not in ('information_schema', 'pg_catalog')\n" +
+                        "order by TABLE_SCHEMA, TABLE_NAME"
         );
     }
 }

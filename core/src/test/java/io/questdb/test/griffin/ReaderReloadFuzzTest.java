@@ -99,7 +99,7 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
             String tableName = testName.getMethodName();
             TableToken tableToken = fuzzer.createInitialTable(tableName, true, 100);
 
-            insert("insert into " + tableName + " (ts) values ('2000-01-01')");
+            execute("insert into " + tableName + " (ts) values ('2000-01-01')");
             drainWalQueue();
 
             try (TableReader reader = engine.getReader(tableToken)) {

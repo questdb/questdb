@@ -109,7 +109,7 @@ public class DataGripTest extends AbstractCairoTest {
     @Test
     public void testLowerCaseCount() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table y as (select x from long_sequence(10))");
+            execute("create table y as (select x from long_sequence(10))");
             assertSql(
                     "count\n" +
                             "10\n", "select COUNT(*) from y"
@@ -179,7 +179,7 @@ public class DataGripTest extends AbstractCairoTest {
     @Test
     public void testUpperCaseCount() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table y as (select x from long_sequence(10))");
+            execute("create table y as (select x from long_sequence(10))");
             assertSql(
                     "count\n" +
                             "10\n", "select COUNT(*) from y"

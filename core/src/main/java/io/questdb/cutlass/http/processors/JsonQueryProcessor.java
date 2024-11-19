@@ -52,6 +52,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlTimeoutException;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -133,9 +134,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
             this.queryExecutors.extendAndSet(CompiledQuery.SET, sendConfirmation);
-            this.queryExecutors.extendAndSet(CompiledQuery.DROP, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.DROP, this::executeDdl);
             this.queryExecutors.extendAndSet(CompiledQuery.PSEUDO_SELECT, this::executePseudoSelect);
-            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE, this::executeDdl);
             this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.COPY_REMOTE, JsonQueryProcessor::cannotCopyRemote);
             this.queryExecutors.extendAndSet(CompiledQuery.RENAME_TABLE, sendConfirmation);
@@ -146,7 +147,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             this.queryExecutors.extendAndSet(CompiledQuery.BEGIN, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.COMMIT, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ROLLBACK, sendConfirmation);
-            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE_AS_SELECT, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE_AS_SELECT, this::executeDdl);
             this.queryExecutors.extendAndSet(CompiledQuery.CHECKPOINT_CREATE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.CHECKPOINT_RELEASE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.DEALLOCATE, sendConfirmation);
@@ -579,6 +580,27 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         sendConfirmation(state, keepAliveHeader);
     }
 
+    private void executeDdl(
+            JsonQueryProcessorState state,
+            CompiledQuery cq,
+            CharSequence keepAliveHeader
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, SqlException {
+        Operation op = cq.getOperation();
+        try (OperationFuture fut = op.execute(sqlExecutionContext, state.getEventSubSequence())) {
+            int waitResult = fut.await(getAsyncWriterStartTimeout(state));
+            if (waitResult != OperationFuture.QUERY_COMPLETE) {
+                state.setOperation(op);
+                // clear operation to report to avoid closing it
+                op = null;
+                throw EntryUnavailableException.instance("retry alter table wait");
+            }
+        } finally {
+            Misc.free(op);
+        }
+        metrics.jsonQuery().markComplete();
+        sendConfirmation(state, keepAliveHeader);
+    }
+
     private void executeCachedSelect(JsonQueryProcessorState state, RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
         state.setCompilerNanos(0);
         sqlExecutionContext.setCacheHit(true);
@@ -808,7 +830,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             long timeout = state.getStatementTimeout() > 0 ? state.getStatementTimeout() : asyncCommandTimeout;
             if (state.getExecutionTimeNanos() / 1_000_000L < timeout) {
                 // Schedule a retry
-                state.info().$("waiting for update query [instance=").$(fut.getInstanceId()).I$();
                 throw EntryUnavailableException.instance("wait for update query");
             } else {
                 state.freeAsyncOperation();

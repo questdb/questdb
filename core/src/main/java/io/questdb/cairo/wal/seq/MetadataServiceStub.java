@@ -77,11 +77,6 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default long getMetaO3MaxLag() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     default int getPartitionBy() {
         throw new UnsupportedOperationException();
     }

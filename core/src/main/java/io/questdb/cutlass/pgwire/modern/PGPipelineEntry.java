@@ -54,6 +54,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
@@ -540,10 +541,23 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 case CompiledQuery.ROLLBACK:
                     rollback(pendingWriters);
                     return IMPLICIT_TRANSACTION;
+
+                // todo - merging from master in progress
+//                case CompiledQuery.CREATE_TABLE:
+//                    // fall-through
+//                case CompiledQuery.DROP:
+//                    try (
+//                            Operation op = cq.getOperation();
+//                            OperationFuture fut = op.execute(sqlExecutionContext, tempSequence)
+//                    ) {
+//                        fut.await();
+//                    }
+//                    queryTag = TAG_OK;
+//                    break;
                 default:
                     // execute DDL that has not been parse-executed
                     if (!empty) {
-                        engine.ddl(sqlText, sqlExecutionContext);
+                        engine.execute(sqlText, sqlExecutionContext);
                     }
                     break;
             }
@@ -2339,9 +2353,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlType = cq.getType();
         switch (sqlType) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                sqlTag = TAG_OK;
                 sqlAffectedRowCount = cq.getAffectedRowsCount();
-                stateParseExecuted = true;
+                // fall-through
+            case CompiledQuery.DROP:
+                // fall-through
+            case CompiledQuery.CREATE_TABLE:
+                sqlTag = TAG_OK;
                 break;
             case CompiledQuery.EXPLAIN:
                 this.sqlTag = TAG_EXPLAIN;
@@ -2428,7 +2445,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 compiledQuery.withSqlText(cq.getSqlText());
                 sqlTag = TAG_OK;
                 break;
-            // fall through
             default:
                 // DDL
                 sqlTag = TAG_OK;
