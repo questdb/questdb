@@ -42,9 +42,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 
 public class TimestampAddFunctionFactory implements FunctionFactory {
 
-    private static final ObjList<LongAddIntFunction> addFunctions = new ObjList<>();
-    private static final int addFunctionsMax;
-
     @Override
     public String getSignature() {
         return "dateadd(AIN)";
@@ -60,20 +57,43 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         int stride;
 
         if (periodFunc.isConstant()) {
-            if ((period = periodFunc.getChar(null)) < addFunctionsMax && (periodAddFunc = addFunctions.getQuick(period)) != null) {
-                if (strideFunc.isConstant()) {
-                    if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
-                        return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc);
-                    } else {
-                        throw SqlException.$(argPositions.getQuick(1), "`null` is not a valid stride");
-                    }
+            period = periodFunc.getChar(null);
+            periodAddFunc = lookupAddFunction(period, argPositions.getQuick(0));
+            if (strideFunc.isConstant()) {
+                if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
+                    return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc);
+                } else {
+                    throw SqlException.$(argPositions.getQuick(1), "`null` is not a valid stride");
                 }
-                return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc);
-            } else {
-                throw SqlException.$(argPositions.getQuick(0), "invalid time period unit '" + period + "'");
             }
+            return new TimestampAddConstVarVar(period, periodAddFunc, strideFunc, timestampFunc);
         }
         return new TimestampAddFunc(periodFunc, strideFunc, timestampFunc);
+    }
+
+    private LongAddIntFunction lookupAddFunction(char period, int periodPos) throws SqlException {
+        switch (period) {
+            case 'u':
+                return Timestamps::addMicros;
+            case 'T':
+                return Timestamps::addMillis;
+            case 's':
+                return Timestamps::addSeconds;
+            case 'm':
+                return Timestamps::addMinutes;
+            case 'h':
+                return Timestamps::addHours;
+            case 'd':
+                return Timestamps::addDays;
+            case 'w':
+                return Timestamps::addWeeks;
+            case 'M':
+                return Timestamps::addMonths;
+            case 'y':
+                return Timestamps::addYears;
+            default:
+                throw SqlException.$(periodPos, "invalid time period unit '").put(period).put("'");
+        }
     }
 
     @FunctionalInterface
@@ -199,18 +219,5 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         public void toPlan(PlanSink sink) {
             sink.val("dateadd('").val(periodFunc).val("',").val(strideFunc).val(',').val(timestampFunc).val(')');
         }
-    }
-
-    static {
-        addFunctions.extendAndSet('u', Timestamps::addMicros);
-        addFunctions.extendAndSet('T', Timestamps::addMillis);
-        addFunctions.extendAndSet('s', Timestamps::addSeconds);
-        addFunctions.extendAndSet('m', Timestamps::addMinutes);
-        addFunctions.extendAndSet('h', Timestamps::addHours);
-        addFunctions.extendAndSet('d', Timestamps::addDays);
-        addFunctions.extendAndSet('w', Timestamps::addWeeks);
-        addFunctions.extendAndSet('M', Timestamps::addMonths);
-        addFunctions.extendAndSet('y', Timestamps::addYears);
-        addFunctionsMax = addFunctions.size();
     }
 }
