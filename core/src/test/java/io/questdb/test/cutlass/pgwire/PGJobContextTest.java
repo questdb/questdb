@@ -9764,7 +9764,6 @@ create table tab as (
                 }
             }
 
-
             // NOT IN
             try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts not in ?")) {
                 sink.clear();
@@ -10011,7 +10010,7 @@ create table tab as (
     }
 
     @Test
-    public void testSmallSendBufferBigColumnValueNotEnoughSpace() throws Exception {
+    public void testSmallSendBufferBigColumnValueNotEnoughSpace1() throws Exception {
         sendBufferSize = 256 + bufferSizeRnd.nextInt(256);
 
         // varchar, string, binary
@@ -10043,6 +10042,74 @@ create table tab as (
                     }
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "not enough space in send buffer");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSmallSendBufferBigColumnValueNotEnoughSpace2() throws Exception {
+        // Here we test user-friendly error messages which are only present in the modern PGWire.
+        Assume.assumeFalse(legacyMode);
+        Assume.assumeFalse(walEnabled);
+
+        recvBufferSize = 1024;
+        sendBufferSize = 512;
+        final int varcharSize = 600;
+
+        final String ddl = "create table x as (" +
+                "select " +
+                "  rnd_boolean() f1," +
+                "  rnd_byte(1,10) f2," +
+                "  rnd_short(1,10) f3," +
+                "  rnd_char() f4," +
+                "  rnd_int(1,10,2) f5," +
+                "  rnd_long(1,10,2) f6," +
+                "  rnd_float(2) f7," +
+                "  rnd_double(2) f8," +
+                "  rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) f9," +
+                "  to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 f10," +
+                "  rnd_uuid4(2) f11," +
+                "  rnd_geohash(4) f12," +
+                "  rnd_geohash(8) f13," +
+                "  rnd_geohash(16) f14," +
+                "  rnd_geohash(32) f15," +
+                "  rnd_ipv4() f16," +
+                "  rnd_long256() f17," +
+                "  rnd_symbol(4,4,4,2) f18," +
+                "  rnd_str(10,10,0) f19," +
+                "  rnd_bin(16,16,0) f20," +
+                "  rnd_varchar(" + varcharSize + "," + varcharSize + ",2) f21," +
+                "  timestamp_sequence(500000000000L,100000000L) ts " +
+                "from long_sequence(1)" +
+                ") timestamp (ts) partition by DAY";
+
+        // We need to be in full control of binary/text format since the buffer size depends on that,
+        // so we run just a few combinations.
+        assertWithPgServer(Mode.SIMPLE, false, -1, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate(ddl);
+
+                try (PreparedStatement stmt = connection.prepareStatement("x")) {
+                    try (ResultSet ignore = stmt.executeQuery()) {
+                        Assert.fail("exception expected");
+                    }
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1782]");
+                }
+            }
+        });
+
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate(ddl);
+
+                try (PreparedStatement stmt = connection.prepareStatement("x")) {
+                    try (ResultSet ignore = stmt.executeQuery()) {
+                        Assert.fail("exception expected");
+                    }
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1629]");
                 }
             }
         });

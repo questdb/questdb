@@ -1290,7 +1290,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                         responseUtf8Sink.reset();
                         pipelineCurrentEntry.getErrorMessageSink()
                                 .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize())
-                                .put(", requiredSize=").put(e.getBytesRequired())
+                                .put(", requiredSize=").put(Math.max(e.getBytesRequired(), responseUtf8Sink.getSendBufferSize() + 1))
                                 .put(']');
                         pipelineCurrentEntry.msgSync(
                                 sqlExecutionContext,
@@ -1516,7 +1516,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     }
 
     private class ResponseUtf8Sink implements PGResponseSink, Mutable {
-
         private long bookmarkPtr = -1;
 
         public ResponseUtf8Sink() {
@@ -1558,6 +1557,11 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         @Override
         public long getSendBufferSize() {
             return sendBufferSize;
+        }
+
+        @Override
+        public long getWrittenBytes() {
+            return sendBufferPtr - sendBuffer;
         }
 
         @Override

@@ -30,9 +30,20 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.str.Utf8Sink;
 
 public interface PGResponseSink extends Utf8Sink {
+
     void bookmark();
 
     void bump(int size);
+
+    void checkCapacity(long size);
+
+    long getMaxBlobSize();
+
+    long getSendBufferPtr();
+
+    long getSendBufferSize();
+
+    long getWrittenBytes();
 
     void put(BinarySequence sequence);
 
@@ -56,23 +67,15 @@ public interface PGResponseSink extends Utf8Sink {
 
     void putZ(CharSequence value);
 
-    void resetToBookmark();
-
-    long getSendBufferPtr();
-
-    long skipInt();
-
-    void checkCapacity(long size);
-
     void reset();
 
-    void setNullValue();
+    void resetToBookmark();
+
+    void resetToBookmark(long address);
 
     int sendBufferAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException;
 
-    long getSendBufferSize();
+    void setNullValue();
 
-    long getMaxBlobSize();
-
-    void resetToBookmark(long address);
+    long skipInt();
 }

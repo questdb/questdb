@@ -2073,6 +2073,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             if (isTextFormat()) {
                 assert messageLengthAddress > 0;
                 resetIncompleteRecord(utf8Sink, messageLengthAddress);
+                if (utf8Sink.getWrittenBytes() == 0) {
+                    // We had nothing but the record in the send buffer,
+                    // so we can estimate the required size to be reported to the user.
+                    final long estimatedSize = estimateRecordSize(record, columnCount);
+                    e.setBytesRequired(estimatedSize);
+                }
             } else {
                 utf8Sink.resetToBookmark();
                 if (isMsgLengthRequired) {
@@ -2092,10 +2098,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             outResendRecordHeader = false;
                         } else {
                             resetIncompleteRecord(utf8Sink, messageLengthAddress);
-                            // Estimate the required size to be reported to the user.
-                            // TODO(puzpuzpuz): skip when possible
-                            final long estimatedSize = estimateRecordSize(record, columnCount);
-                            e.setBytesRequired(estimatedSize);
+                            if (utf8Sink.getWrittenBytes() == 0) {
+                                // We had nothing but the record in the send buffer,
+                                // so we can estimate the required size to be reported to the user.
+                                final long estimatedSize = estimateRecordSize(record, columnCount);
+                                e.setBytesRequired(estimatedSize);
+                            }
                         }
                     } catch (BadProtocolException bpe) {
                         // we have binary data blob size > maxBlobSize

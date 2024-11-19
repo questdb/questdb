@@ -110,6 +110,14 @@ class PGUtils {
             case ColumnType.LONG256:
                 final Long256 long256Value = record.getLong256A(columnIndex);
                 return Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Numbers.hexDigitsLong256(long256Value);
+            case ColumnType.GEOBYTE:
+                return geoHashBytes(record.getGeoByte(columnIndex), bitFlags);
+            case ColumnType.GEOSHORT:
+                return geoHashBytes(record.getGeoShort(columnIndex), bitFlags);
+            case ColumnType.GEOINT:
+                return geoHashBytes(record.getGeoInt(columnIndex), bitFlags);
+            case ColumnType.GEOLONG:
+                return geoHashBytes(record.getGeoLong(columnIndex), bitFlags);
             case ColumnType.VARCHAR:
                 final Utf8Sequence vcValue = record.getVarcharA(columnIndex);
                 return vcValue == null ? Integer.BYTES : Integer.BYTES + vcValue.size();
@@ -135,14 +143,6 @@ class PGUtils {
                                 .put(']');
                     }
                 }
-            case ColumnType.GEOBYTE:
-                return geoHashBytes(record.getGeoByte(columnIndex), bitFlags);
-            case ColumnType.GEOSHORT:
-                return geoHashBytes(record.getGeoShort(columnIndex), bitFlags);
-            case ColumnType.GEOINT:
-                return geoHashBytes(record.getGeoInt(columnIndex), bitFlags);
-            case ColumnType.GEOLONG:
-                return geoHashBytes(record.getGeoLong(columnIndex), bitFlags);
             default:
                 assert false : "unsupported type: " + typeTag;
                 return -1;
@@ -205,7 +205,8 @@ class PGUtils {
                 return strValue == null ? Integer.BYTES : Integer.BYTES + 3L * strValue.length();
             case ColumnType.SYMBOL:
                 final CharSequence symValue = record.getSymA(columnIndex);
-                return symValue == null ? Integer.BYTES : Integer.BYTES + Utf8s.utf8Bytes(symValue);
+                // take rough upper estimate based on the string length
+                return symValue == null ? Integer.BYTES : Integer.BYTES + 3L * symValue.length();
             case ColumnType.BINARY:
                 BinarySequence sequence = record.getBin(columnIndex);
                 return sequence == null ? Integer.BYTES : Integer.BYTES + sequence.length();
