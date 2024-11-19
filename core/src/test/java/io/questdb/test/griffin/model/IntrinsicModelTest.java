@@ -151,7 +151,6 @@ public class IntrinsicModelTest {
     public void testDateCeilYYYYMMDDHmsSU() throws NumericException {
         assertDateCeil("2015-02-28T07:21:44.556012Z", "2015-02-28T07:21:44.556011");
     }
-    //////////////////////////////
 
     @Test
     public void testDateCeilYYYYMMDDNonLeap() throws NumericException {
