@@ -1290,7 +1290,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                         responseUtf8Sink.reset();
                         pipelineCurrentEntry.getErrorMessageSink()
                                 .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize())
-                                .put(", requiredSize=").put(Math.max(e.getBytesRequired(), responseUtf8Sink.getSendBufferSize() + 1))
+                                .put(", requiredSize=").put(Math.max(e.getBytesRequired(), 2 * responseUtf8Sink.getSendBufferSize()))
                                 .put(']');
                         pipelineCurrentEntry.msgSync(
                                 sqlExecutionContext,
