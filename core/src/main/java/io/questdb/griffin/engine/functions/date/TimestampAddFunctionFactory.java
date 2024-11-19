@@ -52,13 +52,11 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         Function periodFunc = args.getQuick(0);
         Function strideFunc = args.getQuick(1);
         Function timestampFunc = args.getQuick(2);
-        LongAddIntFunction periodAddFunc;
-        char period;
         int stride;
 
         if (periodFunc.isConstant()) {
-            period = periodFunc.getChar(null);
-            periodAddFunc = lookupAddFunction(period, argPositions.getQuick(0));
+            char period = periodFunc.getChar(null);
+            LongAddIntFunction periodAddFunc = lookupAddFunction(period, argPositions.getQuick(0));
             if (strideFunc.isConstant()) {
                 if ((stride = strideFunc.getInt(null)) != Numbers.INT_NULL) {
                     return new TimestampAddConstConstVar(period, periodAddFunc, stride, timestampFunc);
