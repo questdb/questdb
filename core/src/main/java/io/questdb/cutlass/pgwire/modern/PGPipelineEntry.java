@@ -873,6 +873,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.stateParse = stateParse;
     }
 
+    private static int geoHashBytes(long value, int bitFlags) {
+        if (value == GeoHashes.NULL) {
+            return Integer.BYTES;
+        } else {
+            assert bitFlags > 0;
+            // chars or bits
+            return Integer.BYTES + bitFlags;
+        }
+    }
+
     private static void outBindComplete(PGResponseSink utf8Sink) {
         outSimpleMsg(utf8Sink, MESSAGE_TYPE_BIND_COMPLETE);
     }
@@ -1009,15 +1019,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // as this would require an expensive serialization to string.
     private boolean canEstimateTextSize(int columnType) {
         final int typeTag = ColumnType.tagOf(columnType);
-        // We could include UUID or IPv4 into the list,
-        // but this would require a special version of getColumnValueSize().
+        // We could include UUID into the list, but this would require a special
+        // version of getColumnValueSize() to estimate rows in text format.
         return ColumnType.isVarSize(typeTag)
+                || ColumnType.isGeoHash(columnType)
+                || typeTag == ColumnType.BOOLEAN
+                || typeTag == ColumnType.CHAR
                 || typeTag == ColumnType.IPv4
                 || typeTag == ColumnType.LONG256
-                || ColumnType.isGeoHash(columnType)
-                || typeTag == ColumnType.SYMBOL
-                || typeTag == ColumnType.CHAR
-                || typeTag == ColumnType.BOOLEAN;
+                || typeTag == ColumnType.SYMBOL;
     }
 
     private void copyOf(PGPipelineEntry blueprint) {
@@ -1208,16 +1218,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 .put(']');
     }
 
-    private static int geoHashBytes(long value, int bitFlags) {
-        if (value == GeoHashes.NULL) {
-            return Integer.BYTES;
-        } else {
-            assert bitFlags > 0;
-            // chars or bits
-            return Integer.BYTES + bitFlags;
-        }
-    }
-
     // Returns the size of the serialized value in bytes,
     // or -1 if the type is not supported (i.e., size cannot be estimated without serialization).
     // throws BadProtocolException if the binary value exceeds maxBlobSize
@@ -1265,7 +1265,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 final long hi = record.getLong128Hi(columnIndex);
                 return Uuid.isNull(lo, hi) ? Integer.BYTES : Integer.BYTES + Long.BYTES * 2;
             case ColumnType.LONG256:
-                // todo: Long256 is text encoded and has variable length
                 final Long256 long256Value = record.getLong256A(columnIndex);
                 return Long256Impl.isNull(long256Value) ? Integer.BYTES : Integer.BYTES + Numbers.hexDigitsLong256(long256Value);
             case ColumnType.VARCHAR:
@@ -1706,17 +1705,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtLong256(PGResponseSink utf8Sink, Record record, int columnIndex) {
-        final Long256 long256Value = record.getLong256A(columnIndex);
-        if (long256Value.getLong0() == Numbers.LONG_NULL && long256Value.getLong1() == Numbers.LONG_NULL && long256Value.getLong2() == Numbers.LONG_NULL && long256Value.getLong3() == Numbers.LONG_NULL) {
-            utf8Sink.setNullValue();
-        } else {
-            final long a = utf8Sink.skipInt();
-            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), utf8Sink);
-            utf8Sink.putLenEx(a);
-        }
-    }
-
     private void outColString(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final CharSequence strValue = record.getStrA(columnIndex);
         if (strValue == null) {
@@ -1843,6 +1831,20 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.putLenEx(a);
         } else {
             utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColTxtLong256(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final Long256 long256Value = record.getLong256A(columnIndex);
+        if (long256Value.getLong0() == Numbers.LONG_NULL
+                && long256Value.getLong1() == Numbers.LONG_NULL
+                && long256Value.getLong2() == Numbers.LONG_NULL
+                && long256Value.getLong3() == Numbers.LONG_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), utf8Sink);
+            utf8Sink.putLenEx(a);
         }
     }
 

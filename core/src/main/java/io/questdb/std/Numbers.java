@@ -34,9 +34,12 @@ import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.Utf8s;import org.jetbrains.annotations.NotNull;
+//#if jdk.version==8
+//$import sun.misc.FDBigInteger;
+//#else
 import jdk.internal.math.FDBigInteger;
-import org.jetbrains.annotations.NotNull;
+//#endif
 
 import java.util.Arrays;
 
@@ -160,12 +163,6 @@ public final class Numbers {
             // ten
             appendInt10(sink, i);
         }
-    }
-
-    public static int hexDigitNumber(long num) {
-        int mag = 63 - Long.numberOfLeadingZeros(num|1);
-        int v = (mag + 3) / 4;
-        return v + (v & 1); // round up to even number of digits 0x123 -> 0x0123
     }
 
     public static void append(CharSink<?> sink, final long value) {
@@ -344,7 +341,7 @@ public final class Numbers {
         }
     }
 
-    public static void appendHex(CharSink<?> sink, final long value, boolean pad) {
+    public static void appendHex(CharSink<?> sink, long value, boolean pad) {
         if (value == Integer.MIN_VALUE) {
             sink.putAscii("NaN");
             return;
@@ -482,47 +479,19 @@ public final class Numbers {
             return;
         }
         sink.putAscii("0x");
-        if (d != 0L) {
+        if (d != 0) {
             appendLong256Four(a, b, c, d, sink);
             return;
         }
-
-        if (c != 0L) {
+        if (c != 0) {
             appendLong256Three(a, b, c, sink);
             return;
         }
-
-        if (b != 0L) {
+        if (b != 0) {
             appendLong256Two(a, b, sink);
             return;
         }
-
         appendHex(sink, a, false);
-    }
-
-    public static int hexDigitsLong256(Long256 long256) {
-       return hexDigitsLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3());
-    }
-
-    public static int hexDigitsLong256(long a, long b, long c, long d) {
-        int digits = 0;
-        digits += hexDigitNumber(d);
-        digits += hexDigitNumber(c);
-        digits += hexDigitNumber(b);
-        digits += hexDigitNumber(a);
-        return digits + 2; // 0x
-    }
-
-    public static int sinkSizeIPv4(int value) {
-        // NULL handling should be done outside
-        int sz = Numbers.sinkSizeInt((value >> 24) & 0xff);
-        sz += 1; // '.'
-        sz += Numbers.sinkSizeInt((value >> 16) & 0xff);
-        sz += 1; // '.'
-        sz += Numbers.sinkSizeInt((value >> 8) & 0xff);
-        sz += 1; // '.'
-        sz += Numbers.sinkSizeInt(value & 0xff);
-        return sz;
     }
 
     public static void appendUuid(long lo, long hi, CharSink<?> sink) {
@@ -737,6 +706,50 @@ public final class Numbers {
         return 32 - Integer.numberOfTrailingZeros(netmask);
     }
 
+    public static int hexDigitNumber(long value) {
+        if (value == Integer.MIN_VALUE) {
+            return 3; // NaN
+        }
+        int mag = 64 - Long.numberOfLeadingZeros(value|1);
+        int v = (mag + 3) / 4;
+        return v + (v & 1); // round up to even number of digits 0x123 -> 0x0123
+    }
+
+    public static int hexDigitNumberPadded(long value) {
+        return value != Integer.MIN_VALUE ? 16 : 3; // for Integer.MIN_VALUE we print NaN
+    }
+
+    public static int hexDigitsLong256(Long256 long256) {
+       return hexDigitsLong256(long256.getLong0(), long256.getLong1(), long256.getLong2(), long256.getLong3());
+    }
+
+    public static int hexDigitsLong256(long a, long b, long c, long d) {
+        if (a == LONG_NULL && b == LONG_NULL && c == LONG_NULL && d == LONG_NULL) {
+            return 0;
+        }
+        int digits = 2; // 0x
+        if (d != 0) {
+            digits += hexDigitNumber(d);
+            digits += hexDigitNumberPadded(c);
+            digits += hexDigitNumberPadded(b);
+            digits += hexDigitNumberPadded(a);
+            return digits;
+        }
+        if (c != 0) {
+            digits += hexDigitNumber(c);
+            digits += hexDigitNumberPadded(b);
+            digits += hexDigitNumberPadded(a);
+            return digits;
+        }
+        if (b != 0) {
+            digits += hexDigitNumber(b);
+            digits += hexDigitNumberPadded(a);
+            return digits;
+        }
+        digits += hexDigitNumber(a);
+        return digits;
+    }
+
     public static int hexToDecimal(int c) throws NumericException {
         if (c > 127) {
             throw NumericException.INSTANCE;
@@ -773,26 +786,6 @@ public final class Numbers {
         append(sink, value & 0xff);
     }
 
-    public static int sinkSizeInt(int value) {
-        if (value == Numbers.INT_NULL) {
-            return 4; // "null"
-        }
-
-        int sz = (value < 0) ? 1 : 0;
-        value = Math.abs(value);
-
-        if (value < 10) return sz + 1;
-        if (value < 100) return sz + 2;
-        if (value < 1000) return sz + 3;
-        if (value < 10000) return sz + 4;
-        if (value < 100000) return sz + 5;
-        if (value < 1000000) return sz + 6;
-        if (value < 10000000) return sz + 7;
-        if (value < 100000000) return sz + 8;
-        if (value < 1000000000) return sz + 9;
-        return sz + 10;
-    }
-
     public static long intToLong(int value) {
         if (value != Numbers.INT_NULL) {
             return value;
@@ -807,6 +800,17 @@ public final class Numbers {
     // leaves first 32 bits unset - remaining 32 bits are the ip address
     public static long ipv4ToLong(int value) {
         return value & (-1L >>> 32);
+    }
+
+    public static boolean isDecimal(CharSequence value, int start) {
+        int len = value.length();
+        for (int i = start; i < len; i++) {
+            char c = value.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return len > start;
     }
 
     public static boolean isFinite(double d) {
@@ -829,6 +833,7 @@ public final class Numbers {
     public static boolean isNull(float value) {
         return Float.isNaN(value) || Float.isInfinite(value);
     }
+
     public static boolean isPow2(int value) {
         return (value & (value - 1)) == 0;
     }
@@ -1913,17 +1918,6 @@ public final class Numbers {
         return i<<24 | i>>8 & 0xff00 | i<<8 & 0xff0000 | i>>>24;
     }
 
-    public static boolean isDecimal(CharSequence value, int start) {
-        int len = value.length();
-        for (int i = start; i < len; i++) {
-            char c = value.charAt(i);
-            if (c < '0' || c > '9') {
-                return false;
-            }
-        }
-        return len > start;
-    }
-
     public static double roundDown(double value, int scale) throws NumericException {
         if (scale < pow10max && scale > -pow10max) {
             return roundDown0(value, scale);
@@ -2040,6 +2034,38 @@ public final class Numbers {
         long signMask = valueBits & Numbers.SIGN_BIT_MASK;
         double absValue = Double.longBitsToDouble(valueBits & ~Numbers.SIGN_BIT_MASK);
         return Double.longBitsToDouble(Double.doubleToRawLongBits(roundUp00PosScale(absValue, scale)) | signMask);
+    }
+
+    public static int sinkSizeIPv4(int value) {
+        // NULL handling should be done outside
+        int sz = sinkSizeInt((value >> 24) & 0xff);
+        sz += 1; // '.'
+        sz += sinkSizeInt((value >> 16) & 0xff);
+        sz += 1; // '.'
+        sz += sinkSizeInt((value >> 8) & 0xff);
+        sz += 1; // '.'
+        sz += sinkSizeInt(value & 0xff);
+        return sz;
+    }
+
+    public static int sinkSizeInt(int value) {
+        if (value == Numbers.INT_NULL) {
+            return 4; // "null"
+        }
+
+        int sz = (value < 0) ? 1 : 0;
+        value = Math.abs(value);
+
+        if (value < 10) return sz + 1;
+        if (value < 100) return sz + 2;
+        if (value < 1000) return sz + 3;
+        if (value < 10000) return sz + 4;
+        if (value < 100000) return sz + 5;
+        if (value < 1000000) return sz + 6;
+        if (value < 10000000) return sz + 7;
+        if (value < 100000000) return sz + 8;
+        if (value < 1000000000) return sz + 9;
+        return sz + 10;
     }
 
     public static long spreadBits(long v) {

@@ -45,7 +45,6 @@ import java.nio.ByteOrder;
 import java.util.Random;
 
 public class NumbersTest {
-
     private final StringSink sink = new StringSink();
     private Rnd rnd;
 
@@ -521,6 +520,90 @@ public class NumbersTest {
         Assert.assertEquals("1/11111111111111111111111111111111", toBinaryString(Numbers.getIPv4Subnet("0.0.0.1/32")));
 
         Assert.assertEquals("12.2.6.8/255.255.0.0", TestUtils.ipv4ToString2(Numbers.getIPv4Subnet("12.2.6.8/16")));
+    }
+
+    @Test
+    public void testHexDigitsLong256() {
+        Long256Impl long256 = new Long256Impl();
+
+        // null
+        long256.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(0, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(0, 0, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(0, 0, 0, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MIN_VALUE, 0, Long.MIN_VALUE, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MIN_VALUE, Long.MIN_VALUE, 0, Long.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, 0);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        for (int i = -1; i < 256; i++) {
+            long256.setAll(i, i, i, i);
+            sink.clear();
+            long256.toSink(sink);
+            Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+        }
+
+        long256.setAll(Short.MAX_VALUE, Short.MAX_VALUE, Short.MAX_VALUE, Short.MAX_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        long256.setAll(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
+        // NaN case
+        long256.setAll(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+    }
+
+    @Test
+    public void testHexDigitsLong256Fuzz() {
+        final int N = 1000;
+        Rnd rnd = TestUtils.generateRandom(null);
+
+        Long256Impl long256 = new Long256Impl();
+
+        for (int i = 0; i < N; i++) {
+            long256.setAll(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
+            sink.clear();
+            long256.toSink(sink);
+            Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+        }
     }
 
     @Test
@@ -1746,6 +1829,44 @@ public class NumbersTest {
     public void testShortBswap() {
         short v = Numbers.bswap((short) -7976);
         Assert.assertEquals(-7976, Numbers.bswap(v));
+    }
+
+    @Test
+    public void testSinkSizeInt() throws NumericException {
+        int ipv4 = Numbers.IPv4_NULL;
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("0.0.0.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("0.0.1.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("0.1.1.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("1.1.1.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("255.255.255.255");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
+
+        ipv4 = Numbers.parseIPv4("128.0.0.1");
+        sink.clear();
+        Numbers.intToIPv4Sink(sink, ipv4);
+        Assert.assertEquals(sink.length(), Numbers.sinkSizeIPv4(ipv4));
     }
 
     private static void assertFails(ExceptionalRunnable r) {
