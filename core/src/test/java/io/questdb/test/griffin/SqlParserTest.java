@@ -3396,6 +3396,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareInsertIntoSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(tradesDdl);
+            drainWalQueue();
+            assertModel("insert batch 1000000 into foo select-choose column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))", "INSERT INTO foo SELECT * FROM (DECLARE @x := 1, @y := 2 SELECT @x + @y)", ExecutionModel.INSERT);
+        });
+    }
+
+    @Test
     public void testDeclareSelectAsofJoin() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
