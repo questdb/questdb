@@ -1342,28 +1342,6 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
         return null;
     }
 
-    public CharSequence getKey(CharSequence key) {
-        Node<V>[] tab;
-        Node<V> e, p;
-        int n, eh;
-        CharSequence ek;
-        int h = spread(keyHashCode(key));
-        if ((tab = table) != null && (n = tab.length) > 0 &&
-                (e = tabAt(tab, (n - 1) & h)) != null) {
-            if ((eh = e.hash) == h) {
-                if ((ek = e.key) == key || (ek != null && keyEquals(key, ek)))
-                    return e.key;
-            } else if (eh < 0)
-                return (p = e.find(h, key)) != null ? p.key : null;
-            while ((e = e.next) != null) {
-                if (e.hash == h &&
-                        ((ek = e.key) == key || (ek != null && keyEquals(key, ek))))
-                    return e.key;
-            }
-        }
-        return null;
-    }
-
     /**
      * Returns the value to which the specified key is mapped, or the
      * given default value if this map contains no mapping for the
@@ -1967,7 +1945,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      */
     private void treeifyBin(Node<V>[] tab, int index) {
         Node<V> b;
-        int n, sc;
+        int n;
         if (tab != null) {
             if ((n = tab.length) < MIN_TREEIFY_CAPACITY)
                 tryPresize(n << 1);
