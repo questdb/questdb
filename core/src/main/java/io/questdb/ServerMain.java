@@ -401,7 +401,7 @@ public class ServerMain implements Closeable {
 
         // pg wire
         freeOnExit.register(pgWireServer = services().createPGWireServer(
-                config,
+                config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics

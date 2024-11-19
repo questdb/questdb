@@ -26,7 +26,6 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
-import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
@@ -188,7 +187,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
-    private final ServerConfiguration serverConfiguration;
     private SuspendEvent suspendEvent;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsertModern> taiCache;
@@ -196,24 +194,25 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = IMPLICIT_TRANSACTION;
+    private final PGWireConfiguration configuration;
 
     public PGConnectionContextModern(
             CairoEngine engine,
-            ServerConfiguration serverConfiguration,
+            PGWireConfiguration configuration,
             SqlExecutionContextImpl sqlExecutionContext,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             AssociativeCache<TypesAndSelectModern> tasCache
     ) {
         super(
-                serverConfiguration.getPGWireConfiguration().getFactoryProvider().getPGWireSocketFactory(),
-                serverConfiguration.getPGWireConfiguration().getNetworkFacade(),
+                configuration.getFactoryProvider().getPGWireSocketFactory(),
+                configuration.getNetworkFacade(),
                 LOG,
                 engine.getMetrics().pgWire().connectionCountGauge()
         );
 
         try {
-            PGWireConfiguration configuration = serverConfiguration.getPGWireConfiguration();
             this.engine = engine;
+            this.configuration = configuration;
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
             this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
             this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -237,8 +236,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
             this.taiCache = new SimpleAssociativeCache<>(insertBlockCount, insertRowCount);
             this.taiPool = new WeakSelfReturningObjectPool<>(TypesAndInsertModern::new, insertBlockCount * insertRowCount);
-            this.serverConfiguration = serverConfiguration;
-            this.namedStatementLimit = serverConfiguration.getPGWireConfiguration().getNamedStatementLimit();
+            this.namedStatementLimit = configuration.getNamedStatementLimit();
 
             this.batchCallback = new PGConnectionBatchCallback();
             FactoryProvider factoryProvider = configuration.getFactoryProvider();
@@ -469,7 +467,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
         // reinitialize the prepared statement limit - this property can be changed at runtime
         // so new connections need to pick up the new value
-        this.namedStatementLimit = serverConfiguration.getPGWireConfiguration().getNamedStatementLimit();
+        this.namedStatementLimit = configuration.getNamedStatementLimit();
         return this;
     }
 
