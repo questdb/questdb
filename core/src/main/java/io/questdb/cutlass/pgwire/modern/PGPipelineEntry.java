@@ -1195,7 +1195,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // Used to estimate required column size (or full record size in case of text format)
     // to be reported to the user in the insufficient send buffer size case.
     private long estimateRecordSize(Record record, int columnCount) throws BadProtocolException {
-        long maxColumnSize = 0;
         long recordSize = 0;
         for (int i = 0; i < columnCount; i++) {
             final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
@@ -1217,10 +1216,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 return Long.MIN_VALUE; // unsupported type
             }
 
-            maxColumnSize = Math.max(maxColumnSize, columnValueSize);
             recordSize += columnValueSize;
         }
-        return Math.max(maxColumnSize, recordSize);
+        return recordSize;
     }
 
     private short getPgResultSetColumnFormatCode(int columnIndex) {
