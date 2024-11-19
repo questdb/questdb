@@ -549,6 +549,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean pgLegacyModeEnabled;
     private int pgMaxBlobSizeOnQuery;
     private int pgNamedStatementCacheCapacity;
+    private int pgNamedStatementLimit;
     private int pgNamesStatementPoolCapacity;
     private int pgNetBindIPv4Address;
     private int pgNetBindPort;
@@ -1095,6 +1096,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNamedStatementCacheCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_CACHE_CAPACITY, 32);
                 this.pgNamesStatementPoolCapacity = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_POOL_CAPACITY, 32);
                 this.pgPendingWritersCacheCapacity = getInt(properties, env, PropertyKey.PG_PENDING_WRITERS_CACHE_CAPACITY, 16);
+                this.pgNamedStatementLimit = getInt(properties, env, PropertyKey.PG_NAMED_STATEMENT_LIMIT, 10_000);
             }
 
             this.walApplyWorkerCount = getInt(properties, env, PropertyKey.WAL_APPLY_WORKER_COUNT, cpuWalApplyWorkers);
@@ -4337,6 +4339,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getNamedStatementCacheCapacity() {
             return pgNamedStatementCacheCapacity;
+        }
+
+        @Override
+        public int getNamedStatementLimit() {
+            return pgNamedStatementLimit;
         }
 
         @Override

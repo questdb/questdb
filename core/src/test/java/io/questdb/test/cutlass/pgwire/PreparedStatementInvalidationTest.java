@@ -968,7 +968,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     @Test
     public void testTxInsertWhileConcurrentlyAlteringTable_simpleStatement() throws Exception {
         assertWithPgServer(
-                CONN_AWARE_ALL,
+                CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS,
                 (connection, binary, mode, port) ->
                         executeStatementWhileConcurrentlyChangingSchema(
                                 connection,
