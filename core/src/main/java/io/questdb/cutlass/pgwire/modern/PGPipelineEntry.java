@@ -189,7 +189,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void cacheIfPossible(@NotNull AssociativeCache<TypesAndSelectModern> tasCache, @Nullable SimpleAssociativeCache<TypesAndInsertModern> taiCache) {
         if (isPortal() || isPreparedStatement()) {
-            // must not cache prepared statements etc; we must only cache abandoned pipeline entries (their contents)
+            // must not cache prepared statements etc.; we must only cache abandoned pipeline entries (their contents)
             return;
         }
 
@@ -422,7 +422,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             } else if (parameterValueArenaHi - parameterValueArenaPtr < valueAreaSize) {
                 parameterValueArenaPtr = Unsafe.realloc(
                         parameterValueArenaPtr, parameterValueArenaHi - parameterValueArenaPtr,
-                        sz, MemoryTag.NATIVE_PGW_PIPELINE);
+                        sz, MemoryTag.NATIVE_PGW_PIPELINE
+                );
                 parameterValueArenaLo = parameterValueArenaPtr;
                 parameterValueArenaHi = parameterValueArenaPtr + sz;
             }
@@ -567,6 +568,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             throw e;
         } catch (Throwable e) {
             if (e instanceof FlyweightMessageContainer) {
+                setErrorMessagePosition(((FlyweightMessageContainer) e).getPosition());
                 getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
             } else {
                 String message = e.getMessage();
@@ -676,8 +678,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                 case CompiledQuery.INSERT_AS_SELECT:
                                 case CompiledQuery.INSERT: {
                                     utf8Sink.bookmark();
-                                    // todo: if we get sent a lot of inserts as the pipeline, we might run out of buffer
-                                    //           sending the replies. We should handle this
                                     utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
                                     long addr = utf8Sink.skipInt();
                                     utf8Sink.put(sqlTag).putAscii(" 0 ").put(sqlAffectedRowCount).put((byte) 0);
@@ -999,7 +999,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             final int typeTag = ColumnType.tagOf(columnType);
             final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
             // if column is not variable size and format code is text, we can't calculate size
-            if (columnBinaryFlag == 0 && !sameTxtAndBinColumnSizes(columnType)) {
+            if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
                 return -1;
             }
             // number of bits or chars for geohash
@@ -1223,7 +1223,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
             final long columnValueSize;
             // if column is not variable size and format code is text, we can't calculate size
-            if (columnBinaryFlag == 0 && !sameTxtAndBinColumnSizes(columnType)) {
+            if (columnBinaryFlag == 0 && txtAndBinSizesCanBeDifferent(columnType)) {
                 columnValueSize = estimateColumnTxtSize(record, i, typeTag);
             } else {
                 columnValueSize = calculateColumnBinSize(this, record, i, typeTag, bitFlags, Long.MAX_VALUE);
@@ -1450,7 +1450,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
                     } else {
                         try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
-                            // todo: is waiting a good idea here? it's blocking threads
                             fut.await();
                             sqlAffectedRowCount = fut.getAffectedRowsCount();
                         }
@@ -1909,39 +1908,33 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outError(PGResponseSink utf8Sink, ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) {
-        try {
-            rollback(pendingWriters);
-            utf8Sink.resetToBookmark();
-            // todo: we need to test scenario, when sync does not fit the buffer
-            final int position = getErrorMessagePosition();
-            utf8Sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-            long addr = utf8Sink.skipInt();
+        rollback(pendingWriters);
+        utf8Sink.resetToBookmark();
+        // todo: we need to test scenario, when sync does not fit the buffer
+        final int position = getErrorMessagePosition();
+        utf8Sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = utf8Sink.skipInt();
 
-            utf8Sink.putAscii('C'); // C = SQLSTATE
-            if (stalePlanError) {
-                // this is what PostgreSQL sends when recompiling a query produces a different resultset.
-                // some clients acts on it by restarting the query from the beginning.
-                utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
-                utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgreSQL here
-                utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
-            } else {
-                utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
-            }
-
-            utf8Sink.putAscii('M');
-            utf8Sink.putZ(getErrorMessageSink());
-            utf8Sink.putAscii('S');
-            utf8Sink.putZ("ERROR");
-            if (position > -1) {
-                utf8Sink.putAscii('P').put(position + 1).put((byte) 0);
-            }
-            utf8Sink.put((byte) 0);
-            utf8Sink.putLen(addr);
-        } catch (Throwable e) {
-            System.out.println("OOPSIE, buffer overflow in sending errors");
-            e.printStackTrace();
-            throw e;
+        utf8Sink.putAscii('C'); // C = SQLSTATE
+        if (stalePlanError) {
+            // this is what PostgreSQL sends when recompiling a query produces a different resultset.
+            // some clients act on it by restarting the query from the beginning.
+            utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
+            utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgreSQL here
+            utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
+        } else {
+            utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
         }
+
+        utf8Sink.putAscii('M');
+        utf8Sink.putZ(getErrorMessageSink());
+        utf8Sink.putAscii('S');
+        utf8Sink.putZ("ERROR");
+        if (position > -1) {
+            utf8Sink.putAscii('P').put(position + 1).put((byte) 0);
+        }
+        utf8Sink.put((byte) 0);
+        utf8Sink.putLen(addr);
     }
 
     private void outParameterTypeDescription(PGResponseSink utf8Sink) {
@@ -2183,20 +2176,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         outResendRecordHeader = true;
         // reset to the message start
         utf8Sink.resetToBookmark(messageLengthAddress - Byte.BYTES);
-    }
-
-    // Returns true if column size is known to be the same in both text and binary formats.
-    // Note: certain column types, e.g. LONG256, don't have a matching column type in Postgres,
-    //       so we always serialize them in text format.
-    private boolean sameTxtAndBinColumnSizes(int columnType) {
-        final int typeTag = ColumnType.tagOf(columnType);
-        return ColumnType.isVarSize(typeTag)
-                || ColumnType.isGeoHash(columnType)
-                || typeTag == ColumnType.BOOLEAN
-                || typeTag == ColumnType.CHAR
-                || typeTag == ColumnType.IPv4
-                || typeTag == ColumnType.LONG256
-                || typeTag == ColumnType.SYMBOL;
     }
 
     private void setBindVariableAsChar(
@@ -2454,6 +2433,20 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 stateParseExecuted = true;
                 break;
         }
+    }
+
+    // Returns false if column size is known to be the same in both text and binary formats.
+    // Note: certain column types, e.g. LONG256, don't have a matching column type in Postgres,
+    //       so we always serialize them in text format, we return false for that and true for everything else
+    private boolean txtAndBinSizesCanBeDifferent(int columnType) {
+        final int typeTag = ColumnType.tagOf(columnType);
+        return !ColumnType.isVarSize(typeTag)
+                && !ColumnType.isGeoHash(columnType)
+                && typeTag != ColumnType.BOOLEAN
+                && typeTag != ColumnType.CHAR
+                && typeTag != ColumnType.IPv4
+                && typeTag != ColumnType.LONG256
+                && typeTag != ColumnType.SYMBOL;
     }
 
     private void validateMetadataAfterRecompileSelect(RecordMetadata oldMeta) throws BadProtocolException {

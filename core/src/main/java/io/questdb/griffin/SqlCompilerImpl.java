@@ -1791,7 +1791,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 executor.execute(executionContext, sqlText);
                 // executor might decide that SQL contains secret, otherwise we're logging it
-                this.sqlText = executionContext.containsSecret() ? "** redacted for privacy ** " : sqlText;
+                this.sqlText = executionContext.containsSecret() ? "** redacted for privacy **" : sqlText;
                 QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos, executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED);
             } catch (Throwable e) {
                 // Executor is all-in-one, it parses SQL text and executes it right away. The convention is

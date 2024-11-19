@@ -1022,15 +1022,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // will have the supplied parameter types.
 
         int cachedStatus = CACHE_MISS;
-        final TypesAndInsertModern tai = taiCache.peek(utf16SqlText);
+        int taiKeyIndex = taiCache.keyIndex(utf16SqlText);
+        final TypesAndInsertModern tai = taiCache.peek(taiKeyIndex);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
                 pipelineCurrentEntry.ofInsert(utf16SqlText, tai);
                 cachedStatus = CACHE_HIT_INSERT_VALID;
             } else {
-                //todo: find more efficient way to remove from cache what we have already looked up
-                // remove cached item, we will create it again, may be
-                TypesAndInsertModern tai2 = taiCache.poll(utf16SqlText);
+                TypesAndInsertModern tai2 = taiCache.poll(taiKeyIndex);
                 assert tai2 == tai;
                 tai.close();
                 cachedStatus = CACHE_HIT_INSERT_INVALID;
