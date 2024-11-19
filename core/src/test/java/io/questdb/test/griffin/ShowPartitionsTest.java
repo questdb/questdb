@@ -119,7 +119,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                         "2023-03-13",
                         4
                 );
-                compile("ALTER TABLE " + tab2Name + " DETACH PARTITION LIST '2023-03'");
+                execute("ALTER TABLE " + tab2Name + " DETACH PARTITION LIST '2023-03'");
                 if (isWal) {
                     drainWalQueue();
                 }
@@ -175,7 +175,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                         "2023-03-13",
                         4
                 );
-                compile("ALTER TABLE " + tab2Name + " DETACH PARTITION LIST '2023-03-15'");
+                execute("ALTER TABLE " + tab2Name + " DETACH PARTITION LIST '2023-03-15'");
                 if (isWal) {
                     drainWalQueue();
                 }
@@ -200,7 +200,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(tabName);
             try {
-                ddl("SHOW PARTITIONS FROM " + tabName + " WHERE active=true", sqlExecutionContext);
+                execute("SHOW PARTITIONS FROM " + tabName + " WHERE active=true", sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [WHERE]");
@@ -214,7 +214,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(tableName);
-            ddl("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -242,7 +242,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                             "null\tMONTH\t2023-03.attachable\t2023-03-01T00:00:00.000000Z\t2023-03-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n" +
                             "null\tMONTH\t2023-04.attachable\t2023-04-01T00:00:00.000000Z\t2023-04-30T18:00:00.000000Z\t120\tSIZE\tHUMAN\tfalse\tfalse\tfalse\ttrue\ttrue\tfalse\t-1\n",
                     tableName);
-            ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2023-02', '2023-03'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2023-02', '2023-03'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -266,7 +266,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName);
-            ddl("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -288,7 +288,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName);
-            ddl("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -310,7 +310,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName);
-            ddl("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -332,8 +332,8 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName);
-            ddl("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
-            ddl("ALTER TABLE " + tableName + " DROP PARTITION LIST '2023-06'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION WHERE timestamp < '2023-06-01T00:00:00.000000Z'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DROP PARTITION LIST '2023-06'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -389,7 +389,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             createTable(tableName);
-            ddl("CREATE TABLE partitions AS (SELECT * FROM table_partitions('" + tableName + "'))", sqlExecutionContext);
+            execute("CREATE TABLE partitions AS (SELECT * FROM table_partitions('" + tableName + "'))", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
             }
@@ -541,7 +541,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 }
             });
         }
-        ddl(createTable);
+        execute(createTable);
         if (isWal) {
             drainWalQueue();
             returned.await();

@@ -35,10 +35,10 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (l long256)");
-            insert("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650')");
-            insert("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651')");
-            insert("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652')");
+            execute("create table x (l long256)");
+            execute("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650')");
+            execute("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651')");
+            execute("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651");
@@ -53,7 +53,7 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testInvalidConstantInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (l long256)");
+            execute("create table x (l long256)");
             assertException("x where l = 'foobar'", 0, "inconvertible value: `foobar` [STRING -> LONG256]");
         });
     }
@@ -134,10 +134,10 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNamedBindVariableInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (l long256)");
-            insert("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650')");
-            insert("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651')");
-            insert("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652')");
+            execute("create table x (l long256)");
+            execute("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650')");
+            execute("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9651')");
+            execute("insert into x values('0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("l256", "0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652");
@@ -153,7 +153,7 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testStrColumnInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (l long256, a string)");
+            execute("create table x (l long256, a string)");
             assertException("x where l = a", 12, "STRING constant expected");
         });
     }

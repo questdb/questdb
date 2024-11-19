@@ -35,7 +35,7 @@ import org.junit.Test;
 public class InStrTest extends AbstractCairoTest {
     @Test
     public void testAllConst() throws Exception {
-        ddl("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        execute("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
         assertQuery("a\tts\n", "test where a in NULL", false);
         assertQuery("a\tts\n" +
                 "16\t1970-01-01T00:00:15.000000Z\n", "test where a in ('16', NULL)", false);
@@ -49,7 +49,7 @@ public class InStrTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarTypeChange() throws SqlException {
-        ddl("create table test as (select x, rnd_str(3,6,1) a from long_sequence(100))");
+        execute("create table test as (select x, rnd_str(3,6,1) a from long_sequence(100))");
 
         // when more than one argument supplied, the function will match exact values from the list
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
@@ -126,7 +126,7 @@ public class InStrTest extends AbstractCairoTest {
 
     @Test
     public void testBindVarTypeNotConvertible() throws Exception {
-        ddl("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        execute("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -147,7 +147,7 @@ public class InStrTest extends AbstractCairoTest {
 
     @Test
     public void testChar() throws Exception {
-        ddl("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        execute("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
         assertQuery("a\tts\n" +
                 "3\t1970-01-01T00:00:02.000000Z\n", "test where a in '3'::char", false);
         assertQuery("a\tts\n" +
@@ -184,7 +184,7 @@ public class InStrTest extends AbstractCairoTest {
 
     @Test
     public void testConstAndBindVarMixed() throws Exception {
-        ddl("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
+        execute("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))");
 
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
@@ -205,7 +205,7 @@ public class InStrTest extends AbstractCairoTest {
 
     @Test
     public void testConstConst() throws Exception {
-        ddl("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
+        execute("create table test as (select cast(x as string) a, timestamp_sequence(0, 1000000) ts from long_sequence(5))");
         assertQuery("a\tts\n" +
                 "1\t1970-01-01T00:00:00.000000Z\n" +
                 "2\t1970-01-01T00:00:01.000000Z\n" +

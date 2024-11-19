@@ -35,11 +35,11 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForMultipleTablesPartitionByHour() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
-            ddl("create table trades_2(timestamp TIMESTAMP, " +
+            execute("create table trades_2(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
-            insert(
+            execute(
                     "INSERT INTO trades_1\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -47,7 +47,7 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
             );
-            insert(
+            execute(
                     "INSERT INTO trades_2\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -71,11 +71,11 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForMultipleTablesWithNoPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
-            ddl("create table trades_2(timestamp TIMESTAMP, " +
+            execute("create table trades_2(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
-            insert(
+            execute(
                     "INSERT INTO trades_1\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -83,7 +83,7 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
             );
-            insert(
+            execute(
                     "INSERT INTO trades_2\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -107,9 +107,9 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForSingleTablePartitionByHour() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
-            insert(
+            execute(
                     "INSERT INTO trades_1\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -131,9 +131,9 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForSingleTableWithNoPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
-            insert(
+            execute(
                     "INSERT INTO trades_1\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -154,9 +154,9 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testFetchNonExistingColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
-            insert(
+            execute(
                     "INSERT INTO trades_1\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +

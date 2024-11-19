@@ -190,7 +190,7 @@ public class Table2IlpTest {
 
         String tableNameDst = "dst";
         createTable(tableNameDst, 1);
-        engine.ddl("truncate table " + tableNameDst, sqlExecutionContext);
+        engine.execute("truncate table " + tableNameDst, sqlExecutionContext);
 
         addColumn(tableNameSrc, tableNameDst, "nullint", "int");
         addColumn(tableNameSrc, tableNameDst, "nulllong", "long");
@@ -228,7 +228,7 @@ public class Table2IlpTest {
 
         String tableNameDst = "dst";
         createTable(tableNameDst, 1);
-        engine.ddl("truncate table " + tableNameDst, sqlExecutionContext);
+        engine.execute("truncate table " + tableNameDst, sqlExecutionContext);
 
         addColumn(tableNameSrc, tableNameDst, "nullint", "int");
         addColumn(tableNameSrc, tableNameDst, "nulllong", "long");
@@ -396,16 +396,16 @@ public class Table2IlpTest {
 
         Assert.assertTrue(params.isValid());
         Assert.assertNotNull(params.getSymbols());
-        Assert.assertEquals(params.getSymbols().length, 0);
+        Assert.assertEquals(0, params.getSymbols().length);
     }
 
     private static void addColumn(String tableNameSrc, String tableNameDst, String name, String type) throws SqlException {
-        engine.ddl("alter table " + tableNameSrc + " add column " + name + " " + type, sqlExecutionContext);
-        engine.ddl("alter table " + tableNameDst + " add column " + name + " " + type, sqlExecutionContext);
+        engine.execute("alter table " + tableNameSrc + " add column " + name + " " + type, sqlExecutionContext);
+        engine.execute("alter table " + tableNameDst + " add column " + name + " " + type, sqlExecutionContext);
     }
 
     private static void createTable(String tableName, int rows) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table " + tableName + " as (select" +
                         " cast(x as int) kk, " +
                         " rnd_int() a," +

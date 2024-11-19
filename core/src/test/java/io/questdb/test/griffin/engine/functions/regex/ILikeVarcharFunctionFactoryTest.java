@@ -36,13 +36,13 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBindVariableConcatIndexed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar() name from long_sequence(2000))");
+            execute("create table x as (select rnd_varchar() name from long_sequence(2000))");
 
             bindVariableService.setStr(0, "H");
             try (RecordCursorFactory factory = select("select * from x where name ilike '%' || $1 || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
-                    Assert.assertNotEquals(sink.toString().indexOf('H'), -1);
+                    Assert.assertNotEquals(-1, sink.toString().indexOf('H'));
                 }
             }
         });
@@ -51,13 +51,13 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBindVariableConcatNamed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar() name from long_sequence(2000))");
+            execute("create table x as (select rnd_varchar() name from long_sequence(2000))");
 
             bindVariableService.setStr("str", "H");
             try (RecordCursorFactory factory = select("select * from x where name ilike '%' || :str || '%'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
-                    Assert.assertNotEquals(sink.toString().indexOf('H'), -1);
+                    Assert.assertNotEquals(-1, sink.toString().indexOf('H'));
                 }
             }
         });
@@ -66,7 +66,7 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testEmptyLike() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "select cast('ABCGE' as varchar) as name from long_sequence(1)\n" +
                             "union\n" +
@@ -87,7 +87,7 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testInvalidRegex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "select cast('ABCGE' as varchar) as name from long_sequence(1)\n" +
                             "union\n" +
@@ -108,7 +108,7 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLikeCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "select cast('ABCGE' as varchar) as name from long_sequence(1)\n" +
                             "union\n" +
@@ -130,7 +130,7 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLikeCaseInsensitiveNonAscii() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "select cast('фу' as varchar) as name from long_sequence(1)\n" +
                             "union\n" +
@@ -150,11 +150,11 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testLikeCharacterNoMatch() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar() name from long_sequence(2000))");
+            execute("create table x as (select rnd_varchar() name from long_sequence(2000))");
             try (RecordCursorFactory factory = select("select * from x where name ilike 'H'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     println(factory, cursor);
-                    Assert.assertEquals(Chars.indexOf(sink, 'H'), -1);
+                    Assert.assertEquals(-1, Chars.indexOf(sink, 'H'));
                 }
             }
         });
@@ -163,7 +163,7 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNonConstantExpression() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar() name from long_sequence(10))");
+            execute("create table x as (select rnd_varchar() name from long_sequence(10))");
             assertException("select * from x where name ilike rnd_str('foo','bar')", 33, "use constant or bind variable");
         });
     }
@@ -171,7 +171,7 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNotLikeCharacterMatch() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('a', 'BC', 'h', 'H', 'k') name from long_sequence(20))");
+            execute("create table x as (select rnd_varchar('a', 'BC', 'h', 'H', 'k') name from long_sequence(20))");
             assertSql(
                     "name\n" +
                             "a\n" +
@@ -194,7 +194,7 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNotLikeStringMatch() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_varchar('kk', 'xJ', 'Xj', 'GU', 'XJ') name from long_sequence(20))");
+            execute("create table x as (select rnd_varchar('kk', 'xJ', 'Xj', 'GU', 'XJ') name from long_sequence(20))");
             assertSql(
                     "name\n" +
                             "kk\n" +
@@ -211,42 +211,42 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSimplePatternLike() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( s varchar ) ");
-            compile("insert into x values ( 'foo' ), ( 'foobar' ), ( null ) ");
+            execute("create table x ( s varchar ) ");
+            execute("insert into x values ( 'foo' ), ( 'foobar' ), ( null ) ");
 
-            assertLike("s\n", "select * from x where s ilike 'f'", false);
-            assertLike("s\n", "select * from x where s ilike '_'", false);
-            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike '%'", false);
-            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike 'f%'", false);
-            assertLike("s\nfoobar\n", "select * from x where s ilike '%r'", false);
-            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike 'fOO%'", false);
-            assertLike("s\nfoobar\n", "select * from x where s ilike '%baR'", false);
-            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike '%%'", false);
-            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike '%OO%'", false);
-            assertLike("s\n", "select * from x where s ilike '%\\%'", false);
+            assertLike("s\n", "select * from x where s ilike 'f'");
+            assertLike("s\n", "select * from x where s ilike '_'");
+            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike '%'");
+            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike 'f%'");
+            assertLike("s\nfoobar\n", "select * from x where s ilike '%r'");
+            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike 'fOO%'");
+            assertLike("s\nfoobar\n", "select * from x where s ilike '%baR'");
+            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike '%%'");
+            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike '%OO%'");
+            assertLike("s\n", "select * from x where s ilike '%\\%'");
         });
     }
 
     @Test
     public void testSimplePatternLikeNonAscii() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x ( s varchar ) ");
-            compile("insert into x values ( 'фу' ), ( 'фубар' ), ( null ) ");
+            execute("create table x ( s varchar ) ");
+            execute("insert into x values ( 'фу' ), ( 'фубар' ), ( null ) ");
 
-            assertLike("s\n", "select * from x where s ilike 'ф'", false);
-            assertLike("s\n", "select * from x where s ilike '_'", false);
-            assertLike("s\nфу\nфубар\n", "select * from x where s ilike '%'", false);
-            assertLike("s\nфу\nфубар\n", "select * from x where s ilike 'ф%'", false);
-            assertLike("s\nфубар\n", "select * from x where s ilike '%р'", false);
-            assertLike("s\nфу\nфубар\n", "select * from x where s ilike 'фУ%'", false);
-            assertLike("s\nфу\n", "select * from x where s ilike 'фУ'", false);
-            assertLike("s\nфубар\n", "select * from x where s ilike '%баР'", false);
-            assertLike("s\nфу\nфубар\n", "select * from x where s ilike '%У%'", false);
-            assertLike("s\n", "select * from x where s ilike '\\_'", false);
+            assertLike("s\n", "select * from x where s ilike 'ф'");
+            assertLike("s\n", "select * from x where s ilike '_'");
+            assertLike("s\nфу\nфубар\n", "select * from x where s ilike '%'");
+            assertLike("s\nфу\nфубар\n", "select * from x where s ilike 'ф%'");
+            assertLike("s\nфубар\n", "select * from x where s ilike '%р'");
+            assertLike("s\nфу\nфубар\n", "select * from x where s ilike 'фУ%'");
+            assertLike("s\nфу\n", "select * from x where s ilike 'фУ'");
+            assertLike("s\nфубар\n", "select * from x where s ilike '%баР'");
+            assertLike("s\nфу\nфубар\n", "select * from x where s ilike '%У%'");
+            assertLike("s\n", "select * from x where s ilike '\\_'");
         });
     }
 
-    private void assertLike(String expected, String query, boolean expectSize) throws Exception {
-        assertQueryNoLeakCheck(expected, query, null, true, expectSize);
+    private void assertLike(String expected, String query) throws Exception {
+        assertQueryNoLeakCheck(expected, query, null, true, false);
     }
 }

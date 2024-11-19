@@ -65,12 +65,12 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
 
     @Override
     public String getColumnName(int columnIndex) {
-        return getColumnMetadata(columnIndex).getName();
+        return getColumnMetadata(columnIndex).getColumnName();
     }
 
     @Override
     public int getColumnType(int columnIndex) {
-        return getColumnMetadata(columnIndex).getType();
+        return getColumnMetadata(columnIndex).getColumnType();
     }
 
     @Override
@@ -101,12 +101,12 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
 
     @Override
     public boolean isColumnIndexed(int columnIndex) {
-        return getColumnMetadata(columnIndex).isIndexed();
+        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
     }
 
     @Override
     public boolean isDedupKey(int columnIndex) {
-        return getColumnMetadata(columnIndex).isDedupKey();
+        return getColumnMetadata(columnIndex).isDedupKeyFlag();
     }
 
     @Override

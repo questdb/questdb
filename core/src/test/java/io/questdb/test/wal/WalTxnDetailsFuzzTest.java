@@ -324,7 +324,7 @@ public class WalTxnDetailsFuzzTest extends AbstractCairoTest {
         }
 
         TableModel model = defaultModel(tableName);
-        return TestUtils.create(model, engine);
+        return TestUtils.createTable(engine, model);
     }
 
     public enum SequencerType {

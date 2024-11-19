@@ -653,6 +653,15 @@ public class SqlKeywords {
                 && (tok.charAt(8) | 32) == 'g';
     }
 
+    public static boolean isForceKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'f'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'r'
+                && (tok.charAt(3) | 32) == 'c'
+                && (tok.charAt(4) | 32) == 'e';
+    }
+
     public static boolean isFormatKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'f'

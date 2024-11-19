@@ -743,7 +743,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                                 "insert into " + tableName + " values(6, '2023-10-12T00:00:02.000000Z')");
 
 
-                        ddl("alter table " + tableName + " drop partition where timestamp > 0");
+                        execute("alter table " + tableName + " drop partition where timestamp > 0");
                         assertTableX(tableName, TableHeader, EmptyTableMinMaxCount); // empty table
                     } finally {
                         Misc.free(workerPool);
@@ -759,7 +759,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
                     try {
                         createTableX(tableName, TableHeader);
                         try {
-                            ddl("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext);
+                            execute("alter table " + tableName + " drop partition where timestamp > 0", sqlExecutionContext);
                             Assert.fail();
                         } catch (CairoException e) {
                             Assert.assertEquals(("alter table " + tableName + " drop partition where ").length(), e.getPosition());
@@ -983,15 +983,15 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
 
     @SuppressWarnings("SameParameterValue")
     private void detachPartition(String tableName, String partitionName) throws SqlException {
-        ddl("alter table " + tableName + " detach partition list '" + partitionName + "'");
+        execute("alter table " + tableName + " detach partition list '" + partitionName + "'");
     }
 
     private void dropPartition(String tableName, String partitionName) throws SqlException {
-        ddl("alter table " + tableName + " drop partition list '" + partitionName + "'");
+        execute("alter table " + tableName + " drop partition list '" + partitionName + "'");
     }
 
     private void insert(String stmt) throws SqlException {
-        AbstractCairoTest.insert(stmt);
+        AbstractCairoTest.execute(stmt);
         txn++;
     }
 }
