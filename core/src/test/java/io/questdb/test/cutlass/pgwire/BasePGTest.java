@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.DefaultServerConfiguration;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -116,7 +118,13 @@ public abstract class BasePGTest extends AbstractCairoTest {
         if (!configuration.isEnabled()) {
             return null;
         }
-        return IPGWireServer.newInstance(configuration, cairoEngine, workerPool, registry, executionContextObjectFactory);
+        ServerConfiguration serverConfiguration = new DefaultServerConfiguration("fake root") {
+            @Override
+            public PGWireConfiguration getPGWireConfiguration() {
+                return configuration;
+            }
+        };
+        return IPGWireServer.newInstance(serverConfiguration, cairoEngine, workerPool, registry, executionContextObjectFactory);
     }
 
     public static IPGWireServer createPGWireServer(
@@ -132,8 +140,15 @@ public abstract class BasePGTest extends AbstractCairoTest {
         CircuitBreakerRegistry registry = fixedClientIdAndSecret ? HexTestsCircuitBreakRegistry.INSTANCE :
                 new DefaultCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
+        ServerConfiguration serverConfiguration = new DefaultServerConfiguration("fake root") {
+            @Override
+            public PGWireConfiguration getPGWireConfiguration() {
+                return configuration;
+            }
+        };
+
         return IPGWireServer.newInstance(
-                configuration,
+                serverConfiguration,
                 cairoEngine,
                 workerPool,
                 registry,

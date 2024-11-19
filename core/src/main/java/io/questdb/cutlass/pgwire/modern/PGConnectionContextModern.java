@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
@@ -175,6 +176,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
     private boolean freezeRecvBuffer;
+    private int namedStatementLimit;
     // PG wire protocol has two phases:
     // phase 1 - fill up the pipeline. In this case the current entry is the entry being populated
     // phase 2 - "sync" the pipeline. This is the execution phase and the current entry is the one being executed.
@@ -186,6 +188,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
+    private ServerConfiguration serverConfiguration;
     private SuspendEvent suspendEvent;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsertModern> taiCache;
@@ -196,19 +199,20 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
     public PGConnectionContextModern(
             CairoEngine engine,
-            PGWireConfiguration configuration,
+            ServerConfiguration serverConfiguration,
             SqlExecutionContextImpl sqlExecutionContext,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             AssociativeCache<TypesAndSelectModern> tasCache
     ) {
         super(
-                configuration.getFactoryProvider().getPGWireSocketFactory(),
-                configuration.getNetworkFacade(),
+                serverConfiguration.getPGWireConfiguration().getFactoryProvider().getPGWireSocketFactory(),
+                serverConfiguration.getPGWireConfiguration().getNetworkFacade(),
                 LOG,
                 engine.getMetrics().pgWire().connectionCountGauge()
         );
 
         try {
+            PGWireConfiguration configuration = serverConfiguration.getPGWireConfiguration();
             this.engine = engine;
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
             this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
@@ -233,6 +237,8 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
             this.taiCache = new SimpleAssociativeCache<>(insertBlockCount, insertRowCount);
             this.taiPool = new WeakSelfReturningObjectPool<>(TypesAndInsertModern::new, insertBlockCount * insertRowCount);
+            this.serverConfiguration = serverConfiguration;
+            this.namedStatementLimit = serverConfiguration.getPGWireConfiguration().getNamedStatementLimit();
 
             this.batchCallback = new PGConnectionBatchCallback();
             FactoryProvider factoryProvider = configuration.getFactoryProvider();
@@ -460,6 +466,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             this.sendBufferLimit = sendBuffer + sendBufferSize;
         }
         authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
+
+        // reinitialize the prepared statement limit - this property can be changed at runtime
+        // so new connections need to pick up the new value
+        this.namedStatementLimit = serverConfiguration.getPGWireConfiguration().getNamedStatementLimit();
         return this;
     }
 
@@ -1056,6 +1066,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             LOG.info().$("create prepared statement [name=").$(targetStatementName).I$();
             int index = namedStatements.keyIndex(targetStatementName);
             if (index > -1) {
+                if (namedStatements.size() == namedStatementLimit) {
+                    throw msgKaput().put("client created too many named statements without closing them. it looks like a buggy client. [limit=").put(namedStatementLimit).put(']');
+                }
+
                 final String preparedStatementName = Chars.toString(targetStatementName);
                 pipelineCurrentEntry.setPreparedStatement(true, preparedStatementName);
                 namedStatements.putAt(index, preparedStatementName, pipelineCurrentEntry);

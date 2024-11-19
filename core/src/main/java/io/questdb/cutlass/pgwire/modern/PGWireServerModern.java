@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
+import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.SocketAuthenticator;
@@ -56,12 +57,13 @@ public class PGWireServerModern implements IPGWireServer {
     private final WorkerPool workerPool;
 
     public PGWireServerModern(
-            PGWireConfiguration configuration,
+            ServerConfiguration serverConfiguration,
             CairoEngine engine,
             WorkerPool workerPool,
             CircuitBreakerRegistry registry,
             ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
     ) {
+        PGWireConfiguration configuration = serverConfiguration.getPGWireConfiguration();
         this.metrics = engine.getMetrics();
         if (configuration.isSelectCacheEnabled()) {
             this.typesAndSelectCache = new ConcurrentAssociativeCache<>(
@@ -76,7 +78,7 @@ public class PGWireServerModern implements IPGWireServer {
         }
         this.contextFactory = new PGConnectionContextFactory(
                 engine,
-                configuration,
+                serverConfiguration,
                 registry,
                 executionContextObjectFactory,
                 typesAndSelectCache
@@ -170,20 +172,21 @@ public class PGWireServerModern implements IPGWireServer {
 
         public PGConnectionContextFactory(
                 CairoEngine engine,
-                PGWireConfiguration configuration,
+                ServerConfiguration serverConfiguration,
                 CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
                 AssociativeCache<TypesAndSelectModern> typesAndSelectCache
         ) {
             super(
                     () -> {
+                        PGWireConfiguration configuration = serverConfiguration.getPGWireConfiguration();
                         NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                                 configuration.getCircuitBreakerConfiguration(),
                                 MemoryTag.NATIVE_CB5
                         );
                         PGConnectionContextModern pgConnectionContext = new PGConnectionContextModern(
                                 engine,
-                                configuration,
+                                serverConfiguration,
                                 executionContextObjectFactory.newInstance(),
                                 circuitBreaker,
                                 typesAndSelectCache
@@ -198,7 +201,7 @@ public class PGWireServerModern implements IPGWireServer {
                         pgConnectionContext.setAuthenticator(authenticator);
                         return pgConnectionContext;
                     },
-                    configuration.getConnectionPoolInitialCapacity()
+                    serverConfiguration.getPGWireConfiguration().getConnectionPoolInitialCapacity()
             );
         }
     }
