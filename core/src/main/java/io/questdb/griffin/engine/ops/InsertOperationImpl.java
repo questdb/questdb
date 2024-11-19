@@ -101,16 +101,6 @@ public class InsertOperationImpl implements InsertOperation {
         }
     }
 
-    public void setColumnNames(ObjList<CharSequence> columnNameList) {
-        ObjList<CharSequence> columnNames;
-        if (columnNameList.size() != 0) {
-            columnNames = new ObjList<>();
-            for (int i = 0, n = columnNameList.size(); i < n; i++) {
-                columnNames.add(Chars.toString(columnNameList.getQuick(i)));
-            }
-        }
-    }
-
     @Override
     public void setInsertSql(CharSequence query) {
         insertMethod.insertSql = Chars.toString(query);

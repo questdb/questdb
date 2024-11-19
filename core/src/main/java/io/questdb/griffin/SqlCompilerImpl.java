@@ -2935,7 +2935,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 insertOperation.addInsertRow(new InsertRowImpl(record, copier, timestampFunction, tupleIndex));
             }
 
-            insertOperation.setColumnNames(columnNameList);
             insertOperation.setInsertSql(sqlText);
             return insertOperation;
         } catch (SqlException e) {
