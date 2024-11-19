@@ -993,7 +993,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
             // if column is not variable size and format code is text, we can't calculate size
             if (columnBinaryFlag == 0 && !canEstimateTextSize(columnType)) {
-                // TODO(puzpuzpuz): we need a user-friendly error message here, e.g. "send buffer is too small [size=X, required=Y]"
                 return -1;
             }
             // number of bits or chars for geohash
@@ -1216,6 +1215,32 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 .put(", sizeActual=").put(sizeActual)
                 .put(", variableIndex=").put(variableIndex)
                 .put(']');
+    }
+
+    // used to estimate required column size (or full record size in case of text format)
+    // to be reported to the user
+    private int estimateRecordTailSize(Record record, int columnCount) throws BadProtocolException {
+        int recordSize = 0;
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = pgResultSetColumnTypes.getQuick(2 * i);
+            final int typeTag = ColumnType.tagOf(columnType);
+            final short columnBinaryFlag = getPgResultSetColumnFormatCode(i, typeTag);
+            // if column is not variable size and format code is text, we can't calculate size
+            if (columnBinaryFlag == 0 && !canEstimateTextSize(columnType)) {
+                return -1;
+            }
+            // number of bits or chars for geohash
+            final int bitFlags = Math.abs(pgResultSetColumnTypes.getQuick(2 * i + 1));
+            final int columnValueSize = getColumnValueSize(record, i, typeTag, bitFlags, Long.MAX_VALUE);
+
+            if (columnValueSize < 0) {
+                // unsupported type
+                return Integer.MIN_VALUE;
+            }
+
+            recordSize += columnValueSize;
+        }
+        return recordSize;
     }
 
     // Returns the size of the serialized value in bytes,
@@ -2175,13 +2200,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             outResendRecordHeader = false;
                         } else {
                             resetIncompleteRecord(utf8Sink, messageLengthAddress);
+                            e.setBytesRequired(-recordTailSize);
                         }
                     } catch (BadProtocolException bpe) {
                         // we have binary data blob size > maxBlobSize
                         resetIncompleteRecord(utf8Sink, messageLengthAddress);
                         throw bpe;
                     }
-
                 }
             }
             throw e;

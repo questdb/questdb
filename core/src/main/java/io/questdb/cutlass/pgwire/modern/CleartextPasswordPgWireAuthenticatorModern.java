@@ -266,7 +266,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
 
     private void checkCapacity(long capacity) {
         if (sendBufWritePos + capacity > sendBufEnd) {
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            throw NoSpaceLeftInResponseBufferException.instance(capacity);
         }
     }
 

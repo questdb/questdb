@@ -342,10 +342,6 @@ public final class Numbers {
     }
 
     public static void appendHex(CharSink<?> sink, long value, boolean pad) {
-        if (value == Integer.MIN_VALUE) {
-            sink.putAscii("NaN");
-            return;
-        }
         int bit = value == 0 ? 0 : 64 - Long.numberOfLeadingZeros(value);
         LongHexAppender[] array = pad ? longHexAppenderPad64 : longHexAppender;
         array[bit].append(sink, value);
@@ -707,16 +703,9 @@ public final class Numbers {
     }
 
     public static int hexDigitNumber(long value) {
-        if (value == Integer.MIN_VALUE) {
-            return 3; // NaN
-        }
         int mag = 64 - Long.numberOfLeadingZeros(value|1);
         int v = (mag + 3) / 4;
         return v + (v & 1); // round up to even number of digits 0x123 -> 0x0123
-    }
-
-    public static int hexDigitNumberPadded(long value) {
-        return value != Integer.MIN_VALUE ? 16 : 3; // for Integer.MIN_VALUE we print NaN
     }
 
     public static int hexDigitsLong256(Long256 long256) {
@@ -730,20 +719,17 @@ public final class Numbers {
         int digits = 2; // 0x
         if (d != 0) {
             digits += hexDigitNumber(d);
-            digits += hexDigitNumberPadded(c);
-            digits += hexDigitNumberPadded(b);
-            digits += hexDigitNumberPadded(a);
+            digits += 48; // a, b, c are padded
             return digits;
         }
         if (c != 0) {
             digits += hexDigitNumber(c);
-            digits += hexDigitNumberPadded(b);
-            digits += hexDigitNumberPadded(a);
+            digits += 32; // a, b are padded
             return digits;
         }
         if (b != 0) {
             digits += hexDigitNumber(b);
-            digits += hexDigitNumberPadded(a);
+            digits += 16; // a is padded
             return digits;
         }
         digits += hexDigitNumber(a);

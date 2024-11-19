@@ -562,7 +562,7 @@ public class NumbersTest {
         long256.toSink(sink);
         Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
 
-        for (int i = -1; i < 256; i++) {
+        for (int i = -1; i < 1024; i++) {
             long256.setAll(i, i, i, i);
             sink.clear();
             long256.toSink(sink);
@@ -574,18 +574,18 @@ public class NumbersTest {
         long256.toSink(sink);
         Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
 
+        // We used to print all NaNs here
+        long256.setAll(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE);
+        sink.clear();
+        long256.toSink(sink);
+        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
+
         long256.setAll(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE);
         sink.clear();
         long256.toSink(sink);
         Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
 
         long256.setAll(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
-        sink.clear();
-        long256.toSink(sink);
-        Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));
-
-        // NaN case
-        long256.setAll(Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE);
         sink.clear();
         long256.toSink(sink);
         Assert.assertEquals(sink.length(), Numbers.hexDigitsLong256(long256));

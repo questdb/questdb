@@ -35,7 +35,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.Socket;
-import io.questdb.std.*;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8Sink;
@@ -255,7 +259,7 @@ public class CleartextPasswordPgWireAuthenticator implements SocketAuthenticator
 
     private void checkCapacity(long capacity) {
         if (sendBufWritePos + capacity > sendBufEnd) {
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            throw NoSpaceLeftInResponseBufferException.instance(capacity);
         }
     }
 

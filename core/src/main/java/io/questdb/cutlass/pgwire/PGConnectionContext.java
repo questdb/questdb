@@ -3206,7 +3206,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (sendBufferPtr + size < sendBufferLimit) {
                 return;
             }
-            throw NoSpaceLeftInResponseBufferException.INSTANCE;
+            throw NoSpaceLeftInResponseBufferException.instance(size);
         }
 
         void putZ(CharSequence value) {
