@@ -88,8 +88,8 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                 serverMain.start();
 
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-                    assertExecRequest(httpClient, "create table x(y long)", HttpURLConnection.HTTP_INTERNAL_ERROR,
-                            "{\"query\":\"create table x(y long)\",\"error\":\"Test error\",\"position\":0}"
+                    assertExecRequest(httpClient, "create table x as (select 1L y)", HttpURLConnection.HTTP_INTERNAL_ERROR,
+                            "{\"query\":\"create table x as (select 1L y)\",\"error\":\"Test error\",\"position\":0}"
                     );
                 }
             }

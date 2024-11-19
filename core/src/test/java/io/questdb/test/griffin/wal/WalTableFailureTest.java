@@ -28,6 +28,8 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.InsertMethod;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -43,6 +45,7 @@ import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -87,7 +90,17 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         if (counter.decrementAndGet() == 0) {
                             throw new IndexOutOfBoundsException();
                         }
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
+                        svc.addColumn(
+                                "new_column",
+                                ColumnType.INT,
+                                0,
+                                false,
+                                false,
+                                12,
+                                false,
+                                false,
+                                null
+                        );
                         return 0;
                     }
 
@@ -107,7 +120,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -125,7 +138,17 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
+                        svc.addColumn(
+                                "new_column",
+                                ColumnType.INT,
+                                0,
+                                false,
+                                false,
+                                12,
+                                false,
+                                false,
+                                null
+                        );
                         return 0;
                     }
 
@@ -149,7 +172,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -190,7 +213,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             TableToken tableName = createStandardWalTable(testName.getMethodName());
 
             drainWalQueue();
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'ef')");
+            execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'ef')");
 
             // Data is not there, job failed to apply the data.
             assertSql("x\tsym\tts\tsym2\n" +
@@ -361,7 +384,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 }
             }
 
-            compile("insert into " + tableToken.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
+            execute("insert into " + tableToken.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
             drainWalQueue();
 
             assertSql("x2\tsym\tts\tsym2\n" +
@@ -383,7 +406,17 @@ public class WalTableFailureTest extends AbstractCairoTest {
                         if (counter.decrementAndGet() == 0) {
                             return 0;
                         }
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
+                        svc.addColumn(
+                                "new_column",
+                                ColumnType.INT,
+                                0,
+                                false,
+                                false,
+                                12,
+                                false,
+                                false,
+                                null
+                        );
                         return 0;
                     }
 
@@ -402,7 +435,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            compile("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -421,7 +454,17 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 AlterOperation dodgyAlterOp = new AlterOperation() {
                     @Override
                     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
-                        svc.addColumn("new_column", ColumnType.INT, 0, false, false, 12, false);
+                        svc.addColumn(
+                                "new_column",
+                                ColumnType.INT,
+                                0,
+                                false,
+                                false,
+                                12,
+                                false,
+                                false,
+                                null
+                        );
                         return 0;
                     }
 
@@ -445,7 +488,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -462,6 +505,75 @@ public class WalTableFailureTest extends AbstractCairoTest {
             alterBuilder.ofDropColumn("ts");
 
             return alterBuilder.build();
+        });
+    }
+
+    @Test
+    public void testDropPartitionRangeNotOnDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableName = createStandardWalTable(testName.getMethodName());
+
+            execute("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-24T01', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(10 * 4)");
+            drainWalQueue();
+            Path tempPath = Path.getThreadLocal(root).concat(tableName);
+            long initialTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+
+            int dropPartitions = 5;
+            for (int i = 0; i < dropPartitions; i++) {
+                long ts = initialTs + i * Timestamps.DAY_MICROS;
+                tempPath.concat(Timestamps.toString(ts).substring(0, 10)).$();
+                Assert.assertTrue(ff.rmdir(tempPath));
+                tempPath.of(root).concat(tableName);
+            }
+
+            execute("alter table " + tableName.getTableName() + " drop partition WHERE ts <= '"
+                    + Timestamps.toString(initialTs + (dropPartitions - 3) * Timestamps.DAY_MICROS) + "'");
+
+            drainWalQueue();
+
+            try {
+                try (RecordCursorFactory factory = select(tableName.getTableName())) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        cursor.hasNext();
+                        Assert.fail();
+                    }
+                }
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2022-02-27' does not exist in table '" + tableName.getTableName() + "'");
+            }
+
+            execute("alter table " + tableName.getTableName() + " drop partition WHERE ts <= '"
+                    + Timestamps.toString(initialTs + dropPartitions * Timestamps.DAY_MICROS) + "'");
+
+            drainWalQueue();
+
+            assertSql("x\tsym\tts\tsym2\n" +
+                            "25\tBC\t2022-03-02T01:00:00.000000Z\tFG\n" +
+                            "26\tCD\t2022-03-02T07:00:00.000000Z\tEF\n" +
+                            "27\tBC\t2022-03-02T13:00:00.000000Z\tDE\n" +
+                            "28\tCD\t2022-03-02T19:00:00.000000Z\tFG\n" +
+                            "29\tCD\t2022-03-03T01:00:00.000000Z\tDE\n" +
+                            "30\tCD\t2022-03-03T07:00:00.000000Z\tDE\n" +
+                            "31\tAB\t2022-03-03T13:00:00.000000Z\tEF\n" +
+                            "32\tCD\t2022-03-03T19:00:00.000000Z\tEF\n" +
+                            "33\tCD\t2022-03-04T01:00:00.000000Z\tDE\n" +
+                            "34\tCD\t2022-03-04T07:00:00.000000Z\tEF\n" +
+                            "35\tCD\t2022-03-04T13:00:00.000000Z\tFG\n" +
+                            "36\tBC\t2022-03-04T19:00:00.000000Z\tDE\n" +
+                            "37\tCD\t2022-03-05T01:00:00.000000Z\tFG\n" +
+                            "38\tAB\t2022-03-05T07:00:00.000000Z\t\n" +
+                            "39\tBC\t2022-03-05T13:00:00.000000Z\tFG\n" +
+                            "40\tBC\t2022-03-05T19:00:00.000000Z\tFG\n",
+                    tableName.getTableName()
+            );
+
+            assertSql("min\tmax\n" +
+                            "2022-03-02T01:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                    "select min(ts), max(ts) from " + tableName.getTableName()
+            );
         });
     }
 
@@ -507,6 +619,197 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForceDropPartitionFailsAndRolledBack() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createStandardWalTable(testName.getMethodName());
+
+            execute("insert into " + tableToken.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-24T01', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(10 * 4)");
+
+            drainWalQueue();
+
+            assertSql("count\tmin\tmax\n" +
+                            "33\t2022-02-24T00:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableToken.getTableName() +
+                            " where ts not in '2022-03-04' and ts not in '2022-03-02'"
+            );
+            // Evict reader to simulate reader that is not able to read partition
+            engine.releaseInactive();
+
+            // Remove one but last partition from the disk
+            Path tempPath = Path.getThreadLocal(root).concat(tableToken).concat("2022-03-04");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            Assert.assertTrue(ff.rmdir(tempPath));
+
+            try {
+                // This should execute immediately, drop partition before the last one
+                execute("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-05'");
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist:");
+                TestUtils.assertContains(e.getFlyweightMessage(), "2022-03-04");
+            }
+
+            try {
+                assertSql("count\tmin\tmax\n" +
+                                "20\t2022-03-01T01:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                        "select count(), min(ts), max(ts) from " + tableToken.getTableName()
+                );
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2022-03-04' does not exist in table");
+            }
+
+            // Previous command to delete 2022-03-05 is not executed because writer rolled back correctly
+            execute("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-02'");
+            tempPath = Path.getThreadLocal(root).concat(tableToken).concat("2022-03-05");
+            Assert.assertTrue(ff.exists(tempPath.$()));
+
+            // Force delete partition that is not on disk to unblock reading
+            execute("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-04'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "33\t2022-02-24T00:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableToken.getTableName()
+            );
+
+            // Check writer is healthy and can insert records to the last partition
+            execute("insert into " + tableToken.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-03-05', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(10 * 4)");
+            drainWalQueue();
+            assertSql("count\tmin\tmax\n" +
+                            "73\t2022-02-24T00:00:00.000000Z\t2022-03-14T18:00:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableToken.getTableName() + " where ts not in '2022-03-04'"
+            );
+        });
+    }
+
+    @Test
+    public void testForceDropPartitionRangeNotOnDisk() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableName = createStandardWalTable(testName.getMethodName());
+
+            execute("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-24T01', 1000000L * 60 * 60 * 6), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(10 * 4)");
+
+            drainWalQueue();
+
+            Path tempPath = Path.getThreadLocal(root).concat(tableName);
+            long initialTs = IntervalUtils.parseFloorPartialTimestamp("2022-02-24");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+
+            int dropPartitions = 5;
+            for (int i = 0; i < dropPartitions; i++) {
+                long ts = initialTs + i * Timestamps.DAY_MICROS;
+                tempPath.concat(Timestamps.toString(ts).substring(0, 10)).$();
+                Assert.assertTrue(ff.rmdir(tempPath));
+                tempPath.of(root).concat(tableName);
+            }
+
+            // This should execute immediately
+            execute("alter table " + tableName.getTableName() + " force drop partition list '2022-02-24', '2022-02-25', '2022-02-26', '2022-02-27', '2022-02-28'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "20\t2022-03-01T01:00:00.000000Z\t2022-03-05T19:00:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+        });
+    }
+
+    @Test
+    public void testForceDropPartitionRangeNotOnDiskWithSplits() throws Exception {
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        assertMemoryLeak(() -> {
+            TableToken tableName = createStandardWalTable(testName.getMethodName());
+
+            execute("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-24', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60 * 24 * 3 - 1)");
+
+            drainWalQueue();
+
+            execute("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-26T19', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60)");
+
+            drainWalQueue();
+
+            execute("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-26T16', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60)");
+
+            drainWalQueue();
+
+            Path tempPath = Path.getThreadLocal(root).concat(tableName).concat("2022-02-26T155900-000001.2");
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            Assert.assertTrue(ff.rmdir(tempPath));
+
+            // This should execute immediately
+            execute("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26T155900-000001'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "4200\t2022-02-24T00:00:00.000000Z\t2022-02-26T23:58:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Drop last partition
+            execute("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26T185900-000001', '2022-02-26'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "2881\t2022-02-24T00:00:00.000000Z\t2022-02-25T23:59:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Insert more data
+            execute("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-26T16', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60)");
+
+            drainWalQueue();
+
+            // Drop all partitions
+            execute("alter table " + tableName.getTableName() + " force drop partition list '2022-02-25', '2022-02-24', '2022-02-26'");
+            assertSql("count\tmin\tmax\n" +
+                            "0\t\t\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Insert more data
+            execute("insert into " + tableName.getTableName() + " " +
+                    "select x, rnd_symbol('AB', 'BC', 'CD'), timestamp_sequence('2022-02-26T16', 1000000L * 60), rnd_symbol('DE', null, 'EF', 'FG') " +
+                    "from long_sequence(60 * 24)");
+
+            drainWalQueue();
+
+            assertSql("count\tmin\tmax\n" +
+                            "1440\t2022-02-26T16:00:00.000000Z\t2022-02-27T15:59:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Force drop first partition, but keep last
+            if (Os.isWindows()) {
+                engine.releaseInactive();
+            }
+            tempPath = Path.getThreadLocal(root).concat(tableName).concat("2022-02-26.6");
+            Assert.assertTrue(ff.exists(tempPath.$()));
+            execute("alter table " + tableName.getTableName() + " force drop partition list '2022-02-26'");
+
+            assertSql("count\tmin\tmax\n" +
+                            "960\t2022-02-27T00:00:00.000000Z\t2022-02-27T15:59:00.000000Z\n",
+                    "select count(), min(ts), max(ts) from " + tableName.getTableName()
+            );
+
+            // Check that partitions are removed from disk, there are no open readers, directory removal should happen at the end
+            // of alter table operation
+            tempPath = Path.getThreadLocal(root).concat(tableName).concat("2022-02-26.6");
+            Assert.assertFalse(ff.exists(tempPath.$()));
+        });
+    }
+
+    @Test
     public void testInvalidNonStructureAlter() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
@@ -533,7 +836,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             drainWalQueue();
-            compile("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableToken.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -589,7 +892,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 Assert.assertEquals(2, walWriter.getWalId());
             }
 
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
 
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -603,10 +906,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            compile("alter table " + tableToken.getTableName() + " add column new_column int");
+            execute("alter table " + tableToken.getTableName() + " add column new_column int");
 
             try {
-                compile("alter table " + tableToken.getTableName() + " add column new_column int");
+                execute("alter table " + tableToken.getTableName() + " add column new_column int");
             } catch (SqlException ex) {
                 // Critical error
                 TestUtils.assertContains(ex.getFlyweightMessage(), "column 'new_column' already exists");
@@ -632,10 +935,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
             String tableName = tableToken.getTableName();
 
-            compile("alter table " + tableName + " add column new_column int");
+            execute("alter table " + tableName + " add column new_column int");
 
             try {
-                insert("insert into " + tableName +
+                execute("insert into " + tableName +
                         " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
                 Assert.fail();
             } catch (CairoException ex) {
@@ -649,7 +952,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\tnull\n", tableName);
 
             fail.set(false);
-            insert("insert into " + tableName +
+            execute("insert into " + tableName +
                     " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\tnew_column\n" +
@@ -677,16 +980,16 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 String tableName = testName.getMethodName();
                 createStandardWalTable(tableName);
 
-                compile("alter table " + tableName + " add column new_column int");
+                execute("alter table " + tableName + " add column new_column int");
 
-                insert("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
+                execute("insert into " + tableName + " values (101, 'dfd', '2022-02-24T01', 'asd', 123)");
                 drainWalQueue(walApplyJob);
                 assertSql("x\tsym\tts\tsym2\n" +
                         "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableName);
 
                 fail.set(false);
 
-                insert("insert into " + tableName + " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
+                execute("insert into " + tableName + " values (102, 'dfd', '2022-02-24T01', 'asd', 123)");
                 drainWalQueue(walApplyJob);
                 assertSql("x\tsym\tts\tsym2\n" +
                         "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableName);
@@ -704,7 +1007,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
             engine.notifyWalTxnCommitted(ignored);
 
-            compile("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableName + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();
 
             assertSql("x\tsym\tts\tsym2\n" +
@@ -731,7 +1034,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             } catch (TableReferenceOutOfDateException ignore) {
             }
 
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();
 
             assertSql("x\tsym\tts\tsym2\n" +
@@ -806,21 +1109,21 @@ public class WalTableFailureTest extends AbstractCairoTest {
         };
         assertMemoryLeak(ff, () -> {
 
-            ddl("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL");
             TableToken tt = engine.verifyTableName("tab");
 
-            insert("insert into tab select true, (1)::timestamp, null from long_sequence(1)");
-            insert("insert into tab select true, (2)::timestamp, null from long_sequence(1)");
-            insert("insert into tab select true, (3)::timestamp, null from long_sequence(1)");
-            insert("insert into tab select true, (4)::timestamp, null from long_sequence(1)");
+            execute("insert into tab select true, (1)::timestamp, null from long_sequence(1)");
+            execute("insert into tab select true, (2)::timestamp, null from long_sequence(1)");
+            execute("insert into tab select true, (3)::timestamp, null from long_sequence(1)");
+            execute("insert into tab select true, (4)::timestamp, null from long_sequence(1)");
             update("update tab set b=false");
-            insert("insert into tab select true, (5)::timestamp, null from long_sequence(1)");
+            execute("insert into tab select true, (5)::timestamp, null from long_sequence(1)");
             drainWalQueue();
 
             assertEventually(() -> Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tt)));
 
-            ddl("alter table tab resume wal");
-            insert("insert into tab select true, (6)::timestamp, null from long_sequence(1)");
+            execute("alter table tab resume wal");
+            execute("insert into tab select true, (6)::timestamp, null from long_sequence(1)");
             drainWalQueue();
 
             assertSql(
@@ -860,7 +1163,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "wal_tables()"
             );
 
-            compile("alter table " + tableToken.getTableName() + " suspend wal");
+            execute("alter table " + tableToken.getTableName() + " suspend wal");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
@@ -868,11 +1171,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "wal_tables()"
             );
 
-            compile("update " + tableToken.getTableName() + " set x = 1111;");
+            execute("update " + tableToken.getTableName() + " set x = 1111;");
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
-            compile("alter table " + tableToken.getTableName() + " suspend wal with "
+            execute("alter table " + tableToken.getTableName() + " suspend wal with "
                     + (Os.isWindows() ? 112 : 28) + ", 'test error message'");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
@@ -881,7 +1184,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "wal_tables()"
             );
 
-            compile("alter table " + tableToken.getTableName() + " resume wal;");
+            execute("alter table " + tableToken.getTableName() + " resume wal;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             assertSql(
                     "name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
@@ -928,8 +1231,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 writer.addColumn("abcd", ColumnType.INT);
             }
 
-            compile("alter table " + tableName.getTableName() + " add column dddd2 long");
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'abcd', 123)");
+            execute("alter table " + tableName.getTableName() + " add column dddd2 long");
+            execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'abcd', 123)");
             drainWalQueue();
 
             // No SQL applied
@@ -949,12 +1252,12 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 writer.removeColumn("sym");
             }
 
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'abcde')");
-            compile("insert into " + tableName.getTableName() + " values (2, 'ab', '2022-02-25', 'abcdr')");
+            execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-25', 'abcde')");
+            execute("insert into " + tableName.getTableName() + " values (2, 'ab', '2022-02-25', 'abcdr')");
             // inserts do not check structure version
             // it fails only when structure is changing through the WAL
-            compile("alter table " + tableName.getTableName() + " add column dddd2 long");
-            compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcdt', 123L)");
+            execute("alter table " + tableName.getTableName() + " add column dddd2 long");
+            execute("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcdt', 123L)");
 
             drainWalQueue();
             assertSql("ts\tsym2\n" +
@@ -967,19 +1270,19 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testWalMultipleColumnConversions() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
-            insert("insert into abc values('aa', 'a', 'b', 'bb', '2022-02-24T01')");
+            execute("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into abc values('aa', 'a', 'b', 'bb', '2022-02-24T01')");
             drainWalQueue();
 
-            ddl("alter table abc add column new_col SYMBOL INDEX");
-            ddl("update abc set new_col = x");
-            ddl("alter table abc drop column x");
-            ddl("alter table abc rename column new_col to x");
+            execute("alter table abc add column new_col SYMBOL INDEX");
+            execute("update abc set new_col = x");
+            execute("alter table abc drop column x");
+            execute("alter table abc rename column new_col to x");
 
-            ddl("alter table abc add column new_col SYMBOL INDEX");
-            ddl("update abc set new_col = y");
-            ddl("alter table abc drop column y");
-            ddl("alter table abc rename column new_col to y");
+            execute("alter table abc add column new_col SYMBOL INDEX");
+            execute("update abc set new_col = y");
+            execute("alter table abc drop column y");
+            execute("alter table abc rename column new_col to y");
 
             drainWalQueue();
 
@@ -1041,7 +1344,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             checkWalTransactionsJob.run(0);
 
-            compile("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
+            execute("insert into " + tableName.getTableName() + " values (1, 'ab', '2022-02-24T23', 'ef')");
             drainWalQueue();
 
             assertSql("x\tsym\tts\tsym2\n" +
@@ -1097,11 +1400,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            insert("insert into " + tableToken.getTableName() +
+            execute("insert into " + tableToken.getTableName() +
                     " values (101, 'dfd', '2022-02-24T01', 'asd')");
 
             try {
-                compile("alter table " + tableToken.getTableName() + " add column jjj int, column2 long");
+                execute("alter table " + tableToken.getTableName() + " add column jjj int, column2 long");
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(
@@ -1111,7 +1414,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 );
             }
 
-            insert("insert into " + tableToken.getTableName() +
+            execute("insert into " + tableToken.getTableName() +
                     " values (101, 'dfd', '2022-02-24T01', 'asd')");
             drainWalQueue();
             assertSql("x\tsym\tts\tsym2\n" +
@@ -1143,11 +1446,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
             //1
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
             //2 fail
-            compile("update " + tableToken.getTableName() + " set x = 1111");
+            execute("update " + tableToken.getTableName() + " set x = 1111");
             //3
-            compile("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (1, 'AB', 'EF', '2022-02-24T01')");
+            execute("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (1, 'AB', 'EF', '2022-02-24T01')");
             //4
-            compile("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (2, 'AB', 'EF', '2022-02-24T02')");
+            execute("insert into " + tableToken.getTableName() + "(x, sym, sym2, ts) values (2, 'AB', 'EF', '2022-02-24T02')");
 
             drainWalQueue();
 
@@ -1167,7 +1470,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
             engine.getTableSequencerAPI().releaseAll();
-            compile("alter table " + tableToken.getTableName() + " resume wal");
+            execute("alter table " + tableToken.getTableName() + " resume wal");
 
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             drainWalQueue();
@@ -1198,9 +1501,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
         assertMemoryLeak(filesFacade, () -> {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
 
-            compile("update " + tableToken.getTableName() + " set x = 1111;");
-            compile("update " + tableToken.getTableName() + " set sym = 'XXX';");
-            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY';");
+            execute("update " + tableToken.getTableName() + " set x = 1111;");
+            execute("update " + tableToken.getTableName() + " set sym = 'XXX';");
+            execute("update " + tableToken.getTableName() + " set sym2 = 'YYY';");
 
             drainWalQueue();
 
@@ -1208,7 +1511,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
-            compile("alter table " + tableToken.getTableName() + " resume wal;");
+            execute("alter table " + tableToken.getTableName() + " resume wal;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
 
             drainWalQueue();
@@ -1234,11 +1537,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
             //1
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
             //2 fail
-            compile("update " + tableToken.getTableName() + " set x = 1111");
+            execute("update " + tableToken.getTableName() + " set x = 1111");
             //3
-            compile("update " + tableToken.getTableName() + " set sym = 'XXX'");
+            execute("update " + tableToken.getTableName() + " set sym = 'XXX'");
             //4
-            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
+            execute("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
 
             drainWalQueue();
 
@@ -1247,13 +1550,13 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertSql("x\tsym\tts\tsym2\n1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n", tableToken.getTableName());
 
             try {
-                compile("alter table " + tableToken.getTableName() + " resume wal from transaction 999;"); // fails
+                execute("alter table " + tableToken.getTableName() + " resume wal from transaction 999;"); // fails
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getMessage(), "[-1] resume txn is higher than next available transaction [resumeFromTxn=999, nextTxn=5]");
             }
 
-            compile("alter table " + tableToken.getTableName() + " resume wal from txn 3;");
+            execute("alter table " + tableToken.getTableName() + " resume wal from txn 3;");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
             engine.releaseInactive(); // release writer from the pool
             drainWalQueue();
@@ -1342,7 +1645,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
     private static void assertAlterTableTypeFail(String alterStmt, String expected) {
         try {
-            compile(alterStmt);
+            execute(alterStmt);
             Assert.fail("expected SQLException is not thrown");
         } catch (SqlException ex) {
             TestUtils.assertContains(ex.getFlyweightMessage(), expected);
@@ -1354,7 +1657,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
     }
 
     private TableToken createStandardTable(String tableName, boolean isWal) throws SqlException {
-        compile("create table " + tableName + " as (" +
+        execute("create table " + tableName + " as (" +
                 "select x, " +
                 " rnd_symbol('AB', 'BC', 'CD') sym, " +
                 " timestamp_sequence('2022-02-24', 1000000L) ts, " +
@@ -1436,7 +1739,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
         assertMemoryLeak(dodgyFf, () -> {
             String tableName = testName.getMethodName();
-            compile("create table " + tableName + " (" +
+            execute("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
                     "str string," +
@@ -1456,7 +1759,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     insertMethod.commit();
 
                     insertMethod.execute();
-                    compile("alter table " + tableName + " add column new_column int");
+                    execute("alter table " + tableName + " add column new_column int");
 
                     try {
                         insertMethod.commit();
@@ -1467,7 +1770,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 }
             }
 
-            insert("insert into " + tableName + " values (103, 'dfd', 'str-2', '2022-02-24T02', 'asdd', 1234)");
+            execute("insert into " + tableName + " values (103, 'dfd', 'str-2', '2022-02-24T02', 'asdd', 1234)");
 
             drainWalQueue();
             assertSql("x\tsym\tstr\tts\tsym2\tnew_column\n" +
@@ -1481,10 +1784,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
         createStandardWalTable(tableName);
 
         // Drop partition which does not exist
-        compile(query);
+        execute(query);
 
         // Table should not be suspended
-        insert("insert into " + tableName +
+        execute("insert into " + tableName +
                 " values (101, 'dfd', '2022-02-25T01', 'asd')");
 
         drainWalQueue();
@@ -1499,10 +1802,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
             createStandardWalTable(tableName);
 
             // Drop partition which does not exist
-            compile(query);
+            execute(query);
 
             // Table should be suspended
-            compile("update " + tableName + " set x = 1111");
+            execute("update " + tableName + " set x = 1111");
 
             drainWalQueue();
 
@@ -1531,7 +1834,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             drainWalQueue();
 
             try (WalWriter ignore = engine.getWalWriter(tableName)) {
-                compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
+                execute("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
                 try (WalWriter insertedWriter = engine.getWalWriter(tableName)) {
                     try (Path path = new Path()) {
                         String columnName = "sym";
@@ -1550,7 +1853,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 }
             }
 
-            compile("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
+            execute("insert into " + tableName.getTableName() + " values (3, 'ab', '2022-02-25', 'abcd')");
             drainWalQueue();
 
             assertSql("x\tsym\tts\tsym2\n" +
@@ -1582,11 +1885,11 @@ public class WalTableFailureTest extends AbstractCairoTest {
             //1
             final TableToken tableToken = createStandardWalTable(tableName);
             //2 fail
-            compile("update " + tableToken.getTableName() + " set x = 1111");
+            execute("update " + tableToken.getTableName() + " set x = 1111");
             //3
-            compile("update " + tableToken.getTableName() + " set sym = 'XXX'");
+            execute("update " + tableToken.getTableName() + " set sym = 'XXX'");
             //4
-            compile("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
+            execute("update " + tableToken.getTableName() + " set sym2 = 'YYY'");
 
             drainWalQueue();
 
@@ -1604,8 +1907,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "wal_tables()"
             );
 
-            compile("alter table " + tableToken.getTableName() + " resume wal");
-            compile("alter table " + tableToken.getTableName() + " resume wal from transaction 0"); // ignored
+            execute("alter table " + tableToken.getTableName() + " resume wal");
+            execute("alter table " + tableToken.getTableName() + " resume wal from transaction 0"); // ignored
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
 
             engine.releaseInactive(); // release writer from the pool
@@ -1614,7 +1917,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             assertSql("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
                     tableToken.getTableName() + "\tfalse\t4\t0\t4\t\t\t0\n", "wal_tables()");
 
-            compile("drop table " + tableToken.getTableName());
+            execute("drop table " + tableToken.getTableName());
         });
     }
 }

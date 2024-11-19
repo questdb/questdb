@@ -24,9 +24,19 @@
 
 package io.questdb.test.griffin.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DebugUtils;
+import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -40,7 +50,14 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -65,10 +82,10 @@ public class FuzzRunner {
     protected int initialRowCount;
     protected int partitionCount;
     private double cancelRowsProb;
+    private double colAddProb;
+    private double colRemoveProb;
     private double colRenameProb;
     private double colTypeChangeProb;
-    private double collAddProb;
-    private double collRemoveProb;
     private double dataAddProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
@@ -77,6 +94,7 @@ public class FuzzRunner {
     private double notSetProb;
     private double nullSetProb;
     private int parallelWalCount;
+    private double partitionDropProb;
     private double rollbackProb;
     private long s0;
     private long s1;
@@ -316,7 +334,7 @@ public class FuzzRunner {
     public TableToken createInitialTable(String tableName, boolean isWal, int rowCount) throws SqlException {
         SharedRandom.RANDOM.set(new Rnd());
         if (engine.getTableTokenIfExists(tableName) == null) {
-            engine.ddl(
+            engine.execute(
                     "create atomic table " + tableName + " as (" +
                             "select x as c1, " +
                             " rnd_symbol('AB', 'BC', 'CD') c2, " +
@@ -332,11 +350,11 @@ public class FuzzRunner {
                     sqlExecutionContext
             );
             // force few column tops
-            engine.ddl("alter table " + tableName + " add column long_top long", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column str_top long", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
-            engine.ddl("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column long_top long", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column str_top long", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column sym_top symbol index", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column ip4 ipv4", sqlExecutionContext);
+            engine.execute("alter table " + tableName + " add column var_top varchar", sqlExecutionContext);
         }
         return engine.verifyTableName(tableName);
     }
@@ -357,7 +375,7 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateSet(
             Rnd rnd,
-            TableMetadata sequencerMetadata,
+            TableRecordMetadata sequencerMetadata,
             TableMetadata tableMetadata,
             long start,
             long end,
@@ -377,12 +395,13 @@ public class FuzzRunner {
                 notSetProb,
                 nullSetProb,
                 rollbackProb,
-                collAddProb,
-                collRemoveProb,
+                colAddProb,
+                colRemoveProb,
                 colRenameProb,
                 colTypeChangeProb,
-                dataAddProb,
                 truncateProb,
+                partitionDropProb,
+                dataAddProb,
                 equalTsRowsProb,
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
@@ -399,10 +418,10 @@ public class FuzzRunner {
 
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
-        try (TableMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken)) {
-            try (TableMetadata tableMetadata = engine.getTableMetadata(tableToken)) {
-                return generateSet(rnd, sequencerMetadata, tableMetadata, start, end, tableName);
-            }
+        try (TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);
+             TableMetadata tableMetadata = engine.getTableMetadata(tableToken)
+        ) {
+            return generateSet(rnd, sequencerMetadata, tableMetadata, start, end, tableName);
         }
     }
 
@@ -426,19 +445,34 @@ public class FuzzRunner {
         this.parallelWalCount = parallelWalCount;
     }
 
-    public void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb, double colTypeChangeProb) {
+    public void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double partitionDropProb,
+            double truncateProb,
+            double tableDropProb,
+            double equalTsRowsProb
+    ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
         this.rollbackProb = rollbackProb;
-        this.collAddProb = collAddProb;
-        this.collRemoveProb = collRemoveProb;
+        this.colAddProb = colAddProb;
+        this.colRemoveProb = colRemoveProb;
         this.colRenameProb = colRenameProb;
         this.colTypeChangeProb = colTypeChangeProb;
         this.dataAddProb = dataAddProb;
+        this.partitionDropProb = partitionDropProb;
         this.truncateProb = truncateProb;
-        this.equalTsRowsProb = equalTsRowsProb;
         this.tableDropProb = tableDropProb;
+        this.equalTsRowsProb = equalTsRowsProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -659,10 +693,6 @@ public class FuzzRunner {
         }
     }
 
-    private int getRndParallelWalCount(Rnd rnd) {
-        return 1 + rnd.nextInt(4);
-    }
-
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
         try {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
@@ -821,7 +851,7 @@ public class FuzzRunner {
         long endNonWalMicro = System.nanoTime() / 1000;
         long nonWalTotal = endNonWalMicro - startMicro;
 
-        applyWal(transactions, tableNameWal, getRndParallelWalCount(rnd), rnd);
+        applyWal(transactions, tableNameWal, 1, rnd);
 
         long endWalMicro = System.nanoTime() / 1000;
         long walTotal = endWalMicro - endNonWalMicro;
@@ -860,9 +890,11 @@ public class FuzzRunner {
                         rnd.nextDouble(),
                         rnd.nextDouble(),
                         rnd.nextDouble(),
-                        0.1 * rnd.nextDouble(), 0.01,
                         rnd.nextDouble(),
-                        rnd.nextDouble()
+                        0.0,
+                        0.1 * rnd.nextDouble(),
+                        rnd.nextDouble(),
+                        0.01
                 );
             }
             if (randomiseCounts) {
@@ -899,4 +931,3 @@ public class FuzzRunner {
         }
     }
 }
-

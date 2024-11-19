@@ -27,14 +27,16 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.griffin.wal.AbstractFuzzTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -51,34 +53,34 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
                 0.05,
                 0.05,
                 0,
+                0,
                 0.2,
+                0.0,
                 0,
-                0.5,
                 0,
-                0
+                0.5
         );
 
         // Basic load to keep the test lite, we just want to fuzz different transaction types, not intensive inserting
-        fuzzer.setFuzzCounts(
-                rnd.nextBoolean(),
-                rnd.nextInt(2_000),
-                rnd.nextInt(1000),
-                rnd.nextInt(3),
-                rnd.nextInt(5),
-                rnd.nextInt(1000),
-                rnd.nextInt(1_000_000),
-                5 + rnd.nextInt(10)
-        );
+        boolean isO3 = rnd.nextBoolean();
+        int fuzzRowCount = rnd.nextInt(2_000);
+        int transactionCount = rnd.nextInt(1000);
+        int strLen = rnd.nextInt(3);
+        int symbolStrLenMax = rnd.nextInt(5);
+        int symbolCountMax = rnd.nextInt(1000);
+        int initialRowCount = rnd.nextInt(1_000_000);
+        int partitionCount = 5 + rnd.nextInt(10);
+        fuzzer.setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount);
 
-        setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd), 10 * Numbers.SIZE_1MB, 3);
+        setFuzzProperties(1,
+                getRndO3PartitionSplit(rnd),
+                getRndO3PartitionSplitMaxCount(rnd),
+                10 * Numbers.SIZE_1MB,
+                3);
         runFuzzWithWithReload(rnd);
     }
 
     protected void runFuzzWithWithReload(Rnd rnd) throws Exception {
-        // Snapshot is not supported on Windows.
-        Assume.assumeFalse(Os.isWindows());
-        boolean testHardLinkCheckpoint = rnd.nextBoolean();
-
         AtomicLong openFileCount = new AtomicLong();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -93,40 +95,29 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(ff, () -> {
             int size = rnd.nextInt(16 * 1024 * 1024);
             node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
-            if (testHardLinkCheckpoint) {
-                node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "100G");
-            }
 
-            String tableNameNonWal = testName.getMethodName() + "_non_wal";
-            fuzzer.createInitialTable(tableNameNonWal, false, 100);
-            String tableNameWal = testName.getMethodName();
-            TableToken walTable = fuzzer.createInitialTable(tableNameWal, true, 100);
+            String tableName = testName.getMethodName();
+            TableToken tableToken = fuzzer.createInitialTable(tableName, true, 100);
 
-            insert("insert into " + tableNameWal + "(ts) values ('2000-01-01')");
+            execute("insert into " + tableName + " (ts) values ('2000-01-01')");
             drainWalQueue();
 
-            try (TableReader reader = engine.getReader(walTable)) {
+            try (TableReader reader = engine.getReader(tableToken)) {
                 reader.openPartition(0);
-
                 reader.goPassive();
 
-                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameNonWal, rnd);
-                int snapshotIndex = 1 + rnd.nextInt(transactions.size() - 1);
-
-                ObjList<FuzzTransaction> beforeSnapshot = new ObjList<>();
-                beforeSnapshot.addAll(transactions, 0, snapshotIndex);
-                ObjList<FuzzTransaction> afterSnapshot = new ObjList<>();
-                afterSnapshot.addAll(transactions, snapshotIndex, transactions.size());
-
-                fuzzer.applyToWal(beforeSnapshot, tableNameWal, rnd.nextInt(2) + 1, rnd);
+                ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
+                fuzzer.applyToWal(transactions, tableName, 1 + rnd.nextInt(2), rnd);
                 drainWalQueue();
 
-                Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(walTable));
+                Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
                 long openFiles = openFileCount.get();
 
                 reader.goActive();
                 reader.openPartition(0);
-                Assert.assertEquals("unaffected partition should not be reloaded, file open count should stay the same", openFiles, openFileCount.get());
+                Assert.assertEquals(
+                        "unaffected partition should not be reloaded, file open count should stay the same",
+                        openFiles, openFileCount.get());
             }
         });
     }

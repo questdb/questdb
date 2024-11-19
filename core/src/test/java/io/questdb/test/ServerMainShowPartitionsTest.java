@@ -30,6 +30,7 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -101,7 +102,8 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 pgPort,
                 ILP_PORT + pgPortDelta,
                 root,
-                PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true"));
+                PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath() + "=true"
+        ));
     }
 
     @Test
@@ -147,7 +149,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                     errors.compareAndSet(null, new AssertionError("Timed out waiting for threads to complete"));
                     TestListener.dumpThreadStacks();
                 }
-                dropTable(defaultCompiler, defaultContext, tableToken);
+                dropTable(defaultContext, tableToken);
                 Misc.freeObjListAndClear(compilers);
                 Misc.freeObjListAndClear(contexts);
 
@@ -190,16 +192,20 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
             SqlExecutionContext context,
             String tableName
     ) throws Exception {
-        String createTable = "CREATE TABLE " + tableName + '(' +
-                "  investmentMill LONG," +
-                "  ticketThous INT," +
-                "  broker SYMBOL," +
-                "  ts TIMESTAMP" +
-                ") TIMESTAMP(ts) PARTITION BY DAY";
+        QueryBuilder qb = compiler.query();
+        qb.$("CREATE TABLE ").$(tableName).$('(');
+        qb
+                .$("  investmentMill LONG,")
+                .$("  ticketThous INT,")
+                .$("broker SYMBOL,")
+                .$("ts TIMESTAMP")
+                .$(") TIMESTAMP(ts) PARTITION BY DAY");
+
         if (isWal) {
-            createTable += " WAL";
+            qb.$(" WAL");
         }
-        compiler.compile(createTable, context);
+        qb.createTable(context);
+
         TableModel tableModel = new TableModel(cairoConfig, tableName, PartitionBy.DAY)
                 .col("investmentMill", ColumnType.LONG)
                 .col("ticketThous", ColumnType.INT)

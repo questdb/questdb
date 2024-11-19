@@ -114,8 +114,8 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
 
                 for (int i = 0; i < numOfDrops; i++) {
                     final CharSequence tableName = pickCreatedTableName(rnd);
-                    sql = "drop table " + tableName;
-                    drop(sql, executionContext, eventSubSeq);
+                    sql = "drop table if exists " + tableName;
+                    execute(sql, executionContext, eventSubSeq);
                     Os.sleep(10);
                 }
             } catch (Exception e) {

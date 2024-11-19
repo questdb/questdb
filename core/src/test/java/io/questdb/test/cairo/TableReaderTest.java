@@ -1267,6 +1267,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     exceptions.add(e);
                     LOG.error().$(e).$();
                 } finally {
+                    Path.clearThreadLocals();
                     done.incrementAndGet();
                 }
             });
@@ -1287,6 +1288,8 @@ public class TableReaderTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     exceptions.add(e);
                     LOG.error().$(e).$();
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             writerThread.start();
@@ -1345,6 +1348,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     LOG.error().$(e).$();
                 } finally {
                     done.incrementAndGet();
+                    Path.clearThreadLocals();
                 }
             });
 
@@ -1365,6 +1369,8 @@ public class TableReaderTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     exceptions.add(e);
                     LOG.error().$(e).$();
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             writerThread.start();
@@ -1421,6 +1427,7 @@ public class TableReaderTest extends AbstractCairoTest {
                     LOG.error().$(e).$();
                 } finally {
                     done.incrementAndGet();
+                    Path.clearThreadLocals();
                 }
             });
 
@@ -1442,6 +1449,8 @@ public class TableReaderTest extends AbstractCairoTest {
                 } catch (Throwable e) {
                     exceptions.add(e);
                     LOG.error().$(e).$();
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             writerThread.start();
@@ -2400,7 +2409,7 @@ public class TableReaderTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, openPartitionsLimit);
 
         TableModel model = new TableModel(configuration, "x", PartitionBy.HOUR).col("i", ColumnType.INT).timestamp();
-        TestUtils.create(model, engine);
+        TestUtils.createTable(engine, model);
 
         try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
             for (int i = 0; i < rows; i++) {

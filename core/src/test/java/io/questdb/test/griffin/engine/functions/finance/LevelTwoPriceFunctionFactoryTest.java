@@ -69,7 +69,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     @Test
     public void testBindVarTypeChangeDoubleAmount() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 'btc_trades' (\n" +
+            execute("CREATE TABLE 'btc_trades' (\n" +
                     "  symbol SYMBOL capacity 256 CACHE,\n" +
                     "  side SYMBOL capacity 256 CACHE,\n" +
                     "  price DOUBLE,\n" +
@@ -77,7 +77,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     "  timestamp TIMESTAMP\n" +
                     ") timestamp (timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS(symbol, timestamp);");
 
-            insert("INSERT INTO btc_trades (symbol, side, price, amount, timestamp) VALUES\n" +
+            execute("INSERT INTO btc_trades (symbol, side, price, amount, timestamp) VALUES\n" +
                     "('BTC-USD', 'buy', 25738.01, 0.00192304, '2023-09-05T16:59:45.804537Z'),\n" +
                     "('BTC-USD', 'buy', 25738.01, 0.00254854, '2023-09-05T16:59:46.639102Z'),\n" +
                     "('BTC-USD', 'buy', 25738.01, 0.00038735, '2023-09-05T16:59:47.229826Z'),\n" +
@@ -169,7 +169,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
         assertMemoryLeak(() -> {
             assertFailure("[20] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.", "select l2price(1.3, '31', 5)");
             assertFailure("[23] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.", "select l2price(100, 1, '31abascsd')");
-            ddl("create table x as ( select rnd_str(1, 10, 0) as s from long_sequence(100) )");
+            execute("create table x as ( select rnd_str(1, 10, 0) as s from long_sequence(100) )");
             drainWalQueue();
             assertFailure("[23] l2price requires arguments of type `DOUBLE`, or convertible to `DOUBLE`, not `STRING`.", "select l2price(100, 1, s) from x");
         });
@@ -238,7 +238,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     @Test
     public void testLevelTwoPriceWithAggregate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as ( select timestamp_sequence(172800000000, 3600000000) ts, rnd_long(12, 20, 0) as size, rnd_double() as value from long_sequence(10))");
+            execute("create table x as ( select timestamp_sequence(172800000000, 3600000000) ts, rnd_long(12, 20, 0) as size, rnd_double() as value from long_sequence(10))");
             drainWalQueue();
 
             assertQuery("avg\n"
@@ -249,7 +249,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
     @Test
     public void testLevelTwoPriceWithSpread() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as ( select timestamp_sequence(172800000000, 3600000000) ts, " +
+            execute("create table x as ( select timestamp_sequence(172800000000, 3600000000) ts, " +
                     "rnd_long(12, 20, 0) as ask_size, " +
                     "rnd_double() as ask_value, " +
                     "rnd_long(12, 20, 0) as bid_size, " +

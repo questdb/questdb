@@ -151,7 +151,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
 
     private void testBusyPoll(long timestampIncrement, int n, String createStatement) throws Exception {
         assertMemoryLeak(() -> {
-            ddl(createStatement);
+            execute(createStatement);
             final AtomicInteger errorCount = new AtomicInteger();
             final CyclicBarrier barrier = new CyclicBarrier(2);
             final CountDownLatch latch = new CountDownLatch(2);
@@ -240,7 +240,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         final int blobSize = 1024;
         final int n = 1000;
         assertMemoryLeak(() -> {
-            ddl("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
+            execute("create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy));
 
             TableToken tableToken = engine.verifyTableName("xyz");
             try (TableWriter writer = getWriter(tableToken)) {
@@ -295,7 +295,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
         final int blobSize = 1024;
         final int n = 1000;
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table xyz (sequence INT, event BINARY, ts LONG, stamp TIMESTAMP) timestamp(stamp) partition by " + PartitionBy.toString(partitionBy),
                     sqlExecutionContext
             );
