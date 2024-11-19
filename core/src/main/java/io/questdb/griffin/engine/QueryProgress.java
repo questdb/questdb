@@ -194,10 +194,10 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             try {
                 final RecordCursor baseCursor = base.getCursor(executionContext);
                 cursor.of(baseCursor); // this should not fail, it is just variable assignment
-            } catch (Throwable e) {
+            } catch (Throwable th) {
                 registry.unregister(sqlId, executionContext);
-                logError(e);
-                throw e;
+                logError(th);
+                throw th;
             }
         }
         return cursor;

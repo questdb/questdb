@@ -1850,27 +1850,31 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
         }
 
+        long recordStartAddress = utf8Sink.getSendBufferPtr();
         try {
             if (outResendCursorRecord) {
                 outRecord(utf8Sink, record, columnCount);
+                recordStartAddress = utf8Sink.getSendBufferPtr();
             }
 
             while (sqlReturnRowCount < sqlReturnRowCountToBeSent && cursor.hasNext()) {
                 outResendCursorRecord = true;
                 outResendRecordHeader = true;
                 outRecord(utf8Sink, record, columnCount);
+                recordStartAddress = utf8Sink.getSendBufferPtr();
             }
         } catch (DataUnavailableException e) {
             utf8Sink.resetToBookmark();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (NoSpaceLeftInResponseBufferException e) {
             throw e;
-        } catch (Throwable e) {
-            utf8Sink.resetToBookmark();
-            if (e instanceof FlyweightMessageContainer) {
-                getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
+        } catch (Throwable th) {
+            // We'll be sending an error to the client, so reset to the start of the last sent message.
+            utf8Sink.resetToBookmark(recordStartAddress);
+            if (th instanceof FlyweightMessageContainer) {
+                getErrorMessageSink().put(((FlyweightMessageContainer) th).getFlyweightMessage());
             } else {
-                String msg = e.getMessage();
+                String msg = th.getMessage();
                 getErrorMessageSink().put(msg != null ? msg : "no message provided (internal error)");
             }
         }

@@ -3417,7 +3417,7 @@ if __name__ == "__main__":
                                             if (command.startsWith("select")) {
                                                 try (ResultSet result = stmt.executeQuery()) {
                                                     while (result.next()) {
-                                                        //ignore
+                                                        // ignore
                                                     }
                                                 }
                                             } else {
@@ -3427,8 +3427,8 @@ if __name__ == "__main__":
                                     }
                                 } catch (SQLException e) {
                                     // ignore errors showing that statement has been cancelled
-                                    if (!Chars.contains(e.getMessage(), "Could not create table") &&
-                                            !Chars.contains(e.getMessage(), "cancelled by user")) {
+                                    if (!Chars.contains(e.getMessage(), "Could not create table")
+                                            && !Chars.contains(e.getMessage(), "cancelled by user")) {
                                         queryError.set(e);
                                     }
                                 } catch (Exception e) {
@@ -3514,7 +3514,7 @@ if __name__ == "__main__":
                                     "\n query: " + command +
                                     "\n exception: ", t);
                         } finally {
-                            queryError.set(new Exception());//stop wal thread
+                            queryError.set(new Exception()); // stop wal thread
                             stopped.await();
                         }
                     }
