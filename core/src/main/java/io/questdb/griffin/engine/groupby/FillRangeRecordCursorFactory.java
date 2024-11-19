@@ -105,10 +105,16 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 throw SqlException.$(fillValuesPos.getLast(), "not enough fill values");
             }
 
+            /*
+            This is used to offset our lookup into the columns.
+            We don't expect the timestamp column to be included in the args list.
+            Therefore, once we pass the column, we need to offset back one entry to find
+            the corresponding fill value.
+             */
             int passedTimestamp = 0;
 
             // validate metadata
-            for (int i = 0; i < metadata.getColumnCount(); i++) {
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 int columnType = metadata.getColumnType(i);
                 if (i == metadata.getTimestampIndex() ||
                         (columnType == ColumnType.TIMESTAMP && metadata.getTimestampIndex() == -1)) {
@@ -116,7 +122,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     continue;
                 }
 
+                // see earlier comment regarding `passedTimestamp`
                 int fillColumnType = valueFuncs.get(i - passedTimestamp).getType();
+
+                // check if the value can appropriately cast to the corresponding column type
+                // in the metadata
                 if (fillColumnType != columnType && !ColumnType.isBuiltInWideningCast(fillColumnType, columnType)) {
                     throw SqlException.$(fillValuesPos.getQuick(i), "invalid fill value, cannot cast ")
                             .put(ColumnType.nameOf(fillColumnType)).put(" to ")
