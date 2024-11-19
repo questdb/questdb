@@ -1079,6 +1079,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
     // processes one or more queries (batch/script). "Simple Query" in PostgresSQL docs.
     private void msgQuery(long lo, long limit) throws BadProtocolException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+            return;
+        }
+
         CharacterStoreEntry e = characterStore.newEntry();
         if (!Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
             throw msgKaput().put("invalid UTF8 bytes in parse query");
@@ -1180,11 +1184,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             throw BadProtocolException.INSTANCE;
         }
 
-        // this check is exactly the same as the one run inside security context on every permission checks.
-        // however, this will run even if the command to be executed does not require permission checks.
-        // this is useful in case a disabled user intends to hammer the database with queries which do not require authorization.
-        sqlExecutionContext.getSecurityContext().checkEntityEnabled();
-
         // msgLen does not take into account type byte
         if (msgLen > len - 1) {
             // When this happens we need to shift our receive buffer left
@@ -1193,10 +1192,26 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             LOG.debug().$("not enough data in buffer [expected=").$(msgLen).$(", have=").$(len).$(", recvBufferWriteOffset=").$(recvBufferWriteOffset).$(", recvBufferReadOffset=").$(recvBufferReadOffset).I$();
             return;
         }
+
+
         // we have enough to read entire message
         recvBufferReadOffset += msgLen + 1;
         final long msgLimit = address + msgLen + 1;
         final long msgLo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
+
+        // this check is exactly the same as the one run inside security context on every permission checks.
+        // however, this will run even if the command to be executed does not require permission checks.
+        // this is useful in case a disabled user intends to hammer the database with queries which do not require authorization.
+        if (pipelineCurrentEntry == null || !pipelineCurrentEntry.isError()) {
+            try {
+                // this check can explode, we need to fold it into a pipeline entry
+                // it has to be done after "recvBufferReadOffset" is updated to avoid infinite loop
+                sqlExecutionContext.getSecurityContext().checkEntityEnabled();
+            } catch (Throwable e) {
+                throw msgKaput().put(e);
+            }
+        }
+
 
         // Message types in the order they usually come over the wire. All "msg" methods
         // are called only from here and are responsible for handling individual messages.

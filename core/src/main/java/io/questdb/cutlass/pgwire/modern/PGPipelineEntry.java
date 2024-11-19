@@ -557,6 +557,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         fut.await();
                     }
                     break;
+                case CompiledQuery.SET:
+                    // SET is a parse-executes SQL for now and must not be acted during "execute" processing.
+                    break;
                 default:
                     // execute DDL that has not been parse-executed
                     if (!empty) {
