@@ -93,7 +93,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testConstHalfConst1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table geohash as (" +
+            execute("create table geohash as (" +
                     "select " +
                     "    cast('sp052w92p1' as GeOhAsH(50b)) geohash from long_sequence(1)" +
                     ")");
@@ -126,7 +126,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testEq() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_geohash(11) a," +
                     " rnd_geohash(11) b" +
@@ -142,7 +142,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNotEq() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_geohash(11) a," +
                     " rnd_geohash(13) b" +
@@ -235,7 +235,7 @@ public class EqGeoHashGeoHashFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testNull9() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table geohash as (" +
+            execute("create table geohash as (" +
                     "select " +
                     "    cast(null as GeOhAsH(50b)) as geohash1, " +
                     "    cast('sp052w92' as GeOhAsH(2c)) as geohash2 " +

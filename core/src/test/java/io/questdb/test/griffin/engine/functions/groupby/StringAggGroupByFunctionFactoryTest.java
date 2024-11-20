@@ -40,15 +40,15 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBufferLimitCompliance() throws Exception {
         assertMemoryLeak(() -> {
-            engine.ddl("create table break as (select rnd_str(25,25,0) a from long_sequence(100000));", sqlExecutionContext);
+            engine.execute("create table break as (select rnd_str(25,25,0) a from long_sequence(100000));", sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 try (RecordCursorFactory fact = compiler.compile("select string_agg(a, ',') from break", sqlExecutionContext).getRecordCursorFactory()) {
                     // execute factory a couple of times to make sure nothing breaks
                     testBufferLimitCompliance0(fact);
                     testBufferLimitCompliance0(fact);
 
-                    engine.ddl("truncate table break", sqlExecutionContext);
-                    engine.insert("insert into break select rnd_str(25,25,0) a from long_sequence(10)", sqlExecutionContext);
+                    engine.execute("truncate table break", sqlExecutionContext);
+                    engine.execute("insert into break select rnd_str(25,25,0) a from long_sequence(10)", sqlExecutionContext);
                     // execute factory few times to make sure nothing accumulates
                     testBufferLimitCompliance1(fact);
                     testBufferLimitCompliance1(fact);
