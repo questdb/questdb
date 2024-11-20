@@ -7408,7 +7408,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withMicrosecondClock(new TestMicroClock(0, 0))
                 .withWorkerCount(1)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
                             "GET /exp?query=SELECT%20%27%7B%22filed1%22%3A1%2C%20%22filed2%22%3A1%2C%20%22filed3%22%3A%22admin%22%2C%20%22filed4%22%3A1%7D%27+as+foo HTTP/1.1\r\n" +
