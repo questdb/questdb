@@ -587,6 +587,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 try {
                     final SecurityContext securityContext = securityContextFactory.getInstance(
                             authenticator.getPrincipal(),
+                            authenticator.getGroups(),
                             authenticator.getAuthType(),
                             SecurityContextFactory.PGWIRE
                     );
