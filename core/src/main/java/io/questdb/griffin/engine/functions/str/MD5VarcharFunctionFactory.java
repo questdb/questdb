@@ -24,9 +24,83 @@
 
 package io.questdb.griffin.engine.functions.str;
 
-public class MD5VarcharFunctionFactory extends MD5StrFunctionFactory {
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Digest;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
+
+public class MD5VarcharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "md5(Ø)";
+    }
+
+    @Override
+    public Function newInstance(int position,
+                                ObjList<Function> args,
+                                IntList argPositions,
+                                CairoConfiguration configuration,
+                                SqlExecutionContext sqlExecutionContext) throws SqlException {
+
+        Function func = args.get(0);
+        return new MD5VarcharFunctionFactory.MD5Func(func);
+    }
+
+    private static class MD5Func extends VarcharFunction implements UnaryFunction {
+        private final Function data;
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+        private final Digest hashFn = new Digest(Digest.DigestAlgorithm.MD5);
+
+        public MD5Func(final Function data) {
+            this.data = data;
+        }
+
+        @Override
+        public Function getArg() {
+            return data;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(final Record rec) {
+            final Utf8Sequence sequence = getArg().getVarcharA(rec);
+            if (sequence == null) {
+                return null;
+            }
+            sinkA.clear();
+            this.hashFn.hash(sequence, sinkA);
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(final Record rec) {
+            final Utf8Sequence sequence = getArg().getVarcharB(rec);
+            if (sequence == null) {
+                return null;
+            }
+            sinkB.clear();
+            this.hashFn.hash(sequence, sinkB);
+            return sinkB;
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("md5(").val(data).val(')');
+        }
     }
 }

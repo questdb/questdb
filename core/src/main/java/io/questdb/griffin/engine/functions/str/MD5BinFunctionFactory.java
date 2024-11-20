@@ -31,13 +31,14 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Digest;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 
 
 public class MD5BinFunctionFactory implements FunctionFactory {
@@ -57,10 +58,10 @@ public class MD5BinFunctionFactory implements FunctionFactory {
         return new MD5Func(func);
     }
 
-    private static class MD5Func extends StrFunction implements UnaryFunction {
+    private static class MD5Func extends VarcharFunction implements UnaryFunction {
         private final Function data;
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
         private final Digest hashFn = new Digest(Digest.DigestAlgorithm.MD5);
 
         public MD5Func(final Function data) {
@@ -73,7 +74,7 @@ public class MD5BinFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrA(final Record rec) {
+        public Utf8Sequence getVarcharA(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
             if (sequence == null) {
                 return null;
@@ -84,7 +85,7 @@ public class MD5BinFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrB(final Record rec) {
+        public Utf8Sequence getVarcharB(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
             if (sequence == null) {
                 return null;

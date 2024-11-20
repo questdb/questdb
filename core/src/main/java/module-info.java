@@ -956,6 +956,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.SHA1VarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.SHA256BinFunctionFactory,
             io.questdb.griffin.engine.functions.str.SHA256StrFunctionFactory,
+            io.questdb.griffin.engine.functions.str.SHA256VarcharFunctionFactory,
             // left/right
             io.questdb.griffin.engine.functions.str.LeftStrFunctionFactory,
             io.questdb.griffin.engine.functions.str.LeftVarcharFunctionFactory,
