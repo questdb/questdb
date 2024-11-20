@@ -299,7 +299,7 @@ public class ReaderPoolTableFunctionTest extends AbstractCairoTest {
     }
 
     private static void executeTx(CharSequence tableName) throws SqlException {
-        insert("insert into " + tableName + " values (now(), 42)");
+        execute("insert into " + tableName + " values (now(), 42)");
     }
 
     private static ReaderPoolRowValidator recordValidator(long startTime, CharSequence applicableTableName, long expectedOwner, long expectedTxn) {

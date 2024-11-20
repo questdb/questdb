@@ -32,11 +32,11 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testColumns() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table A(col0 int, col1 symbol, col2 double)");
-            ddl("create table B(col0 long, col1 string, col2 float)");
-            ddl("create table C(col0 double, col1 char, col2 byte)");
+            execute("create table A(col0 int, col1 symbol, col2 double)");
+            execute("create table B(col0 long, col1 string, col2 float)");
+            execute("create table C(col0 double, col1 char, col2 byte)");
             drainWalQueue();
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "table_name\tordinal_position\tcolumn_name\tdata_type\n" +
                             "A\t0\tcol0\tINT\n" +
                             "A\t1\tcol1\tSYMBOL\n" +
@@ -58,27 +58,35 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testRename() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test_rename ( ts timestamp, x int ) timestamp(ts) partition by day wal");
+            execute("create table test_rename ( ts timestamp, x int ) timestamp(ts) partition by day wal");
             drainWalQueue();
 
-            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                    "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_rename");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_rename"
+            );
 
-            assertSql("table_name\tordinal_position\tcolumn_name\tdata_type\n" +
-                    "test_rename\t0\tts\tTIMESTAMP\n" +
-                    "test_rename\t1\tx\tINT\n", "information_schema.columns()");
+            assertSql(
+                    "table_name\tordinal_position\tcolumn_name\tdata_type\n" +
+                            "test_rename\t0\tts\tTIMESTAMP\n" +
+                            "test_rename\t1\tx\tINT\n", "information_schema.columns()"
+            );
 
-            ddl("rename table test_rename to test_renamed");
+            execute("rename table test_rename to test_renamed");
             drainWalQueue();
 
-            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
-                    "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_renamed");
+            assertSql(
+                    "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_renamed"
+            );
 
-            assertSql("table_name\tordinal_position\tcolumn_name\tdata_type\n" +
-                    "test_renamed\t0\tts\tTIMESTAMP\n" +
-                    "test_renamed\t1\tx\tINT\n", "information_schema.columns()");
+            assertSql(
+                    "table_name\tordinal_position\tcolumn_name\tdata_type\n" +
+                            "test_renamed\t0\tts\tTIMESTAMP\n" +
+                            "test_renamed\t1\tx\tINT\n", "information_schema.columns()"
+            );
         });
     }
 }

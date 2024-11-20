@@ -177,8 +177,8 @@ public class FirstAndLastVarcharGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testKeyedFirstLast1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, device symbol, valueStr varchar, valueDb double) timestamp(ts) partition by day");
-            insert("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
+            execute("create table test (ts timestamp, device symbol, valueStr varchar, valueDb double) timestamp(ts) partition by day");
+            execute("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
                     "        ('2023-12-18T18:00:00', 'A', null, null)," +
                     "        ('2023-12-18T18:00:00', 'B', null, null)," +
                     "        ('2023-12-18T18:00:00', 'A', 'hot_1', 150)," +
@@ -213,8 +213,8 @@ public class FirstAndLastVarcharGroupByFunctionFactoryTest extends AbstractCairo
     @Test
     public void testKeyedFirstLast2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, device symbol, valueStr varchar, valueDb Double) timestamp(ts) partition by day");
-            insert("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
+            execute("create table test (ts timestamp, device symbol, valueStr varchar, valueDb Double) timestamp(ts) partition by day");
+            execute("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
                     "        ('2023-12-18T18:00:00', 'A', 'hot_1', 150)," +
                     "        ('2023-12-18T18:00:00', 'B', 'cold_1', 3)," +
                     "        ('2023-12-18T18:00:00', 'A', null, null)," +

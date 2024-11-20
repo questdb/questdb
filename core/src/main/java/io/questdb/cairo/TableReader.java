@@ -945,9 +945,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 formatErrorPartitionDirName(partitionIndex, exception.message);
                 exception.put("' does not exist in table '")
                         .put(tableToken.getTableName())
-                        .put("' directory. Run [ALTER TABLE ").put(tableToken.getTableName()).put(" DROP PARTITION LIST '");
+                        .put("' directory. Run [ALTER TABLE ").put(tableToken.getTableName()).put(" FORCE DROP PARTITION LIST '");
                 formatErrorPartitionDirName(partitionIndex, exception.message);
-                exception.put("'] to repair the table or restore the partition directory.");
+                exception.put("'] to repair the table or the database from the backup.");
                 throw exception;
             } else {
                 throw CairoException.critical(0).put("Table '").put(tableToken.getTableName())
@@ -1028,8 +1028,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // We must discard and try again
             count++;
             if (clock.getTicks() > deadline) {
-                LOG.error().$("tx read timeout [timeout=").$(configuration.getSpinLockTimeout()).$("ms]").$();
-                throw CairoException.critical(0).put("Transaction read timeout");
+                throw CairoException.critical(0).put("Transaction read timeout [src=reader, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
             }
             Os.pause();
         }
@@ -1207,8 +1206,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     if (clock.getTicks() < deadline) {
                         return false;
                     }
-                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableToken.getTableName()).I$();
-                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableToken.getTableName()).put(']');
+                    throw CairoException.critical(0).put("Metadata read timeout [src=reader, timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
                 }
             } catch (CairoException ex) {
                 // This is temporary solution until we can get multiple version of metadata not overwriting each other

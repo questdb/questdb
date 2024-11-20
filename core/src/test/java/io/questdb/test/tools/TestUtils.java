@@ -40,6 +40,7 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -855,34 +856,36 @@ public final class TestUtils {
         }
     }
 
-    public static TableToken create(TableModel model, CairoEngine engine) {
-        int tableId = (int) engine.getTableIdGenerator().getNextId();
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, model.isWalEnabled());
-        if (tableToken == null) {
-            throw new RuntimeException("table already exists: " + model.getTableName());
-        }
-        createTable(model, engine.getConfiguration(), ColumnType.VERSION, tableId, tableToken);
-        engine.registerTableToken(tableToken);
-        if (model.isWalEnabled()) {
-            engine.getTableSequencerAPI().registerTable(tableId, model, tableToken);
-        }
-        return tableToken;
-    }
-
     public static void createPopulateTable(
             SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, TableModel tableModel,
             int totalRows, String startDate, int partitionCount
     ) throws NumericException, SqlException {
-        createPopulateTable(tableModel.getTableName(), compiler, sqlExecutionContext,
-                tableModel, totalRows, startDate, partitionCount);
+        createPopulateTable(
+                tableModel.getTableName(),
+                compiler,
+                sqlExecutionContext,
+                tableModel,
+                totalRows,
+                startDate,
+                partitionCount
+        );
     }
 
     public static void createPopulateTable(
-            CharSequence tableName, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext,
-            TableModel tableModel, int totalRows, String startDate, int partitionCount
+            CharSequence tableName,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            TableModel tableModel,
+            int totalRows,
+            String startDate,
+            int partitionCount
     ) throws NumericException, SqlException {
-        compiler.compile(createPopulateTableStmt(tableName, tableModel, totalRows, startDate, partitionCount),
-                sqlExecutionContext);
+        CairoEngine.execute(
+                compiler,
+                createPopulateTableStmt(tableName, tableModel, totalRows, startDate, partitionCount),
+                sqlExecutionContext,
+                null
+        );
     }
 
     public static String createPopulateTableStmt(
@@ -1010,12 +1013,47 @@ public final class TestUtils {
                 );
     }
 
+    public static TableToken createTable(CairoEngine engine, TableStructure structure) {
+        return createTable(engine, structure, engine.getNextTableId());
+    }
+
     public static void createTable(
-            TableModel model, CairoConfiguration configuration, int tableVersion, int tableId, TableToken tableToken
+            TableModel model,
+            CairoConfiguration configuration,
+            int tableVersion,
+            int tableId,
+            TableToken tableToken
     ) {
         try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
             TableUtils.createTable(configuration, mem, path, model, tableVersion, tableId, tableToken.getDirName());
         }
+    }
+
+    public static TableToken createTable(CairoEngine engine, TableStructure structure, int tableId) {
+        try (MemoryMARW mem = Vm.getMARWInstance(); Path path = new Path()) {
+            return TestUtils.createTable(engine, mem, path, structure, tableId, structure.getTableName());
+        }
+    }
+
+    public static TableToken createTable(
+            CairoEngine engine,
+            MemoryMARW memory,
+            Path path,
+            TableStructure structure,
+            int tableId,
+            CharSequence tableName
+    ) {
+        TableToken token = engine.lockTableName(tableName, tableId, structure.isWalEnabled());
+        if (token == null) {
+            throw new RuntimeException("table already exists: " + tableName);
+        }
+        path.of(engine.getConfiguration().getRoot()).concat(token);
+        TableUtils.createTable(engine.getConfiguration(), memory, path, structure, ColumnType.VERSION, tableId, token.getDirName());
+        engine.registerTableToken(token);
+        if (structure.isWalEnabled()) {
+            engine.getTableSequencerAPI().registerTable(tableId, structure, token);
+        }
+        return token;
     }
 
     public static void createTestPath(CharSequence root) {
