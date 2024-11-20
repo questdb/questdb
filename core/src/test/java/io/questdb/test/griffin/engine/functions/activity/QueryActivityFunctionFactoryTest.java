@@ -150,7 +150,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonAdminCanNotSeeOtherUsersCommands() throws Exception {
+    public void testNonAdminCannotSeeOtherUsersCommands() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select 1 t from long_sequence(1) where sleep(120000)";
 
@@ -243,8 +243,8 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
 
     private static class UserContext extends ReadOnlySecurityContext {
         @Override
-        public void authorizeSystemAdmin() {
-            throw CairoException.authorization().put("Access denied for ").put(getPrincipal()).put(" [built-in admin user required]");
+        public void authorizeQueryAdmin() {
+            throw CairoException.authorization().put("Access denied for ").put(getPrincipal()).put(" [QUERY ADMIN]");
         }
 
         @Override

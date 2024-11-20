@@ -203,7 +203,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                     assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", "Write permission denied", readOnlyUserContext);
 
                     // regular user can't cancel other user's commands
-                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", "Access denied for bob [built-in admin user required]", regularUserContext);
+                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", "Access denied for bob [QUERY ADMIN]", regularUserContext);
 
                     execute("cancel query " + queryId, adminUserContext2);
                 }
@@ -262,8 +262,8 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
 
     private static class RegularUserContext extends AllowAllSecurityContext {
         @Override
-        public void authorizeSystemAdmin() {
-            throw CairoException.authorization().put("Access denied for ").put(getPrincipal()).put(" [built-in admin user required]");
+        public void authorizeQueryAdmin() {
+            throw CairoException.authorization().put("Access denied for ").put(getPrincipal()).put(" [QUERY ADMIN]");
         }
 
         @Override
