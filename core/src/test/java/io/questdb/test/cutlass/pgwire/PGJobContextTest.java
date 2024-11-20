@@ -10232,12 +10232,14 @@ create table tab as (
         Assume.assumeFalse(walEnabled);
 
         sendBufferSize = 256;
+        final int errorLen = sendBufferSize + bufferSizeRnd.nextInt(1000);
 
         // We need to be in full control of binary/text format since the buffer size depends on that,
         // so we run just a few combinations.
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            // error message overflows the buffer
             try (Statement ignore1 = connection.createStatement()) {
-                try (PreparedStatement stmt = connection.prepareStatement("select large_error_message(1000) from long_sequence(1);")) {
+                try (PreparedStatement stmt = connection.prepareStatement("select large_error_message(" + errorLen + ") from long_sequence(1);")) {
                     try (ResultSet ignore2 = stmt.executeQuery()) {
                         Assert.fail("exception expected");
                     }
@@ -10245,6 +10247,19 @@ create table tab as (
                     sink.clear();
                     sink.repeat("e", 216);
                     sink.put("...");
+                    TestUtils.assertContains(e.getMessage(), sink);
+                }
+            }
+
+            // error message fits into the buffer
+            try (Statement ignore1 = connection.createStatement()) {
+                try (PreparedStatement stmt = connection.prepareStatement("select large_error_message(" + (sendBufferSize / 2) + ") from long_sequence(1);")) {
+                    try (ResultSet ignore2 = stmt.executeQuery()) {
+                        Assert.fail("exception expected");
+                    }
+                } catch (SQLException e) {
+                    sink.clear();
+                    sink.repeat("e", sendBufferSize / 2);
                     TestUtils.assertContains(e.getMessage(), sink);
                 }
             }
