@@ -6138,7 +6138,7 @@ public class SqlOptimiser implements Mutable {
                     ac.setRowsLo(rowsLo * ac.getRowsLoExprTimeUnit());
                     ac.setRowsHi(rowsHi * ac.getRowsHiExprTimeUnit());
 
-                    if (rowsLo > rowsHi) {
+                    if (ac.getRowsLo() > ac.getRowsHi()) {
                         throw SqlException.$(ac.getRowsLoExpr().position, "start of window must be lower than end of window");
                     }
                 }
