@@ -30,12 +30,10 @@ import org.jetbrains.annotations.Nullable;
 
 public interface Utf8Sink extends CharSink<Utf8Sink> {
 
+    /*
+        Assume we are enclosed in double quotes.
+     */
     default Utf8Sink escapeCsvStr(@NotNull CharSequence cs, int lo, int hi) {
-        boolean doubleQuotes = checkIfDoubleQuotesAreNeeded(cs, lo, hi);
-        if (doubleQuotes) {
-            putAscii('"');
-        }
-
         int i = lo;
         while (i < hi) {
             char c = cs.charAt(i++);
@@ -44,24 +42,15 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             } else if (c < 128) {
                 switch (c) {
                     case '"':
-                        if (doubleQuotes) {
-                            putAscii("\"\"");
-                        }
-                        break;
+                        putAscii('"');
                     case '\\':
                         putAscii('\\');
-                        break;
                     default:
                         putAscii(c);
-                        break;
                 }
             } else {
                 i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
             }
-        }
-
-        if (doubleQuotes) {
-            putAscii('"');
         }
 
         return this;
@@ -70,10 +59,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     default Utf8Sink escapeCsvStr(Utf8Sequence utf8) {
         int i = 0;
         final int hi = utf8.size();
-        boolean doubleQuotes = checkIfDoubleQuotesAreNeeded(utf8, i, hi);
-        if (doubleQuotes) {
-            putAscii('"');
-        }
+
         while (i < hi) {
             char c = (char) utf8.byteAt(i++);
             if (c > 0 && c < 32) {
@@ -81,23 +67,15 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             } else if (c > 0 && c < 128) {
                 switch (c) {
                     case '"':
-                        if (doubleQuotes) {
-                            putAscii("\"\"");
-                        }
-                        break;
+                        putAscii('"');
                     case '\\':
                         putAscii('\\');
-                        break;
                     default:
                         putAscii(c);
-                        break;
                 }
             } else {
                 put((byte) c);
             }
-        }
-        if (doubleQuotes) {
-            putAscii('"');
         }
         return this;
     }
@@ -366,37 +344,5 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     default Utf8Sink putQuoted(@NotNull CharSequence cs) {
         putAscii('\"').put(cs).putAscii('\"');
         return this;
-    }
-
-    private boolean checkIfDoubleQuotesAreNeeded(@NotNull CharSequence cs, int lo, int hi) {
-        for (int i = lo; i < hi; i++) {
-            char c = cs.charAt(i);
-            switch (c) {
-                case '\r':
-                case '\n':
-                case ',':
-                case ' ':
-                case '"':
-                case '\t':
-                    return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean checkIfDoubleQuotesAreNeeded(@NotNull Utf8Sequence us, int lo, int hi) {
-        for (int i = lo; i < hi; i++) {
-            char c = (char) us.byteAt(i);
-            switch (c) {
-                case '\r':
-                case '\n':
-                case ',':
-                case ' ':
-                case '"':
-                case '\t':
-                    return true;
-            }
-        }
-        return false;
     }
 }

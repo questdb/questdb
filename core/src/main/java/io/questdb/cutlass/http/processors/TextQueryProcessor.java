@@ -293,7 +293,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private static void putStringOrNull(HttpChunkedResponse response, CharSequence cs) {
         if (cs != null) {
-            response.escapeCsvStr(cs);
+            response.putQuote().escapeCsvStr(cs).putQuote();
         }
     }
 
@@ -306,7 +306,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
 
     private static void putVarcharOrNull(HttpChunkedResponse response, Utf8Sequence us) {
         if (us != null) {
-            response.escapeCsvStr(us);
+            response.putQuote().escapeCsvStr(us).putQuote();
         }
     }
 
