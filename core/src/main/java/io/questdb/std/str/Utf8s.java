@@ -130,6 +130,81 @@ public final class Utf8s {
         return i;
     }
 
+    /**
+     * Encodes the given UTF-16 string or its fragment to UTF-8 and appends it
+     * to this sink.
+     *
+     * @param sink     destination sink
+     * @param cs       UTF-16 source string
+     * @param maxBytes maximum number of bytes to write to sink; the limit is applied
+     *                 with character boundaries, so the actual number of written bytes
+     *                 may be lower than this value
+     * @return true if the string was written fully; false otherwise
+     */
+    public static boolean encodeUtf16WithLimit(@NotNull Utf8Sink sink, @NotNull CharSequence cs, int maxBytes) {
+        final int len = cs.length();
+        int bytes = 0;
+        int i = 0;
+        while (i < len) {
+            char c = cs.charAt(i++);
+            if (c < 128) {
+                if (bytes + 1 > maxBytes) {
+                    return false;
+                }
+                sink.putAscii(c);
+                bytes++;
+            } else if (c < 2048) {
+                if (bytes + 2 > maxBytes) {
+                    return false;
+                }
+                sink.put((byte) (192 | c >> 6));
+                sink.put((byte) (128 | c & 63));
+                bytes += 2;
+            } else if (Character.isSurrogate(c)) {
+                boolean valid = Character.isHighSurrogate(c);
+                int dword = c;
+                if (valid) {
+                    if (len - i < 1) {
+                        valid = false;
+                    } else {
+                        char c2 = cs.charAt(i++);
+                        if (Character.isLowSurrogate(c2)) {
+                            dword = Character.toCodePoint(c, c2);
+                        } else {
+                            valid = false;
+                        }
+                    }
+                }
+
+                if (!valid) {
+                    if (bytes + 1 > maxBytes) {
+                        return false;
+                    }
+                    sink.putAscii('?');
+                    bytes++;
+                } else {
+                    if (bytes + 4 > maxBytes) {
+                        return false;
+                    }
+                    sink.put((byte) (240 | dword >> 18));
+                    sink.put((byte) (128 | dword >> 12 & 63));
+                    sink.put((byte) (128 | dword >> 6 & 63));
+                    sink.put((byte) (128 | dword & 63));
+                    bytes += 4;
+                }
+            } else {
+                if (bytes + 3 > maxBytes) {
+                    return false;
+                }
+                sink.put((byte) (224 | c >> 12));
+                sink.put((byte) (128 | c >> 6 & 63));
+                sink.put((byte) (128 | c & 63));
+                bytes += 3;
+            }
+        }
+        return true;
+    }
+
     public static boolean endsWith(@NotNull Utf8Sequence seq, @NotNull Utf8Sequence endsWith) {
         int endsWithSize = endsWith.size();
         if (endsWithSize == 0) {

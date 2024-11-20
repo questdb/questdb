@@ -40,7 +40,7 @@ io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestNPEFactory
 io.questdb.griffin.engine.functions.test.TestSleepFunctionFactory
-io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory
+io.questdb.griffin.engine.functions.test.TestLargeErrorMsgFunctionFactory
 
 # logical operations
 io.questdb.griffin.engine.functions.bool.OrFunctionFactory
@@ -260,6 +260,7 @@ io.questdb.griffin.engine.functions.rnd.ListFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIntervalFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory
 
 # date conversion functions
 

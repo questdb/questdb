@@ -144,6 +144,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestSleepFunctionFactory,
+            io.questdb.griffin.engine.functions.test.TestLargeErrorMsgFunctionFactory,
 
             // bool
             io.questdb.griffin.engine.functions.bool.OrFunctionFactory,

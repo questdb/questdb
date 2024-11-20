@@ -99,6 +99,7 @@ import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {
+    private static final int ERROR_TAIL_MAX_SIZE = 23;
     private final CompiledQueryImpl compiledQueryCopy;
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
@@ -549,15 +550,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
         } catch (BadProtocolException e) {
             throw e;
-        } catch (Throwable e) {
-            if (e instanceof FlyweightMessageContainer) {
-                getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
+        } catch (Throwable th) {
+            if (th instanceof FlyweightMessageContainer) {
+                getErrorMessageSink().put(((FlyweightMessageContainer) th).getFlyweightMessage());
             } else {
-                String message = e.getMessage();
-                if (message != null) {
-                    getErrorMessageSink().put(message);
+                String msg = th.getMessage();
+                if (msg != null) {
+                    getErrorMessageSink().put(msg);
                 } else {
-                    getErrorMessageSink().put("Internal error. Exception type: ").put(e.getClass().getSimpleName());
+                    getErrorMessageSink().putAscii("Internal error. Exception type: ").putAscii(th.getClass().getSimpleName());
                 }
             }
         }
@@ -1875,7 +1876,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 getErrorMessageSink().put(((FlyweightMessageContainer) th).getFlyweightMessage());
             } else {
                 String msg = th.getMessage();
-                getErrorMessageSink().put(msg != null ? msg : "no message provided (internal error)");
+                if (msg != null) {
+                    getErrorMessageSink().put(msg);
+                } else {
+                    getErrorMessageSink().putAscii("no message provided (internal error)");
+                }
             }
         }
 
@@ -1892,39 +1897,48 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outError(PGResponseSink utf8Sink, ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) {
-        try {
-            rollback(pendingWriters);
-            utf8Sink.resetToBookmark();
-            // todo: we need to test scenario, when sync does not fit the buffer
-            final int position = getErrorMessagePosition();
-            utf8Sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-            long addr = utf8Sink.skipInt();
+        rollback(pendingWriters);
+        utf8Sink.resetToBookmark();
+        utf8Sink.bookmark();
 
-            utf8Sink.putAscii('C'); // C = SQLSTATE
-            if (stalePlanError) {
-                // this is what PostgreSQL sends when recompiling a query produces a different resultset.
-                // some clients acts on it by restarting the query from the beginning.
-                utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
-                utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgreSQL here
-                utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
-            } else {
-                utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
-            }
+        final boolean emptyBuffer = utf8Sink.getWrittenBytes() == 0;
+        final int position = getErrorMessagePosition();
+        utf8Sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = utf8Sink.skipInt();
 
-            utf8Sink.putAscii('M');
-            utf8Sink.putZ(getErrorMessageSink());
-            utf8Sink.putAscii('S');
-            utf8Sink.putZ("ERROR");
-            if (position > -1) {
-                utf8Sink.putAscii('P').put(position + 1).put((byte) 0);
-            }
-            utf8Sink.put((byte) 0);
-            utf8Sink.putLen(addr);
-        } catch (Throwable e) {
-            System.out.println("OOPSIE, buffer overflow in sending errors");
-            e.printStackTrace();
-            throw e;
+        utf8Sink.putAscii('C'); // C = SQLSTATE
+        if (stalePlanError) {
+            // This is what PostgreSQL sends when recompiling a query produces a different result set.
+            // Some clients act on it by restarting the query from the beginning.
+            utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
+            utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgreSQL here
+            utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
+        } else {
+            utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
         }
+
+        utf8Sink.putAscii('M');
+
+        final StringSink errorSink = getErrorMessageSink();
+        final int remainingBufferBytes = (int) (utf8Sink.getSendBufferSize() - utf8Sink.getWrittenBytes());
+        if (emptyBuffer) {
+            // We've started from an empty send buffer. If the error message doesn't fit,
+            // we write a truncated version of the message.
+            if (!utf8Sink.putWithLimit(errorSink, remainingBufferBytes - ERROR_TAIL_MAX_SIZE - 4)) {
+                utf8Sink.put("..."); // the message got truncated
+            }
+            utf8Sink.put((byte) 0); // trailing zero byte
+        } else {
+            utf8Sink.putZ(errorSink);
+        }
+        // Note: don't forget to update ERROR_TAIL_MAX_SIZE when changing this code.
+        utf8Sink.putAscii('S');
+        utf8Sink.putZ("ERROR");
+        if (position > -1) {
+            utf8Sink.putAscii('P').put(position + 1).put((byte) 0);
+        }
+        utf8Sink.put((byte) 0);
+        utf8Sink.putLen(addr);
     }
 
     private void outParameterTypeDescription(PGResponseSink utf8Sink) {

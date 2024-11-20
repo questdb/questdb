@@ -10226,6 +10226,32 @@ create table tab as (
     }
 
     @Test
+    public void testSmallSendBufferLargeErrorMessage() throws Exception {
+        // We want to test behavior of the modern PGWire only.
+        Assume.assumeFalse(legacyMode);
+        Assume.assumeFalse(walEnabled);
+
+        sendBufferSize = 256;
+
+        // We need to be in full control of binary/text format since the buffer size depends on that,
+        // so we run just a few combinations.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement ignore1 = connection.createStatement()) {
+                try (PreparedStatement stmt = connection.prepareStatement("select large_error_message(1000) from long_sequence(1);")) {
+                    try (ResultSet ignore2 = stmt.executeQuery()) {
+                        Assert.fail("exception expected");
+                    }
+                } catch (SQLException e) {
+                    sink.clear();
+                    sink.repeat("e", 216);
+                    sink.put("...");
+                    TestUtils.assertContains(e.getMessage(), sink);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSmallSendBufferWideRecordPermute() throws Exception {
         // legacy code fails this test, modern code does not
         Assume.assumeFalse(legacyMode);

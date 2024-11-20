@@ -25,10 +25,9 @@
 package io.questdb.griffin.engine.functions.test;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -36,14 +35,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
-import io.questdb.std.datetime.millitime.MillisecondClock;
 
-public class TestSleepFunctionFactory implements FunctionFactory {
+public class TestLargeErrorMsgFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "sleep(l)";
+        return "large_error_message(i)";
     }
 
     @Override
@@ -55,40 +52,29 @@ public class TestSleepFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         Function arg = args.getQuick(0);
-        long sleepMillis = arg.getLong(null);
-        return new Func(configuration, sleepMillis);
+        int len = arg.getInt(null);
+        return new Func(Math.max(len, 1));
     }
 
     private static class Func extends BooleanFunction {
-        private final MillisecondClock clock;
-        private final long sleepMillis;
-        private SqlExecutionCircuitBreaker circuitBreaker;
+        private final int len;
 
-        public Func(CairoConfiguration configuration, long sleepMillis) {
-            clock = configuration.getMillisecondClock();
-            this.sleepMillis = sleepMillis;
+        public Func(int len) {
+            this.len = len;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-            long sleepStart = clock.getTicks();
-            while ((clock.getTicks() - sleepStart) < sleepMillis) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
-                Os.sleep(1);
+            final CairoException ce = CairoException.nonCritical();
+            for (int i = 0; i < len; i++) {
+                ce.put('e');
             }
-            return true;
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            circuitBreaker = executionContext.getCircuitBreaker();
+            throw ce;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("sleep(").val(sleepMillis).val(')');
+            sink.val("large_error_message(").val(len).val(')');
         }
     }
 }
