@@ -131,10 +131,6 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeQueryAdmin() {
-    }
-
-    @Override
     public void authorizeResumeWal(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
@@ -145,6 +141,10 @@ public class ReadOnlySecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeSqlEngineAdmin() {
     }
 
     @Override
@@ -196,12 +196,12 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
-    public void failIfReadOnly() {
-        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    public CharSequence getPrincipal() {
+        return Constants.USER_NAME;
     }
 
     @Override
-    public CharSequence getPrincipal() {
-        return Constants.USER_NAME;
+    public boolean isQueryCancellationAllowed() {
+        return false;
     }
 }

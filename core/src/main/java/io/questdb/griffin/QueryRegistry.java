@@ -74,13 +74,15 @@ public class QueryRegistry {
      */
     public boolean cancel(long queryId, SqlExecutionContext executionContext) throws CairoException {
         SecurityContext securityContext = executionContext.getSecurityContext();
-        securityContext.failIfReadOnly();
+        if (!securityContext.isQueryCancellationAllowed()) {
+            throw CairoException.nonCritical().put("Query cancellation is disabled");
+        }
 
         Entry entry = registry.get(queryId);
         if (entry != null) {
             if (!Chars.equals(entry.principal, securityContext.getPrincipal())) {
-                // only a query admin can cancel other user's queries
-                securityContext.authorizeQueryAdmin();
+                // only a SQL Engine admin can cancel other user's queries
+                securityContext.authorizeSqlEngineAdmin();
             }
 
             if (entry.isWAL) {

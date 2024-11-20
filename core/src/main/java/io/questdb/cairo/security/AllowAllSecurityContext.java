@@ -114,10 +114,6 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeQueryAdmin() {
-    }
-
-    @Override
     public void authorizeResumeWal(TableToken tableToken) {
     }
 
@@ -127,6 +123,10 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeSqlEngineAdmin() {
     }
 
     @Override
@@ -167,10 +167,6 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void checkEntityEnabled() {
-    }
-
-    @Override
-    public void failIfReadOnly() {
     }
 
     @Override

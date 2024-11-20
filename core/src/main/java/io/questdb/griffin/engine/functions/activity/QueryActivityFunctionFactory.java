@@ -105,7 +105,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
 
         public void of(SqlExecutionContext executionContext) {
             try {
-                executionContext.getSecurityContext().authorizeQueryAdmin();
+                executionContext.getSecurityContext().authorizeSqlEngineAdmin();
                 isAdmin = true;
             } catch (CairoException e) {
                 isAdmin = false;

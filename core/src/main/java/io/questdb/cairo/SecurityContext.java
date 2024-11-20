@@ -78,13 +78,13 @@ public interface SecurityContext extends Mutable {
 
     void authorizePGWire();
 
-    void authorizeQueryAdmin();
-
     void authorizeResumeWal(TableToken tableToken);
 
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeSelectOnAnyColumn(TableToken tableToken);
+
+    void authorizeSqlEngineAdmin();
 
     void authorizeSystemAdmin();
 
@@ -123,8 +123,6 @@ public interface SecurityContext extends Mutable {
         // no-op
     }
 
-    void failIfReadOnly();
-
     default CharSequence getAssumedServiceAccount() {
         final CharSequence principal = getPrincipal();
         final CharSequence sessionPrincipal = getSessionPrincipal();
@@ -149,5 +147,9 @@ public interface SecurityContext extends Mutable {
      */
     default boolean isExternal() {
         return false;
+    }
+
+    default boolean isQueryCancellationAllowed() {
+        return true;
     }
 }

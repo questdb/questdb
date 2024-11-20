@@ -157,7 +157,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegularUserCanNotCancelOtherUsersCommands() throws Exception {
         assertMemoryLeak(() -> {
-            final String query = "select 1 t from long_sequence(1) where sleep(120000)";
+            final String query = "select 1 t from long_sequence(1) where sleep(5000)";
 
             SOCountDownLatch started = new SOCountDownLatch(1);
             SOCountDownLatch stopped = new SOCountDownLatch(1);
@@ -200,10 +200,10 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                     }
 
                     // readonly user can't cancel any commands
-                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", "Write permission denied", readOnlyUserContext);
+                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", "Query cancellation is disabled", readOnlyUserContext);
 
                     // regular user can't cancel other user's commands
-                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", "Access denied for bob [QUERY ADMIN]", regularUserContext);
+                    assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", "Access denied for bob [SQL ENGINE ADMIN]", regularUserContext);
 
                     execute("cancel query " + queryId, adminUserContext2);
                 }
@@ -262,8 +262,8 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
 
     private static class RegularUserContext extends AllowAllSecurityContext {
         @Override
-        public void authorizeQueryAdmin() {
-            throw CairoException.authorization().put("Access denied for ").put(getPrincipal()).put(" [QUERY ADMIN]");
+        public void authorizeSqlEngineAdmin() {
+            throw CairoException.authorization().put("Access denied for ").put(getPrincipal()).put(" [SQL ENGINE ADMIN]");
         }
 
         @Override
