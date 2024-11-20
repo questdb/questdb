@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin;
+package io.questdb.test.cairo.o3;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
@@ -38,6 +38,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;

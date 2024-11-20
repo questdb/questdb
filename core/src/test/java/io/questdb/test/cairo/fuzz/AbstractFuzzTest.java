@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal;
+package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
@@ -47,7 +47,7 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
 
-import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
+import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
 public class AbstractFuzzTest extends AbstractCairoTest {
     public final static int MAX_WAL_APPLY_O3_SPLIT_PARTITION_CEIL = 20000;

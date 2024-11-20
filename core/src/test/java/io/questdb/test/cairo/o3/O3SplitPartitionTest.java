@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin;
+package io.questdb.test.cairo.o3;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CommitMode;
@@ -52,7 +52,6 @@ import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.dFile;
 import static io.questdb.cairo.TableUtils.iFile;
-import static io.questdb.test.tools.TestUtils.assertSql;
 import static io.questdb.test.tools.TestUtils.drainWalQueue;
 
 @RunWith(Parameterized.class)
@@ -247,7 +246,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                     );
 
 
-                    assertSql(
+                    TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select ts, metric, loggerChannel from monthly_col_top", sink,
                             "ts\tmetric\tloggerChannel\n" +
                                     "2022-06-08T01:40:00.000000Z\t1\t\n" +
@@ -268,7 +267,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "2022-06-08T04:50:00.000000Z\t14\t2\n"
                     );
 
-                    assertSql(
+                    TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '2'", sink,
                             "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                                     "2022-06-08T02:50:00.000000Z\t9\t\t\t2\n" +
@@ -286,7 +285,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "('2022-06-08T04:50:00.000000Z', '18', '4', '3')", sqlExecutionContext
                     );
 
-                    assertSql(
+                    TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                             "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                                     "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
@@ -305,7 +304,7 @@ public class O3SplitPartitionTest extends AbstractO3Test {
                                     "('2022-06-08T02:50:00.000000Z', '21', '4', '3')", sqlExecutionContext
                     );
 
-                    assertSql(
+                    TestUtils.assertSql(
                             compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                             "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                                     "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +

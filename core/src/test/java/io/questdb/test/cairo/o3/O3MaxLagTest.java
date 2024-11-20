@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin;
+package io.questdb.test.cairo.o3;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
