@@ -130,7 +130,7 @@ public class CountFunctionFactoryHelper {
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
 
-                        // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                        // moving count over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                         return new CountOverPartitionRangeFrameFunction(
                                 map,
                                 partitionByRecord,
@@ -232,7 +232,7 @@ public class CountFunctionFactoryHelper {
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
-                    // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                    // moving count over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                     return new CountOverRangeFrameFunction(
                             rowsLo,
                             rowsHi,
@@ -312,7 +312,7 @@ public class CountFunctionFactoryHelper {
         }
     }
 
-    // handles count(avg) over (partition by x)
+    // handles count(arg) over (partition by x)
     // order by is absent so default frame mode includes all rows in partition
     static class CountOverPartitionFunction extends BasePartitionedLongWindowFunction {
 
@@ -362,7 +362,7 @@ public class CountFunctionFactoryHelper {
         }
     }
 
-    // Handles count(avg) over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
+    // Handles count(arg) over (partition by x order by ts range between [undobuned | y] preceding and [z preceding | current row])
     public static class CountOverPartitionRangeFrameFunction extends BasePartitionedLongWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES;
@@ -624,7 +624,7 @@ public class CountFunctionFactoryHelper {
         }
     }
 
-    // handles count(avg) over (partition by x [order by o] rows between y and z)
+    // handles count(arg) over (partition by x [order by o] rows between y and z)
     public static class CountOverPartitionRowsFrameFunction extends BasePartitionedLongWindowFunction {
 
         //number of values we need to keep to compute over frame
@@ -789,7 +789,7 @@ public class CountFunctionFactoryHelper {
         }
     }
 
-    // Handles count(avg) over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
+    // Handles count(arg) over ([order by ts] range between [unbounded | x] preceding and [ x preceding | current row ] ); no partition by key
     public static class CountOverRangeFrameFunction extends BaseLongWindowFunction implements Reopenable {
         private static final int RECORD_SIZE = Long.BYTES;
         private final boolean frameLoBounded;
@@ -981,7 +981,7 @@ public class CountFunctionFactoryHelper {
         }
     }
 
-    // Handles count(avg) over ([order by o] rows between y and z); there's no partition by.
+    // Handles count(arg) over ([order by o] rows between y and z); there's no partition by.
     public static class CountOverRowsFrameFunction extends BaseLongWindowFunction implements Reopenable {
         private final MemoryARW buffer;
         private final int bufferSize;
