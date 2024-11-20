@@ -1264,6 +1264,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false,
                     true
             );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\tavg\tsum\tfirst_value\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4.0\n",
+                    "select ts, i, j, " +
+                            "avg(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                            "sum(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                            "first_value(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding) " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
         });
     }
 
