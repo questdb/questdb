@@ -236,16 +236,6 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
 
     private static class AdminContext extends AllowAllSecurityContext {
         @Override
-        public void authorizeAdminAction() {
-            // do nothing
-        }
-
-        @Override
-        public void authorizeCancelQuery() {
-            // do nothing
-        }
-
-        @Override
         public String getPrincipal() {
             return "admin";
         }
@@ -253,8 +243,8 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
 
     private static class UserContext extends ReadOnlySecurityContext {
         @Override
-        public void authorizeAdminAction() {
-            throw new CairoException();
+        public void authorizeSystemAdmin() {
+            throw CairoException.authorization().put("Access denied for ").put(getPrincipal()).put(" [built-in admin user required]");
         }
 
         @Override

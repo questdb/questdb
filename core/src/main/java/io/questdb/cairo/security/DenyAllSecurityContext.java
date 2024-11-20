@@ -36,16 +36,6 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     }
 
     @Override
-    public void authorizeAdminAction() {
-        throw CairoException.nonCritical().put("permission denied");
-    }
-
-    @Override
-    public void authorizeCancelQuery() {
-        throw CairoException.nonCritical().put("permission denied");
-    }
-
-    @Override
     public void authorizeHttp() {
         throw CairoException.nonCritical().put("permission denied");
     }
@@ -61,12 +51,27 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     }
 
     @Override
+    public void authorizeQueryAdmin() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
     public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
         throw CairoException.nonCritical().put("permission denied");
     }
 
     @Override
     public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeSystemAdmin() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void failIfReadOnly() {
         throw CairoException.nonCritical().put("permission denied");
     }
 }

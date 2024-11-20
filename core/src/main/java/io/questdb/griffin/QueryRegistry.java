@@ -30,8 +30,12 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Worker;
+import io.questdb.std.Chars;
+import io.questdb.std.ConcurrentLongHashMap;
+import io.questdb.std.LongList;
+import io.questdb.std.Mutable;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.WeakMutableObjectPool;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -70,13 +74,13 @@ public class QueryRegistry {
      */
     public boolean cancel(long queryId, SqlExecutionContext executionContext) throws CairoException {
         SecurityContext securityContext = executionContext.getSecurityContext();
-        securityContext.authorizeCancelQuery();
+        securityContext.failIfReadOnly();
 
         Entry entry = registry.get(queryId);
         if (entry != null) {
             if (!Chars.equals(entry.principal, securityContext.getPrincipal())) {
-                // only admin can cancel other user's queries
-                securityContext.authorizeAdminAction();
+                // only a query admin can cancel other user's queries
+                securityContext.authorizeQueryAdmin();
             }
 
             if (entry.isWAL) {

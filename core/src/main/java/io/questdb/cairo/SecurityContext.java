@@ -39,8 +39,6 @@ public interface SecurityContext extends Mutable {
     // Either tried to authenticate and failed, or did not try to authenticate at all.
     byte AUTH_TYPE_NONE = 0;
 
-    void authorizeAdminAction();
-
     void authorizeAlterTableAddColumn(TableToken tableToken);
 
     void authorizeAlterTableAddIndex(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
@@ -68,9 +66,6 @@ public interface SecurityContext extends Mutable {
 
     void authorizeAlterTableSetType(TableToken tableToken);
 
-    default void authorizeCancelQuery() {
-    }
-
     void authorizeCopyCancel(SecurityContext cancellingSecurityContext);
 
     void authorizeDatabaseSnapshot();
@@ -83,11 +78,15 @@ public interface SecurityContext extends Mutable {
 
     void authorizePGWire();
 
+    void authorizeQueryAdmin();
+
     void authorizeResumeWal(TableToken tableToken);
 
     void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames);
 
     void authorizeSelectOnAnyColumn(TableToken tableToken);
+
+    void authorizeSystemAdmin();
 
     void authorizeTableBackup(ObjHashSet<TableToken> tableTokens);
 
@@ -123,6 +122,8 @@ public interface SecurityContext extends Mutable {
     default void clear() {
         // no-op
     }
+
+    void failIfReadOnly();
 
     default CharSequence getAssumedServiceAccount() {
         final CharSequence principal = getPrincipal();
