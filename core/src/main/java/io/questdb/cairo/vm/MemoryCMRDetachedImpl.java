@@ -83,14 +83,4 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
         return false;
     }
 
-    public boolean tryExtend(long newSize) {
-        if (newSize == size()) {
-            return true;
-        }
-        if (fd != -1) {
-            super.extend(newSize);
-            return true;
-        }
-        return false;
-    }
 }

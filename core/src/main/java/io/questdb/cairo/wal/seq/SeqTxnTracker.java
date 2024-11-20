@@ -132,7 +132,6 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         return writerTxn != UNINITIALIZED_TXN;
     }
 
-    @TestOnly
     public boolean isSuspended() {
         return suspendedState < 0;
     }
@@ -233,15 +232,17 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
      * @param dirtyWriterTxn txn that is in flight that is not yet fully written
      * @return true if Apply2Wal job should be notified
      */
-    public boolean updateWriterTxns(long writerTxn, long dirtyWriterTxn) {
-        // This is only called under TableWriter lock
+    public synchronized boolean updateWriterTxns(long writerTxn, long dirtyWriterTxn) {
+        // This is only called under TableWriter lock inside Apply2Wal job
         // with no threads race
+        // TODO: remove other calls and make the call non-synchronized. The calls to reset txn
+        // when queue is full seems like redundant after all the changes in CheckWalTransactionsJob
         long prevWriterTxn = this.writerTxn;
         long prevDirtyWriterTxn = this.dirtyWriterTxn;
         this.writerTxn = writerTxn;
         this.dirtyWriterTxn = dirtyWriterTxn;
 
-        // No transaction progress == no suspend status change
+        // Progress made means table is not suspended
         if (writerTxn > prevWriterTxn || dirtyWriterTxn > prevDirtyWriterTxn) {
             suspendedState = 1;
         }

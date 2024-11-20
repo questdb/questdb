@@ -423,80 +423,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartition0(partitionIndex);
     }
 
-    public void reconcileOpenPartitionsFrom(int partitionIndex, boolean forceTruncate) {
-        int txPartitionCount = txFile.getPartitionCount();
-        int txPartitionIndex = partitionIndex;
-        boolean changed = false;
-
-        while (partitionIndex < partitionCount && txPartitionIndex < txPartitionCount) {
-            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-            final long txPartTs = txFile.getPartitionTimestampByIndex(txPartitionIndex);
-            final long openPartitionTimestamp = openPartitionInfo.getQuick(offset);
-
-            if (openPartitionTimestamp < txPartTs) {
-                // Deleted partitions
-                // This will decrement partitionCount
-                closeDeletedPartition(partitionIndex);
-            } else if (openPartitionTimestamp > txPartTs) {
-                // Insert partition
-                insertPartition(partitionIndex, txPartTs);
-                changed = true;
-                txPartitionIndex++;
-                partitionIndex++;
-            } else {
-                // Refresh partition
-                final long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);
-                final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
-                final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
-                final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-                final long openPartitionColumnVersion = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
-
-                if (!forceTruncate) {
-                    if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs)) {
-                        // We used to skip reloading partition size if the row count is the same and name txn is the same
-                        // But in case of dedup the row count can be same but the data can be overwritten by splitting and squashing the partition back
-                        // This is ok for fixed size columns but var length columns have to be re-mapped to the bigger / smaller sizes
-                        if (openPartitionSize > -1L) {
-                            if (reloadPartitionFiles(partitionIndex, newPartitionSize, txPartitionNameTxn)) {
-                                openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, newPartitionSize);
-                                LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
-                            } else {
-                                prepareForLazyOpen(partitionIndex);
-                            }
-                        }
-                    } else {
-                        prepareForLazyOpen(partitionIndex);
-                    }
-                    changed = true;
-                } else if (openPartitionSize > -1L && newPartitionSize > -1L) { // Don't force re-open if not yet opened
-                    prepareForLazyOpen(partitionIndex);
-                }
-                txPartitionIndex++;
-                partitionIndex++;
-            }
-        }
-
-        // if while finished on txPartitionIndex == txPartitionCount condition
-        // remove deleted opened partitions
-        while (partitionIndex < partitionCount) {
-            closeDeletedPartition(partitionIndex);
-            changed = true;
-        }
-
-        // if while finished on partitionIndex == partitionCount condition
-        // insert new partitions at the end
-        for (; partitionIndex < txPartitionCount; partitionIndex++) {
-            insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex));
-            changed = true;
-        }
-
-        if (forceTruncate) {
-            reloadAllSymbols();
-        } else if (changed) {
-            reloadSymbolMapCounts();
-        }
-    }
-
     public boolean reload() {
         if (acquireTxn()) {
             return false;
@@ -544,7 +470,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 // Extend aux memory
                 ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                 long newSize = columnTypeDriver.getAuxVectorSize(rowCount);
-                if (!mem2.tryExtend(newSize)) {
+                if (!mem2.tryChangeSize(newSize)) {
                     return false;
                 }
 
@@ -563,7 +489,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     return false;
                 }
 
-                return mem1.tryExtend(rowCount << ColumnType.pow2SizeOf(columnType));
+                return mem1.tryChangeSize(rowCount << ColumnType.pow2SizeOf(columnType));
             }
         }
         return true;
@@ -1078,6 +1004,80 @@ public class TableReader implements Closeable, SymbolTableSource {
             return;
         }
         reconcileOpenPartitionsFrom(0, truncateHappened);
+    }
+
+    private void reconcileOpenPartitionsFrom(int partitionIndex, boolean forceTruncate) {
+        int txPartitionCount = txFile.getPartitionCount();
+        int txPartitionIndex = partitionIndex;
+        boolean changed = false;
+
+        while (partitionIndex < partitionCount && txPartitionIndex < txPartitionCount) {
+            final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+            final long txPartTs = txFile.getPartitionTimestampByIndex(txPartitionIndex);
+            final long openPartitionTimestamp = openPartitionInfo.getQuick(offset);
+
+            if (openPartitionTimestamp < txPartTs) {
+                // Deleted partitions
+                // This will decrement partitionCount
+                closeDeletedPartition(partitionIndex);
+            } else if (openPartitionTimestamp > txPartTs) {
+                // Insert partition
+                insertPartition(partitionIndex, txPartTs);
+                changed = true;
+                txPartitionIndex++;
+                partitionIndex++;
+            } else {
+                // Refresh partition
+                final long newPartitionSize = txFile.getPartitionSize(txPartitionIndex);
+                final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+                final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+                final long openPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+                final long openPartitionColumnVersion = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
+
+                if (!forceTruncate) {
+                    if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs)) {
+                        // We used to skip reloading partition size if the row count is the same and name txn is the same
+                        // But in case of dedup the row count can be same but the data can be overwritten by splitting and squashing the partition back
+                        // This is ok for fixed size columns but var length columns have to be re-mapped to the bigger / smaller sizes
+                        if (openPartitionSize > -1L) {
+                            if (reloadPartitionFiles(partitionIndex, newPartitionSize, txPartitionNameTxn)) {
+                                openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, newPartitionSize);
+                                LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
+                            } else {
+                                prepareForLazyOpen(partitionIndex);
+                            }
+                        }
+                    } else {
+                        prepareForLazyOpen(partitionIndex);
+                    }
+                    changed = true;
+                } else if (openPartitionSize > -1L && newPartitionSize > -1L) { // Don't force re-open if not yet opened
+                    prepareForLazyOpen(partitionIndex);
+                }
+                txPartitionIndex++;
+                partitionIndex++;
+            }
+        }
+
+        // if while finished on txPartitionIndex == txPartitionCount condition
+        // remove deleted opened partitions
+        while (partitionIndex < partitionCount) {
+            closeDeletedPartition(partitionIndex);
+            changed = true;
+        }
+
+        // if while finished on partitionIndex == partitionCount condition
+        // insert new partitions at the end
+        for (; partitionIndex < txPartitionCount; partitionIndex++) {
+            insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex));
+            changed = true;
+        }
+
+        if (forceTruncate) {
+            reloadAllSymbols();
+        } else if (changed) {
+            reloadSymbolMapCounts();
+        }
     }
 
     private boolean releaseTxn() {
