@@ -291,9 +291,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private static void putStringOrNull(HttpChunkedResponse r, CharSequence cs) {
+    private static void putStringOrNull(HttpChunkedResponse response, CharSequence cs) {
         if (cs != null) {
-            r.putQuote().escapeJsonStr(cs).putQuote();
+            response.escapeCsvStr(cs);
         }
     }
 
@@ -304,9 +304,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         Numbers.appendUuid(lo, hi, response);
     }
 
-    private static void putVarcharOrNull(HttpChunkedResponse r, Utf8Sequence us) {
+    private static void putVarcharOrNull(HttpChunkedResponse response, Utf8Sequence us) {
         if (us != null) {
-            r.putQuote().escapeJsonStr(us).putQuote();
+            response.escapeCsvStr(us);
         }
     }
 
