@@ -71,6 +71,9 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         int i = 0;
         final int hi = utf8.size();
         boolean doubleQuotes = checkIfDoubleQuotesAreNeeded(utf8, i, hi);
+        if (doubleQuotes) {
+            putAscii('"');
+        }
         while (i < hi) {
             char c = (char) utf8.byteAt(i++);
             if (c > 0 && c < 32) {
@@ -92,6 +95,9 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             } else {
                 put((byte) c);
             }
+        }
+        if (doubleQuotes) {
+            putAscii('"');
         }
         return this;
     }
@@ -370,6 +376,7 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
                 case '\n':
                 case ',':
                 case ' ':
+                case '"':
                 case '\t':
                     return true;
             }
@@ -379,12 +386,13 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
 
     private boolean checkIfDoubleQuotesAreNeeded(@NotNull Utf8Sequence us, int lo, int hi) {
         for (int i = lo; i < hi; i++) {
-            char c = (char) us.byteAt(i++);
+            char c = (char) us.byteAt(i);
             switch (c) {
                 case '\r':
                 case '\n':
                 case ',':
                 case ' ':
+                case '"':
                 case '\t':
                     return true;
             }
