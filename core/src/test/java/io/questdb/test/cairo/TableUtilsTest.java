@@ -139,7 +139,7 @@ public class TableUtilsTest extends AbstractTest {
 
     @Test
     public void testEstimateRecordSize() {
-        GenericTableRecordMetadata metadata = new GenericTableRecordMetadata();
+        GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.INT, metadata))
                 .add(new TableColumnMetadata("b", ColumnType.STRING, metadata))
                 .add(new TableColumnMetadata("c", -ColumnType.DOUBLE, metadata));

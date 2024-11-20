@@ -452,7 +452,7 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
                                 if (type > 0 && FuzzChangeColumnTypeOperation.canGenerateColumnTypeChange(meta, colIndex)) {
                                     int newType = changeColumnTypeTo(random, type);
                                     try {
-                                        engine.ddl("ALTER TABLE " + tableName + " ALTER COLUMN "
+                                        engine.execute("ALTER TABLE " + tableName + " ALTER COLUMN "
                                                 + meta.getColumnName(colIndex) + " TYPE " + nameOf(newType), executionContext);
                                         totalTestConversions--;
                                     } catch (SqlException ex) {

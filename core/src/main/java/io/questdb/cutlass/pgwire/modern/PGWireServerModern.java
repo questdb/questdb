@@ -26,7 +26,6 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
-import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.SocketAuthenticator;
@@ -39,8 +38,21 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.IOContextFactoryImpl;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IODispatchers;
+import io.questdb.network.IOOperation;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.PeerIsSlowToWriteException;
+import io.questdb.network.QueryPausedException;
+import io.questdb.std.AssociativeCache;
+import io.questdb.std.ConcurrentAssociativeCache;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.NoOpAssociativeCache;
+import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -57,13 +69,12 @@ public class PGWireServerModern implements IPGWireServer {
     private final WorkerPool workerPool;
 
     public PGWireServerModern(
-            ServerConfiguration serverConfiguration,
+            PGWireConfiguration configuration,
             CairoEngine engine,
             WorkerPool workerPool,
             CircuitBreakerRegistry registry,
             ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
     ) {
-        PGWireConfiguration configuration = serverConfiguration.getPGWireConfiguration();
         this.metrics = engine.getMetrics();
         if (configuration.isSelectCacheEnabled()) {
             this.typesAndSelectCache = new ConcurrentAssociativeCache<>(
@@ -78,7 +89,7 @@ public class PGWireServerModern implements IPGWireServer {
         }
         this.contextFactory = new PGConnectionContextFactory(
                 engine,
-                serverConfiguration,
+                configuration,
                 registry,
                 executionContextObjectFactory,
                 typesAndSelectCache
@@ -172,21 +183,20 @@ public class PGWireServerModern implements IPGWireServer {
 
         public PGConnectionContextFactory(
                 CairoEngine engine,
-                ServerConfiguration serverConfiguration,
+                PGWireConfiguration configuration,
                 CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
                 AssociativeCache<TypesAndSelectModern> typesAndSelectCache
         ) {
             super(
                     () -> {
-                        PGWireConfiguration configuration = serverConfiguration.getPGWireConfiguration();
                         NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                                 configuration.getCircuitBreakerConfiguration(),
                                 MemoryTag.NATIVE_CB5
                         );
                         PGConnectionContextModern pgConnectionContext = new PGConnectionContextModern(
                                 engine,
-                                serverConfiguration,
+                                configuration,
                                 executionContextObjectFactory.newInstance(),
                                 circuitBreaker,
                                 typesAndSelectCache
@@ -201,7 +211,7 @@ public class PGWireServerModern implements IPGWireServer {
                         pgConnectionContext.setAuthenticator(authenticator);
                         return pgConnectionContext;
                     },
-                    serverConfiguration.getPGWireConfiguration().getConnectionPoolInitialCapacity()
+                    configuration.getConnectionPoolInitialCapacity()
             );
         }
     }

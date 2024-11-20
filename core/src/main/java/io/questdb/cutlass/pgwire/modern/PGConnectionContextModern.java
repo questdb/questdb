@@ -26,7 +26,6 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
-import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
@@ -188,7 +187,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
-    private ServerConfiguration serverConfiguration;
     private SuspendEvent suspendEvent;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsertModern> taiCache;
@@ -196,24 +194,25 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = IMPLICIT_TRANSACTION;
+    private final PGWireConfiguration configuration;
 
     public PGConnectionContextModern(
             CairoEngine engine,
-            ServerConfiguration serverConfiguration,
+            PGWireConfiguration configuration,
             SqlExecutionContextImpl sqlExecutionContext,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             AssociativeCache<TypesAndSelectModern> tasCache
     ) {
         super(
-                serverConfiguration.getPGWireConfiguration().getFactoryProvider().getPGWireSocketFactory(),
-                serverConfiguration.getPGWireConfiguration().getNetworkFacade(),
+                configuration.getFactoryProvider().getPGWireSocketFactory(),
+                configuration.getNetworkFacade(),
                 LOG,
                 engine.getMetrics().pgWire().connectionCountGauge()
         );
 
         try {
-            PGWireConfiguration configuration = serverConfiguration.getPGWireConfiguration();
             this.engine = engine;
+            this.configuration = configuration;
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
             this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
             this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
@@ -237,8 +236,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
             this.taiCache = new SimpleAssociativeCache<>(insertBlockCount, insertRowCount);
             this.taiPool = new WeakSelfReturningObjectPool<>(TypesAndInsertModern::new, insertBlockCount * insertRowCount);
-            this.serverConfiguration = serverConfiguration;
-            this.namedStatementLimit = serverConfiguration.getPGWireConfiguration().getNamedStatementLimit();
+            this.namedStatementLimit = configuration.getNamedStatementLimit();
 
             this.batchCallback = new PGConnectionBatchCallback();
             FactoryProvider factoryProvider = configuration.getFactoryProvider();
@@ -469,7 +467,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
         // reinitialize the prepared statement limit - this property can be changed at runtime
         // so new connections need to pick up the new value
-        this.namedStatementLimit = serverConfiguration.getPGWireConfiguration().getNamedStatementLimit();
+        this.namedStatementLimit = configuration.getNamedStatementLimit();
         return this;
     }
 
@@ -1024,15 +1022,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // will have the supplied parameter types.
 
         int cachedStatus = CACHE_MISS;
-        final TypesAndInsertModern tai = taiCache.peek(utf16SqlText);
+        int taiKeyIndex = taiCache.keyIndex(utf16SqlText);
+        final TypesAndInsertModern tai = taiCache.peek(taiKeyIndex);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
                 pipelineCurrentEntry.ofInsert(utf16SqlText, tai);
                 cachedStatus = CACHE_HIT_INSERT_VALID;
             } else {
-                //todo: find more efficient way to remove from cache what we have already looked up
-                // remove cached item, we will create it again, may be
-                TypesAndInsertModern tai2 = taiCache.poll(utf16SqlText);
+                TypesAndInsertModern tai2 = taiCache.poll(taiKeyIndex);
                 assert tai2 == tai;
                 tai.close();
                 cachedStatus = CACHE_HIT_INSERT_INVALID;
@@ -1082,6 +1079,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
     // processes one or more queries (batch/script). "Simple Query" in PostgresSQL docs.
     private void msgQuery(long lo, long limit) throws BadProtocolException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+            return;
+        }
+
         CharacterStoreEntry e = characterStore.newEntry();
         if (!Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
             throw msgKaput().put("invalid UTF8 bytes in parse query");
@@ -1183,11 +1184,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             throw BadProtocolException.INSTANCE;
         }
 
-        // this check is exactly the same as the one run inside security context on every permission checks.
-        // however, this will run even if the command to be executed does not require permission checks.
-        // this is useful in case a disabled user intends to hammer the database with queries which do not require authorization.
-        sqlExecutionContext.getSecurityContext().checkEntityEnabled();
-
         // msgLen does not take into account type byte
         if (msgLen > len - 1) {
             // When this happens we need to shift our receive buffer left
@@ -1196,10 +1192,26 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             LOG.debug().$("not enough data in buffer [expected=").$(msgLen).$(", have=").$(len).$(", recvBufferWriteOffset=").$(recvBufferWriteOffset).$(", recvBufferReadOffset=").$(recvBufferReadOffset).I$();
             return;
         }
+
+
         // we have enough to read entire message
         recvBufferReadOffset += msgLen + 1;
         final long msgLimit = address + msgLen + 1;
         final long msgLo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
+
+        // this check is exactly the same as the one run inside security context on every permission checks.
+        // however, this will run even if the command to be executed does not require permission checks.
+        // this is useful in case a disabled user intends to hammer the database with queries which do not require authorization.
+        if (pipelineCurrentEntry == null || !pipelineCurrentEntry.isError()) {
+            try {
+                // this check can explode, we need to fold it into a pipeline entry
+                // it has to be done after "recvBufferReadOffset" is updated to avoid infinite loop
+                sqlExecutionContext.getSecurityContext().checkEntityEnabled();
+            } catch (Throwable e) {
+                throw msgKaput().put(e);
+            }
+        }
+
 
         // Message types in the order they usually come over the wire. All "msg" methods
         // are called only from here and are responsible for handling individual messages.

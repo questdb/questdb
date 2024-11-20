@@ -54,7 +54,7 @@ public class PGCommitFailureTest extends BasePGTest {
     public void testExplicitCommitFailure() throws Exception {
         skipInLegacyMode();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            ddl("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
+            execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);
@@ -90,7 +90,7 @@ public class PGCommitFailureTest extends BasePGTest {
     @Test
     public void testImplicitCommitFailure() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            ddl("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
+            execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);
@@ -124,7 +124,7 @@ public class PGCommitFailureTest extends BasePGTest {
     @Test
     public void testImplicitPipelineCommitFailure() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            ddl("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
+            execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);

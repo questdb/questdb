@@ -1945,7 +1945,7 @@ public class ConcurrentHashMap<V> extends AbstractMap<CharSequence, V>
      */
     private void treeifyBin(Node<V>[] tab, int index) {
         Node<V> b;
-        int n, sc;
+        int n;
         if (tab != null) {
             if ((n = tab.length) < MIN_TREEIFY_CAPACITY)
                 tryPresize(n << 1);

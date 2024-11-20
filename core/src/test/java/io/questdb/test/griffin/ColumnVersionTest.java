@@ -35,7 +35,7 @@ public class ColumnVersionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setRandom(new Rnd(9005735847243117419L, 3979535605596560453L));
 
-            ddl(
+            execute(
                     "create table t_col_top_ooo_day as (" +
                             "select " +
                             " x" +
@@ -44,9 +44,9 @@ public class ColumnVersionTest extends AbstractCairoTest {
                             " from long_sequence(96)," +
                             "), index(m) timestamp(ts) partition by DAY"
             );
-            ddl("alter table t_col_top_ooo_day add column день symbol");// .execute(null).await();
-            ddl("alter table t_col_top_ooo_day add column str string");//.execute(null).await();
-            ddl(
+            execute("alter table t_col_top_ooo_day add column день symbol");// .execute(null).await();
+            execute("alter table t_col_top_ooo_day add column str string");//.execute(null).await();
+            execute(
                     "insert into t_col_top_ooo_day " +
                             "select " +
                             " x" +
@@ -56,7 +56,7 @@ public class ColumnVersionTest extends AbstractCairoTest {
                             ", rnd_str()" +
                             " from long_sequence(10),"
             );
-            ddl(
+            execute(
                     "insert into t_col_top_ooo_day " +
                             "select " +
                             " x" +
@@ -68,7 +68,7 @@ public class ColumnVersionTest extends AbstractCairoTest {
             );
 
             sqlExecutionContext.setRandom(new Rnd(3784807164251091079L, 1558467903141138059L));
-            ddl(
+            execute(
                     "insert into t_col_top_ooo_day " +
                             "select " +
                             " x" +
@@ -97,7 +97,7 @@ public class ColumnVersionTest extends AbstractCairoTest {
                     "9\ta\t1970-01-05T12:25:00.000000Z\ta\tHIUG\n", "t_col_top_ooo_day where день = 'a'"
             );
 
-            ddl(
+            execute(
                     "insert into t_col_top_ooo_day " +
                             "select " +
                             " x" +

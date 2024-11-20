@@ -392,9 +392,9 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
             String create = "CREATE TABLE tango AS (SELECT x FROM long_sequence(10))";
             String drop = "DROP TABLE tango";
             try (Statement s = connection.createStatement()) {
-                ddl(create);
+                execute(create);
                 s.execute(drop);
-                ddl(create);
+                execute(create);
                 s.execute(drop);
             }
         });
@@ -1311,7 +1311,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
             @Nullable String acceptedErrorRegex,
             @NotNull MainLoopBody mainLoopBody
     ) throws Exception {
-        ddl("CREATE TABLE tango AS (SELECT x FROM long_sequence(10)) ");
+        execute("CREATE TABLE tango AS (SELECT x FROM long_sequence(10)) ");
         AtomicBoolean stop = new AtomicBoolean();
         AtomicReference<Exception> backgroundError = new AtomicReference<>();
         boolean hadForegroundError = false;

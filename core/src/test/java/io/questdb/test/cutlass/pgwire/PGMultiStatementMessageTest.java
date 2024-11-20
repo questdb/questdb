@@ -380,7 +380,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCachedTextFormatPgStatementReturnsDataUsingBinaryFormatWhenClientRequestsIt() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        // Exclude quirks, because they send P(arse) message for all SQL statements in the script
+        // and only then (E)xecute them. This means at the time when it's parsing 'insert into mytable ...'
+        // the 'mytable' table does not exist yet. because the CREATE TABLE was not yet (E)xecuted.
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try (
                     Statement stmt = connection.createStatement()
             ) {
@@ -566,7 +569,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         // @Ignore in legacy mode
         // ERROR: row value count does not match column count [expected=3, actual=2, tuple=1]
         Assume.assumeFalse(legacyMode);
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
             boolean hasResult =
@@ -1141,7 +1144,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test // test interleaved extended query execution they don't spill bind formats
     public void testDifferentExtendedQueriesExecutedInExtendedModeDoNotSpillFormats() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        // Exclude quirks, because they send P(arse) message for all SQL statements in the script
+        // and only then (E)xecute them. This means at the time when it's parsing 'INSERT INTO mytable...;'
+        // the 'mytable' table does not exist yet. because the CREATE TABLE was not yet (E)xecuted.
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try (Statement stmt = connection.createStatement()) {
                 connection.setAutoCommit(true);
 
@@ -1323,7 +1329,10 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test // edge case - run the same query with binary protocol in extended mode and then the same in query block
     public void testQueryExecutedInBatchModeDoesNotUseCachedStatementBinaryFormat() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        // Exclude quirks, because they send P(arse) message for all SQL statements in the script
+        // and only then (E)xecute them. This means at the time when it's parsing 'INSERT INTO mytable...;'
+        // the 'mytable' table does not exist yet. because the CREATE TABLE was not yet (E)xecuted.
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try (Statement stmt = connection.createStatement()) {
                 connection.setAutoCommit(true);
 
@@ -1400,19 +1409,19 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testRestartDueToStaleCompilationDoesNotDuplicate() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, Integer.MAX_VALUE - 1);
-            engine.ddl("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
+            engine.execute("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
 
             CyclicBarrier barrier = new CyclicBarrier(2);
             long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
             new Thread(() -> {
                 try {
                     while (System.nanoTime() < deadlineNanos && barrier.getNumberWaiting() == 0) {
-                        engine.ddl("alter table x add column distraction int", sqlExecutionContext);
+                        engine.execute("alter table x add column distraction int", sqlExecutionContext);
                         Os.sleep(1); // give compiler a chance to compile and execute
                         if (barrier.getNumberWaiting() != 0) {
                             break;
                         }
-                        engine.ddl("alter table x drop column distraction", sqlExecutionContext);
+                        engine.execute("alter table x drop column distraction", sqlExecutionContext);
                         Os.sleep(1);
                     }
                 } catch (SqlException e) {
@@ -1694,9 +1703,22 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    public void testShowTableInBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            engine.execute("create table test (i int);", sqlExecutionContext);
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+
+                boolean hasResult = statement.execute("SHOW TABLES; SELECT '15';");
+                assertResults(statement, hasResult, data(row("test")), data(row(15L)));
+            }
+        });
+    }
+
+    @Test
     public void testShowTablesThenSelect() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            engine.ddl("create table test (i int);", sqlExecutionContext);
+            engine.execute("create table test (i int);", sqlExecutionContext);
             Statement statement = connection.createStatement();
 
             boolean hasResult = statement.execute("SHOW TABLES; SELECT '15';");

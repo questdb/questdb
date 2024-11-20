@@ -205,7 +205,7 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
                     // regular user can't cancel other user's commands
                     assertExceptionNoLeakCheck0("select cancel_query(" + queryId + ")", "Access denied for bob [built-in admin user required]", regularUserContext);
 
-                    ddl("cancel query " + queryId, adminUserContext2);
+                    execute("cancel query " + queryId, adminUserContext2);
                 }
 
             } finally {

@@ -32,11 +32,11 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testColumns() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table A(col0 int, col1 symbol, col2 double)");
-            ddl("create table B(col0 long, col1 string, col2 float)");
-            ddl("create table C(col0 double, col1 char, col2 byte)");
+            execute("create table A(col0 int, col1 symbol, col2 double)");
+            execute("create table B(col0 long, col1 string, col2 float)");
+            execute("create table C(col0 double, col1 char, col2 byte)");
             drainWalQueue();
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
                             "qdb\tpublic\tA\tcol0\t0\t\tyes\tINT\n" +
                             "qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL\n" +
@@ -58,7 +58,7 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
     @Test
     public void testRename() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test_rename ( ts timestamp, x int ) timestamp(ts) partition by day wal");
+            execute("create table test_rename ( ts timestamp, x int ) timestamp(ts) partition by day wal");
             drainWalQueue();
 
             assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
@@ -69,7 +69,7 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                     "qdb\tpublic\ttest_rename\tts\t0\t\tyes\tTIMESTAMP\n" +
                     "qdb\tpublic\ttest_rename\tx\t1\t\tyes\tINT\n", "information_schema.columns()");
 
-            ddl("rename table test_rename to test_renamed");
+            execute("rename table test_rename to test_renamed");
             drainWalQueue();
 
             assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +

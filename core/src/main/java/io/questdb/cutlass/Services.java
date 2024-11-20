@@ -238,12 +238,11 @@ public class Services {
 
     @Nullable
     public IPGWireServer createPGWireServer(
-            ServerConfiguration serverConfiguration,
+            PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
             Metrics metrics
     ) {
-        PGWireConfiguration configuration = serverConfiguration.getPGWireConfiguration();
         if (!configuration.isEnabled()) {
             return null;
         }
@@ -260,7 +259,7 @@ public class Services {
         CircuitBreakerRegistry registry = configuration.getDumpNetworkTraffic() ? HexTestsCircuitBreakRegistry.INSTANCE : new DefaultCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
         return IPGWireServer.newInstance(
-                serverConfiguration,
+                configuration,
                 cairoEngine,
                 workerPool,
                 registry,
