@@ -9649,10 +9649,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "order by ts, l1 " +
                         "limit 100 ) " +
                         "where i1*i2 != 0",
-                "SelectedRecord\n" +
-                        "    Filter filter: i1*i2!=0\n" +
+                "Filter filter: i1*i2!=0\n" +
+                        "    SelectedRecord\n" +
                         "        Sort light lo: 100 partiallySorted: true\n" +
-                        "          keys: [ts1, l1]\n" +
+                        "          keys: [ts, l1]\n" +
                         "            SelectedRecord\n" +
                         "                PageFrame\n" +
                         "                    Row forward scan\n" +
