@@ -7421,20 +7421,19 @@ public class IODispatcherTest extends AbstractTest {
                                     "Accept-Encoding: gzip, deflate, br\r\n" +
                                     "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                                     "\r\n",
-                            "HTTP/1.1 200 OK\n" +
-                                    "Server: questDB/1.0\n" +
-                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\n" +
-                                    "Transfer-Encoding: chunked\n" +
-                                    "Content-Type: text/csv; charset=utf-8\n" +
-                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\n" +
-                                    "Keep-Alive: timeout=5, max=10000\n" +
-                                    "\n" +
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/csv; charset=utf-8\r\n" +
+                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
                                     "4b\r\n" +
                                     "\"foo\"\r\n" +
                                     "\"{\"\"filed1\"\":1, \"\"filed2\"\":1, \"\"filed3\"\":\"\"admin\"\", \"\"filed4\"\":1}\"\r\n" +
                                     "\r\n" +
-                                    "00\r\n" +
-                                    "\r\na",
+                                    "00\r\n",
                             1,
                             0,
                             false
