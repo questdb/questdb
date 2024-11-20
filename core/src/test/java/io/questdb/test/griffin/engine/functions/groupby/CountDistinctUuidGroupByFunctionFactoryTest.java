@@ -134,8 +134,8 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
             );
             assertSql(expected, "select count(distinct s) from x");
 
-            insert("insert into x values(cast(null as UUID), '2021-05-21')");
-            insert("insert into x values(cast(null as UUID), '1970-01-01')");
+            execute("insert into x values(cast(null as UUID), '2021-05-21')");
+            execute("insert into x values(cast(null as UUID), '1970-01-01')");
             assertSql(expected, "select count_distinct(s) from x");
             assertSql(expected, "select count(distinct s) from x");
         });
@@ -153,7 +153,7 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
                     true
             );
 
-            insert("insert into x values ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, null), '2021-05-21'), ('a', to_uuid(10, 0), '2021-05-21'), ('a', to_uuid(10, null), '2021-05-21')" +
+            execute("insert into x values ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, null), '2021-05-21'), ('a', to_uuid(10, 0), '2021-05-21'), ('a', to_uuid(10, null), '2021-05-21')" +
                     ", ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(null, 5), '2021-05-21'), ('a', to_uuid(0, 10), '2021-05-21'), ('a', to_uuid(null, 10), '2021-05-21'), ('a', to_uuid(0, 0), '2021-05-21'), ('a', to_uuid(null, null), '2021-05-21')");
             String expected = "a\ts\n" +
                     "a\t9\n";

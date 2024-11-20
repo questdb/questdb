@@ -24,7 +24,13 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -36,10 +42,24 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.*;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
@@ -48,7 +68,11 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
@@ -95,67 +119,69 @@ public class O3Test extends AbstractO3Test {
     @Test
     // test case is contributed by Zhongwei Yao
     public void testAddColumnO3Fuzz() throws Exception {
-        executeWithPool(0, (engine, compiler, sqlExecutionContext) -> {
-            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
-            final String tableName = "ABC";
-            TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
-                    .col("productId", ColumnType.INT)
-                    .col("productName", ColumnType.STRING)
-                    .col("category", ColumnType.SYMBOL)
-                    .col("price", ColumnType.DOUBLE)
-                    .timestamp()
-                    .col("supplier", ColumnType.SYMBOL);
+        executeWithPool(
+                0, (engine, compiler, sqlExecutionContext) -> {
+                    final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+                    final String tableName = "ABC";
+                    TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
+                            .col("productId", ColumnType.INT)
+                            .col("productName", ColumnType.STRING)
+                            .col("category", ColumnType.SYMBOL)
+                            .col("price", ColumnType.DOUBLE)
+                            .timestamp()
+                            .col("supplier", ColumnType.SYMBOL);
 
-            TestUtils.create(model, engine);
+                    TestUtils.createTable(engine, model);
 
-            AtomicInteger errorCount = new AtomicInteger();
-            short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};
-            IntList newColTypes = new IntList();
-            CyclicBarrier barrier = new CyclicBarrier(1);
+                    AtomicInteger errorCount = new AtomicInteger();
+                    short[] columnTypes = new short[]{ColumnType.INT, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.DOUBLE};
+                    IntList newColTypes = new IntList();
+                    CyclicBarrier barrier = new CyclicBarrier(1);
 
-            try (TableWriter writer = TestUtils.getWriter(engine, tableName)) {
-                Thread writerT = new Thread(() -> {
-                    try {
-                        int i = 0;
-                        ObjList<CharSequence> newCols = new ObjList<>();
-                        // number of iterations here (70) is critical to reproduce O3 crash
-                        // also row counts (1000) at every iteration, do not wind these down please
-                        // to high values make for a long-running unit test
-                        while (i < 70) {
-                            ++i;
-                            final long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
+                    try (TableWriter writer = TestUtils.getWriter(engine, tableName)) {
+                        Thread writerT = new Thread(() -> {
+                            try {
+                                int i = 0;
+                                ObjList<CharSequence> newCols = new ObjList<>();
+                                // number of iterations here (70) is critical to reproduce O3 crash
+                                // also row counts (1000) at every iteration, do not wind these down please
+                                // to high values make for a long-running unit test
+                                while (i < 70) {
+                                    ++i;
+                                    final long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
-                            Rnd rnd = new Rnd();
-                            appendNProducts(ts, rnd, writer);
+                                    Rnd rnd = new Rnd();
+                                    appendNProducts(ts, rnd, writer);
 
-                            CharSequence newCol = "price" + i;
-                            short colType = columnTypes[i % columnTypes.length];
-                            writer.addColumn(newCol, colType);
-                            newCols.add(newCol);
-                            newColTypes.add(colType);
+                                    CharSequence newCol = "price" + i;
+                                    short colType = columnTypes[i % columnTypes.length];
+                                    writer.addColumn(newCol, colType);
+                                    newCols.add(newCol);
+                                    newColTypes.add(colType);
 
-                            appendNWithNewColumn(rnd, writer, newCols, newColTypes);
+                                    appendNWithNewColumn(rnd, writer, newCols, newColTypes);
 
-                            writer.commit();
-                            LOG.info().$("writer:").$(i).$("put once with ColumnType:").$(colType).$();
-                            barrier.await();
-                        }
-                        barrier.await();
-                    } catch (Throwable e) {
-                        //noinspection CallToPrintStackTrace
-                        e.printStackTrace();
-                        errorCount.incrementAndGet();
-                    } finally {
-                        Path.clearThreadLocals();
-                        LOG.info().$("write is done").$();
+                                    writer.commit();
+                                    LOG.info().$("writer:").$(i).$("put once with ColumnType:").$(colType).$();
+                                    barrier.await();
+                                }
+                                barrier.await();
+                            } catch (Throwable e) {
+                                //noinspection CallToPrintStackTrace
+                                e.printStackTrace();
+                                errorCount.incrementAndGet();
+                            } finally {
+                                Path.clearThreadLocals();
+                                LOG.info().$("write is done").$();
+                            }
+                        });
+
+                        writerT.start();
+                        writerT.join();
                     }
-                });
-
-                writerT.start();
-                writerT.join();
-            }
-            Assert.assertEquals(0, errorCount.get());
-        });
+                    Assert.assertEquals(0, errorCount.get());
+                }
+        );
     }
 
     @Test
@@ -419,52 +445,54 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testInsertNullTimestamp() throws Exception {
-        executeWithPool(2, (engine, compiler, sqlExecutionContext) -> {
-            engine.ddl(
-                    "create table x as (" +
-                            "select" +
-                            " cast(x as int) i," +
-                            " rnd_symbol('msft','ibm', 'googl') sym," +
-                            " timestamp_sequence(10000000000,1000000000L) ts" +
-                            " from long_sequence(100)" +
-                            "), index(sym) timestamp (ts) partition by DAY",
-                    sqlExecutionContext
-            );
+        executeWithPool(
+                2, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "create table x as (" +
+                                    "select" +
+                                    " cast(x as int) i," +
+                                    " rnd_symbol('msft','ibm', 'googl') sym," +
+                                    " timestamp_sequence(10000000000,1000000000L) ts" +
+                                    " from long_sequence(100)" +
+                                    "), index(sym) timestamp (ts) partition by DAY",
+                            sqlExecutionContext
+                    );
 
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select count() from x",
-                    sink2
-            );
+                    TestUtils.printSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "select count() from x",
+                            sink2
+                    );
 
-            TestUtils.printSql(
-                    compiler,
-                    sqlExecutionContext,
-                    "select max(ts) from x",
-                    sink
-            );
+                    TestUtils.printSql(
+                            compiler,
+                            sqlExecutionContext,
+                            "select max(ts) from x",
+                            sink
+                    );
 
-            final String expectedMaxTimestamp = Chars.toString(sink);
+                    final String expectedMaxTimestamp = Chars.toString(sink);
 
-            // to_timestamp produces NULL because values does not match the pattern
-            try {
-                CairoEngine.insert(compiler, "insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))", sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "designated timestamp column cannot be NULL");
-            }
+                    // to_timestamp produces NULL because values does not match the pattern
+                    try {
+                        engine.execute("insert into x values(0, 'abc', to_timestamp('2019-08-15T16:03:06.595', 'yyyy-MM-dd:HH:mm:ss.SSSUUU'))", sqlExecutionContext);
+                        Assert.fail();
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "designated timestamp column cannot be NULL");
+                    }
 
-            assertXCount(
-                    compiler,
-                    sqlExecutionContext
-            );
+                    assertXCount(
+                            compiler,
+                            sqlExecutionContext
+                    );
 
-            assertMaxTimestamp(
-                    engine,
-                    expectedMaxTimestamp
-            );
-        });
+                    assertMaxTimestamp(
+                            engine,
+                            expectedMaxTimestamp
+                    );
+                }
+        );
     }
 
     @Test
@@ -876,7 +904,7 @@ public class O3Test extends AbstractO3Test {
                     compilerRef.set(compiler);
                     executionContextRef.set(executionContext);
 
-                    engine.ddl(
+                    engine.execute(
                             "create table x as (" +
                                     "select" +
                                     " cast(x as int) i," +
@@ -887,14 +915,14 @@ public class O3Test extends AbstractO3Test {
                             executionContext
                     );
 
-                    engine.ddl("alter table x add column k uuid", executionContext);
-                    engine.ddl("alter table x add column kb binary", executionContext);
-                    engine.ddl("alter table x add column ks string", executionContext);
-                    engine.ddl("alter table x add column kv1 varchar", executionContext);
-                    engine.ddl("alter table x add column kv2 varchar", executionContext);
-                    engine.ddl("alter table x add column last int", executionContext);
+                    engine.execute("alter table x add column k uuid", executionContext);
+                    engine.execute("alter table x add column kb binary", executionContext);
+                    engine.execute("alter table x add column ks string", executionContext);
+                    engine.execute("alter table x add column kv1 varchar", executionContext);
+                    engine.execute("alter table x add column kv2 varchar", executionContext);
+                    engine.execute("alter table x add column last int", executionContext);
 
-                    engine.ddl(
+                    engine.execute(
                             "create table y as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -910,7 +938,7 @@ public class O3Test extends AbstractO3Test {
                             executionContext
                     );
 
-                    engine.ddl(
+                    engine.execute(
                             "create table z as (" +
                                     "select" +
                                     " cast(x as int) * 1000000 i," +
@@ -927,15 +955,15 @@ public class O3Test extends AbstractO3Test {
                     );
 
                     // Create table zz with first 2 inserts to be ready to compare.
-                    engine.ddl(
+                    engine.execute(
                             "create table zz as (select * from x union all select * from y)",
                             executionContext
                     );
 
-                    engine.insert("insert into x select * from y", executionContext);
-                    engine.insert("insert into x select * from z", executionContext);
+                    engine.execute("insert into x select * from y", executionContext);
+                    engine.execute("insert into x select * from z", executionContext);
 
-                    engine.insert("insert into zz select * from z", executionContext);
+                    engine.execute("insert into zz select * from z", executionContext);
 
                     TestUtils.assertSqlCursors(
                             compiler,
@@ -997,7 +1025,7 @@ public class O3Test extends AbstractO3Test {
                 (engine, compiler, sqlExecutionContext) -> {
                     int longsPerO3Page = o3ColumnMemorySize / 8;
                     int half = longsPerO3Page / 2;
-                    engine.ddl(
+                    engine.execute(
                             "create table x (str string, ts timestamp) timestamp(ts) partition by day;",
                             sqlExecutionContext
                     );
@@ -1085,16 +1113,18 @@ public class O3Test extends AbstractO3Test {
 
                     // String
                     String tableName = testName.getMethodName();
-                    engine.ddl("create table " + tableName + " as ( " +
-                            "select " +
-                            "'" + strColVal + "' as str, " +
-                            " timestamp_sequence('2022-02-24', 1000) ts" +
-                            " from long_sequence(" + records + ")" +
-                            ") timestamp (ts) partition by DAY", sqlExecutionContext);
+                    engine.execute(
+                            "create table " + tableName + " as ( " +
+                                    "select " +
+                                    "'" + strColVal + "' as str, " +
+                                    " timestamp_sequence('2022-02-24', 1000) ts" +
+                                    " from long_sequence(" + records + ")" +
+                                    ") timestamp (ts) partition by DAY", sqlExecutionContext
+                    );
 
                     long maxTimestamp = IntervalUtils.parseFloorPartialTimestamp("2022-02-24") + records * 1000L;
                     CharSequence o3Ts = Timestamps.toString(maxTimestamp - 2000);
-                    CairoEngine.insert(compiler, "insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
+                    engine.execute("insert into " + tableName + " VALUES('abcd', '" + o3Ts + "')", sqlExecutionContext);
 
                     // Check that there was an attempt to write a file bigger than 2GB
                     long max = 0;
@@ -1139,7 +1169,7 @@ public class O3Test extends AbstractO3Test {
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "12:00:01.000000Z");
-                        engine.drop("drop table x", sqlExecutionContext);
+                        engine.execute("drop table x", sqlExecutionContext);
                     }
                 }
         );
@@ -1157,7 +1187,7 @@ public class O3Test extends AbstractO3Test {
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "11:00:00.002500Z");
-                        engine.drop("drop table x", sqlExecutionContext);
+                        engine.execute("drop table x", sqlExecutionContext);
                     }
                 }
         );
@@ -1175,7 +1205,7 @@ public class O3Test extends AbstractO3Test {
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, "00:00:01.000000Z");
-                        engine.drop("drop table x", sqlExecutionContext);
+                        engine.execute("drop table x", sqlExecutionContext);
                     }
                 }
         );
@@ -1199,7 +1229,7 @@ public class O3Test extends AbstractO3Test {
             String selectFrom,
             String o3InsertSql
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -1228,7 +1258,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table top as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -1291,10 +1321,10 @@ public class O3Test extends AbstractO3Test {
     ) throws SqlException {
         // create third table, which will contain both X and 1AM
         if (referenceTableDDL != null) {
-            engine.ddl(referenceTableDDL, sqlExecutionContext);
+            engine.execute(referenceTableDDL, sqlExecutionContext);
         }
         if (o3InsertSQL != null) {
-            engine.insert(o3InsertSQL, sqlExecutionContext);
+            engine.execute(o3InsertSQL, sqlExecutionContext);
         }
         testXAndIndex(
                 engine,
@@ -1313,7 +1343,7 @@ public class O3Test extends AbstractO3Test {
     }
 
     private static void dropTableY(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        engine.drop("drop table y", sqlExecutionContext);
+        engine.execute("drop table y", sqlExecutionContext);
     }
 
     private static void testAppendIntoColdWriter0(
@@ -1322,7 +1352,7 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -1877,7 +1907,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x (" +
                         "seq long, " +
                         "sym symbol, " +
@@ -1950,7 +1980,7 @@ public class O3Test extends AbstractO3Test {
     }
 
     private static void testAppendToLastPartition(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x (" +
                         " a int," +
                         " b double," +
@@ -1993,7 +2023,7 @@ public class O3Test extends AbstractO3Test {
 
     private static void testBench0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {
         // create table with roughly 2AM data
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2023,7 +2053,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2071,7 +2101,7 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2098,23 +2128,23 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        engine.ddl("alter table x add column v double", executionContext);
-        engine.ddl("alter table x add column v1 float", executionContext);
-        engine.ddl("alter table x add column v2 int", executionContext);
-        engine.ddl("alter table x add column v3 byte", executionContext);
-        engine.ddl("alter table x add column v4 short", executionContext);
-        engine.ddl("alter table x add column v5 boolean", executionContext);
-        engine.ddl("alter table x add column v6 date", executionContext);
-        engine.ddl("alter table x add column v7 timestamp", executionContext);
-        engine.ddl("alter table x add column v8 symbol", executionContext);
-        engine.ddl("alter table x add column v10 char", executionContext);
-        engine.ddl("alter table x add column v11 string", executionContext);
-        engine.ddl("alter table x add column v12 binary", executionContext);
-        engine.ddl("alter table x add column v9 long", executionContext);
-        engine.ddl("alter table x add column v13 varchar", executionContext);
-        engine.ddl("alter table x add column v14 varchar", executionContext);
+        engine.execute("alter table x add column v double", executionContext);
+        engine.execute("alter table x add column v1 float", executionContext);
+        engine.execute("alter table x add column v2 int", executionContext);
+        engine.execute("alter table x add column v3 byte", executionContext);
+        engine.execute("alter table x add column v4 short", executionContext);
+        engine.execute("alter table x add column v5 boolean", executionContext);
+        engine.execute("alter table x add column v6 date", executionContext);
+        engine.execute("alter table x add column v7 timestamp", executionContext);
+        engine.execute("alter table x add column v8 symbol", executionContext);
+        engine.execute("alter table x add column v10 char", executionContext);
+        engine.execute("alter table x add column v11 string", executionContext);
+        engine.execute("alter table x add column v12 binary", executionContext);
+        engine.execute("alter table x add column v9 long", executionContext);
+        engine.execute("alter table x add column v13 varchar", executionContext);
+        engine.execute("alter table x add column v14 varchar", executionContext);
 
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -2179,7 +2209,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -2207,23 +2237,24 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("alter table x add column v double", sqlExecutionContext);
-        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
-        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
-        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
-        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
-        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
-        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
-        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
-        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
-        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
-        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
-        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
-        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
-        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
-        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v double", sqlExecutionContext);
+        engine.execute("alter table x add column v1 float", sqlExecutionContext);
+        engine.execute("alter table x add column v2 int", sqlExecutionContext);
+        engine.execute("alter table x add column v3 byte", sqlExecutionContext);
+        engine.execute("alter table x add column v4 short", sqlExecutionContext);
+        engine.execute("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.execute("alter table x add column v6 date", sqlExecutionContext);
+        engine.execute("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.execute("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.execute("alter table x add column v10 char", sqlExecutionContext);
+        engine.execute("alter table x add column v11 string", sqlExecutionContext);
+        engine.execute("alter table x add column v12 binary", sqlExecutionContext);
+        engine.execute("alter table x add column v9 long", sqlExecutionContext);
+        engine.execute("alter table x add column v13 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v14 varchar", sqlExecutionContext);
 
-        engine.insert(
+        // ---- new columns ----
+        engine.execute(
                 "insert into x " +
                         "select" +
                         " 2 as commit," +
@@ -2262,11 +2293,10 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long() v9," +
                         " rnd_varchar(1,1,1) v13," +
                         " rnd_varchar(1,40,1) v14," +
-                        " from long_sequence(10)",
-                sqlExecutionContext
+                        " from long_sequence(10)", sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " 3 as commit," +
@@ -2331,7 +2361,7 @@ public class O3Test extends AbstractO3Test {
         // merge in the middle, however data prefix is such
         // that we can deal with by reducing column top rather than copying columns
 
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -2359,25 +2389,25 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.ddl("alter table x add column v double", ectx);
-        engine.ddl("alter table x add column v1 float", ectx);
-        engine.ddl("alter table x add column v2 int", ectx);
-        engine.ddl("alter table x add column v3 byte", ectx);
-        engine.ddl("alter table x add column v4 short", ectx);
-        engine.ddl("alter table x add column v5 boolean", ectx);
-        engine.ddl("alter table x add column v6 date", ectx);
-        engine.ddl("alter table x add column v7 timestamp", ectx);
-        engine.ddl("alter table x add column v8 symbol", ectx);
-        engine.ddl("alter table x add column v10 char", ectx);
-        engine.ddl("alter table x add column v11 string", ectx);
-        engine.ddl("alter table x add column v12 binary", ectx);
-        engine.ddl("alter table x add column v9 long", ectx);
-        engine.ddl("alter table x add column v13 varchar", ectx);
-        engine.ddl("alter table x add column v14 varchar", ectx);
+        engine.execute("alter table x add column v double", ectx);
+        engine.execute("alter table x add column v1 float", ectx);
+        engine.execute("alter table x add column v2 int", ectx);
+        engine.execute("alter table x add column v3 byte", ectx);
+        engine.execute("alter table x add column v4 short", ectx);
+        engine.execute("alter table x add column v5 boolean", ectx);
+        engine.execute("alter table x add column v6 date", ectx);
+        engine.execute("alter table x add column v7 timestamp", ectx);
+        engine.execute("alter table x add column v8 symbol", ectx);
+        engine.execute("alter table x add column v10 char", ectx);
+        engine.execute("alter table x add column v11 string", ectx);
+        engine.execute("alter table x add column v12 binary", ectx);
+        engine.execute("alter table x add column v9 long", ectx);
+        engine.execute("alter table x add column v13 varchar", ectx);
+        engine.execute("alter table x add column v14 varchar", ectx);
 
-        engine.ddl("create table z as (select * from x)", ectx);
+        engine.execute("create table z as (select * from x)", ectx);
 
-        engine.ddl(
+        engine.execute(
                 "create table append as ( " +
                         "select" +
                         " 1 as commit," +
@@ -2421,7 +2451,7 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append1 as (" +
                         "select " +
                         " 2 as commit," +
@@ -2465,7 +2495,7 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.insert("insert into x select * from append", ectx);
+        engine.execute("insert into x select * from append", ectx);
 
         assertO3DataConsistencyStableSort(
                 engine,
@@ -2476,7 +2506,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // 599820000000
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 3 as commit," +
@@ -2529,7 +2559,7 @@ public class O3Test extends AbstractO3Test {
 //        engine.insert("insert into x select * from append2", ectx);
 
         // to re-run the comparison, drop table "y"
-        engine.drop("drop table y", ectx);
+        engine.execute("drop table y", ectx);
 
         assertO3DataConsistencyStableSort(
                 engine,
@@ -2567,7 +2597,7 @@ public class O3Test extends AbstractO3Test {
         // |           |   | (narrow) |      |   data  |
         // |           |   +----------+      +---------+
         // +-----------+
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -2595,25 +2625,26 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("alter table x add column v double", sqlExecutionContext);
-        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
-        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
-        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
-        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
-        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
-        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
-        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
-        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
-        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
-        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
-        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
-        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
-        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
-        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v double", sqlExecutionContext);
+        engine.execute("alter table x add column v1 float", sqlExecutionContext);
+        engine.execute("alter table x add column v2 int", sqlExecutionContext);
+        engine.execute("alter table x add column v3 byte", sqlExecutionContext);
+        engine.execute("alter table x add column v4 short", sqlExecutionContext);
+        engine.execute("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.execute("alter table x add column v6 date", sqlExecutionContext);
+        engine.execute("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.execute("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.execute("alter table x add column v10 char", sqlExecutionContext);
+        engine.execute("alter table x add column v11 string", sqlExecutionContext);
+        engine.execute("alter table x add column v12 binary", sqlExecutionContext);
+        engine.execute("alter table x add column v9 long", sqlExecutionContext);
+        engine.execute("alter table x add column v13 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v14 varchar", sqlExecutionContext);
 
-        engine.ddl("create table z as (select * from x)", sqlExecutionContext);
+        engine.execute("create table z as (select * from x)", sqlExecutionContext);
 
-        engine.ddl("create table append as (" +
+        engine.execute(
+                "create table append as (" +
                         "select" +
                         " 2 as commit," +
                         " cast(x as int) i," +
@@ -2653,9 +2684,10 @@ public class O3Test extends AbstractO3Test {
                         " rnd_varchar(1, 1, 1) v14," +
                         " from long_sequence(500)" +
                         ")",
-                sqlExecutionContext);
+                sqlExecutionContext
+        );
 
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 3 as commit," +
@@ -2699,7 +2731,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.insert("insert into x select * from append", sqlExecutionContext);
+        engine.execute("insert into x select * from append", sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append2)", sink2);
         TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from (x union all append2)", sink);
@@ -2741,7 +2773,7 @@ public class O3Test extends AbstractO3Test {
         // |           |   | (narrow) |      |   data  |
         // |           |   +----------+      +---------+
         // +-----------+
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -2769,25 +2801,25 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.ddl("alter table x add column v double", ectx);
-        engine.ddl("alter table x add column v1 float", ectx);
-        engine.ddl("alter table x add column v2 int", ectx);
-        engine.ddl("alter table x add column v3 byte", ectx);
-        engine.ddl("alter table x add column v4 short", ectx);
-        engine.ddl("alter table x add column v5 boolean", ectx);
-        engine.ddl("alter table x add column v6 date", ectx);
-        engine.ddl("alter table x add column v7 timestamp", ectx);
-        engine.ddl("alter table x add column v8 symbol", ectx);
-        engine.ddl("alter table x add column v10 char", ectx);
-        engine.ddl("alter table x add column v11 string", ectx);
-        engine.ddl("alter table x add column v12 binary", ectx);
-        engine.ddl("alter table x add column v9 long", ectx);
-        engine.ddl("alter table x add column v13 varchar", ectx);
-        engine.ddl("alter table x add column v14 varchar", ectx);
+        engine.execute("alter table x add column v double", ectx);
+        engine.execute("alter table x add column v1 float", ectx);
+        engine.execute("alter table x add column v2 int", ectx);
+        engine.execute("alter table x add column v3 byte", ectx);
+        engine.execute("alter table x add column v4 short", ectx);
+        engine.execute("alter table x add column v5 boolean", ectx);
+        engine.execute("alter table x add column v6 date", ectx);
+        engine.execute("alter table x add column v7 timestamp", ectx);
+        engine.execute("alter table x add column v8 symbol", ectx);
+        engine.execute("alter table x add column v10 char", ectx);
+        engine.execute("alter table x add column v11 string", ectx);
+        engine.execute("alter table x add column v12 binary", ectx);
+        engine.execute("alter table x add column v9 long", ectx);
+        engine.execute("alter table x add column v13 varchar", ectx);
+        engine.execute("alter table x add column v14 varchar", ectx);
 
-        engine.ddl("create table z as (select * from x)", ectx);
+        engine.execute("create table z as (select * from x)", ectx);
 
-        engine.ddl(
+        engine.execute(
                 "create table append1 as ( " +
                         "select" +
                         " 1 as commit," +
@@ -2831,7 +2863,7 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 2 as commit," +
@@ -2875,7 +2907,7 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.insert("insert into x select * from append1", ectx);
+        engine.execute("insert into x select * from append1", ectx);
 
         TestUtils.printSql(compiler, ectx, "select count() from (x union all append2)", sink2);
         TestUtils.printSql(compiler, ectx, "select max(ts) from (x union all append2)", sink);
@@ -2902,7 +2934,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext ectx
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -2930,25 +2962,25 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.ddl("alter table x add column v double", ectx);
-        engine.ddl("alter table x add column v1 float", ectx);
-        engine.ddl("alter table x add column v2 int", ectx);
-        engine.ddl("alter table x add column v3 byte", ectx);
-        engine.ddl("alter table x add column v4 short", ectx);
-        engine.ddl("alter table x add column v5 boolean", ectx);
-        engine.ddl("alter table x add column v6 date", ectx);
-        engine.ddl("alter table x add column v7 timestamp", ectx);
-        engine.ddl("alter table x add column v8 symbol", ectx);
-        engine.ddl("alter table x add column v10 char", ectx);
-        engine.ddl("alter table x add column v11 string", ectx);
-        engine.ddl("alter table x add column v12 binary", ectx);
-        engine.ddl("alter table x add column v9 long", ectx);
-        engine.ddl("alter table x add column v13 varchar", ectx);
-        engine.ddl("alter table x add column v14 varchar", ectx);
+        engine.execute("alter table x add column v double", ectx);
+        engine.execute("alter table x add column v1 float", ectx);
+        engine.execute("alter table x add column v2 int", ectx);
+        engine.execute("alter table x add column v3 byte", ectx);
+        engine.execute("alter table x add column v4 short", ectx);
+        engine.execute("alter table x add column v5 boolean", ectx);
+        engine.execute("alter table x add column v6 date", ectx);
+        engine.execute("alter table x add column v7 timestamp", ectx);
+        engine.execute("alter table x add column v8 symbol", ectx);
+        engine.execute("alter table x add column v10 char", ectx);
+        engine.execute("alter table x add column v11 string", ectx);
+        engine.execute("alter table x add column v12 binary", ectx);
+        engine.execute("alter table x add column v9 long", ectx);
+        engine.execute("alter table x add column v13 varchar", ectx);
+        engine.execute("alter table x add column v14 varchar", ectx);
 
-        engine.ddl("create table z as (select * from x)", ectx);
+        engine.execute("create table z as (select * from x)", ectx);
 
-        engine.ddl(
+        engine.execute(
                 "create table append1 as ( " +
                         "select" +
                         " 1 as commit," +
@@ -2992,7 +3024,7 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 2 as commit," +
@@ -3036,7 +3068,7 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.insert("insert into x select * from append1", ectx);
+        engine.execute("insert into x select * from append1", ectx);
         TestUtils.printSql(compiler, ectx, "select count() from (x union all append2)", sink2);
         TestUtils.printSql(compiler, ectx, "select max(ts) from (x union all append2)", sink);
         final String expectedMaxTimestamp = Chars.toString(sink);
@@ -3062,7 +3094,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -3091,26 +3123,26 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("alter table x add column v double", sqlExecutionContext);
-        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
-        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
-        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
-        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
-        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
-        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
-        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
-        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
-        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
-        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
-        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
-        engine.ddl("alter table x add column v13 long256", sqlExecutionContext);
-        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
-        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
-        engine.ddl("alter table x add column v15 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v double", sqlExecutionContext);
+        engine.execute("alter table x add column v1 float", sqlExecutionContext);
+        engine.execute("alter table x add column v2 int", sqlExecutionContext);
+        engine.execute("alter table x add column v3 byte", sqlExecutionContext);
+        engine.execute("alter table x add column v4 short", sqlExecutionContext);
+        engine.execute("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.execute("alter table x add column v6 date", sqlExecutionContext);
+        engine.execute("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.execute("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.execute("alter table x add column v10 char", sqlExecutionContext);
+        engine.execute("alter table x add column v11 string", sqlExecutionContext);
+        engine.execute("alter table x add column v12 binary", sqlExecutionContext);
+        engine.execute("alter table x add column v13 long256", sqlExecutionContext);
+        engine.execute("alter table x add column v9 long", sqlExecutionContext);
+        engine.execute("alter table x add column v14 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v15 varchar", sqlExecutionContext);
 
-        engine.ddl("create table w as (select * from x)", sqlExecutionContext);
+        engine.execute("create table w as (select * from x)", sqlExecutionContext);
 
-        engine.ddl(
+        engine.execute(
                 "create table append1 as (" +
                         "select" +
                         " 1 as commit," +
@@ -3156,7 +3188,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 2 as commit," +
@@ -3202,7 +3234,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.insert("insert into x select * from append1", sqlExecutionContext);
+        engine.execute("insert into x select * from append1", sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append2)", sink2);
         TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from (x union all append2)", sink);
@@ -3227,7 +3259,7 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3255,24 +3287,24 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        engine.ddl("alter table x add column v double", executionContext);
-        engine.ddl("alter table x add column v1 float", executionContext);
-        engine.ddl("alter table x add column v2 int", executionContext);
-        engine.ddl("alter table x add column v3 byte", executionContext);
-        engine.ddl("alter table x add column v4 short", executionContext);
-        engine.ddl("alter table x add column v5 boolean", executionContext);
-        engine.ddl("alter table x add column v6 date", executionContext);
-        engine.ddl("alter table x add column v7 timestamp", executionContext);
-        engine.ddl("alter table x add column v8 symbol", executionContext);
-        engine.ddl("alter table x add column v10 char", executionContext);
-        engine.ddl("alter table x add column v11 string", executionContext);
-        engine.ddl("alter table x add column v12 binary", executionContext);
-        engine.ddl("alter table x add column v13 long256", executionContext);
-        engine.ddl("alter table x add column v9 long", executionContext);
-        engine.ddl("alter table x add column v14 varchar", executionContext);
-        engine.ddl("alter table x add column v15 varchar", executionContext);
+        engine.execute("alter table x add column v double", executionContext);
+        engine.execute("alter table x add column v1 float", executionContext);
+        engine.execute("alter table x add column v2 int", executionContext);
+        engine.execute("alter table x add column v3 byte", executionContext);
+        engine.execute("alter table x add column v4 short", executionContext);
+        engine.execute("alter table x add column v5 boolean", executionContext);
+        engine.execute("alter table x add column v6 date", executionContext);
+        engine.execute("alter table x add column v7 timestamp", executionContext);
+        engine.execute("alter table x add column v8 symbol", executionContext);
+        engine.execute("alter table x add column v10 char", executionContext);
+        engine.execute("alter table x add column v11 string", executionContext);
+        engine.execute("alter table x add column v12 binary", executionContext);
+        engine.execute("alter table x add column v13 long256", executionContext);
+        engine.execute("alter table x add column v9 long", executionContext);
+        engine.execute("alter table x add column v14 varchar", executionContext);
+        engine.execute("alter table x add column v15 varchar", executionContext);
 
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3339,7 +3371,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -3368,26 +3400,26 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("alter table x add column v double", sqlExecutionContext);
-        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
-        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
-        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
-        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
-        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
-        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
-        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
-        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
-        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
-        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
-        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
-        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
-        engine.ddl("alter table x add column v13 long256", sqlExecutionContext);
-        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
-        engine.ddl("alter table x add column v15 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v double", sqlExecutionContext);
+        engine.execute("alter table x add column v1 float", sqlExecutionContext);
+        engine.execute("alter table x add column v2 int", sqlExecutionContext);
+        engine.execute("alter table x add column v3 byte", sqlExecutionContext);
+        engine.execute("alter table x add column v4 short", sqlExecutionContext);
+        engine.execute("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.execute("alter table x add column v6 date", sqlExecutionContext);
+        engine.execute("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.execute("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.execute("alter table x add column v10 char", sqlExecutionContext);
+        engine.execute("alter table x add column v11 string", sqlExecutionContext);
+        engine.execute("alter table x add column v12 binary", sqlExecutionContext);
+        engine.execute("alter table x add column v9 long", sqlExecutionContext);
+        engine.execute("alter table x add column v13 long256", sqlExecutionContext);
+        engine.execute("alter table x add column v14 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v15 varchar", sqlExecutionContext);
 
-        engine.ddl("create table w as (select * from x)", sqlExecutionContext);
+        engine.execute("create table w as (select * from x)", sqlExecutionContext);
 
-        engine.ddl(
+        engine.execute(
                 "create table append1 as (" +
                         "select" +
                         " 1 as commit," +
@@ -3433,7 +3465,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 2 as commit," +
@@ -3479,7 +3511,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("insert into x select * from append1", sqlExecutionContext);
+        engine.execute("insert into x select * from append1", sqlExecutionContext);
         assertO3DataConsistencyStableSort(
                 engine,
                 compiler,
@@ -3498,7 +3530,7 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext ectx
     ) throws SqlException {
 
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -3526,25 +3558,25 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.ddl("alter table x add column v double", ectx);
-        engine.ddl("alter table x add column v1 float", ectx);
-        engine.ddl("alter table x add column v2 int", ectx);
-        engine.ddl("alter table x add column v3 byte", ectx);
-        engine.ddl("alter table x add column v4 short", ectx);
-        engine.ddl("alter table x add column v5 boolean", ectx);
-        engine.ddl("alter table x add column v6 date", ectx);
-        engine.ddl("alter table x add column v7 timestamp", ectx);
-        engine.ddl("alter table x add column v8 symbol", ectx);
-        engine.ddl("alter table x add column v10 char", ectx);
-        engine.ddl("alter table x add column v11 string", ectx);
-        engine.ddl("alter table x add column v12 binary", ectx);
-        engine.ddl("alter table x add column v9 long", ectx);
-        engine.ddl("alter table x add column v13 varchar", ectx);
-        engine.ddl("alter table x add column v14 varchar", ectx);
+        engine.execute("alter table x add column v double", ectx);
+        engine.execute("alter table x add column v1 float", ectx);
+        engine.execute("alter table x add column v2 int", ectx);
+        engine.execute("alter table x add column v3 byte", ectx);
+        engine.execute("alter table x add column v4 short", ectx);
+        engine.execute("alter table x add column v5 boolean", ectx);
+        engine.execute("alter table x add column v6 date", ectx);
+        engine.execute("alter table x add column v7 timestamp", ectx);
+        engine.execute("alter table x add column v8 symbol", ectx);
+        engine.execute("alter table x add column v10 char", ectx);
+        engine.execute("alter table x add column v11 string", ectx);
+        engine.execute("alter table x add column v12 binary", ectx);
+        engine.execute("alter table x add column v9 long", ectx);
+        engine.execute("alter table x add column v13 varchar", ectx);
+        engine.execute("alter table x add column v14 varchar", ectx);
 
-        engine.ddl("create table w as (select * from x)", ectx);
+        engine.execute("create table w as (select * from x)", ectx);
 
-        engine.ddl(
+        engine.execute(
                 "create table append1 as ( " +
                         "select" +
                         " 1 as commit," +
@@ -3588,7 +3620,7 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 2 as commit," +
@@ -3632,7 +3664,7 @@ public class O3Test extends AbstractO3Test {
                 ectx
         );
 
-        engine.insert("insert into x select * from append1", ectx);
+        engine.execute("insert into x select * from append1", ectx);
 
         TestUtils.printSql(compiler, ectx, "select count() from (x union all append2)", sink2);
         TestUtils.printSql(compiler, ectx, "select max(ts) from (x union all append2)", sink);
@@ -3659,7 +3691,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3687,24 +3719,24 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        engine.ddl("alter table x add column v double", executionContext);
-        engine.ddl("alter table x add column v1 float", executionContext);
-        engine.ddl("alter table x add column v2 int", executionContext);
-        engine.ddl("alter table x add column v3 byte", executionContext);
-        engine.ddl("alter table x add column v4 short", executionContext);
-        engine.ddl("alter table x add column v5 boolean", executionContext);
-        engine.ddl("alter table x add column v6 date", executionContext);
-        engine.ddl("alter table x add column v7 timestamp", executionContext);
-        engine.ddl("alter table x add column v8 symbol index", executionContext);
-        engine.ddl("alter table x add column v10 char", executionContext);
-        engine.ddl("alter table x add column v11 string", executionContext);
-        engine.ddl("alter table x add column v12 binary", executionContext);
-        engine.ddl("alter table x add column v13 long256", executionContext);
-        engine.ddl("alter table x add column v9 long", executionContext);
-        engine.ddl("alter table x add column v14 varchar", executionContext);
-        engine.ddl("alter table x add column v15 varchar", executionContext);
+        engine.execute("alter table x add column v double", executionContext);
+        engine.execute("alter table x add column v1 float", executionContext);
+        engine.execute("alter table x add column v2 int", executionContext);
+        engine.execute("alter table x add column v3 byte", executionContext);
+        engine.execute("alter table x add column v4 short", executionContext);
+        engine.execute("alter table x add column v5 boolean", executionContext);
+        engine.execute("alter table x add column v6 date", executionContext);
+        engine.execute("alter table x add column v7 timestamp", executionContext);
+        engine.execute("alter table x add column v8 symbol index", executionContext);
+        engine.execute("alter table x add column v10 char", executionContext);
+        engine.execute("alter table x add column v11 string", executionContext);
+        engine.execute("alter table x add column v12 binary", executionContext);
+        engine.execute("alter table x add column v13 long256", executionContext);
+        engine.execute("alter table x add column v9 long", executionContext);
+        engine.execute("alter table x add column v14 varchar", executionContext);
+        engine.execute("alter table x add column v15 varchar", executionContext);
 
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3771,7 +3803,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3785,12 +3817,12 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        engine.ddl("alter table x add column v1 geohash(1c)", executionContext);
-        engine.ddl("alter table x add column v2 geohash(2c)", executionContext);
-        engine.ddl("alter table x add column v4 geohash(4c)", executionContext);
-        engine.ddl("alter table x add column v8 geohash(10c)", executionContext);
+        engine.execute("alter table x add column v1 geohash(1c)", executionContext);
+        engine.execute("alter table x add column v2 geohash(2c)", executionContext);
+        engine.execute("alter table x add column v4 geohash(4c)", executionContext);
+        engine.execute("alter table x add column v8 geohash(10c)", executionContext);
 
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -3829,7 +3861,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -3857,25 +3889,25 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("alter table x add column v double", sqlExecutionContext);
-        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
-        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
-        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
-        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
-        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
-        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
-        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
-        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
-        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
-        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
-        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
-        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
-        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
-        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v double", sqlExecutionContext);
+        engine.execute("alter table x add column v1 float", sqlExecutionContext);
+        engine.execute("alter table x add column v2 int", sqlExecutionContext);
+        engine.execute("alter table x add column v3 byte", sqlExecutionContext);
+        engine.execute("alter table x add column v4 short", sqlExecutionContext);
+        engine.execute("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.execute("alter table x add column v6 date", sqlExecutionContext);
+        engine.execute("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.execute("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.execute("alter table x add column v10 char", sqlExecutionContext);
+        engine.execute("alter table x add column v11 string", sqlExecutionContext);
+        engine.execute("alter table x add column v12 binary", sqlExecutionContext);
+        engine.execute("alter table x add column v9 long", sqlExecutionContext);
+        engine.execute("alter table x add column v13 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v14 varchar", sqlExecutionContext);
 
-        engine.ddl("create table w as (select * from x)", sqlExecutionContext);
+        engine.execute("create table w as (select * from x)", sqlExecutionContext);
 
-        engine.ddl(
+        engine.execute(
                 "create table append1 as (" +
                         "select" +
                         " 1 as commit," +
@@ -3919,7 +3951,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 2 as commit," +
@@ -3963,7 +3995,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.insert("insert into x select * from append1", sqlExecutionContext);
+        engine.execute("insert into x select * from append1", sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select count() from (x union all append2)", sink2);
         TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from (x union all append2)", sink);
@@ -3990,7 +4022,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table 'привет от штиблет' as (" +
                         "select" +
                         " 0 as commit," +
@@ -4018,25 +4050,25 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("alter table 'привет от штиблет' add column v double", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v1 float", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v2 int", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v3 byte", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v4 short", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v5 boolean", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v6 date", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v7 timestamp", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v8 symbol", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v10 char", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v11 string", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v12 binary", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v9 long", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v13 varchar", sqlExecutionContext);
-        engine.ddl("alter table 'привет от штиблет' add column v14 varchar", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v double", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v1 float", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v2 int", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v3 byte", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v4 short", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v5 boolean", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v6 date", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v7 timestamp", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v8 symbol", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v10 char", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v11 string", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v12 binary", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v9 long", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v13 varchar", sqlExecutionContext);
+        engine.execute("alter table 'привет от штиблет' add column v14 varchar", sqlExecutionContext);
 
-        engine.ddl("create table w as (select * from 'привет от штиблет')", sqlExecutionContext);
+        engine.execute("create table w as (select * from 'привет от штиблет')", sqlExecutionContext);
 
-        engine.ddl(
+        engine.execute(
                 "create table append1 as (" +
                         "select" +
                         " 1 as commit," +
@@ -4080,7 +4112,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 2 as commit," +
@@ -4124,13 +4156,13 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.insert("insert into 'привет от штиблет' select * from append1", sqlExecutionContext);
+        engine.execute("insert into 'привет от штиблет' select * from append1", sqlExecutionContext);
 
         TestUtils.printSql(compiler, sqlExecutionContext, "select count() from ('привет от штиблет' union all append2)", sink2);
         TestUtils.printSql(compiler, sqlExecutionContext, "select max(ts) from ('привет от штиблет' union all append2)", sink);
         final String expectedMaxTimestamp = Chars.toString(sink);
 
-        engine.insert("insert into 'привет от штиблет' select * from append2", sqlExecutionContext);
+        engine.execute("insert into 'привет от штиблет' select * from append2", sqlExecutionContext);
         assertO3DataConsistencyStableSort(
                 engine,
                 compiler,
@@ -4175,7 +4207,7 @@ public class O3Test extends AbstractO3Test {
         // |               |
         // |               |
         // +---------------+
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -4202,25 +4234,25 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("alter table x add column v double", sqlExecutionContext);
-        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
-        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
-        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
-        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
-        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
-        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
-        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
-        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
-        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
-        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
-        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
-        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
-        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
-        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v double", sqlExecutionContext);
+        engine.execute("alter table x add column v1 float", sqlExecutionContext);
+        engine.execute("alter table x add column v2 int", sqlExecutionContext);
+        engine.execute("alter table x add column v3 byte", sqlExecutionContext);
+        engine.execute("alter table x add column v4 short", sqlExecutionContext);
+        engine.execute("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.execute("alter table x add column v6 date", sqlExecutionContext);
+        engine.execute("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.execute("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.execute("alter table x add column v10 char", sqlExecutionContext);
+        engine.execute("alter table x add column v11 string", sqlExecutionContext);
+        engine.execute("alter table x add column v12 binary", sqlExecutionContext);
+        engine.execute("alter table x add column v9 long", sqlExecutionContext);
+        engine.execute("alter table x add column v13 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v14 varchar", sqlExecutionContext);
 
         // prepare data in APPEND table (non-partitioned, unordered) such, that these rows cover the rest of the
         // last partition and will cause a new partition with uncommitted data to be created
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -4266,7 +4298,8 @@ public class O3Test extends AbstractO3Test {
         // Insert the O3 data, the conventional O3 logic should be triggered because this table does not
         // have designated timestamp. Space out O3 such that it hits the last partition.
 
-        engine.insert(
+        //        --------     new columns here ---------------
+        engine.execute(
                 "insert into append " +
                         "select" +
                         " cast(x as int) i," +
@@ -4304,14 +4337,13 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long() v9," +
                         " rnd_varchar(1, 40, 1) v13," +
                         " rnd_varchar(1, 1, 1) v14," +
-                        " from long_sequence(100)",
-                sqlExecutionContext
+                        " from long_sequence(100)", sqlExecutionContext
         );
 
         // copy "x" away before we modify it, get rid of timestamp by ordering table differently
-        engine.ddl("create table y as (x order by 1)", sqlExecutionContext);
+        engine.execute("create table y as (x order by 1)", sqlExecutionContext);
         // add "append" table to the mix
-        engine.insert("insert into y select * from append", sqlExecutionContext);
+        engine.execute("insert into y select * from append", sqlExecutionContext);
 
         TestUtils.printSql(
                 compiler,
@@ -4322,7 +4354,7 @@ public class O3Test extends AbstractO3Test {
 
         String expected = Chars.toString(sink);
 
-        engine.insert("insert into x select * from append", sqlExecutionContext);
+        engine.execute("insert into x select * from append", sqlExecutionContext);
 
         TestUtils.assertSql(
                 compiler,
@@ -4359,7 +4391,7 @@ public class O3Test extends AbstractO3Test {
         // |               |
         // |               |
         // +---------------+
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -4386,25 +4418,25 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("alter table x add column v double", sqlExecutionContext);
-        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
-        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
-        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
-        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
-        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
-        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
-        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
-        engine.ddl("alter table x add column v8 symbol", sqlExecutionContext);
-        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
-        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
-        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
-        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
-        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
-        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v double", sqlExecutionContext);
+        engine.execute("alter table x add column v1 float", sqlExecutionContext);
+        engine.execute("alter table x add column v2 int", sqlExecutionContext);
+        engine.execute("alter table x add column v3 byte", sqlExecutionContext);
+        engine.execute("alter table x add column v4 short", sqlExecutionContext);
+        engine.execute("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.execute("alter table x add column v6 date", sqlExecutionContext);
+        engine.execute("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.execute("alter table x add column v8 symbol", sqlExecutionContext);
+        engine.execute("alter table x add column v10 char", sqlExecutionContext);
+        engine.execute("alter table x add column v11 string", sqlExecutionContext);
+        engine.execute("alter table x add column v12 binary", sqlExecutionContext);
+        engine.execute("alter table x add column v9 long", sqlExecutionContext);
+        engine.execute("alter table x add column v13 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v14 varchar", sqlExecutionContext);
 
         // prepare data in APPEND table (non-partitioned, unordered) such, that first 100 rows are in order
         // and another 100 rows are out of order
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -4450,7 +4482,8 @@ public class O3Test extends AbstractO3Test {
         // insert the O3 data, the conventional O3 logic should be triggered because this table does not
         // have designated timestamp
 
-        engine.insert(
+        //        --------     new columns here ---------------
+        engine.execute(
                 "insert into append " +
                         "select" +
                         " cast(x as int) i," +
@@ -4488,14 +4521,13 @@ public class O3Test extends AbstractO3Test {
                         " rnd_long() v9," +
                         " rnd_varchar(1, 40, 1) v13," +
                         " rnd_varchar(1, 1, 1) v14," +
-                        " from long_sequence(100)",
-                sqlExecutionContext
+                        " from long_sequence(100)", sqlExecutionContext
         );
 
         // copy "x" away before we modify it, get rid of timestamp by ordering table differently
-        engine.ddl("create table y as (x order by 1)", sqlExecutionContext);
+        engine.execute("create table y as (x order by 1)", sqlExecutionContext);
         // add "append" table to the mix
-        engine.insert("insert into y select * from append", sqlExecutionContext);
+        engine.execute("insert into y select * from append", sqlExecutionContext);
 
         TestUtils.printSql(
                 compiler,
@@ -4506,7 +4538,7 @@ public class O3Test extends AbstractO3Test {
 
         String expected = Chars.toString(sink);
 
-        engine.insert("insert into x select * from append", sqlExecutionContext);
+        engine.execute("insert into x select * from append", sqlExecutionContext);
 
         TestUtils.assertSql(
                 compiler,
@@ -4528,7 +4560,7 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // 1970-01-06
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -4556,7 +4588,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // 1970-01-09
-        engine.insert(
+        engine.execute(
                 "insert into x " +
                         "select" +
                         " cast(x as int) i," +
@@ -4578,28 +4610,27 @@ public class O3Test extends AbstractO3Test {
                         " rnd_char() t," +
                         " rnd_varchar(1, 40, 1) varc," +
                         " rnd_varchar(1, 1, 1) varc2," +
-                        " from long_sequence(500)",
-                sqlExecutionContext
+                        " from long_sequence(500)", sqlExecutionContext
         );
 
-        engine.ddl("alter table x add column v double", sqlExecutionContext);
-        engine.ddl("alter table x add column v1 float", sqlExecutionContext);
-        engine.ddl("alter table x add column v2 int", sqlExecutionContext);
-        engine.ddl("alter table x add column v3 byte", sqlExecutionContext);
-        engine.ddl("alter table x add column v4 short", sqlExecutionContext);
-        engine.ddl("alter table x add column v5 boolean", sqlExecutionContext);
-        engine.ddl("alter table x add column v6 date", sqlExecutionContext);
-        engine.ddl("alter table x add column v7 timestamp", sqlExecutionContext);
-        engine.ddl("alter table x add column v8 symbol index", sqlExecutionContext);
-        engine.ddl("alter table x add column v10 char", sqlExecutionContext);
-        engine.ddl("alter table x add column v11 string", sqlExecutionContext);
-        engine.ddl("alter table x add column v12 binary", sqlExecutionContext);
-        engine.ddl("alter table x add column v9 long", sqlExecutionContext);
-        engine.ddl("alter table x add column v13 varchar", sqlExecutionContext);
-        engine.ddl("alter table x add column v14 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v double", sqlExecutionContext);
+        engine.execute("alter table x add column v1 float", sqlExecutionContext);
+        engine.execute("alter table x add column v2 int", sqlExecutionContext);
+        engine.execute("alter table x add column v3 byte", sqlExecutionContext);
+        engine.execute("alter table x add column v4 short", sqlExecutionContext);
+        engine.execute("alter table x add column v5 boolean", sqlExecutionContext);
+        engine.execute("alter table x add column v6 date", sqlExecutionContext);
+        engine.execute("alter table x add column v7 timestamp", sqlExecutionContext);
+        engine.execute("alter table x add column v8 symbol index", sqlExecutionContext);
+        engine.execute("alter table x add column v10 char", sqlExecutionContext);
+        engine.execute("alter table x add column v11 string", sqlExecutionContext);
+        engine.execute("alter table x add column v12 binary", sqlExecutionContext);
+        engine.execute("alter table x add column v9 long", sqlExecutionContext);
+        engine.execute("alter table x add column v13 varchar", sqlExecutionContext);
+        engine.execute("alter table x add column v14 varchar", sqlExecutionContext);
 
         // 1970-01-08
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -4694,7 +4725,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -4722,9 +4753,9 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("alter TABLE x SET PARAM maxUncommittedRows = 2000000", sqlExecutionContext);
+        engine.execute("alter TABLE x SET PARAM maxUncommittedRows = 2000000", sqlExecutionContext);
 
-        engine.ddl(
+        engine.execute(
                 "create table top as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -4779,7 +4810,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -4790,17 +4821,18 @@ public class O3Test extends AbstractO3Test {
         );
 
         for (int i = 0; i < 20; i++) {
-            engine.insert(
+            engine.execute(
                     "insert into x select" +
                             " cast(x as int) i," +
                             " cast(abs(rnd_int(0, 400, 0) * 60 * 60 * 1000000L) as timestamp) ts" +
-                            " from long_sequence(200)",
-                    sqlExecutionContext
+                            " from long_sequence(200)", sqlExecutionContext
             );
         }
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select sum(i) from x", sink, "sum\n" +
-                "527250\n");
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select sum(i) from x", sink, "sum\n" +
+                        "527250\n"
+        );
     }
 
     private static void testO3EdgeBug(
@@ -4808,7 +4840,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -4839,7 +4871,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table 1am as (" +
                         "select" +
                         " 2 as commit," +
@@ -4868,7 +4900,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table tail as (" +
                         "select" +
                         " 3 as commit," +
@@ -4898,7 +4930,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        engine.ddl("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+        engine.execute("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
         // The query above generates expected result, but there is a problem using it
         // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
@@ -4906,8 +4938,8 @@ public class O3Test extends AbstractO3Test {
         // look different. If this test ever breaks, uncomment the reference query and compare results visually.
 
         // insert 1AM data into X
-        engine.insert("insert into x select * from 1am", sqlExecutionContext);
-        engine.insert("insert into x select * from tail", sqlExecutionContext);
+        engine.execute("insert into x select * from 1am", sqlExecutionContext);
+        engine.execute("insert into x select * from tail", sqlExecutionContext);
 
         assertO3DataCursors(
                 engine,
@@ -4938,7 +4970,7 @@ public class O3Test extends AbstractO3Test {
         long sec = min / 60;
         long minsPerDay = day / min;
 
-        engine.ddl(
+        engine.execute(
                 "create table x as ( " +
                         "select" +
                         " cast(x as int) i," +
@@ -4966,7 +4998,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -5021,7 +5053,7 @@ public class O3Test extends AbstractO3Test {
         long minsPerDay = day / min;
 
         // crate records from Jan 1 01:00:00 to Jan 2 01:00:00 with 1 min interval
-        engine.ddl(
+        engine.execute(
                 "create table x as ( " +
                         "select" +
                         " 1 as commit," +
@@ -5052,7 +5084,7 @@ public class O3Test extends AbstractO3Test {
 
         // crate 60 records from Jan 1 00:01:00 to Jan 1 01:00:00 with 1 min interval
         // so that Jan 1 01:00:00 present in both record sets
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " 2 as commit," +
@@ -5102,7 +5134,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -5133,7 +5165,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table 1am as (" +
                         "select" +
                         " 2 as commit," +
@@ -5162,7 +5194,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table tail as (" +
                         "select" +
                         " 3 as commit," +
@@ -5191,11 +5223,11 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+        engine.execute("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
         // insert 1AM data into X
-        engine.insert("insert into x select * from 1am", sqlExecutionContext);
-        engine.insert("insert into x select * from tail", sqlExecutionContext);
+        engine.execute("insert into x select * from 1am", sqlExecutionContext);
+        engine.execute("insert into x select * from tail", sqlExecutionContext);
 
         testXAndIndex(engine, compiler, sqlExecutionContext, "y order by ts, commit", "x");
 
@@ -5211,7 +5243,7 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext executionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -5240,7 +5272,7 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " 2 as commit," +
@@ -5286,7 +5318,7 @@ public class O3Test extends AbstractO3Test {
 
         // x ends with timestamp 549900000000
         // straight append
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 3 as commit," +
@@ -5315,7 +5347,7 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        engine.drop("drop table y", executionContext);
+        engine.execute("drop table y", executionContext);
 
         // create third table, which will contain both X and 1AM
         assertO3DataCursors(
@@ -5347,7 +5379,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -5376,7 +5408,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " 2 as commit," +
@@ -5429,7 +5461,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -5457,7 +5489,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -5511,7 +5543,7 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -5542,7 +5574,7 @@ public class O3Test extends AbstractO3Test {
 
         // all records but one is appended to middle partition
         // last record is prepended to the last partition
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " 2 as commit," +
@@ -5601,7 +5633,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -5630,7 +5662,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table middle as (" +
                         "select" +
                         " 1 as commit," +
@@ -5694,7 +5726,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -5722,7 +5754,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table middle as (" +
                         "select" +
                         " 2 as commit," +
@@ -5785,7 +5817,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -5815,7 +5847,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table middle as (" +
                         "select" +
                         " 2 as commit," +
@@ -5865,7 +5897,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -5895,7 +5927,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table 1am as (" +
                         "select" +
                         " 2 as commit," +
@@ -5923,7 +5955,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table top2 as (" +
                         "select" +
                         " 3 as commit," +
@@ -5976,7 +6008,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -6007,7 +6039,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table 1am as (" +
                         "select" +
                         " 2 as commit," +
@@ -6036,7 +6068,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 3 as commit," +
@@ -6078,7 +6110,7 @@ public class O3Test extends AbstractO3Test {
                 engine
         );
 
-        engine.ddl("alter table x drop column c", sqlExecutionContext);
+        engine.execute("alter table x drop column c", sqlExecutionContext);
 
         dropTableY(engine, sqlExecutionContext);
         assertO3DataCursors(
@@ -6115,7 +6147,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -6146,7 +6178,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table 1am as (" +
                         "select" +
                         " 2 as commit," +
@@ -6175,7 +6207,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table tail as (" +
                         "select" +
                         " 3 as commit," +
@@ -6205,7 +6237,7 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        engine.ddl("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+        engine.execute("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
         // The query above generates expected result, but there is a problem using it
         // This test produces duplicate timestamps. Those are being sorted in different order by OOO implementation
@@ -6213,8 +6245,8 @@ public class O3Test extends AbstractO3Test {
         // look different. If this test ever breaks, uncomment the reference query and compare results visually.
 
         // insert 1AM data into X
-        engine.insert("insert into x select * from 1am", sqlExecutionContext);
-        engine.insert("insert into x select * from tail", sqlExecutionContext);
+        engine.execute("insert into x select * from 1am", sqlExecutionContext);
+        engine.execute("insert into x select * from tail", sqlExecutionContext);
 
         // It is necessary to release cached "x" reader because as of yet
         // reader cannot reload any partition other than "current".
@@ -6238,7 +6270,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -6269,7 +6301,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table 1am as (" +
                         "select" +
                         " 2 as commit," +
@@ -6298,7 +6330,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table tail as (" +
                         "select" +
                         " 3 as commit," +
@@ -6327,10 +6359,10 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+        engine.execute("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
-        engine.insert("insert into x select * from 1am", sqlExecutionContext);
-        engine.insert("insert into x select * from tail", sqlExecutionContext);
+        engine.execute("insert into x select * from 1am", sqlExecutionContext);
+        engine.execute("insert into x select * from tail", sqlExecutionContext);
 
         testXAndIndex(
                 engine,
@@ -6359,7 +6391,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -6389,7 +6421,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table 1am as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -6417,7 +6449,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table tail as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -6446,10 +6478,10 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        engine.ddl("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
+        engine.execute("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
 
-        engine.insert("insert into x select * from 1am", sqlExecutionContext);
-        engine.insert("insert into x select * from tail", sqlExecutionContext);
+        engine.execute("insert into x select * from 1am", sqlExecutionContext);
+        engine.execute("insert into x select * from tail", sqlExecutionContext);
 
         testXAndIndex(
                 engine,
@@ -6471,7 +6503,7 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // top edge of data timestamp equals of of
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -6502,7 +6534,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table middle as (" +
                         "select" +
                         " 2 as commit," +
@@ -6557,7 +6589,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -6587,7 +6619,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table 1am as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -6615,7 +6647,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table prev as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -6669,7 +6701,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -6700,7 +6732,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table 1am as (" +
                         "select" +
                         " 2 as commit," +
@@ -6729,7 +6761,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table tail as (" +
                         "select" +
                         " 3 as commit," +
@@ -6759,11 +6791,11 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        engine.ddl("create table y as (x union all 1am union all tail)", sqlExecutionContext);
+        engine.execute("create table y as (x union all 1am union all tail)", sqlExecutionContext);
 
         // insert 1AM data into X
-        engine.insert("insert into x select * from 1am", sqlExecutionContext);
-        engine.insert("insert into x select * from tail", sqlExecutionContext);
+        engine.execute("insert into x select * from 1am", sqlExecutionContext);
+        engine.execute("insert into x select * from tail", sqlExecutionContext);
 
         testXAndIndex(engine, compiler, sqlExecutionContext, "y order by ts, commit", "x");
 
@@ -6778,7 +6810,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 1 as commit," +
@@ -6809,7 +6841,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table 1am as (" +
                         "select" +
                         " 2 as commit," +
@@ -6840,7 +6872,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table tail as (" +
                         "select" +
                         " 3 as commit," +
@@ -6870,11 +6902,11 @@ public class O3Test extends AbstractO3Test {
         );
 
         // create third table, which will contain both X and 1AM
-        engine.ddl("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
+        engine.execute("create table y as (select * from x union all 1am union all tail)", sqlExecutionContext);
 
         // insert 1AM data into X
-        engine.insert("insert into x select * from 1am", sqlExecutionContext);
-        engine.insert("insert into x select * from tail", sqlExecutionContext);
+        engine.execute("insert into x select * from 1am", sqlExecutionContext);
+        engine.execute("insert into x select * from tail", sqlExecutionContext);
 
         testXAndIndex(engine, compiler, sqlExecutionContext, "y order by ts, commit", "x");
 
@@ -6889,7 +6921,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x_1 as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -6917,12 +6949,12 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table y as (select * from x_1 order by ts) timestamp(ts) partition by DAY",
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table x as (select * from x_1), index(sym) timestamp(ts) partition by DAY",
                 sqlExecutionContext
         );
@@ -6940,7 +6972,7 @@ public class O3Test extends AbstractO3Test {
 
     private static void testPartitionedOOONullSetters0(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext)
             throws SqlException, NumericException {
-        engine.ddl("create table x (a int, b int, c int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+        engine.execute("create table x (a int, b int, c int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
         try (TableWriter w = TestUtils.getWriter(engine, "x")) {
             TableWriter.Row r;
 
@@ -6980,7 +7012,7 @@ public class O3Test extends AbstractO3Test {
             throws SqlException {
         final int commits = 4;
         final int rows = 1_000;
-        engine.ddl("create table x (s string, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+        engine.execute("create table x (s string, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
         try (TableWriter w = TestUtils.getWriter(engine, "x")) {
             TableWriter.Row r;
 
@@ -7029,7 +7061,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -7059,7 +7091,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table top as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -7113,7 +7145,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -7143,7 +7175,7 @@ public class O3Test extends AbstractO3Test {
 
         // create table with 1AM data
 
-        engine.ddl(
+        engine.execute(
                 "create table top as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -7171,7 +7203,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table bottom as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -7222,26 +7254,25 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
 
-        engine.ddl(
+        engine.execute(
                 "CREATE TABLE monthly_col_top(" +
                         "ts timestamp, metric SYMBOL, diagnostic SYMBOL, sensorChannel SYMBOL" +
                         ") timestamp(ts) partition by MONTH",
                 sqlExecutionContext
         );
 
-        engine.insert(
+        engine.execute(
                 "INSERT INTO monthly_col_top (ts, metric, diagnostic, sensorChannel) VALUES" +
                         "('2022-06-08T01:40:00.000000Z', '1', 'true', '2')," +
                         "('2022-06-08T02:41:00.000000Z', '2', 'true', '2')," +
                         "('2022-06-08T02:42:00.000000Z', '3', 'true', '1')," +
-                        "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')",
-                sqlExecutionContext
+                        "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')", sqlExecutionContext
         );
 
-        engine.ddl("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)
+        engine.execute("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)
         ;
 
-        engine.insert(
+        engine.execute(
                 "INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
                         "('2022-06-08T02:50:00.000000Z', '5', '3')," +
                         "('2022-06-08T02:50:00.000000Z', '6', '3')," +
@@ -7252,20 +7283,19 @@ public class O3Test extends AbstractO3Test {
                         "('2022-06-08T03:50:00.000000Z', '11', '2')," +
                         "('2022-06-08T03:50:00.000000Z', '12', '2')," +
                         "('2022-06-08T04:50:00.000000Z', '13', '2')," +
-                        "('2022-06-08T04:50:00.000000Z', '14', '2')",
-                sqlExecutionContext
+                        "('2022-06-08T04:50:00.000000Z', '14', '2')", sqlExecutionContext
         );
 
         // OOO in the middle
-        engine.insert(
+        engine.execute(
                 "INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
                         "('2022-06-08T03:30:00.000000Z', '15', '2', '3')," +
-                        "('2022-06-08T03:30:00.000000Z', '16', '2', '3')",
-                sqlExecutionContext
+                        "('2022-06-08T03:30:00.000000Z', '16', '2', '3')", sqlExecutionContext
         );
 
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '2'", sink,
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '2'", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                         "2022-06-08T02:50:00.000000Z\t9\t\t\t2\n" +
                         "2022-06-08T02:50:00.000000Z\t10\t\t\t2\n" +
@@ -7276,14 +7306,14 @@ public class O3Test extends AbstractO3Test {
         );
 
         // OOO appends to last partition
-        engine.insert(
+        engine.execute(
                 "INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
                         "('2022-06-08T05:30:00.000000Z', '17', '4', '3')," +
-                        "('2022-06-08T04:50:00.000000Z', '18', '4', '3')",
-                sqlExecutionContext
+                        "('2022-06-08T04:50:00.000000Z', '18', '4', '3')", sqlExecutionContext
         );
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                         "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
                         "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
@@ -7294,15 +7324,15 @@ public class O3Test extends AbstractO3Test {
         );
 
         // OOO merges and appends to last partition
-        engine.insert(
+        engine.execute(
                 "INSERT INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
                         "('2022-06-08T05:30:00.000000Z', '19', '4', '3')," +
                         "('2022-06-08T02:50:00.000000Z', '20', '4', '3')," +
-                        "('2022-06-08T02:50:00.000000Z', '21', '4', '3')",
-                sqlExecutionContext
+                        "('2022-06-08T02:50:00.000000Z', '21', '4', '3')", sqlExecutionContext
         );
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                         "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
                         "2022-06-08T02:50:00.000000Z\t6\t\t\t3\n" +
@@ -7322,54 +7352,51 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
 
-        engine.ddl(
+        engine.execute(
                 "CREATE TABLE monthly_col_top(" +
                         "ts timestamp, metric SYMBOL, diagnostic SYMBOL, sensorChannel SYMBOL" +
                         ") timestamp(ts) partition by DAY",
                 sqlExecutionContext
         );
 
-        engine.insert(
+        engine.execute(
                 "INSERT INTO monthly_col_top (ts, metric, diagnostic, sensorChannel) VALUES" +
                         "('2022-06-08T01:40:00.000000Z', '1', 'true', '2')," +
                         "('2022-06-08T02:41:00.000000Z', '2', 'true', '2')," +
                         "('2022-06-08T02:42:00.000000Z', '3', 'true', '1')," +
-                        "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')",
-                sqlExecutionContext
+                        "('2022-06-08T02:43:00.000000Z', '4', 'true', '1')", sqlExecutionContext
         );
 
-        engine.ddl("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)
+        engine.execute("ALTER TABLE monthly_col_top ADD COLUMN loggerChannel SYMBOL INDEX", sqlExecutionContext)
         ;
 
-        engine.insert(
+        engine.execute(
                 "INSERT INTO monthly_col_top (ts, metric, loggerChannel) VALUES" +
                         "('2022-06-08T02:50:00.000000Z', '5', '3')," +
                         "('2022-06-08T02:55:00.000000Z', '6', '3')," +
-                        "('2022-06-08T02:59:00.000000Z', '7', '1')",
-                sqlExecutionContext
+                        "('2022-06-08T02:59:00.000000Z', '7', '1')", sqlExecutionContext
         );
 
-        engine.insert(
+        engine.execute(
                 "INSERT batch 6 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
                         "('2022-06-09T02:50:00.000000Z', '9', '2')," +
                         "('2022-06-09T02:50:00.000000Z', '10', '2')," +
                         "('2022-06-09T03:50:00.000000Z', '11', '2')," +
                         "('2022-06-09T03:50:00.000000Z', '12', '2')," +
                         "('2022-06-09T04:50:00.000000Z', '13', '2')," +
-                        "('2022-06-09T04:50:00.000000Z', '14', '2')",
-                sqlExecutionContext
+                        "('2022-06-09T04:50:00.000000Z', '14', '2')", sqlExecutionContext
         );
 
         // OOO append prev partition
-        engine.insert(
+        engine.execute(
                 "INSERT batch 2 INTO monthly_col_top (ts, metric, sensorChannel, 'loggerChannel') VALUES" +
                         "('2022-06-08T03:30:00.000000Z', '15', '2', '3')," +
-                        "('2022-06-08T03:30:00.000000Z', '16', '2', '3')",
-                sqlExecutionContext
+                        "('2022-06-08T03:30:00.000000Z', '16', '2', '3')", sqlExecutionContext
         );
 
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                         "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
                         "2022-06-08T02:55:00.000000Z\t6\t\t\t3\n" +
@@ -7378,14 +7405,14 @@ public class O3Test extends AbstractO3Test {
         );
 
         // OOO insert mid prev partition
-        engine.insert(
+        engine.execute(
                 "INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
                         "('2022-06-08T02:54:00.000000Z', '17', '3')," +
-                        "('2022-06-08T02:56:00.000000Z', '18', '3')",
-                sqlExecutionContext
+                        "('2022-06-08T02:56:00.000000Z', '18', '3')", sqlExecutionContext
         );
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                         "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
                         "2022-06-08T02:54:00.000000Z\t17\t\t\t3\n" +
@@ -7396,15 +7423,15 @@ public class O3Test extends AbstractO3Test {
         );
 
         // OOO insert overlaps prev partition and adds new rows at the end
-        engine.insert(
+        engine.execute(
                 "INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
                         "('2022-06-08T03:15:00.000000Z', '19', '3')," +
                         "('2022-06-08T04:30:00.000000Z', '20', '3')," +
-                        "('2022-06-08T04:31:00.000000Z', '21', '3')",
-                sqlExecutionContext
+                        "('2022-06-08T04:31:00.000000Z', '21', '3')", sqlExecutionContext
         );
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3'", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                         "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
                         "2022-06-08T02:54:00.000000Z\t17\t\t\t3\n" +
@@ -7418,15 +7445,15 @@ public class O3Test extends AbstractO3Test {
         );
 
         // OOO insert overlaps prev partition and adds new rows at the top
-        engine.insert(
+        engine.execute(
                 "INSERT batch 2 INTO monthly_col_top (ts, metric, 'loggerChannel') VALUES" +
                         "('2022-06-08T03:15:00.000000Z', '22', '3')," +
                         "('2022-06-08T03:15:00.000000Z', '23', '3')," +
-                        "('2022-06-08T00:40:00.000000Z', '24', '3')",
-                sqlExecutionContext
+                        "('2022-06-08T00:40:00.000000Z', '24', '3')", sqlExecutionContext
         );
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3' order by ts, metric", sink,
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select * from monthly_col_top where loggerChannel = '3' order by ts, metric", sink,
                 "ts\tmetric\tdiagnostic\tsensorChannel\tloggerChannel\n" +
                         "2022-06-08T00:40:00.000000Z\t24\t\t\t3\n" +
                         "2022-06-08T02:50:00.000000Z\t5\t\t\t3\n" +
@@ -7449,7 +7476,7 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, NumericException {
 
-        engine.ddl("create table x (a int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
+        engine.execute("create table x (a int, ts timestamp) timestamp(ts) partition by DAY", sqlExecutionContext);
 
 
         long ts = TimestampFormatUtils.parseUTCTimestamp("2020-03-10T20:36:00.000000Z");
@@ -7688,7 +7715,7 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         // create table with roughly 2AM data
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 0 as commit," +
@@ -7719,7 +7746,7 @@ public class O3Test extends AbstractO3Test {
 
         // all records but one is appended to middle partition
         // last record is prepended to the last partition
-        engine.ddl(
+        engine.execute(
                 "create table append as (" +
                         "select" +
                         " 1 as commit," +
@@ -7748,7 +7775,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append2 as (" +
                         "select" +
                         " 2 as commit," +
@@ -7777,7 +7804,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table append3 as (" +
                         "select" +
                         " 3 as commit," +
@@ -7866,7 +7893,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " rnd_str(5,16,10) i," +
@@ -7892,9 +7919,9 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        engine.ddl("create table x1 as (x) timestamp(ts) partition by DAY", executionContext);
+        engine.execute("create table x1 as (x) timestamp(ts) partition by DAY", executionContext);
 
-        engine.ddl(
+        engine.execute(
                 "create table y as (" +
                         "select" +
                         " rnd_str(5,16,10) i," +
@@ -7920,10 +7947,10 @@ public class O3Test extends AbstractO3Test {
                 executionContext
         );
 
-        engine.ddl("create table y1 as (y)", executionContext);
+        engine.execute("create table y1 as (y)", executionContext);
 
         // create expected result sets
-        engine.ddl("create table z as (x union all y)", executionContext);
+        engine.execute("create table z as (x union all y)", executionContext);
 
         // create another compiler to be used by second pool
         try (SqlCompiler compiler2 = engine.getSqlCompiler();
@@ -7945,7 +7972,7 @@ public class O3Test extends AbstractO3Test {
                             try {
                                 toRun = false;
                                 barrier.await();
-                                engine.insert("insert into x select * from y", executionContext);
+                                engine.execute("insert into x select * from y", executionContext);
                             } catch (Throwable e) {
                                 //noinspection CallToPrintStackTrace
                                 e.printStackTrace();
@@ -8022,7 +8049,7 @@ public class O3Test extends AbstractO3Test {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -8050,7 +8077,7 @@ public class O3Test extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        engine.ddl(
+        engine.execute(
                 "create table top as (" +
                         "select" +
                         " cast(x as int) i," +
@@ -8118,16 +8145,18 @@ public class O3Test extends AbstractO3Test {
         );
 
         // Insert OOO to create partition dir 2020-01-01.1
-        CairoEngine.insert(compiler, "insert into x values(1, 100.0, '2020-01-01T00:01:00')", sqlExecutionContext);
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
+        engine.execute("insert into x values(1, 100.0, '2020-01-01T00:01:00')", sqlExecutionContext);
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select count() from x", sink,
                 "count\n" +
                         "11\n"
         );
 
         // Close and open writer. Partition dir 2020-01-01.1 should not be purged
         engine.releaseAllWriters();
-        CairoEngine.insert(compiler, "insert into x values(2, 101.0, '2020-01-01T00:02:00')", sqlExecutionContext);
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
+        engine.execute("insert into x values(2, 101.0, '2020-01-01T00:02:00')", sqlExecutionContext);
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select count() from x", sink,
                 "count\n" +
                         "12\n"
         );
@@ -8235,7 +8264,8 @@ public class O3Test extends AbstractO3Test {
             o3.commit();
         }
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select count() from x", sink,
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select count() from x", sink,
                 "count\n" + (2 * idBatchSize + 1) + "\n"
         );
         engine.releaseAllReaders();
@@ -8381,7 +8411,7 @@ public class O3Test extends AbstractO3Test {
     private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int i, String o3Timestamp) throws SqlException {
         // Day 1 '1970-01-01'
         int initialCount = i / 2;
-        engine.ddl(
+        engine.execute(
                 "create table x as (" +
                         "select" +
                         " 'aa' as str," +
@@ -8393,18 +8423,17 @@ public class O3Test extends AbstractO3Test {
         );
 
         // Day 2 '1970-01-02'
-        engine.insert(
+        engine.execute(
                 "insert into x " +
                         "select" +
                         " 'bb' as str," +
                         " timestamp_sequence('1970-01-02T11:00:00',1000L) ts," +
                         " x " +
-                        " from long_sequence(" + initialCount + ")",
-                sqlExecutionContext
+                        " from long_sequence(" + initialCount + ")", sqlExecutionContext
         );
 
-        engine.ddl("alter table x add column str2 string", sqlExecutionContext);
-        engine.ddl("alter table x add column y long", sqlExecutionContext);
+        engine.execute("alter table x add column str2 string", sqlExecutionContext);
+        engine.execute("alter table x add column y long", sqlExecutionContext);
 
         if (i % 2 == 0) {
             engine.releaseAllWriters();
@@ -8413,7 +8442,7 @@ public class O3Test extends AbstractO3Test {
         // O3 insert Day 1
         final String ts1 = "1970-01-01T" + o3Timestamp;
         final String ts2 = "1970-01-02T" + o3Timestamp;
-        engine.insert(
+        engine.execute(
                 "insert into x " +
                         " select" +
                         " 'cc' as str," +
@@ -8429,15 +8458,15 @@ public class O3Test extends AbstractO3Test {
                         " 11111 as x," +
                         " 'dd' as str2," +
                         " 22222 as y" +
-                        " from long_sequence(1)",
-                sqlExecutionContext
+                        " from long_sequence(1)", sqlExecutionContext
         );
 
         if (i % 2 == 0) {
             engine.releaseAllWriters();
         }
 
-        TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'cc'", sink,
+        TestUtils.assertSql(
+                compiler, sqlExecutionContext, "select * from x where str = 'cc'", sink,
                 "str\tts\tx\tstr2\ty\n" +
                         "cc\t" + ts1 + "\t11111\tdd\t22222\n" +
                         "cc\t" + ts2 + "\t11111\tdd\t22222\n"

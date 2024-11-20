@@ -34,8 +34,8 @@ public class IntersectTest extends AbstractCairoTest {
     @Test
     public void testIntersectAllCastDuplicateRows() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
-            ddl("create table y as (SELECT rnd_int(1,5,0) i, rnd_str('A', 'B', 'C') s FROM long_sequence(3))");
+            execute("create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
+            execute("create table y as (SELECT rnd_int(1,5,0) i, rnd_str('A', 'B', 'C') s FROM long_sequence(3))");
 
             final String expected = "i\ts\n" +
                     "4\tB\n" +
@@ -53,8 +53,8 @@ public class IntersectTest extends AbstractCairoTest {
     @Test
     public void testIntersectAllDuplicateRows() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
-            ddl("create table y as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(20))");
+            execute("create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
+            execute("create table y as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(20))");
 
             final String expected = "i\ts\n" +
                     "4\tB\n" +
@@ -115,7 +115,7 @@ public class IntersectTest extends AbstractCairoTest {
                     "-772867311\tfalse\tQ\t0.7653255982993546\tnull\t681\t2015-05-07T02:45:07.603Z\t\t4794469881975683047\t1970-01-01T02:30:00.000000Z\t31\t00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
                     "00000010 a0 dd\tVTNPIW\t0x2d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe19b2faa4e8255a0d\tP\n";
 
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -145,7 +145,7 @@ public class IntersectTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl(
+            execute(
                     "create table y as " +
                             "(" +
                             "select" +
@@ -189,7 +189,7 @@ public class IntersectTest extends AbstractCairoTest {
             final String expected2 = "t\n" +
                     "MOTORBIKE\n";
 
-            ddl(
+            execute(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'MOTORBIKE') t " +
@@ -202,14 +202,14 @@ public class IntersectTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl(
+            execute(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'MOTORBIKE', 'SCOOTER') t " +
                             " FROM long_sequence(7) x)"
             );
 
-            ddl(
+            execute(
                     "CREATE TABLE z as " +
                             "(SELECT " +
                             " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
@@ -226,8 +226,8 @@ public class IntersectTest extends AbstractCairoTest {
     @Test
     public void testIntersectCastNoDuplicateRows() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
-            ddl("create table y as (SELECT rnd_int(1,5,0) i, rnd_str('A', 'B', 'C') s FROM long_sequence(3))");
+            execute("create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
+            execute("create table y as (SELECT rnd_int(1,5,0) i, rnd_str('A', 'B', 'C') s FROM long_sequence(3))");
 
             final String expected = "i\ts\n" +
                     "4\tB\n" +
@@ -243,8 +243,8 @@ public class IntersectTest extends AbstractCairoTest {
     @Test
     public void testIntersectNoDuplicateRows() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
-            ddl("create table y as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(20))");
+            execute("create table x as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
+            execute("create table y as (SELECT rnd_int(1,5,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(20))");
 
             final String expected = "i\ts\n" +
                     "4\tB\n" +
@@ -303,7 +303,7 @@ public class IntersectTest extends AbstractCairoTest {
                     "-772867311\tfalse\tQ\t0.7653255982993546\tnull\t681\t2015-05-07T02:45:07.603Z\t\t4794469881975683047\t1970-01-01T02:30:00.000000Z\t31\t00000000 4e d6 b2 57 5b e3 71 3d 20 e2 37 f2 64 43 84 55\n" +
                     "00000010 a0 dd\tVTNPIW\t0x2d1c6f57bbfd47ec39bd4dd9ad497a2721dc4adc870c62fe19b2faa4e8255a0d\tP\n";
 
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -333,7 +333,7 @@ public class IntersectTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl(
+            execute(
                     "create table y as " +
                             "(" +
                             "select" +

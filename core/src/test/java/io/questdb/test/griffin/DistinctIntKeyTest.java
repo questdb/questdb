@@ -61,7 +61,7 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
         final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount);
 
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::int i from long_sequence(10000))" +
                             " timestamp(ts) PARTITION BY MONTH",
                     sqlExecutionContext
@@ -136,7 +136,7 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
     @Test
     public void testDistinctOnBrokenTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table tab as (select timestamp_sequence('2020-01-01', 10 * 60 * 1000000L) ts, x::int i from long_sequence(10000))" +
                             " timestamp(ts) PARTITION BY MONTH"
             );

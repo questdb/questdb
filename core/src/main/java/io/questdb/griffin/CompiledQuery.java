@@ -24,11 +24,11 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Transient;
@@ -96,6 +96,8 @@ public interface CompiledQuery {
     @Transient
     AlterOperation getAlterOperation();
 
+    Operation getOperation();
+
     InsertOperation getInsertOperation();
 
     RecordCursorFactory getRecordCursorFactory();
@@ -108,8 +110,6 @@ public interface CompiledQuery {
      * @return statement name
      */
     CharSequence getStatementName();
-
-    TableToken getTableToken();
 
     short getType();
 

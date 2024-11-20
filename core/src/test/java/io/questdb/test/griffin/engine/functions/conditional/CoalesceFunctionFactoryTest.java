@@ -328,7 +328,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFailsWithSingleArg() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table alex as (" +
+            execute("create table alex as (" +
                     "select CASE WHEN x % 2 = 0 THEN CAST(NULL as long) ELSE x END as x," +
                     " CASE WHEN x % 3 = 0 THEN x * 2 ELSE CAST(NULL as long) END as a," +
                     " CASE WHEN x % 3 = 1 THEN x * 3 ELSE CAST(NULL as long) END as b" +
@@ -336,7 +336,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
                     ")");
 
             try {
-                ddl(
+                execute(
                         "select coalesce(b)\n" +
                                 "from alex"
                 );
@@ -350,7 +350,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testFailsWithUnsupportedType() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table alex as (" +
+            execute("create table alex as (" +
                     "select CAST(NULL as binary) x, CAST(NULL as binary) a" +
                     " from long_sequence(6)" +
                     ")");
@@ -831,7 +831,7 @@ public class CoalesceFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testUnsupportedBindVariables() throws Exception {
-        ddl("create table test as (select x, rnd_str(2,10,1) a from long_sequence(10))");
+        execute("create table test as (select x, rnd_str(2,10,1) a from long_sequence(10))");
         assertException(
                 "select coalesce(a, $1, $2) from test",
                 19,

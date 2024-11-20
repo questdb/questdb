@@ -156,7 +156,7 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
             AtomicInteger current = new AtomicInteger();
             ObjList<Thread> threads = new ObjList<>(numOfWriters + numOfReaders + 1);
 
-            ddl("create table up as" +
+            execute("create table up as" +
                     " (select timestamp_sequence(0, " + PartitionMode.getTimestampSeq(partitionMode) + ") ts," +
                     " 0 as x" +
                     " from long_sequence(5))" +
