@@ -6978,18 +6978,24 @@ nodejs code:
                 statement.execute("create table x as (select rnd_str() s from long_sequence(10))");
             }
 
+            ObjList<Statement> statements = new ObjList<>();
             try {
                 for (int i = 0; i < 50_000; i++) {
-                    try (Statement stmt = connection.createStatement()) {
-                        try (ResultSet rs = stmt.executeQuery("select * from x");) {
-                            // consume result set
-                        }
+                    Statement stmt = connection.createStatement();
+                    // capturing statements instances to prevent them from being GCed
+                    // since PG JDBC does use phantom references to track statement instances
+                    // and close them when they are GCed
+                    statements.add(stmt);
+                    try (ResultSet rs = stmt.executeQuery("select * from x");) {
+                        // consume result set
                     }
                 }
                 Assert.fail("Expected exception");
             } catch (PSQLException e) {
                 TestUtils.assertContains(e.getMessage(), "too many named statements");
                 TestUtils.assertContains(e.getMessage(), "[limit=10000]");
+            } finally {
+                Misc.freeObjListIfCloseable(statements);
             }
         });
     }
