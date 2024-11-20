@@ -42,9 +42,11 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             } else if (c < 128) {
                 switch (c) {
                     case '"':
-                        putAscii('"');
+                        putAscii("\"\"");
+                        break;
                     case '\\':
-                        putAscii('\\');
+                        putAscii("\\\\");
+                        break;
                     default:
                         putAscii(c);
                 }
@@ -67,9 +69,11 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
             } else if (c > 0 && c < 128) {
                 switch (c) {
                     case '"':
-                        putAscii('"');
+                        putAscii("\"\"");
+                        break;
                     case '\\':
-                        putAscii('\\');
+                        putAscii("\\\\");
+                        break;
                     default:
                         putAscii(c);
                 }

@@ -7401,6 +7401,48 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testTextQueryCorrectQuoting() throws Exception {
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withMicrosecondClock(new TestMicroClock(0, 0))
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .run((engine) -> {
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /exp?query=SELECT%20%27%7B%22filed1%22%3A1%2C%20%22filed2%22%3A1%2C%20%22filed3%22%3A%22admin%22%2C%20%22filed4%22%3A1%7D%27+as+foo HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Cache-Control: max-age=0\r\n" +
+                                    "Upgrade-Insecure-Requests: 1\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\n" +
+                                    "Server: questDB/1.0\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\n" +
+                                    "Transfer-Encoding: chunked\n" +
+                                    "Content-Type: text/csv; charset=utf-8\n" +
+                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\n" +
+                                    "Keep-Alive: timeout=5, max=10000\n" +
+                                    "\n" +
+                                    "4b\r\n" +
+                                    "\"foo\"\r\n" +
+                                    "\"{\"\"filed1\"\":1, \"\"filed2\"\":1, \"\"filed3\"\":\"\"admin\"\", \"\"filed4\"\":1}\"\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\na",
+                            1,
+                            0,
+                            false
+                    );
+                });
+    }
+
+    @Test
     public void testTextQueryCreateTable() throws Exception {
         testJsonQuery(
                 20,
