@@ -150,7 +150,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonAdminCannotSeeOtherUsersCommands() throws Exception {
+    public void testNonAdminCanNotSeeOtherUsersCommands() throws Exception {
         assertMemoryLeak(() -> {
             final String query = "select 1 t from long_sequence(1) where sleep(120000)";
 
