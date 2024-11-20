@@ -6981,7 +6981,7 @@ nodejs code:
             try {
                 for (int i = 0; i < 50_000; i++) {
                     try (Statement stmt = connection.createStatement()) {
-                        try (ResultSet rs = stmt.executeQuery("select * from x")) {
+                        try (ResultSet ignore = stmt.executeQuery("select * from x")) {
                             // consume result set
                         }
                     }
