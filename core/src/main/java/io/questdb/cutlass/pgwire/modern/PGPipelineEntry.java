@@ -519,8 +519,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     );
                     break;
                 case CompiledQuery.ALTER:
-                case CompiledQuery.ALTER_USER:
-                case CompiledQuery.CREATE_USER:
                     msgExecuteDDL(
                             sqlExecutionContext,
                             transactionState,
@@ -531,6 +529,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             taiPool
                     );
                     break;
+                case CompiledQuery.ALTER_USER:
+                case CompiledQuery.CREATE_USER:
+                    assert false : "TODO - these are Parsed-time executed and we need to recompile them again for another execution";
                 case CompiledQuery.DEALLOCATE:
                     // this is supposed to work instead of sending 'close' message via the
                     // network protocol. Reply format out of 'execute' message is
@@ -2422,6 +2423,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             case CompiledQuery.SET:
                 sqlTag = TAG_SET;
+                stateParseExecuted = true;
                 break;
             case CompiledQuery.DEALLOCATE:
                 this.preparedStatementNameToDeallocate = Chars.toString(cq.getStatementName());
@@ -2439,10 +2441,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             case CompiledQuery.ALTER_USER:
                 sqlTextHasSecret = sqlExecutionContext.containsSecret();
                 sqlTag = TAG_ALTER_ROLE;
+                stateParseExecuted = true;
                 break;
             case CompiledQuery.CREATE_USER:
                 sqlTextHasSecret = sqlExecutionContext.containsSecret();
                 sqlTag = TAG_CREATE_ROLE;
+                stateParseExecuted = true;
                 break;
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
