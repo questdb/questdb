@@ -118,7 +118,7 @@ public class CountConstWindowFunctionFactory extends AbsWindowFunctionFactory {
                                 MemoryTag.NATIVE_CIRCULAR_BUFFER
                         );
 
-                        // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                        // moving count over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                         return new CountFunctionFactoryHelper.CountOverPartitionRangeFrameFunction(
                                 map,
                                 partitionByRecord,
@@ -212,7 +212,7 @@ public class CountConstWindowFunctionFactory extends AbsWindowFunctionFactory {
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
-                    // moving average over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
+                    // moving count over range between timestamp - rowsLo and timestamp + rowsHi (inclusive)
                     return new CountFunctionFactoryHelper.CountOverRangeFrameFunction(
                             rowsLo,
                             rowsHi,
