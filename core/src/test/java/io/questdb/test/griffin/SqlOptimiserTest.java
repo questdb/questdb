@@ -55,14 +55,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     " ('c', '2023-09-01T01:00:00.000Z')," +
                     " ('c', '2023-09-01T02:00:00.000Z')," +
                     " ('c', '2023-09-01T03:00:00.000Z')";
-    private static String tradesDdl = "CREATE TABLE 'trades' (\n" +
+    private static final String tradesDdl = "CREATE TABLE 'trades' (\n" +
             "  symbol SYMBOL,\n" +
             "  side SYMBOL,\n" +
             "  price DOUBLE,\n" +
             "  amount DOUBLE,\n" +
             "  timestamp TIMESTAMP\n" +
             ") timestamp (timestamp) PARTITION BY DAY WAL;";
-    private static String tripsDdl = "\n" +
+    private static final String tripsDdl = "\n" +
             "CREATE TABLE 'trips' (\n" +
             "  cab_type SYMBOL capacity 12,\n" +
             "  vendor_id SYMBOL capacity 8,\n" +

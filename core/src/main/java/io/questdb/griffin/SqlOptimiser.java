@@ -55,8 +55,6 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowColumn;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
@@ -91,7 +89,6 @@ public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
-    private static final Log LOG = LogFactory.getLog(SqlOptimiser.class);
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_EQUAL = 8;
@@ -2283,29 +2280,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private boolean hasAggregateQueryColumn(QueryModel model) {
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-
-        for (int i = 0, k = columns.size(); i < k; i++) {
-            QueryColumn qc = columns.getQuick(i);
-            if (qc.getAst().type != LITERAL) {
-                if (qc.getAst().type == ExpressionNode.FUNCTION) {
-                    if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                        return true;
-                    } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
-                        continue;
-                    }
-                }
-
-                if (checkForAggregates(qc.getAst())) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
     private boolean hasAggregates(ExpressionNode node) {
         sqlNodeStack.clear();
 
@@ -2336,6 +2310,29 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    private boolean hasNoAggregateQueryColumns(QueryModel model) {
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+
+        for (int i = 0, k = columns.size(); i < k; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.getAst().type != LITERAL) {
+                if (qc.getAst().type == ExpressionNode.FUNCTION) {
+                    if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                        return false;
+                    } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
+                        continue;
+                    }
+                }
+
+                if (checkForAggregates(qc.getAst())) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private void homogenizeCrossJoins(QueryModel parent) {
@@ -3609,7 +3606,7 @@ public class SqlOptimiser implements Mutable {
                         && model.getGroupBy().size() == 0
                         && model.getSampleBy() == null
                         && !model.isDistinct()
-                        && !hasAggregateQueryColumn(model)
+                        && hasNoAggregateQueryColumns(model)
                         && nested != null
                         && nested.getSelectModelType() == SELECT_MODEL_NONE
                         && nested.getOrderBy().size() > 1 // only for multi-sort case, to get limited size cursor
@@ -4241,7 +4238,7 @@ public class SqlOptimiser implements Mutable {
                         && model.getJoinModels().size() == 1
                         && model.getGroupBy().size() == 0
                         && model.getSampleBy() == null
-                        && !hasAggregateQueryColumn(model)
+                        && hasNoAggregateQueryColumns(model)
                         && !model.isDistinct()
                         && nested != null
                         && nested.getJoinModels().size() == 1
@@ -4274,7 +4271,7 @@ public class SqlOptimiser implements Mutable {
      * So we produce a model like this:
      * `select-choose timestamp, side from (trades timestamp (timestamp) order by timestamp desc, side desc limit 3) order by timestamp, side desc`
      */
-    private void rewriteNegativeLimitWithOrderBy(QueryModel model) throws SqlException {
+    private void rewriteNegativeLimitWithOrderBy(QueryModel model) {
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
                 && model.getNestedModel() != null
                 && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE
@@ -5940,9 +5937,6 @@ public class SqlOptimiser implements Mutable {
      * ```
      * But this inner model is not required, since it is the same as the outer model,
      * just without the extra timestamp alias.
-     *
-     * @param model
-     * @throws SqlException
      */
     private void rewriteToCondenseWildcardModels(QueryModel model) throws SqlException {
 
@@ -5975,7 +5969,7 @@ public class SqlOptimiser implements Mutable {
                     && none.getGroupBy().size() == 0
                     && model.getSampleBy() == null
                     && nested.getSampleBy() == null
-                    && !hasAggregateQueryColumn(model)
+                    && hasNoAggregateQueryColumns(model)
                     && !model.isDistinct()
                     && model.getBottomUpColumns().size() >= nested.getBottomUpColumns().size()) {
                 IntList copiedColumns = new IntList();
@@ -6335,9 +6329,11 @@ public class SqlOptimiser implements Mutable {
         return _model;
     }
 
+    @SuppressWarnings("unused")
     protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
     }
 
+    @SuppressWarnings("unused")
     protected void authorizeUpdate(QueryModel updateQueryModel, TableToken token) {
     }
 

@@ -143,8 +143,9 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
     // used for the parallel sample by rewrite. In future, if we deprecate original SAMPLE BY, then these will
     // be the only fields for these values.
-    public ExpressionNode fillTimestampAlias;
     private ExpressionNode alias;
+    // used to block pushing down of order by advice to lower model
+    // this is used for negative limits optimisations
     private boolean allowPropagationOfOrderByAdvice = true;
     private boolean artificialStar;
     // Used to store a deep copy of the whereClause field
