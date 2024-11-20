@@ -10195,32 +10195,46 @@ create table tab as (
         Assume.assumeFalse(legacyMode);
         // WAL is irrelevant here, we are checking result sending code path
         skipOnWalRun();
+        String sqlCreate = "create table x as (" +
+                "select" +
+                " rnd_str(5,16,2) i," +
+                " rnd_str(5,16,2) sym," +
+                " rnd_str(5,16,2) amt," +
+                " rnd_str(5,16,2) timestamp," +
+                " rnd_str(5,16,2) b," +
+                " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                " rnd_str(5,16,2) d," +
+                " rnd_str(5,16,2) e," +
+                " rnd_str(5,16,2) f," +
+                " rnd_str(5,16,2) g," +
+                " rnd_str(5,16,2) ik," +
+                " rnd_str(5,16,2) j," +
+                " timestamp_sequence(500000000000L,100000000L) ts," +
+                " rnd_str(5,16,2) l," +
+                " rnd_str(5,16,2) m," +
+                " rnd_str(5,16,2) n," +
+                " rnd_str(5,16,2) t," +
+                " rnd_str(5,16,2) l256" +
+                " from long_sequence(100)" +
+                ") timestamp (ts) partition by DAY";
+        String sql = "SELECT * FROM x";
         sendBufferSize = 256;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        // binary encoding only. row description message and record should be able to send in chunks
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("create table x as (" +
-                        "select" +
-                        " rnd_str(5,16,2) i," +
-                        " rnd_str(5,16,2) sym," +
-                        " rnd_str(5,16,2) amt," +
-                        " rnd_str(5,16,2) timestamp," +
-                        " rnd_str(5,16,2) b," +
-                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                        " rnd_str(5,16,2) d," +
-                        " rnd_str(5,16,2) e," +
-                        " rnd_str(5,16,2) f," +
-                        " rnd_str(5,16,2) g," +
-                        " rnd_str(5,16,2) ik," +
-                        " rnd_str(5,16,2) j," +
-                        " timestamp_sequence(500000000000L,100000000L) ts," +
-                        " rnd_str(5,16,2) l," +
-                        " rnd_str(5,16,2) m," +
-                        " rnd_str(5,16,2) n," +
-                        " rnd_str(5,16,2) t," +
-                        " rnd_str(5,16,2) l256" +
-                        " from long_sequence(10000)" +
-                        ") timestamp (ts) partition by DAY");
-                String sql = "SELECT * FROM x";
+                statement.executeUpdate(sqlCreate);
+                try {
+                    statement.execute(sql);
+                } catch (SQLException e) {
+                    Assert.fail();
+                }
+            }
+        });
+
+        // row description message should be sent but record should not
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate(sqlCreate);
                 try {
                     statement.execute(sql);
                     Assert.fail();
