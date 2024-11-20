@@ -24,10 +24,23 @@
 
 package io.questdb.griffin.engine.functions.activity;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -92,7 +105,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
 
         public void of(SqlExecutionContext executionContext) {
             try {
-                executionContext.getSecurityContext().authorizeAdminAction();
+                executionContext.getSecurityContext().authorizeSqlEngineAdmin();
                 isAdmin = true;
             } catch (CairoException e) {
                 isAdmin = false;

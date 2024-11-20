@@ -98,7 +98,7 @@ public class DumpThreadStacksFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
+            executionContext.getSecurityContext().authorizeSystemAdmin();
         }
 
         @Override
