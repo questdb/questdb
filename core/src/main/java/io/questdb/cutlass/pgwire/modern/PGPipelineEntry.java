@@ -101,6 +101,8 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TI
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int ERROR_TAIL_MAX_SIZE = 23;
+    // tableOid + column number + type + type size + type modifier + format code
+    private static final int ROW_DESCRIPTION_COLUMN_RECORD_FIXED_SIZE = 3 * Short.BYTES + 3 * Integer.BYTES;
     private final CompiledQueryImpl compiledQueryCopy;
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
@@ -2181,15 +2183,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 final int typeFlag = pgResultSetColumnTypes.getQuick(2 * i);
                 final int columnType = toColumnType(ColumnType.isNull(typeFlag) ? ColumnType.STRING : typeFlag);
                 utf8Sink.putZ(metadata.getColumnName(i));
-                utf8Sink.putIntDirect(0); //tableOid ?
+                utf8Sink.putIntDirect(0); // tableOid for each column is optional, so we always set it to zero
                 utf8Sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
                 utf8Sink.putNetworkInt(PGOids.getTypeOid(columnType)); // type
+                // type size
                 if (ColumnType.tagOf(columnType) < ColumnType.STRING) {
-                    // type size
-                    // todo: cache small endian type sizes and do not check if type is valid - its coming from metadata, must be always valid
                     utf8Sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
                 } else {
-                    // type size
                     utf8Sink.putNetworkShort((short) -1);
                 }
 
@@ -2207,13 +2207,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 final long sizeInBuffer = utf8Sink.getSendBufferPtr() - messageLengthAddress;
                 assert sizeInBuffer > 0;
                 // tableOid + column number + type + type size + type modifier + format code
-                final int fixedSize = 3 * Short.BYTES + 3 * Integer.BYTES;
                 long tailSize = 0;
                 for (int i = outResendColumnIndex; i < n; i++) {
                     final String columnName = metadata.getColumnName(i);
                     assert columnName != null && !columnName.isEmpty();
                     final int utf8Bytes = Utf8s.utf8Bytes(columnName);
-                    tailSize += utf8Bytes + 1 + fixedSize;
+                    tailSize += utf8Bytes + 1 + ROW_DESCRIPTION_COLUMN_RECORD_FIXED_SIZE;
                 }
                 assert tailSize > 0;
                 final long messageSizeWithHeader = sizeInBuffer + tailSize;
