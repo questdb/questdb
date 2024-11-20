@@ -6986,7 +6986,7 @@ nodejs code:
                     // since PG JDBC does use phantom references to track statement instances
                     // and close them when they are GCed
                     statements.add(stmt);
-                    try (ResultSet rs = stmt.executeQuery("select * from x");) {
+                    try (ResultSet ignore = stmt.executeQuery("select * from x");) {
                         // consume result set
                     }
                 }

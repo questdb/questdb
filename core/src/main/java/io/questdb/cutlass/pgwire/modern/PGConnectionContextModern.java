@@ -98,7 +98,6 @@ import java.util.function.Consumer;
  * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
  */
 public class PGConnectionContextModern extends IOContext<PGConnectionContextModern> implements WriterSource, OptionsListener {
-
     public static final byte STATUS_IDLE = 'I';
     public static final byte STATUS_IN_ERROR = 'E';
     public static final byte STATUS_IN_TRANSACTION = 'T';
@@ -150,6 +149,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final IntList bindVariableTypes = new IntList();
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
+    private final PGWireConfiguration configuration;
     private final boolean dumpNetworkTraffic;
     private final CairoEngine engine;
     private final ObjectPool<PGPipelineEntry> entryPool;
@@ -191,10 +191,11 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsertModern> taiCache;
     private AssociativeCache<TypesAndSelectModern> tasCache;
+    private final PGResumeCallback msgFlushRef = this::msgFlush0;
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = IMPLICIT_TRANSACTION;
-    private final PGWireConfiguration configuration;
+    private final PGResumeCallback msgSyncRef = this::msgSync0;
 
     public PGConnectionContextModern(
             CairoEngine engine,
@@ -930,7 +931,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // but instead fire 'H'. Can't wrap my head around as to why
         // query execution is so ambiguous
 
-        resumeCallback = this::msgFlush0;
+        resumeCallback = msgFlushRef;
         msgFlush0();
     }
 
@@ -1129,7 +1130,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // 2. SQL might get paused due to data not being available yet
         // however, sync0 is reenterable and we have to call it until
         // the resume callback clears
-        resumeCallback = this::msgSync0;
+        resumeCallback = msgSyncRef;
         msgSync0();
     }
 
