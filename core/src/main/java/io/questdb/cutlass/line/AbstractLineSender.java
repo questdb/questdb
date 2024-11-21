@@ -164,6 +164,12 @@ public abstract class AbstractLineSender implements Utf8Sink, Closeable, Sender 
     }
 
     @Override
+    public Sender arrayColumn(CharSequence name, CharSequence value) {
+        writeFieldName(name).put(value);
+        return this;
+    }
+
+    @Override
     public void flush() {
         validateNotClosed();
         sendLine();

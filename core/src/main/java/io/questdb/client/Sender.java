@@ -182,6 +182,43 @@ public interface Sender extends Closeable {
     }
 
     /**
+     * Add a column with an array value.
+     *
+     * <p>Here are some valid examples:</p>
+     * <p>Dense arrays are specified row-major. Values are separated with commas,
+     * nesting levels are surrounded by braces. No whitespace or newlines are allowed:</p>
+     * <ul>
+     *   <li>A NULL array: <code>{}</code></li>
+     *   <li>A 1x3 dense array of longs: <code>{1,2,3}</code></li>
+     *   <li>A 1x2 dense array of doubles: <code>{1.0,3.4}</code></li>
+     *   <li>A 4x3x2 dense array of longs:
+     *       <code>{{{1,2},{3,4},{5,6}},{{7,8},{9,10},{11,12}},{{13,14},{15,16},{17,18}},{{19,20},{21,22},{23,24}}}</code>
+     *   </li>
+     *   <li>A 2-D CSR encoded array of longs:
+     *       <code>{R{0,1,3,4,5}{2,0,3,4,1}{3,5,4,7,8}}</code>
+     *   </li>
+     *   <li>The same array as above, encoded as CSC:
+     *       <code>{C{0,1,2,3,4,5}{1,3,0,1,2}{5,8,3,4,7}}</code>
+     *   </li>
+     * </ul>
+     *
+     * <p>The CSR and CSC representations have the following 3 components:</p>
+     * <ul>
+     *   <li><code>{row_pointers/col_pointers}</code></li>
+     *   <li><code>{column_indices/row_indices}</code></li>
+     *   <li><code>{values}</code></li>
+     * </ul>
+     *
+     * <p>Both examples above are equivalent to the dense array:
+     * <code>{{0,0,3,0,0},{5,0,0,4,0},{0,0,0,0,7},{0,8,0,0,0}}</code></p>
+     *
+     * @param name  name of the column
+     * @param value the encoded array buffer
+     */
+    Sender arrayColumn(CharSequence name, CharSequence value);
+
+
+    /**
      * Finalize the current row and assign an explicit timestamp.
      * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
      *

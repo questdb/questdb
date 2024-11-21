@@ -36,6 +36,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.net.HttpURLConnection;
 
@@ -91,6 +92,13 @@ public abstract class HttpClient implements QuietCloseable {
 
     public void disconnect() {
         Misc.free(socket);
+    }
+
+    @TestOnly
+    public String getDebugBuffer() {
+        DirectUtf8String s = new DirectUtf8String();
+        s.of(bufLo, ptr);
+        return Utf8s.toString(s);
     }
 
     public Request newRequest(CharSequence host, int port) {

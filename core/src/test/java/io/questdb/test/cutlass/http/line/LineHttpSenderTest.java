@@ -424,7 +424,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 String tableName = "ndarr_test";
-                serverMain.compile("create table " + tableName + " (a1 array(double), a2 array(long), ts timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.compile("create table " + tableName + " (l1 long, a1 array(double), a2 array(long), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
@@ -433,8 +433,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         .build()
                 ) {
                     sender.table(tableName)
-                            .array("a1", new double[]{i, i + 1, i + 2})
-                            .array("a2", new long[]{i, i + 1, i + 2})
+                            .longColumn("l1", 23452345)
+                            .arrayColumn("a1", "{1.0,2.0,NaN}")
+                            .arrayColumn("a2", "{-1,0,100000000}")
                             .atNow();
                     sender.flush();
                 }

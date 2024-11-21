@@ -31,6 +31,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.ndarr.NdArrLiteralParser;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 
@@ -59,6 +60,7 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
     public static final byte ENTITY_TYPE_UUID = 20;
     public static final byte ENTITY_TYPE_VARCHAR = 21;
+    public static final byte ENTITY_TYPE_ND_ARRAY = 22;
     public static final byte ENTITY_UNIT_NONE = 0;
     public static final byte ENTITY_UNIT_NANO = ENTITY_UNIT_NONE + 1;
     public static final byte ENTITY_UNIT_MICRO = ENTITY_UNIT_NANO + 1;
@@ -68,7 +70,7 @@ public class LineTcpParser {
     public static final byte ENTITY_UNIT_HOUR = ENTITY_UNIT_MINUTE + 1;
     public static final long NULL_TIMESTAMP = Numbers.LONG_NULL;
     public static final int N_ENTITY_TYPES = ENTITY_TYPE_TIMESTAMP + 1;
-    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_VARCHAR + 1;
+    public static final int N_MAPPED_ENTITY_TYPES = ENTITY_TYPE_ND_ARRAY + 1;
     private static final byte ENTITY_HANDLER_NAME = 1;
     private static final byte ENTITY_HANDLER_NEW_LINE = 4;
     private static final byte ENTITY_HANDLER_TABLE = 0;
@@ -81,12 +83,12 @@ public class LineTcpParser {
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
+    private boolean asciiSegment;
     private long bufAt;
     private ProtoEntity currentEntity;
     private byte entityHandler = -1;
     private long entityLo;
     private ErrorCode errorCode;
-    private boolean asciiSegment;
     private boolean isQuotedFieldValue;
     private int nEntities;
     private int nEscapedChars;
@@ -179,6 +181,7 @@ public class LineTcpParser {
         }
 
         // Main parsing loop
+        int braceCount = 0;
         while (bufAt < bufHi) {
             byte b = Unsafe.getUnsafe().getByte(bufAt);
 
@@ -193,14 +196,19 @@ public class LineTcpParser {
             asciiSegment &= b >= 0;
             boolean endOfLine = false;
             boolean appendByte = false;
-            // Important note: don't forget to update controlChars array when changing the following switch.
+
+            // Important note: don't forget to update controlBytes array when changing the following switch.
             switch (b) {
                 case '\n':
                 case '\r':
                     endOfLine = true;
                     b = '\n';
-                case '=':
                 case ',':
+                    if (braceCount > 0) {
+                        appendByte = true;
+                        break;
+                    }
+                case '=':
                 case ' ':
                     isQuotedFieldValue = false;
                     if (!completeEntity(b, bufHi)) {
@@ -272,6 +280,20 @@ public class LineTcpParser {
                         break;
                     } else if (isQuotedFieldValue) {
                         return getError(bufHi);
+                    }
+
+                case '{':
+                    if (entityHandler == ENTITY_HANDLER_VALUE) {
+                        ++braceCount;
+                        appendByte = true;
+                        break;
+                    }
+
+                case '}':
+                    if (entityHandler == ENTITY_HANDLER_VALUE) {
+                        --braceCount;
+                        appendByte = true;
+                        break;
                     }
 
                 default:
@@ -624,6 +646,7 @@ public class LineTcpParser {
         private boolean booleanValue;
         private double floatValue;
         private long longValue;
+        private final NdArrLiteralParser ndArrParser = new NdArrLiteralParser();
         private byte type = ENTITY_TYPE_NONE;
         private byte unit = ENTITY_UNIT_NONE;
 
@@ -666,6 +689,7 @@ public class LineTcpParser {
         }
 
         private boolean parse(byte last, int valueLen) {
+            System.err.println("LineTcpParser.ProtoEntity.parse :: " + ((char) last) + ", valueLen: " + valueLen);
             switch (last) {
                 case 'i':
                     if (valueLen > 1 && value.byteAt(1) != 'x') {
@@ -798,7 +822,7 @@ public class LineTcpParser {
     }
 
     static {
-        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/'};
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', '{'};
         controlBytes = new boolean[256];
         for (char ch : chars) {
             controlBytes[ch] = true;

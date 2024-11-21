@@ -30,12 +30,20 @@ import io.questdb.HttpClientConfiguration;
 import io.questdb.cairo.TableUtils;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.http.HttpConstants;
-import io.questdb.cutlass.http.client.*;
+import io.questdb.cutlass.http.client.Fragment;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientException;
+import io.questdb.cutlass.http.client.HttpClientFactory;
+import io.questdb.cutlass.http.client.Response;
 import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.cutlass.json.JsonParser;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.DirectUtf8Sequence;
@@ -44,7 +52,6 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
@@ -109,6 +116,14 @@ public final class LineHttpSender implements Sender {
         }
         this.questdbVersion = new BuildInformationHolder().getSwVersion();
         this.request = newRequest();
+    }
+
+    @Override
+    public Sender arrayColumn(CharSequence name, CharSequence value) {
+        // TODO(amunra): Validation of the value
+        writeFieldName(name);
+        request.put(value);
+        return this;
     }
 
     @Override
@@ -184,7 +199,13 @@ public final class LineHttpSender implements Sender {
 
     @Override
     public void flush() {
+        System.err.println("ABOUT TO FLUSH: " + client.getDebugBuffer());
         flush0(false);
+    }
+
+    @TestOnly
+    public String getDebugBuffer() {
+        return client.getDebugBuffer();
     }
 
     @Override

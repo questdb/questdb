@@ -30,40 +30,48 @@ import io.questdb.std.QuietCloseable;
 
 /**
  * Parse N-dimensional array literals.
- * Here are a few examples:
- * <p>
- * An empty array of unspecified dimensions and type:
- * NULL
- * <p>
- * Semantically equivalent to NULL is an empty array:
- * {}
- * <p>
- * A 1-D array of longs.
- * {1, 2, 3}
- * <p>
- * A 2-D array of doubles
+ *
+ * <p>Here are a few examples:</p>
+ *
+ * <p>An empty array of unspecified dimensions and type:</p>
+ * <pre><code>NULL</code></pre>
+ *
+ * <p>Semantically equivalent to <code>NULL</code> is an empty array:</p>
+ * <pre><code>{}</code></pre>
+ *
+ * <p>A 1-D array of longs:</p>
+ * <pre><code>{1, 2, 3}</code></pre>
+ *
+ * <p>A 2-D array of doubles:</p>
+ * <pre><code>
  * {
- * -- nice!
- * {NULL, 1},
- * {2.5, 3},  -- very nice
+ *     -- a comment
+ *     {NULL, 1},
+ *     {2.5, 3}  -- yet another comment
  * }
- * <p>
- * There is also support for specifying the array as a CSC or CSR 1D vectors and 2D matrices.
- * For example:
- * {R{0,1,3,4,5}{2,3,0,4,1,4}{3,4,5,7,8}}
- * is equivalent to
- * {{0,0,3,0,0},
- *  {0,0,0,4,0},
- *  {5,0,0,0,6},
- *  {0,7,0,0,0},
- *  {0,0,0,0,8}}
- * "R" tags CSR and "C" tags CSC.
- * The three following arrays of numbers indicate:
- *   * {row_pointers/col_pointers}
- *   * {column_indices/row_indices}
- *   * {values}
- * <p>
- * NOTE: The element type is inferred, but can also be fixed during parsing.
+ * </code></pre>
+ *
+ * <p>There is also support for specifying the array as a CSC or CSR 1D vectors and 2D matrices.
+ * For example:</p>
+ * <pre><code>{R{0,1,3,4,5}{2,0,3,4,1}{3,5,4,7,8}}</code></pre>
+ * <p>is equivalent to:</p>
+ * <pre><code>
+ * {
+ *     {0, 0, 3, 0, 0},
+ *     {5, 0, 0, 4, 0},
+ *     {0, 0, 0, 0, 7},
+ *     {0, 8, 0, 0, 0}
+ * }
+ * </code></pre>
+ *
+ * <p>"R" tags CSR and "C" tags CSC. The three following arrays of numbers indicate:</p>
+ * <ul>
+ *   <li><code>{row_pointers/col_pointers}</code></li>
+ *   <li><code>{column_indices/row_indices}</code></li>
+ *   <li><code>{values}</code></li>
+ * </ul>
+ *
+ * <p><strong>NOTE:</strong> The element type is inferred but can also be fixed during parsing.</p>
  */
 public class NdArrLiteralParser implements QuietCloseable {
     /**
