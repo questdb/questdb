@@ -308,7 +308,7 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), value);
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -634,7 +634,7 @@ public class CountFunctionFactoryHelper {
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        // holds fixed-size ring buffers of double values
+        // holds fixed-size ring buffers of boolean values
         private final MemoryARW memory;
         private final IsRecordNotNull isRecordNotNull;
         protected long count;
