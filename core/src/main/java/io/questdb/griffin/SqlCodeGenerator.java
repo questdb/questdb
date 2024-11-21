@@ -63,7 +63,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.cairo.sql.SymbolTable;
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -5191,13 +5190,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         model.setWhereClause(withinExtracted);
 
-        boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
-
         // Either this: `ORDER BY timestamp DESC`
         // Or this: `ORDER BY timestamp DESC, side DESC LIMIT 3`
         // In the latter case, we would like to generate a partially sorted cursor in `generateOrderBy`
         // So we need to return a bwd scan here first.
-        boolean orderByStartsWithDescDesignatedTimestampAndLimited = isOrderByStartingWithDescDesignatedTimestampAndLimited(model);
+        boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
+
+        boolean shouldGenerateBackwardsScan = orderDescendingByDesignatedTimestampOnly
+                || isOrderByStartingWithDescDesignatedTimestampAndLimited(model);
 
         if (withinExtracted != null) {
             CharSequence preferredKeyColumn = null;
@@ -5272,7 +5272,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean intervalHitsOnlyOnePartition;
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                if (orderDescendingByDesignatedTimestampOnly || orderByStartsWithDescDesignatedTimestampAndLimited) {
+                if (shouldGenerateBackwardsScan) {
                     dfcFactory = new IntervalBwdPartitionFrameCursorFactory(
                             tableToken,
                             model.getMetadataVersion(),
@@ -5291,7 +5291,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
-                if (orderDescendingByDesignatedTimestampOnly || orderByStartsWithDescDesignatedTimestampAndLimited) {
+                if (shouldGenerateBackwardsScan) {
                     dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 } else {
                     dfcFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
@@ -5581,7 +5581,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             RowCursorFactory rowFactory;
-            if (orderDescendingByDesignatedTimestampOnly || orderByStartsWithDescDesignatedTimestampAndLimited) {
+            if (shouldGenerateBackwardsScan) {
                 rowFactory = new BwdPageFrameRowCursorFactory();
             } else {
                 rowFactory = new FwdPageFrameRowCursorFactory();
@@ -5610,7 +5610,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             AbstractPartitionFrameCursorFactory cursorFactory;
             RowCursorFactory rowCursorFactory;
 
-            if (orderDescendingByDesignatedTimestampOnly || orderByStartsWithDescDesignatedTimestampAndLimited) {
+            if (shouldGenerateBackwardsScan) {
                 cursorFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdPageFrameRowCursorFactory();
             } else {
@@ -5623,7 +5623,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta,
                     cursorFactory,
                     rowCursorFactory,
-                    orderDescendingByDesignatedTimestampOnly || isOrderByDesignatedTimestampOnly(model),
+                    orderDescendingByDesignatedTimestampOnly,
                     null,
                     true,
                     columnIndexes,
