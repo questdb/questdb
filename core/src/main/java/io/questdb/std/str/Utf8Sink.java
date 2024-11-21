@@ -30,9 +30,6 @@ import org.jetbrains.annotations.Nullable;
 
 public interface Utf8Sink extends CharSink<Utf8Sink> {
 
-    /*
-        Assume we are enclosed in double quotes.
-     */
 
     /**
      * Differs from `escapeJsonStr` by instead escaping double quotes `"` with double
