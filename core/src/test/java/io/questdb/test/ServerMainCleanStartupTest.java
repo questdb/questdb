@@ -25,6 +25,7 @@
 package io.questdb.test;
 
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -60,11 +61,13 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                     SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(serverMain.getEngine(), 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 serverMain.start();
-                serverMain.getEngine().compile("create table x (a int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
-                serverMain.getEngine().compile("create table y (b int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
+                serverMain.getEngine().execute("create table x (a int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
+                serverMain.getEngine().execute("create table y (b int, t timestamp) timestamp(t) partition by day wal", sqlExecutionContext);
 
-                serverMain.getEngine().compile("insert into y values(100, 1)", sqlExecutionContext);
-                serverMain.getEngine().compile("insert into y values(200, 2)", sqlExecutionContext);
+                CairoEngine cairoEngine1 = serverMain.getEngine();
+                cairoEngine1.execute("insert into y values(100, 1)", sqlExecutionContext);
+                CairoEngine cairoEngine = serverMain.getEngine();
+                cairoEngine.execute("insert into y values(200, 2)", sqlExecutionContext);
 
                 // wait for the row count
                 try (RecordCursorFactory rfc = serverMain.getEngine().select("select count() from y", sqlExecutionContext)) {

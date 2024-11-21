@@ -28,7 +28,14 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -36,8 +43,8 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.validationException;
 
 public class TableReaderMetadata extends AbstractRecordMetadata implements TableMetadata, Mutable {
+    protected final CairoConfiguration configuration;
     private final IntList columnOrderMap = new IntList();
-    private final CairoConfiguration configuration;
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private boolean isSoftLink;
@@ -122,6 +129,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             boolean isIndexed = TableUtils.isColumnIndexed(metaMem, writerIndex);
             boolean isDedupKey = TableUtils.isColumnDedupKey(metaMem, writerIndex);
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(metaMem, writerIndex);
+            boolean symbolIsCached = TableUtils.isSymbolCached(metaMem, writerIndex);
+            int symbolCapacity = TableUtils.getSymbolCapacity(metaMem, writerIndex);
             TableReaderMetadataColumn existing = null;
             String newName;
 
@@ -148,15 +157,15 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                 }
             } else {
                 // existing column
-                boolean rename = existing != null && !Chars.equals(existing.getName(), name);
-                newName = rename || existing == null ? Chars.toString(name) : existing.getName();
+                boolean rename = existing != null && !Chars.equals(existing.getColumnName(), name);
+                newName = rename || existing == null ? Chars.toString(name) : existing.getColumnName();
 
                 if (rename
                         || existing == null
                         || existing.getWriterIndex() != writerIndex
-                        || existing.isIndexed() != isIndexed
+                        || existing.isSymbolIndexFlag() != isIndexed
                         || existing.getIndexValueBlockCapacity() != indexBlockCapacity
-                        || existing.isDedupKey() != isDedupKey
+                        || existing.isDedupKeyFlag() != isDedupKey
                         || existing.getDenseSymbolIndex() != denseSymbolIndex
                         || existing.getStableIndex() != stableIndex
                 ) {
@@ -173,7 +182,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     writerIndex,
                                     isDedupKey,
                                     denseSymbolIndex,
-                                    stableIndex
+                                    stableIndex,
+                                    symbolIsCached,
+                                    symbolCapacity
                             )
                     );
                     if (existing != null) {
@@ -238,6 +249,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getIndexBlockCapacity(int columnIndex) {
+        return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
+    }
+
+    @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
     }
@@ -258,13 +274,33 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public boolean getSymbolCacheFlag(int columnIndex) {
+        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
+    }
+
+    @Override
+    public int getSymbolCapacity(int columnIndex) {
+        return getColumnMetadata(columnIndex).getSymbolCapacity();
+    }
+
+    @Override
     public int getTableId() {
         return tableId;
     }
 
     @Override
+    public CharSequence getTableName() {
+        return tableToken.getTableName();
+    }
+
+    @Override
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    @Override
+    public boolean isIndexed(int columnIndex) {
+        return getColumnMetadata(columnIndex).isSymbolIndexFlag();
     }
 
     public boolean isSoftLink() {
@@ -319,7 +355,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     writerIndex,
                                     TableUtils.isColumnDedupKey(metaMem, writerIndex),
                                     denseSymbolIndex,
-                                    stableIndex
+                                    stableIndex,
+                                    TableUtils.isSymbolCached(metaMem, writerIndex),
+                                    TableUtils.getSymbolCapacity(metaMem, writerIndex)
                             )
                     );
                     int denseIndex = columnMetadata.size() - 1;
@@ -339,9 +377,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     public void load() {
-        final long timeout = configuration.getSpinLockTimeout();
+        final long spinLockTimeout = configuration.getSpinLockTimeout();
         final MillisecondClock millisecondClock = configuration.getMillisecondClock();
-        long deadline = configuration.getMillisecondClock().getTicks() + timeout;
+        long deadline = configuration.getMillisecondClock().getTicks() + spinLockTimeout;
         this.path.trimTo(plen).concat(TableUtils.META_FILE_NAME);
         boolean existenceChecked = false;
         while (true) {
@@ -357,7 +395,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                     path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
                 }
                 existenceChecked = true;
-                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, millisecondClock, timeout);
+                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, millisecondClock, spinLockTimeout);
             }
         }
     }

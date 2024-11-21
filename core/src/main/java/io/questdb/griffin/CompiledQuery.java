@@ -24,11 +24,11 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Transient;
@@ -96,11 +96,13 @@ public interface CompiledQuery {
     @Transient
     AlterOperation getAlterOperation();
 
+    Operation getOperation();
+
     InsertOperation getInsertOperation();
 
     RecordCursorFactory getRecordCursorFactory();
 
-    String getSqlStatement();
+    String getSqlText();
 
     /**
      * Returns statement name for DEALLOCATE statement. Used e.g. in pg wire protocol.
@@ -109,13 +111,11 @@ public interface CompiledQuery {
      */
     CharSequence getStatementName();
 
-    TableToken getTableToken();
-
     short getType();
 
     UpdateOperation getUpdateOperation();
 
     CompiledQuery withContext(SqlExecutionContext sqlExecutionContext);
 
-    void withSqlStatement(String sqlStatement);
+    void withSqlText(String sqlText);
 }

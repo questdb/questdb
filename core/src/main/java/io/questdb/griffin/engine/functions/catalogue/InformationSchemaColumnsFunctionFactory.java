@@ -194,10 +194,22 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                 public CharSequence getStrA(int col) {
                     switch (col) {
                         case 0:
-                            return tableName;
+                            // table_catalog
+                            return Constants.DB_NAME;
+                        case 1:
+                            // table_schema
+                            return Constants.PUBLIC_SCHEMA;
                         case 2:
-                            return columnName;
+                            return tableName;
                         case 3:
+                            return columnName;
+                        case 5:
+                            // column_default
+                            return null;
+                        case 6:
+                            // is_nullable
+                            return "yes";
+                        case 7:
                             return dataType;
                     }
                     return null;
@@ -226,9 +238,13 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("table_catalog", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("table_schema", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));
-        metadata.add(new TableColumnMetadata("ordinal_position", ColumnType.INT));
         metadata.add(new TableColumnMetadata("column_name", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("ordinal_position", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("column_default", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("is_nullable", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("data_type", ColumnType.STRING));
         METADATA = metadata;
     }

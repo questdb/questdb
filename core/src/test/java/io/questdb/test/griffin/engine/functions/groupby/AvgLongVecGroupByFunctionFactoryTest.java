@@ -61,7 +61,7 @@ public class AvgLongVecGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testAvgLongOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as(select 21474836475L * x as x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1000000));");
+            execute("create table test as(select 21474836475L * x as x, rnd_symbol('a', 'b', 'c') sym from long_sequence(1000000));");
             String expected = "sym\tavg\n" +
                     "a\t1.0731625369352276E16\n" +
                     "b\t1.0731385513028126E16\n" +

@@ -34,14 +34,12 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
@@ -111,15 +109,15 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // to validate the result correctness.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE t (\n" +
                             "  created timestamp,\n" +
                             "  event short,\n" +
                             "  origin short\n" +
                             ") TIMESTAMP(created) PARTITION BY DAY;"
             );
-            insert("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
-            insert("INSERT INTO t VALUES ('2023-09-21T11:00:00.000000Z', 1, 1);");
+            execute("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
+            execute("INSERT INTO t VALUES ('2023-09-21T11:00:00.000000Z', 1, 1);");
 
             assertQuery(
                     "count\n" +
@@ -140,18 +138,18 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // to validate the result correctness.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE t (\n" +
                             "  created timestamp,\n" +
                             "  event symbol,\n" +
                             "  origin symbol\n" +
                             ") TIMESTAMP(created) PARTITION BY DAY;"
             );
-            insert("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 'a', 'c');");
-            insert("INSERT INTO t VALUES ('2023-09-21T10:00:01.000000Z', 'a', 'c');");
-            insert("INSERT INTO t VALUES ('2023-09-21T10:00:02.000000Z', 'a', 'd');");
-            insert("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 'b', 'c');");
-            insert("INSERT INTO t VALUES ('2023-09-21T10:00:01.000000Z', 'b', 'c');");
+            execute("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 'a', 'c');");
+            execute("INSERT INTO t VALUES ('2023-09-21T10:00:01.000000Z', 'a', 'c');");
+            execute("INSERT INTO t VALUES ('2023-09-21T10:00:02.000000Z', 'a', 'd');");
+            execute("INSERT INTO t VALUES ('2023-09-21T10:00:00.000000Z', 'b', 'c');");
+            execute("INSERT INTO t VALUES ('2023-09-21T10:00:01.000000Z', 'b', 'c');");
 
             assertQuery(
                     "count\n" +
@@ -173,25 +171,25 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // to validate the result correctness.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE t1 (\n" +
                             "  created timestamp,\n" +
                             "  event short,\n" +
                             "  origin short\n" +
                             ") TIMESTAMP(created) PARTITION BY DAY;"
             );
-            insert("INSERT INTO t1 VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
-            insert("INSERT INTO t1 VALUES ('2023-09-21T10:00:01.000000Z', 2, 2);");
+            execute("INSERT INTO t1 VALUES ('2023-09-21T10:00:00.000000Z', 1, 1);");
+            execute("INSERT INTO t1 VALUES ('2023-09-21T10:00:01.000000Z', 2, 2);");
 
-            ddl(
+            execute(
                     "CREATE TABLE t2 (\n" +
                             "  created timestamp,\n" +
                             "  event short,\n" +
                             "  origin short\n" +
                             ") TIMESTAMP(created) PARTITION BY DAY;"
             );
-            insert("INSERT INTO t2 VALUES ('2023-09-21T10:00:02.000000Z', 3, 1);");
-            insert("INSERT INTO t2 VALUES ('2023-09-21T10:00:00.000000Z', 4, 2);");
+            execute("INSERT INTO t2 VALUES ('2023-09-21T10:00:02.000000Z', 3, 1);");
+            execute("INSERT INTO t2 VALUES ('2023-09-21T10:00:00.000000Z', 4, 2);");
 
             assertQuery(
                     "event\tcount\n" +
@@ -212,8 +210,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableJitCompiler);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                        ddl(
+            TestUtils.execute(
+                    pool, (engine, compiler, sqlExecutionContext) -> {
+                        execute(
                                 compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
@@ -667,8 +666,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         // so this test verifies that nothing breaks.
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool((() -> 4));
-            TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                        ddl(
+            TestUtils.execute(
+                    pool, (engine, compiler, sqlExecutionContext) -> {
+                        execute(
                                 compiler,
                                 "create table x as (select * from (select rnd_symbol('a','b','c') a, 'x' || x b from long_sequence(" + ROW_COUNT + ")))",
                                 sqlExecutionContext
@@ -704,17 +704,30 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelGroupByCorrelation() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
-        testParallelGroupByAllTypes("SELECT round(corr(adouble, along), 14) FROM tab", "round\n" +
-                "-0.01506463207666\n");
+        testParallelGroupByAllTypes(
+                "SELECT round(corr(adouble, along), 14) FROM tab", "round\n" +
+                        "-0.01506463207666\n"
+        );
     }
 
     @Test
     public void testParallelGroupByCovariance() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
-        testParallelGroupByAllTypes("SELECT round(covar_samp(adouble, along), 14) FROM tab", "round\n" +
+        testParallelGroupByAllTypes(
+                "SELECT round(covar_samp(adouble, along), 14) FROM tab", "round\n" +
                         "-92233.72036854776\n",
                 "SELECT round(covar_pop(adouble, along), 13) FROM tab", "round\n" +
-                        "-922337.2036854776\n");
+                        "-922337.2036854776\n"
+        );
+    }
+
+    @Test
+    public void testParallelGroupByRegrIntercept() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes(
+                "SELECT round(regr_intercept(adouble, along), 14) FROM tab", "round\n" +
+                        "0.50356769718027\n"
+        );
     }
 
     @Test
@@ -727,23 +740,27 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelGroupByStdDev() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
-        testParallelGroupByAllTypes("SELECT round(stddev_samp(adouble), 14) FROM tab", "round\n" +
+        testParallelGroupByAllTypes(
+                "SELECT round(stddev_samp(adouble), 14) FROM tab", "round\n" +
                         "0.2851973374189\n",
                 "SELECT round(stddev(adouble), 14) FROM tab", "round\n" +
                         "0.2851973374189\n",
                 "SELECT round(stddev_pop(adouble), 13) FROM tab", "round\n" +
-                        "0.28515456316480003\n");
+                        "0.28515456316480003\n"
+        );
     }
 
     @Test
     public void testParallelGroupByVariance() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
-        testParallelGroupByAllTypes("SELECT round(var_samp(adouble), 14) FROM tab", "round\n" +
+        testParallelGroupByAllTypes(
+                "SELECT round(var_samp(adouble), 14) FROM tab", "round\n" +
                         "0.08133752127083\n",
                 "SELECT round(variance(adouble), 14) FROM tab", "round\n" +
                         "0.08133752127083\n",
                 "SELECT round(var_pop(adouble), 13) FROM tab", "round\n" +
-                        "0.0813131248937\n");
+                        "0.0813131248937\n"
+        );
     }
 
     @Test
@@ -1139,22 +1156,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
         final WorkerPool pool = new WorkerPool((() -> 4));
-        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    ddl(
-                            compiler,
+        TestUtils.execute(
+                pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
                             "CREATE TABLE tab (" +
                                     "  ts TIMESTAMP," +
                                     "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                             sqlExecutionContext
                     );
-                    insert(
-                            compiler,
+                    engine.execute(
                             "insert into tab select (x * 864000000)::timestamp, x from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
-                    ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                    insert(
-                            compiler,
+                    engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                    engine.execute(
                             "insert into tab " +
                                     "select ((50 + x) * 864000000)::timestamp, 50 + x, 50 + x " +
                                     "from long_sequence(" + ROW_COUNT + ")",
@@ -1633,9 +1648,9 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
 
-                        ddl(
+                        execute(
                                 compiler,
                                 "create table tbl1 as (select rnd_double() x, rnd_double() y, rnd_symbol('a', 'b', 'c') sym from long_sequence(100000))",
                                 sqlExecutionContext
@@ -1999,23 +2014,21 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
         final WorkerPool pool = new WorkerPool((() -> 4));
-        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    ddl(
-                            compiler,
+        TestUtils.execute(
+                pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
                             "CREATE TABLE tab (" +
                                     "  ts TIMESTAMP," +
                                     "  key STRING," +
                                     "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                             sqlExecutionContext
                     );
-                    insert(
-                            compiler,
+                    engine.execute(
                             "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
-                    ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                    insert(
-                            compiler,
+                    engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                    engine.execute(
                             "insert into tab " +
                                     "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
                                     "from long_sequence(" + ROW_COUNT + ")",
@@ -2067,21 +2080,18 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
         final int numOfThreads = 8;
         final int numOfIterations = 50;
-        final String query = "SELECT key, avg(value) FROM tab WHERE npe();";
-
         final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
         final WorkerPool pool = new WorkerPool((() -> 4));
-        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    ddl(
-                            compiler,
+        TestUtils.execute(
+                pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
                             "CREATE TABLE tab (" +
                                     "  ts TIMESTAMP," +
                                     "  key STRING," +
                                     "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                             sqlExecutionContext
                     );
-                    insert(
-                            compiler,
+                    engine.execute(
                             "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
                             sqlExecutionContext
                     );
@@ -2097,7 +2107,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             // We expect an NPE (work stealing) or a CairoException (NPE caught by a worker)
                             try {
                                 for (int j = 0; j < numOfIterations; j++) {
-                                    assertCairoException(engine, query, "unexpected filter error", sqlExecutionContext);
+                                    assertCairoException(engine, sqlExecutionContext);
                                 }
                             } catch (NullPointerException npe) {
                                 // NPE is expected
@@ -2804,7 +2814,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        ddl(
+                        execute(
                                 compiler,
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
@@ -2825,27 +2835,17 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertCairoException(
-            CairoEngine engine,
-            CharSequence sql,
-            CharSequence contains,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
+    private static void assertCairoException(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try {
             try (
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    RecordCursorFactory factory = CairoEngine.select(compiler, sql, sqlExecutionContext);
+                    RecordCursorFactory factory = engine.select("SELECT key, avg(value) FROM tab WHERE npe();", sqlExecutionContext);
                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)
             ) {
                 cursor.hasNext();
             }
             Assert.fail();
-        } catch (Throwable th) {
-            if (th instanceof FlyweightMessageContainer) {
-                TestUtils.assertContains(((FlyweightMessageContainer) th).getFlyweightMessage(), contains);
-            } else {
-                throw th;
-            }
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected filter error");
         }
     }
 
@@ -2882,7 +2882,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
                         sqlExecutionContext.setRandom(rnd);
 
-                        ddl(
+                        execute(
                                 compiler,
                                 "create table tab as (select" +
                                         " 'k' || ((50 + x) % 5) key," +
@@ -2947,7 +2947,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             initializer.init(sqlExecutionContext);
                         }
 
-                        ddl(
+                        execute(
                                 compiler,
                                 "create table tab as (select" +
                                         " 'k' || ((50 + x) % 5) key," +
@@ -2994,16 +2994,14 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        ddl(
-                                compiler,
+                        engine.execute(
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  price DOUBLE," +
                                         "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
-                        insert(
-                                compiler,
+                        engine.execute(
                                 "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
@@ -3049,13 +3047,13 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
             );
 
             try {
-                ddl(
+                execute(
                         "CREATE TABLE tab (" +
                                 "  ts TIMESTAMP," +
                                 "  price DOUBLE," +
                                 "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY"
                 );
-                insert("insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")");
+                execute("insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")");
 
                 context.with(
                         context.getSecurityContext(),
@@ -3091,8 +3089,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        ddl(
-                                compiler,
+                        engine.execute(
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  key VARCHAR," +
@@ -3100,8 +3097,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "  quantity LONG) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
-                        insert(
-                                compiler,
+                        engine.execute(
                                 "insert into tab select (x * 864000000)::timestamp, '{\"key\": \"k' || (x % 5) || '\", \"foo\": \"bar\"}', x, x from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
@@ -3121,8 +3117,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        ddl(
-                                compiler,
+                        engine.execute(
                                 "CREATE TABLE tab (\n" +
                                         "  ts TIMESTAMP," +
                                         "  key1 SYMBOL," +
@@ -3131,14 +3126,12 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
-                        insert(
-                                compiler,
+                        engine.execute(
                                 "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), 'k' || (x % 4), 'k' || (x % 3), x from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        insert(
-                                compiler,
+                        execute(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        engine.execute(
                                 "insert into tab " +
                                         "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 'k' || ((50 + x) % 4), 'k' || ((50 + x) % 3), 50 + x, 50 + x " +
                                         "from long_sequence(" + ROW_COUNT + ")",
@@ -3161,22 +3154,19 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        ddl(
-                                compiler,
+                        engine.execute(
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  price DOUBLE," +
                                         "  quantity DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
-                        insert(
-                                compiler,
+                        engine.execute(
                                 "insert into tab select (x * 864000000)::timestamp, x, x % 100 from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        insert(
-                                compiler,
+                        engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        engine.execute(
                                 "insert into tab " +
                                         "select ((50 + x) * 864000000)::timestamp, 50 + x, 50 + x, 50 + x " +
                                         "from long_sequence(" + ROW_COUNT + ")",
@@ -3200,7 +3190,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         // We want each row to be in its own partition
-                        ddl(
+                        execute(
                                 compiler,
                                 "CREATE TABLE tab AS (SELECT " +
                                         "cast('k' || (x%5) as symbol) key, " +
@@ -3253,22 +3243,19 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
                         // try with a String table first
-                        ddl(
-                                compiler,
+                        engine.execute(
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  key STRING," +
                                         "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
-                        insert(
-                                compiler,
+                        engine.execute(
                                 "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        insert(
-                                compiler,
+                        engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        engine.execute(
                                 "insert into tab " +
                                         "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
                                         "from long_sequence(" + ROW_COUNT + ")",
@@ -3278,23 +3265,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
 
                         // now drop the String table and recreate it with a Varchar key
-                        engine.drop("DROP TABLE tab", sqlExecutionContext);
-                        ddl(
-                                compiler,
+                        engine.execute("DROP TABLE tab", sqlExecutionContext);
+                        engine.execute(
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  key VARCHAR," +
                                         "  value DOUBLE) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
-                        insert(
-                                compiler,
+                        engine.execute(
                                 "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        insert(
-                                compiler,
+                        engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        engine.execute(
                                 "insert into tab " +
                                         "select ((50 + x) * 864000000)::timestamp, 'k' || ((50 + x) % 5), 50 + x, 50 + x " +
                                         "from long_sequence(" + ROW_COUNT + ")",
@@ -3317,8 +3301,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     (engine, compiler, sqlExecutionContext) -> {
                         sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
 
-                        ddl(
-                                compiler,
+                        engine.execute(
                                 "CREATE TABLE tab (" +
                                         "  ts TIMESTAMP," +
                                         "  key SYMBOL," +
@@ -3326,14 +3309,12 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                                         "  quantity LONG) timestamp (ts) PARTITION BY DAY",
                                 sqlExecutionContext
                         );
-                        insert(
-                                compiler,
+                        engine.execute(
                                 "insert into tab select (x * 864000000)::timestamp, 'k' || (x % 5), x, x from long_sequence(" + ROW_COUNT + ")",
                                 sqlExecutionContext
                         );
-                        ddl(compiler, "ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
-                        insert(
-                                compiler,
+                        engine.execute("ALTER TABLE tab ADD COLUMN colTop DOUBLE", sqlExecutionContext);
+                        engine.execute(
                                 "insert into tab " +
                                         "select ((50 + x) * 864000000)::timestamp, " +
                                         "  'k' || ((50 + x) % 5), 50 + x, 50 + x, 50 + x " +

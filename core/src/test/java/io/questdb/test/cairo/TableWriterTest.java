@@ -26,7 +26,22 @@ package io.questdb.test.cairo;
 
 import io.questdb.Metrics;
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.EntryUnavailableException;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
@@ -34,26 +49,40 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.*;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -207,23 +236,19 @@ public class TableWriterTest extends AbstractCairoTest {
             // Reduce disk space by for the test run.
             setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1 << 20); // 1MB
 
-            TableToken tableToken;
             TableModel model = new TableModel(configuration, "testAddColumnConcurrentWithDataUpdates", PartitionBy.NONE);
             model.timestamp();
-            tableToken = registerTableName(model.getTableName());
-            TableUtils.createTable(
-                    configuration,
-                    model,
-                    tableId,
-                    tableToken.getDirName()
-            );
+            TableToken token;
+            try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
+                token = TestUtils.createTable(engine, mem, path, model, tableId, model.getTableName());
+            }
 
             // Write data in a loop getting writer in and out of pool
             Thread writeDataThread = new Thread(() -> {
                 TestUtils.await(barrier);
                 int i = 0;
                 while (columnsAdded.get() < totalColAddCount && exceptions.isEmpty()) {
-                    try (TableWriter writer = getWriter(tableToken)) {
+                    try (TableWriter writer = getWriter(token)) {
                         TableWriter.Row row = writer.newRow((i++) * Timestamps.HOUR_MICROS);
                         row.append();
                         writer.commit();
@@ -234,7 +259,10 @@ public class TableWriterTest extends AbstractCairoTest {
                         exceptions.add(e);
                         LOG.error().$(e).$();
                         throw e;
+                    } finally {
+                        Path.clearThreadLocals();
                     }
+
                 }
             });
 
@@ -246,10 +274,10 @@ public class TableWriterTest extends AbstractCairoTest {
                         alterOperationBuilder.clear();
                         String columnName = "col" + i;
                         alterOperationBuilder
-                                .ofAddColumn(0, tableToken, tableId)
+                                .ofAddColumn(0, token, tableId)
                                 .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
                         AlterOperation alterOp = alterOperationBuilder.build();
-                        try (TableWriter writer = engine.getWriterOrPublishCommand(tableToken, alterOp)) {
+                        try (TableWriter writer = engine.getWriterOrPublishCommand(token, alterOp)) {
                             if (writer != null) {
                                 writer.publishAsyncWriterCommand(alterOp);
                             }
@@ -260,6 +288,8 @@ public class TableWriterTest extends AbstractCairoTest {
                     exceptions.add(e);
                     LOG.error().$(e).$();
                     throw e;
+                } finally {
+                    Path.clearThreadLocals();
                 }
             });
             writeDataThread.start();
@@ -276,7 +306,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
             Assert.assertTrue(insertCount.get() > 0);
 
-            try (TableReader rdr = getReader(tableToken)) {
+            try (TableReader rdr = getReader(token)) {
                 Assert.assertEquals(totalColAddCount + 1, rdr.getColumnCount());
             }
 
@@ -2132,9 +2162,9 @@ public class TableWriterTest extends AbstractCairoTest {
                     .col("b", ColumnType.STRING)
                     .col("c", ColumnType.STRING).indexed(true, 1024)
                     .timestamp();
-            AbstractCairoTest.create(model);
 
             try {
+                AbstractCairoTest.create(model);
                 newOffPoolWriter(configuration, "x", metrics).close();
                 Assert.fail();
             } catch (CairoException e) {

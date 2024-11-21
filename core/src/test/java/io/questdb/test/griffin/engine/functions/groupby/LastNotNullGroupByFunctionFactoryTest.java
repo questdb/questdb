@@ -79,7 +79,7 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testLastNotNull() throws Exception {
         UUID lastUuid = UUID.randomUUID();
 
-        ddl("create table tab (a0 char," +
+        execute("create table tab (a0 char," +
                 "a1 date," +
                 "a2 double," +
                 "a3 float," +
@@ -96,7 +96,7 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "a14 ipv4 " +
                 ")");
 
-        insert("insert into tab values(" +
+        execute("insert into tab values(" +
                 "'b'," +
                 "to_date('2023-10-22','yyyy-MM-dd')," +
                 "22.2," +
@@ -114,7 +114,7 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                 " '2.0.0.0'" +
                 ")");
 
-        insert("insert into tab values(" +
+        execute("insert into tab values(" +
                 "'a', " +
                 "to_date('2023-10-23','yyyy-MM-dd')," +
                 "2.2," +
@@ -132,7 +132,7 @@ public class LastNotNullGroupByFunctionFactoryTest extends AbstractCairoTest {
                 " '1.0.0.0'" +
                 ")");
 
-        insert("insert into tab (a1) values (null)"); // other columns default to null
+        execute("insert into tab (a1) values (null)"); // other columns default to null
 
         assertSql(
                 "a0\ta1\ta2\ta3\ta4\ta5\ta6\ta7\ta8\ta9\ta10\ta11\ta12\ta13\ta14\n" +

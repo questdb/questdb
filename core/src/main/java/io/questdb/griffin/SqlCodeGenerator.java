@@ -269,6 +269,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
+import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
@@ -1001,8 +1002,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     metadata.add(slaveAlias, m);
                     listColumnFilterB.add(i + 1);
                     columnIndex.add(i);
-                    valueTypes.add(m.getType());
-                    slaveTypes.add(m.getType());
+                    valueTypes.add(m.getColumnType());
+                    slaveTypes.add(m.getColumnType());
                 }
             }
 
@@ -1011,7 +1012,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int index = listColumnFilterA.getColumnIndexFactored(i);
                 final TableColumnMetadata m = slaveMetadata.getColumnMetadata(index);
                 metadata.add(slaveAlias, m);
-                slaveTypes.add(m.getType());
+                slaveTypes.add(m.getColumnType());
                 columnIndex.add(index);
             }
 
@@ -3755,25 +3756,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            int dot = Chars.indexOf(colMetadata.getName(), '.');
+            int dot = Chars.indexOf(colMetadata.getColumnName(), '.');
             if (dot > -1) {//remove inner table alias
                 selectMetadata.add(
                         new TableColumnMetadata(
-                                Chars.toString(colMetadata.getName(), dot + 1, colMetadata.getName().length()),
-                                colMetadata.getType(),
-                                colMetadata.isIndexed(),
+                                Chars.toString(colMetadata.getColumnName(), dot + 1, colMetadata.getColumnName().length()),
+                                colMetadata.getColumnType(),
+                                colMetadata.isSymbolIndexFlag(),
                                 colMetadata.getIndexValueBlockCapacity(),
                                 colMetadata.isSymbolTableStatic(),
                                 metadata
                         )
                 );
             } else {
-                if (selectMetadata.getColumnIndexQuiet(colMetadata.getName()) < 0) {
+                if (selectMetadata.getColumnIndexQuiet(colMetadata.getColumnName()) < 0) {
                     selectMetadata.add(colMetadata);
                 } else {
                     // avoid clashing with other columns using timestamp column name as alias
                     StringSink sink = Misc.getThreadLocalSink();
-                    sink.put(colMetadata.getName());
+                    sink.put(colMetadata.getColumnName());
                     int len = sink.length();
                     int sequence = 0;
 
@@ -3785,8 +3786,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     selectMetadata.add(
                             new TableColumnMetadata(
                                     sink.toString(),
-                                    colMetadata.getType(),
-                                    colMetadata.isIndexed(),
+                                    colMetadata.getColumnType(),
+                                    colMetadata.isSymbolIndexFlag(),
                                     colMetadata.getIndexValueBlockCapacity(),
                                     colMetadata.isSymbolTableStatic(),
                                     metadata
@@ -4620,8 +4621,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else { // keep alias
                         factoryMetadata.add(i, new TableColumnMetadata(
                                         Chars.toString(qc.getAlias()),
-                                        m.getType(),
-                                        m.isIndexed(),
+                                        m.getColumnType(),
+                                        m.isSymbolIndexFlag(),
                                         m.getIndexValueBlockCapacity(),
                                         m.isSymbolTableStatic(),
                                         baseMetadata
@@ -4661,15 +4662,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else { // keep alias
                         factoryMetadata.add(i, new TableColumnMetadata(
                                         Chars.toString(qc.getAlias()),
-                                        m.getType(),
-                                        m.isIndexed(),
+                                        m.getColumnType(),
+                                        m.isSymbolIndexFlag(),
                                         m.getIndexValueBlockCapacity(),
                                         m.isSymbolTableStatic(),
                                         baseMetadata
                                 )
                         );
                     }
-                    chainTypes.add(i, m.getType());
+                    chainTypes.add(i, m.getColumnType());
                     listColumnFilterA.extendAndSet(i, i + 1);
                     listColumnFilterB.extendAndSet(i, columnIndex);
                     intHashSet.add(columnIndex);
@@ -4693,7 +4694,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (intHashSet.excludes(i)) {
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(i);
                     chainMetadata.add(addAt, m);
-                    chainTypes.add(addAt, m.getType());
+                    chainTypes.add(addAt, m.getColumnType());
                     listColumnFilterA.extendAndSet(addAt, addAt + 1);
                     listColumnFilterB.extendAndSet(addAt, i);
                     columnIndexes.extendAndSet(addAt, i);
@@ -4845,7 +4846,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0, n = deferredWindowMetadata.size(); i < n; i++) {
                 TableColumnMetadata m = deferredWindowMetadata.getQuick(i);
                 if (m != null) {
-                    chainTypes.add(i, m.getType());
+                    chainTypes.add(i, m.getColumnType());
                     factoryMetadata.add(i, m);
                 }
             }
@@ -5057,10 +5058,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
 
-        final GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) model.getTableName();
+        final BufferWindowCharSequence tab = (BufferWindowCharSequence) model.getTableName();
         final boolean supportsRandomAccess;
         if (Chars.startsWith(tab, NO_ROWID_MARKER)) {
-            tab.setLo(tab.getLo() + NO_ROWID_MARKER.length());
+            tab.shiftLo(NO_ROWID_MARKER.length());
             supportsRandomAccess = false;
         } else {
             supportsRandomAccess = true;
@@ -5070,7 +5071,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
             // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
             // to allow the client to succeed even if WAL apply does not run.
-            try (TableMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
+            try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
                 // it is not enough to rely on execution context to be different for WAL APPLY;
                 // in WAL APPLY we also must supply reader, outside of WAL APPLY reader is null
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
@@ -5134,7 +5135,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadata.isColumnIndexed(columnIndex),
                             metadata.getIndexValueBlockCapacity(columnIndex),
                             metadata.isSymbolTableStatic(columnIndex),
-                            metadata.getMetadata(columnIndex)
+                            metadata.getMetadata(columnIndex),
+                            -1,
+                            false,
+                            0,
+                            metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
+                            metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
+
                     ));
 
                     if (columnIndex == readerTimestampIndex) {

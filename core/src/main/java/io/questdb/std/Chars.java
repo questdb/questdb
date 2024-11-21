@@ -27,7 +27,11 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.str.TrimType;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -117,6 +121,18 @@ public final class Chars {
     public static void base64UrlEncode(BinarySequence sequence, int maxLength, CharSink<?> buffer) {
         base64Encode(sequence, maxLength, buffer, base64Url);
         // base64 url does not use padding
+    }
+
+    public static int charBytes(char c) {
+        if (c < 0x80) {
+            return 1;
+        } else if (c < 0x800) {
+            return 2;
+        } else if (Character.isSurrogate(c)) {
+            return 1; // replaced with '?'
+        } else {
+            return 3;
+        }
     }
 
     public static int compare(CharSequence l, CharSequence r) {
@@ -1280,7 +1296,6 @@ public final class Chars {
         }
         return true;
     }
-
 
     static {
         CHAR_STRINGS = new String[128];

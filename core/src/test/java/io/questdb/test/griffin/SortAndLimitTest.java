@@ -335,7 +335,7 @@ public class SortAndLimitTest extends AbstractCairoTest {
     private void runQueries(String... queries) throws Exception {
         assertMemoryLeak(() -> {
             for (String query : queries) {
-                ddl(query);
+                execute(query);
             }
         });
     }

@@ -994,7 +994,7 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
         runInContext(() -> {
             if (columnType != ColumnType.UNDEFINED) {
                 TableModel model = new TableModel(configuration, TABLE, PartitionBy.DAY);
-                TestUtils.create(model.col(TARGET_COLUMN_NAME, columnType).timestamp(), engine);
+                TestUtils.createTable(engine, model.col(TARGET_COLUMN_NAME, columnType).timestamp());
                 if (walEnabled) {
                     Assert.assertTrue(isWalTable(TABLE));
                 }

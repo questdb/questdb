@@ -71,9 +71,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table nodts_tab (ts timestamp, val int)");
-            insert("insert into nodts_tab values (0, 1)");
-            insert("insert into nodts_tab values (0, 2)");
+            execute("create table nodts_tab (ts timestamp, val int)");
+            execute("insert into nodts_tab values (0, 1)");
+            execute("insert into nodts_tab values (0, 2)");
 
             String noDtsResult = "ts\tval\tavg\n" +
                     "1970-01-01T00:00:00.000000Z\t1\t1.0\n" +
@@ -106,11 +106,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testCachedWindowFactoryMaintainsOrderOfRecordsWithSameTimestamp2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, val int) timestamp(ts)");
-            insert("insert into tab values (0, 1)");
-            insert("insert into tab values (0, 1)");
-            insert("insert into tab values (0, 2)");
-            insert("insert into tab values (0, 2)");
+            execute("create table tab (ts timestamp, val int) timestamp(ts)");
+            execute("insert into tab values (0, 1)");
+            execute("insert into tab values (0, 1)");
+            execute("insert into tab values (0, 2)");
+            execute("insert into tab values (0, 2)");
 
             assertQueryNoLeakCheck(
                     "ts\tval\tavg\n" +
@@ -144,7 +144,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionDoesNotAcceptFollowingInNonDefaultFrameDefinition() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
             for (String func : FRAME_FUNCTIONS) {
                 assertExceptionNoLeakCheck(
@@ -165,10 +165,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionOverNonPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
             //default buffer size holds 65k entries
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
-            insert("insert into tab select x::timestamp, x/4, x from long_sequence(40000)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("insert into tab select x::timestamp, x/4, x from long_sequence(40000)");
             //trigger removal of rows below lo boundary AND resize of buffer
-            insert("insert into tab select (100000+x)::timestamp, x/4, x from long_sequence(90000)");
+            execute("insert into tab select (100000+x)::timestamp, x/4, x from long_sequence(90000)");
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\n" +
@@ -190,9 +190,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false
             );
 
-            ddl("truncate table tab");
+            execute("truncate table tab");
             // trigger buffer resize
-            insert("insert into tab select (100000+x)::timestamp, x/4, x from long_sequence(90000)");
+            execute("insert into tab select (100000+x)::timestamp, x/4, x from long_sequence(90000)");
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\tavg\tsum\tfirst_value\n" +
@@ -217,10 +217,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverNonPartitionedRowsWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
-            insert("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
-            insert("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x) from long_sequence(4*90000)");
+            execute("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
+            execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x) from long_sequence(4*90000)");
 
             String expected = "ts\tj\tavg\tsum\tfirst_value\n" +
                     "1970-01-01T00:00:00.460000Z\t460000\t420000.0\t3.360042E10\t380000.0\n";
@@ -255,10 +255,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverNonPartitionedRowsWithLargeFrameRandomData() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
-            insert("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
-            insert("insert into tab select (100000+x)::timestamp, rnd_long(1,10000,10), rnd_long(1,100000,10) from long_sequence(1000000)");
+            execute("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
+            execute("insert into tab select (100000+x)::timestamp, rnd_long(1,10000,10), rnd_long(1,100000,10) from long_sequence(1000000)");
 
             String expected = "ts\tavg\tsum\tfirst_value\n" +
                     "1970-01-01T00:00:01.100000Z\t49980.066958378644\t3.815028491E9\t2073.0\n";
@@ -292,12 +292,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionOverPartitionedRangeWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
             // default buffer size holds 65k entries in total, 32 per partition, see CairoConfiguration.getSqlWindowInitialRangeBufferSize()
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
             // trigger per-partition buffers growth and free list usage
-            insert("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
+            execute("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
             // trigger removal of rows below lo boundary AND resize of buffer
-            insert("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x) from long_sequence(4*90000)");
+            execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x) from long_sequence(4*90000)");
 
             String expected = "ts\ti\tj\tavg\tsum\tfirst_value\n" +
                     "1970-01-01T00:00:00.460000Z\t0\t460000\t420000.0\t8.40042E9\t380000.0\n" +
@@ -341,8 +341,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverPartitionedRangeWithLargeFrameRandomData() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
-            insert("insert into tab " +
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("insert into tab " +
                     "select (100000+x)::timestamp, " +
                     "rnd_long(1,20,10), " +
                     "rnd_long(1,1000,5) " +
@@ -412,10 +412,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverPartitionedRowsWithLargeFrame() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
-            insert("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
-            insert("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x) from long_sequence(4*90000)");
+            execute("insert into tab select x::timestamp, x/10000, x from long_sequence(39999)");
+            execute("insert into tab select (100000+x)::timestamp, (100000+x)%4, (100000+x) from long_sequence(4*90000)");
 
             String expected = "ts\ti\tj\tavg\tsum\tfirst_value\n" +
                     "1970-01-01T00:00:00.460000Z\t0\t460000\t300000.0\t2.40003E10\t140000.0\n" +
@@ -454,8 +454,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverRangeFrame() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab_big (ts timestamp, i long, j long) timestamp(ts)");
-            insert("insert into tab_big select (x*1000000)::timestamp, x/4, x%5 from long_sequence(10)");
+            execute("create table tab_big (ts timestamp, i long, j long) timestamp(ts)");
+            execute("insert into tab_big select (x*1000000)::timestamp, x/4, x%5 from long_sequence(10)");
 
             // tests when frame doesn't end on current row and time gaps between values are bigger than hi bound
             assertQueryNoLeakCheck(
@@ -546,8 +546,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     true
             );
 
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
-            insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
             // tests for between X preceding and [Y preceding | current row]
             assertQueryNoLeakCheck(
@@ -858,8 +858,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             // with duplicate timestamp values (but still unique within partition)
-            ddl("create table dups(ts timestamp, i long, j long) timestamp(ts) partition by year");
-            insert("insert into dups select (x/2)::timestamp, x%2, x%5 from long_sequence(10)");
+            execute("create table dups(ts timestamp, i long, j long) timestamp(ts) partition by year");
+            execute("insert into dups select (x/2)::timestamp, x%2, x%5 from long_sequence(10)");
 
             assertQueryNoLeakCheck(
                     "ts\ti\tj\n" +
@@ -968,8 +968,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             // with duplicate timestamp values (including ts duplicates within partition)
-            ddl("create table dups2(ts timestamp, i long, j long, n long) timestamp(ts) partition by year");
-            insert("insert into dups2 select (x/4)::timestamp, x%2, x%5, x from long_sequence(10)");
+            execute("create table dups2(ts timestamp, i long, j long, n long) timestamp(ts) partition by year");
+            execute("insert into dups2 select (x/4)::timestamp, x%2, x%5, x from long_sequence(10)");
 
             assertSql(
                     "ts\ti\tj\tn\n" +
@@ -1237,8 +1237,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             // table without designated timestamp
-            ddl("create table nodts(ts timestamp, i long, j long)");
-            insert("insert into nodts select (x/2)::timestamp, x%2, x%5 from long_sequence(10)");
+            execute("create table nodts(ts timestamp, i long, j long)");
+            execute("insert into nodts select (x/2)::timestamp, x%2, x%5 from long_sequence(10)");
 
             // timestamp ascending order is declared using timestamp(ts) clause
             assertQueryNoLeakCheck(
@@ -1264,6 +1264,25 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false,
                     true
             );
+
+            assertQueryNoLeakCheck(
+                    "ts\ti\tj\tavg\tsum\tfirst_value\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4.0\n",
+                    "select ts, i, j, " +
+                            "avg(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                            "sum(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                            "first_value(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding) " +
+                            "from tab",
+                    "ts",
+                    false,
+                    true
+            );
         });
     }
 
@@ -1271,10 +1290,10 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testFrameFunctionOverRangeIsOnlySupportedOverDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             // table without designated timestamp
-            ddl("create table nodts(ts timestamp, i long, j long)");
+            execute("create table nodts(ts timestamp, i long, j long)");
 
             //table with designated timestamp
-            ddl("create table tab (ts timestamp, i long, j long, otherTs timestamp) timestamp(ts) partition by month");
+            execute("create table tab (ts timestamp, i long, j long, otherTs timestamp) timestamp(ts) partition by month");
 
             for (String func : FRAME_FUNCTIONS) {
                 assertExceptionNoLeakCheck(
@@ -1346,7 +1365,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionOverRowsRejectsCurrentRowFrameExcludingCurrentRow() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
             for (String func : FRAME_FUNCTIONS) {
                 assertExceptionNoLeakCheck(
@@ -1361,7 +1380,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionRejectsExclusionModesOtherThanDefault() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xyz (a int, b int, c int, ts timestamp) timestamp(ts)");
+            execute("create table xyz (a int, b int, c int, ts timestamp) timestamp(ts)");
 
             for (String function : FRAME_FUNCTIONS) {
                 for (String exclusionMode : new String[]{"GROUP", "TIES"}) {
@@ -1395,8 +1414,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionRejectsFramesThatUseFollowing() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
-            insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
             for (String func : FRAME_FUNCTIONS) {
                 assertExceptionNoLeakCheck(
@@ -1452,8 +1471,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionResolvesSymbolTables() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table  cpu ( hostname symbol, usage_system double )");
-            insert("insert into cpu select rnd_symbol('A', 'B', 'C'), x from long_sequence(1000)");
+            execute("create table  cpu ( hostname symbol, usage_system double )");
+            execute("insert into cpu select rnd_symbol('A', 'B', 'C'), x from long_sequence(1000)");
 
             assertQueryNoLeakCheck(
                     "hostname\tusage_system\tavg\tsum\tfirst_value\n" +
@@ -1483,9 +1502,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionResolvesSymbolTablesInPartitionByCachedWindow() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (sym symbol, i int);");
-            insert("insert into x values ('aaa', 1);");
-            insert("insert into x values ('aaa', 2);");
+            execute("create table x (sym symbol, i int);");
+            execute("insert into x values ('aaa', 1);");
+            execute("insert into x values ('aaa', 2);");
 
             assertQueryNoLeakCheck(
                     "sym\tavg\tsum\tfirst_value\n" +
@@ -1506,9 +1525,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionResolvesSymbolTablesInPartitionByNonCachedWindow() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (sym symbol, i int, ts timestamp) timestamp(ts) partition by day;");
-            insert("insert into x values ('aaa', 1, '2023-11-09T00:00:00.000000');");
-            insert("insert into x values ('aaa', 2, '2023-11-09T01:00:00.000000');");
+            execute("create table x (sym symbol, i int, ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into x values ('aaa', 1, '2023-11-09T00:00:00.000000');");
+            execute("insert into x values ('aaa', 2, '2023-11-09T01:00:00.000000');");
 
             assertQueryNoLeakCheck(
                     "ts\tsym\tavg\tsum\tfirst_value\n" +
@@ -1529,8 +1548,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionsDontSupportGroupFrames() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
-            insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
             for (String func : FRAME_FUNCTIONS) {
                 assertExceptionNoLeakCheck(
@@ -1545,8 +1564,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testFrameFunctionsOverRowsFrame() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long, d double) timestamp(ts)");
-            insert("insert into tab select x::timestamp, x/4, x%5, x%5 from long_sequence(7)");
+            execute("create table tab (ts timestamp, i long, j long, d double) timestamp(ts)");
+            execute("insert into tab select x::timestamp, x/4, x%5, x%5 from long_sequence(7)");
 
             assertSql(
                     "ts\ti\tj\n" +
@@ -2056,32 +2075,30 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
         // https://github.com/questdb/questdb/issues/4748
-        assertMemoryLeak(() -> {
-            assertQuery("x\trow_number\n" +
-                            "1\t1\n" +
-                            "2\t2\n" +
-                            "3\t3\n" +
-                            "4\t4\n" +
-                            "5\t5\n" +
-                            "6\t6\n" +
-                            "7\t7\n" +
-                            "8\t8\n" +
-                            "9\t9\n" +
-                            "10\t10\n",
-                    "SELECT x, row_number() OVER (\n" +
-                            "    ORDER BY x asc\n" +
-                            "    RANGE UNBOUNDED PRECEDING\n" +
-                            ")\n" +
-                            "FROM long_sequence(10)\n" +
-                            "limit -10", false);
-        });
+        assertMemoryLeak(() -> assertQuery("x\trow_number\n" +
+                        "1\t1\n" +
+                        "2\t2\n" +
+                        "3\t3\n" +
+                        "4\t4\n" +
+                        "5\t5\n" +
+                        "6\t6\n" +
+                        "7\t7\n" +
+                        "8\t8\n" +
+                        "9\t9\n" +
+                        "10\t10\n",
+                "SELECT x, row_number() OVER (\n" +
+                        "    ORDER BY x asc\n" +
+                        "    RANGE UNBOUNDED PRECEDING\n" +
+                        ")\n" +
+                        "FROM long_sequence(10)\n" +
+                        "limit -10", false));
     }
 
     @Test
     public void testPartitionByAndOrderByColumnPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
-            insert("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+            execute("insert into tab select x::timestamp, x/4, x%5 from long_sequence(7)");
 
             // row_number()
             assertQueryNoLeakCheck(
@@ -2887,8 +2904,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
         try {
             assertMemoryLeak(() -> {
-                ddl("create table tab (ts timestamp, i long, j long) timestamp(ts)");
-                insert("insert into tab select x::timestamp, 1, x from long_sequence(100000)");
+                execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
+                execute("insert into tab select x::timestamp, 1, x from long_sequence(100000)");
 
                 //TODO: improve error message and position
                 assertExceptionNoLeakCheck(
@@ -2919,7 +2936,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFactoryRetainsTimestampMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
 
             // table scans
             assertQueryAndPlan(
@@ -3154,7 +3171,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionContextCleanup() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades as " +
+            execute("create table trades as " +
                     "(" +
                     "select" +
                     " rnd_int(1,2,3) price," +
@@ -3180,7 +3197,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // WindowContext should be properly clean up when we try to execute the next query.
             for (String function : WINDOW_ONLY_FUNCTIONS) {
                 try {
-                    ddl("select #FUNCTION from trades".replace("#FUNCTION", function), sqlExecutionContext);
+                    execute("select #FUNCTION from trades".replace("#FUNCTION", function), sqlExecutionContext);
                     Assert.fail();
                 } catch (SqlException e) {
                     Assert.assertEquals(7, e.getPosition());
@@ -3193,7 +3210,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionDoesSortIfOrderByIsNotCompatibleWithBaseQuery() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
 
             for (String func : FRAME_FUNCTIONS) {
                 assertPlanNoLeakCheck(
@@ -3256,7 +3273,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionDoesntSortIfOrderByIsCompatibleWithBaseQuery() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long, sym symbol index) timestamp(ts)");
 
             for (String func : FRAME_FUNCTIONS) {
                 assertPlanNoLeakCheck(
@@ -3361,8 +3378,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionReleaseNativeMemory() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab (ts timestamp, val long) timestamp(ts)");
-            ddl("insert into tab select x::timestamp, x from long_sequence(10)");
+            execute("create table tab (ts timestamp, val long) timestamp(ts)");
+            execute("insert into tab select x::timestamp, x from long_sequence(10)");
 
             final String EXPRESSION = "rnd_str(100,100,100,10)";//chosen because it allocates native memory that needs to be freed
 
@@ -3429,7 +3446,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowOnlyFunctionFailsInNonWindowContext() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades as " +
+            execute("create table trades as " +
                     "(" +
                     "select" +
                     " rnd_int(1,2,3) price," +

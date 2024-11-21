@@ -26,8 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.model.CreateTableModel;
-import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.GenericLexer;
@@ -36,19 +35,19 @@ import org.jetbrains.annotations.Nullable;
 
 public interface SqlParserCallback {
 
-    default ExecutionModel createTableSuffix(
+    // todo: rename to parseCreateTableEx
+    default void createTableExt(
             GenericLexer lexer,
             SecurityContext securityContext,
-            CreateTableModel model,
+            CreateTableOperationBuilder opBuilder,
             @Nullable CharSequence tok
     ) throws SqlException {
         if (tok != null) {
             throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
         }
-        return model;
     }
 
-    default RecordCursorFactory generateShowSqlFactory(QueryModel model) throws SqlException {
+    default RecordCursorFactory generateShowSqlFactory(QueryModel model) {
         assert false;
         return null;
     }

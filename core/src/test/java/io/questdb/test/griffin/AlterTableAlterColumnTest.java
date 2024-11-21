@@ -44,7 +44,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                 () -> {
                     createX();
 
-                    ddl("alter table x alter column ik add index capacity 1024");
+                    execute("alter table x alter column ik add index capacity 1024");
 
                     try (TableWriter writer = getWriter("x")) {
                         int blockCapacity = writer.getMetadata().getIndexValueBlockCapacity("ik");
@@ -67,7 +67,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
                         }
                     }
 
-                    ddl("alter table x alter column ik add index");
+                    execute("alter table x alter column ik add index");
 
                     try (TableReader reader = getReader("x")) {
                         Assert.assertNotNull(reader.getBitmapIndexReader(0, reader.getMetadata().getColumnIndex("ik"), BitmapIndexReader.DIR_FORWARD));
@@ -135,7 +135,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
 
                 startBarrier.await();
                 try {
-                    ddl("alter table x alter column ik add index", sqlExecutionContext);
+                    execute("alter table x alter column ik add index", sqlExecutionContext);
                     Assert.fail();
                 } finally {
                     haltLatch.countDown();
@@ -191,7 +191,7 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     private void createX() throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " cast(x as int) i," +

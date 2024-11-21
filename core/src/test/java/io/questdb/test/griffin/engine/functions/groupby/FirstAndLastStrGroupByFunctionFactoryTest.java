@@ -185,8 +185,8 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testKeyedFirstLast1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, device symbol, valueStr String, valueDb Double) timestamp(ts) partition by day");
-            insert("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
+            execute("create table test (ts timestamp, device symbol, valueStr String, valueDb Double) timestamp(ts) partition by day");
+            execute("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
                     "        ('2023-12-18T18:00:00', 'A', null, null)," +
                     "        ('2023-12-18T18:00:00', 'B', null, null)," +
                     "        ('2023-12-18T18:00:00', 'A', 'hot_1', 150)," +
@@ -221,8 +221,8 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testKeyedFirstLast2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, device symbol, valueStr String, valueDb Double) timestamp(ts) partition by day");
-            insert("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
+            execute("create table test (ts timestamp, device symbol, valueStr String, valueDb Double) timestamp(ts) partition by day");
+            execute("insert into test (ts, device, valueStr, valueDb) VALUES \n" +
                     "        ('2023-12-18T18:00:00', 'A', 'hot_1', 150)," +
                     "        ('2023-12-18T18:00:00', 'B', 'cold_1', 3)," +
                     "        ('2023-12-18T18:00:00', 'A', null, null)," +
@@ -257,9 +257,9 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     @Test
     public void testVarcharColoredPointerDoesNotLeak() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, vch varchar) timestamp(ts) partition by day");
-            insert("insert into test (ts, vch) VALUES ('2023-12-17T18:00:00', 'first')");
-            insert("insert into test (ts, vch) VALUES ('2023-12-18T18:00:00', 'last')");
+            execute("create table test (ts timestamp, vch varchar) timestamp(ts) partition by day");
+            execute("insert into test (ts, vch) VALUES ('2023-12-17T18:00:00', 'first')");
+            execute("insert into test (ts, vch) VALUES ('2023-12-18T18:00:00', 'last')");
 
             String query = "select first(vch) first_str, " +
                     "last(vch) last_str, " +

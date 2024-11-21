@@ -39,7 +39,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-        ddl("create table tab (f long)");
+        execute("create table tab (f long)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -61,7 +61,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFirstNull() throws SqlException {
-        ddl("create table tab (f long)");
+        execute("create table tab (f long)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -94,7 +94,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-        ddl("create table tab (f long)");
+        execute("create table tab (f long)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -282,7 +282,7 @@ public class MinLongGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSomeNull() throws SqlException {
-        ddl("create table tab (f long)");
+        execute("create table tab (f long)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {

@@ -118,6 +118,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.json;
     exports io.questdb.std.filewatch;
     exports io.questdb.griffin.engine.table.parquet;
+    exports io.questdb.cutlass.pgwire.modern;
 
     provides io.questdb.griffin.FunctionFactory with
 
@@ -143,6 +144,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.test.TestSleepFunctionFactory,
+            io.questdb.griffin.engine.functions.test.TestLargeErrorMsgFunctionFactory,
 
             // bool
             io.questdb.griffin.engine.functions.bool.OrFunctionFactory,
@@ -163,6 +165,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIPv4StrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqLongCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLong128FunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLong256StrFunctionFactory,
@@ -852,6 +855,11 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PgGetSIExprFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgProcFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.PgEnumFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.ReferentialConstraintsFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.TableConstraintsFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.KeyColumnUsageFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.InformationSchemaCharacterSetsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgRangeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgGetKeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
@@ -947,6 +955,16 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.str.LowerVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.str.UpperFunctionFactory,
             io.questdb.griffin.engine.functions.str.UpperVarcharFunctionFactory,
+            // hash functions
+            io.questdb.griffin.engine.functions.str.MD5BinFunctionFactory,
+            io.questdb.griffin.engine.functions.str.MD5StrFunctionFactory,
+            io.questdb.griffin.engine.functions.str.MD5VarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.str.SHA1BinFunctionFactory,
+            io.questdb.griffin.engine.functions.str.SHA1StrFunctionFactory,
+            io.questdb.griffin.engine.functions.str.SHA1VarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.str.SHA256BinFunctionFactory,
+            io.questdb.griffin.engine.functions.str.SHA256StrFunctionFactory,
+            io.questdb.griffin.engine.functions.str.SHA256VarcharFunctionFactory,
             // left/right
             io.questdb.griffin.engine.functions.str.LeftStrFunctionFactory,
             io.questdb.griffin.engine.functions.str.LeftVarcharFunctionFactory,

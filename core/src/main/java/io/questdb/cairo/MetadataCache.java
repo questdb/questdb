@@ -25,13 +25,21 @@
 package io.questdb.cairo;
 
 import io.questdb.TelemetryConfigLogger;
-import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
@@ -80,7 +88,7 @@ public class MetadataCache implements QuietCloseable {
             for (int i = 0, n = tableTokens.size(); i < n; i++) {
                 // acquire a write lock for each table
                 try (MetadataCacheWriter ignore = writeLock()) {
-                    hydrateTable0(tableTokens.getQuick(i));
+                    hydrateTable0(tableTokens.getQuick(i), false);
                 }
             }
 
@@ -123,7 +131,7 @@ public class MetadataCache implements QuietCloseable {
         return cacheWriter;
     }
 
-    private void hydrateTable0(@NotNull TableToken token) {
+    private void hydrateTable0(@NotNull TableToken token, boolean throwError) {
         if (engine.isTableDropped(token)) {
             // Table writer can still process some transactions when DROP table has already
             // been executed, essentially updating dropped table. We should ignore such updates.
@@ -243,6 +251,7 @@ public class MetadataCache implements QuietCloseable {
             try {
                 log
                         .$("could not hydrate metadata [table=").$(token)
+                        .$(", errno=").$(e instanceof CairoException ? ((CairoException) e).errno : 0)
                         .$(", message=");
 
                 if (e instanceof FlyweightMessageContainer) {
@@ -252,6 +261,9 @@ public class MetadataCache implements QuietCloseable {
                 }
             } finally {
                 log.I$();
+            }
+            if (throwError) {
+                throw e;
             }
         } finally {
             Misc.free(metaMem);
@@ -411,38 +423,6 @@ public class MetadataCache implements QuietCloseable {
         }
 
         /**
-         * Rehydrates all tables in the database.
-         */
-        @Override
-        public void hydrateAllTables() {
-            clearCache();
-            ObjHashSet<TableToken> tableTokensSet = new ObjHashSet<>();
-            engine.getTableTokens(tableTokensSet, false);
-            ObjList<TableToken> tableTokens = tableTokensSet.getList();
-
-            if (tableTokens.size() == 0) {
-                LOG.error().$("could not hydrate, there are no table tokens").$();
-                return;
-            }
-
-            for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                hydrateTable(tableTokens.getQuick(i));
-            }
-        }
-
-        /**
-         * @see MetadataCacheWriter#hydrateTable(CharSequence)
-         */
-        @Override
-        public void hydrateTable(@NotNull CharSequence tableName) throws TableReferenceOutOfDateException {
-            final TableToken token = engine.getTableTokenIfExists(tableName);
-            if (token == null) {
-                throw TableReferenceOutOfDateException.of(tableName);
-            }
-            hydrateTable(token);
-        }
-
-        /**
          * @see MetadataCacheWriter#hydrateTable(TableToken)
          */
         @Override
@@ -483,13 +463,13 @@ public class MetadataCache implements QuietCloseable {
 
             int timestampIndex = tableMetadata.getTimestampIndex();
             table.setTimestampIndex(timestampIndex);
-            table.setIsSoftLink(tableMetadata.isSoftLink());
+            table.setIsSoftLink(engine.getConfiguration().getFilesFacade().isSoftLink(Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(tableToken.getDirNameUtf8()).$()));
 
             for (int i = 0; i < columnCount; i++) {
                 final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(i);
-                CharSequence columnName = columnMetadata.getName();
+                CharSequence columnName = columnMetadata.getColumnName();
 
-                int columnType = columnMetadata.getType();
+                int columnType = columnMetadata.getColumnType();
 
                 if (columnType < 0) {
                     continue; // marked for deletion
@@ -502,10 +482,10 @@ public class MetadataCache implements QuietCloseable {
                 column.setName(columnName); // check this, not sure the char sequence is preserved
                 column.setType(columnType);
                 column.setPosition(columnMetadata.getReplacingIndex() > 0 ? columnMetadata.getReplacingIndex() - 1 : i);
-                column.setIsIndexed(columnMetadata.isIndexed());
+                column.setIsIndexed(columnMetadata.isSymbolIndexFlag());
                 column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
                 column.setIsSymbolTableStatic(columnMetadata.isSymbolTableStatic());
-                column.setIsDedupKey(columnMetadata.isDedupKey());
+                column.setIsDedupKey(columnMetadata.isDedupKeyFlag());
                 column.setWriterIndex(columnMetadata.getWriterIndex());
                 column.setIsDesignated(column.getWriterIndex() == timestampIndex);
 
@@ -534,13 +514,16 @@ public class MetadataCache implements QuietCloseable {
 
         @Override
         public void hydrateTable(@NotNull TableToken token) {
-            hydrateTable0(token);
+            hydrateTable0(token, true);
         }
 
         @Override
         public void renameTable(@NotNull TableToken fromTableToken, @NotNull TableToken toTableToken) {
-            dropTable(fromTableToken);
-            hydrateTable(toTableToken);
+            String tableName = fromTableToken.getTableName();
+            final int index = tableMap.keyIndex(tableName);
+            CairoTable fromTab = tableMap.valueAt(index);
+            tableMap.removeAt(index);
+            tableMap.put(toTableToken.getTableName(), new CairoTable(toTableToken, fromTab));
         }
     }
 }

@@ -36,7 +36,7 @@ public class AddIndexTest extends AbstractCairoTest {
     @Test
     public void testAddIndexToColumnWithTop() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table trades as (\n" +
                             "    select \n" +
                             "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -45,8 +45,8 @@ public class AddIndexTest extends AbstractCairoTest {
                             "    from long_sequence(1000)\n" +
                             ") timestamp(ts) partition by DAY"
             );
-            ddl("alter table trades add column sym2 symbol");
-            ddl("alter table trades alter column sym2 add index");
+            execute("alter table trades add column sym2 symbol");
+            execute("alter table trades alter column sym2 add index");
 
             assertSql("sym\tprice\tts\tsym2\n", "trades where sym2 = 'ABB'");
         });
@@ -56,7 +56,7 @@ public class AddIndexTest extends AbstractCairoTest {
     public void testAddIndexToColumnWithTop2() throws Exception {
         assertMemoryLeak(() -> {
             int rowCount = (int) configuration.getDataAppendPageSize() / Integer.BYTES + 1;
-            ddl(
+            execute(
                     "create table trades as (\n" +
                             "    select \n" +
                             "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -66,8 +66,8 @@ public class AddIndexTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY"
             );
 
-            ddl("alter table trades add column sym2 symbol");
-            ddl(
+            execute("alter table trades add column sym2 symbol");
+            execute(
                     "insert into trades \n" +
                             "    select \n" +
                             "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -77,7 +77,7 @@ public class AddIndexTest extends AbstractCairoTest {
                             "    from long_sequence(" + rowCount + ")\n"
             );
 
-            ddl("alter table trades alter column sym2 add index");
+            execute("alter table trades alter column sym2 add index");
             // While row count is derived from append page size, the expected row count value is hardcoded
             // as a string. Test will fail should append page size change.
             assertSql("count\n" +
@@ -88,7 +88,7 @@ public class AddIndexTest extends AbstractCairoTest {
     @Test
     public void testAddIndexToIndexedColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table trades as (\n" +
                             "    select \n" +
                             "        rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
@@ -97,10 +97,10 @@ public class AddIndexTest extends AbstractCairoTest {
                             "    from long_sequence(10000)\n" +
                             ") timestamp(ts) partition by DAY"
             );
-            ddl("alter table trades alter column sym add index");
+            execute("alter table trades alter column sym add index");
 
             try {
-                ddl("alter table trades alter column sym add index");
+                execute("alter table trades alter column sym add index");
                 Assert.fail();
             } catch (SqlException | CairoException e) {
                 Assert.assertEquals(12, e.getPosition());
