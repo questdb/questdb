@@ -1604,7 +1604,6 @@ public class MaxDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
         @Override
         public void toTop() {
             super.toTop();
-
             max = Double.NaN;
         }
 
