@@ -416,6 +416,33 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testInsertNdArr() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+
+                String tableName = "ndarr_test";
+                serverMain.compile("create table " + tableName + " (a1 array(double), a2 array(long), ts timestamp) timestamp(ts) partition by DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .build()
+                ) {
+                    sender.table(tableName)
+                            .array("a1", new double[]{i, i + 1, i + 2})
+                            .array("a2", new long[]{i, i + 1, i + 2})
+                            .atNow();
+                    sender.flush();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLineHttpDisabled() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
