@@ -38,10 +38,6 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeAdminAction() {
-    }
-
-    @Override
     public void authorizeAlterTableAddColumn(TableToken tableToken) {
     }
 
@@ -127,6 +123,14 @@ public class AllowAllSecurityContext implements SecurityContext {
 
     @Override
     public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+    }
+
+    @Override
+    public void authorizeSqlEngineAdmin() {
+    }
+
+    @Override
+    public void authorizeSystemAdmin() {
     }
 
     @Override
