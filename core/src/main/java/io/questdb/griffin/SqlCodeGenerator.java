@@ -268,6 +268,7 @@ import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
+import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
@@ -5036,10 +5037,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
 
-        final GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) model.getTableName();
+        final BufferWindowCharSequence tab = (BufferWindowCharSequence) model.getTableName();
         final boolean supportsRandomAccess;
         if (Chars.startsWith(tab, NO_ROWID_MARKER)) {
-            tab.setLo(tab.getLo() + NO_ROWID_MARKER.length());
+            tab.shiftLo(NO_ROWID_MARKER.length());
             supportsRandomAccess = false;
         } else {
             supportsRandomAccess = true;
