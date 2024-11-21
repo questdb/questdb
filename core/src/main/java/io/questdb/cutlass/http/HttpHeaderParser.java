@@ -277,7 +277,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 continue;
             }
 
-            Unsafe.getUnsafe().putByte(_wptr++, (byte) b);
+            Unsafe.putByte(_wptr++, (byte) b);
 
             switch (b) {
                 case ':':
@@ -760,7 +760,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 default:
                     break;
             }
-            Unsafe.getUnsafe().putByte(_wptr++, (byte) b);
+            Unsafe.putByte(_wptr++, (byte) b);
         }
         return (int) (p - lo);
     }
@@ -805,7 +805,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 default:
                     break;
             }
-            Unsafe.getUnsafe().putByte(_wptr++, (byte) b);
+            Unsafe.putByte(_wptr++, (byte) b);
         }
         return (int) (p - lo);
     }
@@ -848,13 +848,13 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                     _lo = rp - offset;
                     break;
                 case '+':
-                    Unsafe.getUnsafe().putByte(wp++, (byte) ' ');
+                    Unsafe.putByte(wp++, (byte) ' ');
                     continue;
                 case '%':
                     try {
                         if (rp + 1 < hi) {
                             byte bb = (byte) Numbers.parseHexInt(temp.of(rp, rp += 2).asAsciiCharSequence());
-                            Unsafe.getUnsafe().putByte(wp++, bb);
+                            Unsafe.putByte(wp++, bb);
                             offset += 2;
                             continue;
                         }
@@ -864,7 +864,7 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
                 default:
                     break;
             }
-            Unsafe.getUnsafe().putByte(wp++, (byte) b);
+            Unsafe.putByte(wp++, (byte) b);
         }
 
         if (_lo < wp && name != null) {

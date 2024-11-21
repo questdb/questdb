@@ -87,8 +87,8 @@ public final class Kqueue implements Closeable {
     public int listen(long sfd) {
         writeAddress = changeList;
         commonFd(sfd, 0);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_ADD);
+        Unsafe.putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
+        Unsafe.putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_ADD);
         return register(1);
     }
 
@@ -98,8 +98,8 @@ public final class Kqueue implements Closeable {
 
     public void readFD(long fd, int data) {
         commonFd(fd, data);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, (short) (KqueueAccessor.EV_ADD | KqueueAccessor.EV_ONESHOT));
+        Unsafe.putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
+        Unsafe.putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, (short) (KqueueAccessor.EV_ADD | KqueueAccessor.EV_ONESHOT));
     }
 
     public int register(int n) {
@@ -109,21 +109,21 @@ public final class Kqueue implements Closeable {
     public int removeListen(long sfd) {
         writeAddress = changeList;
         commonFd(sfd, 0);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);
+        Unsafe.putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
+        Unsafe.putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);
         return register(1);
     }
 
     public void removeReadFD(long fd) {
         commonFd(fd, 0);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);
+        Unsafe.putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_READ);
+        Unsafe.putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);
     }
 
     public void removeWriteFD(long fd) {
         commonFd(fd, 0);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_WRITE);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);
+        Unsafe.putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_WRITE);
+        Unsafe.putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, KqueueAccessor.EV_DELETE);
     }
 
     public void setReadOffset(int offset) {
@@ -136,13 +136,13 @@ public final class Kqueue implements Closeable {
 
     public void writeFD(long fd, int data) {
         commonFd(fd, data);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_WRITE);
-        Unsafe.getUnsafe().putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, (short) (KqueueAccessor.EV_ADD | KqueueAccessor.EV_ONESHOT));
+        Unsafe.putShort(writeAddress + KqueueAccessor.FILTER_OFFSET, KqueueAccessor.EVFILT_WRITE);
+        Unsafe.putShort(writeAddress + KqueueAccessor.FLAGS_OFFSET, (short) (KqueueAccessor.EV_ADD | KqueueAccessor.EV_ONESHOT));
     }
 
     private void commonFd(long fd, int data) {
-        Unsafe.getUnsafe().putLong(writeAddress + KqueueAccessor.FD_OFFSET, Files.toOsFd(fd));
-        Unsafe.getUnsafe().putInt(writeAddress + KqueueAccessor.DATA_OFFSET, data);
-        Unsafe.getUnsafe().putInt(writeAddress + KqueueAccessor.DATA_OFFSET + 4, Numbers.decodeLowInt(fd));
+        Unsafe.putLong(writeAddress + KqueueAccessor.FD_OFFSET, Files.toOsFd(fd));
+        Unsafe.putInt(writeAddress + KqueueAccessor.DATA_OFFSET, data);
+        Unsafe.putInt(writeAddress + KqueueAccessor.DATA_OFFSET + 4, Numbers.decodeLowInt(fd));
     }
 }

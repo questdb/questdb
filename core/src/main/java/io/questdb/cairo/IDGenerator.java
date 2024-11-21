@@ -91,7 +91,7 @@ public class IDGenerator implements Closeable {
     // This is not thread safe way to reset the id back to 0
     // It is useful for testing only
     public void reset() {
-        Unsafe.getUnsafe().putLong(uniqueIdMem, 0);
+        Unsafe.putLong(uniqueIdMem, 0);
     }
 
     long getCurrentId() {

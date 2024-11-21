@@ -136,7 +136,7 @@ public class RankFunctionFactory implements FunctionFactory {
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             if (recordComparator == null) {
                 // order dismiss
-                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxIndex + 1);
+                Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxIndex + 1);
             } else {
                 if (currentIndex == 0) {
                     currentIndex = 1;
@@ -149,7 +149,7 @@ public class RankFunctionFactory implements FunctionFactory {
                         offset = recordOffset;
                     }
                 }
-                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), currentIndex);
+                Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), currentIndex);
             }
             maxIndex++;
         }
@@ -262,7 +262,7 @@ public class RankFunctionFactory implements FunctionFactory {
 
             if (recordComparator == null) {
                 // no order or order dismiss
-                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), maxIndex + 1);
+                Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), maxIndex + 1);
             } else {
                 long currentIndex = mapValue.getLong(VAL_CURRENT_INDEX);
                 long offset = mapValue.getLong(VAL_OFFSET);
@@ -277,7 +277,7 @@ public class RankFunctionFactory implements FunctionFactory {
                         mapValue.putLong(VAL_OFFSET, recordOffset);
                     }
                 }
-                Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), mapValue.getLong(VAL_CURRENT_INDEX));
+                Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), mapValue.getLong(VAL_CURRENT_INDEX));
             }
             mapValue.putLong(VAL_MAX_INDEX, maxIndex + 1);
         }
@@ -342,7 +342,7 @@ public class RankFunctionFactory implements FunctionFactory {
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
-            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), rank);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), rank);
         }
 
         @Override

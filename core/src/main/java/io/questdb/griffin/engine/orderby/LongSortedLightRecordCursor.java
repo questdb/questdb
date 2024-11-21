@@ -190,11 +190,11 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
                 // radix sort
                 valueRowIdMemCpy.reopen();
                 valueRowIdMemCpy.setCapacity(valueRowIdMem.size());
-                Vect.radixSortLongIndexAscInPlace(valueRowIdMem.getAddress(), valueRowIdMem.size() >>> 1, valueRowIdMemCpy.getAddress());
+                Vect.radixSortLongIndexAscInPlaceChecked(valueRowIdMem.getAddress(), valueRowIdMem.size() >>> 1, valueRowIdMemCpy.getAddress());
                 valueRowIdMemCpy.close();
             } else {
                 // quick sort
-                Vect.quickSortLongIndexAscInPlace(valueRowIdMem.getAddress(), valueRowIdMem.size() >>> 1);
+                Vect.quickSortLongIndexAscInPlaceChecked(valueRowIdMem.getAddress(), valueRowIdMem.size() >>> 1);
             }
         }
         // we're ready to go

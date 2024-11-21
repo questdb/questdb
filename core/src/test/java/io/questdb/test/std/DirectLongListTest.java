@@ -237,7 +237,7 @@ public class DirectLongListTest {
 
     @Test
     public void testSet() {
-        try (DirectLongList list = new DirectLongList(32, MemoryTag.NATIVE_DEFAULT)) {
+        try (DirectLongList list = new DirectLongList(1, MemoryTag.NATIVE_DEFAULT)) {
             final int N = 100;
             for (int i = 0; i < N; i++) {
                 list.add(i);

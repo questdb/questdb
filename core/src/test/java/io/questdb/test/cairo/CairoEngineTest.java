@@ -58,8 +58,8 @@ import static org.junit.Assert.*;
 
 public class CairoEngineTest extends AbstractCairoTest {
 
-    private static Path otherPath = new Path();
-    private static Path path = new Path();
+    private static Path otherPath;
+    private static Path path;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
