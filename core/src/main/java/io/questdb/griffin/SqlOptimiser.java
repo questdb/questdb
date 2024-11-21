@@ -4286,7 +4286,7 @@ public class SqlOptimiser implements Mutable {
 
             ExpressionNode firstOrderByArg = nested.getOrderBy().get(0);
 
-            if (!Chars.equals(firstOrderByArg.token, nested.getTimestamp().token)) {
+            if (!Chars.equalsIgnoreCase(firstOrderByArg.token, nested.getTimestamp().token)) {
                 return;
             }
 
