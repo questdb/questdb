@@ -33,6 +33,12 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
     /*
         Assume we are enclosed in double quotes.
      */
+
+    /**
+     * Differs from `escapeJsonStr` by instead escaping double quotes `"` with double
+     * double quotes `""`. This follows recommendation from RFC 4180.
+     * <a href="https://www.ietf.org/rfc/rfc4180.txt">...</a>
+     */
     default Utf8Sink escapeCsvStr(@NotNull CharSequence cs, int lo, int hi) {
         int i = lo;
         while (i < hi) {

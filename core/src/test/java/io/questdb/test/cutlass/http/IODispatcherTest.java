@@ -7411,7 +7411,7 @@ public class IODispatcherTest extends AbstractTest {
                 .run((engine, sqlExecutionContext) -> {
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /exp?query=SELECT%20%27%7B%22filed1%22%3A1%2C%20%22filed2%22%3A1%2C%20%22filed3%22%3A%22admin%22%2C%20%22filed4%22%3A1%7D%27+as+foo HTTP/1.1\r\n" +
+                            "GET /exp?query=" + urlEncodeQuery("SELECT '{\"filed1\":1, \"filed2\":1, \"filed3\":\"admin\", \"filed4\":1}' as foo") + " HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Cache-Control: max-age=0\r\n" +
@@ -7452,7 +7452,7 @@ public class IODispatcherTest extends AbstractTest {
                 .run((engine, sqlExecutionContext) -> {
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /exp?query=select%20%27foo%5Cfoo%F0%9F%90%A7%27%20as%20foo HTTP/1.1\r\n" +
+                            "GET /exp?query=" + urlEncodeQuery("select 'foo\\foo\uD83D\uDC27' as foo") + " HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Cache-Control: max-age=0\r\n" +
