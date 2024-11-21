@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal;
+package io.questdb.test.cairo.fuzz;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
