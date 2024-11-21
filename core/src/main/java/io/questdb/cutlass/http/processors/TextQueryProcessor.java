@@ -360,7 +360,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                 if (state.columnIndex > 0) {
                                     response.putAscii(state.delimiter);
                                 }
-                                response.putQuote().escapeJsonStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
+                                response.putQuote().escapeCsvStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
                                 state.columnIndex++;
                                 response.bookmark();
                             }

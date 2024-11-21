@@ -7442,6 +7442,47 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testTextQueryCorrectQuotingOfHeader() throws Exception {
+
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withMicrosecondClock(new TestMicroClock(0, 0))
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .run((engine, sqlExecutionContext) -> {
+                    sendAndReceive(
+                            NetworkFacadeImpl.INSTANCE,
+                            "GET /exp?query=" + urlEncodeQuery("SELECT 5 as '\"foo\"'") + " HTTP/1.1\r\n" +
+                                    "Host: localhost:9000\r\n" +
+                                    "Connection: keep-alive\r\n" +
+                                    "Cache-Control: max-age=0\r\n" +
+                                    "Upgrade-Insecure-Requests: 1\r\n" +
+                                    "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "Accept-Encoding: gzip, deflate, br\r\n" +
+                                    "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                                    "\r\n",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/csv; charset=utf-8\r\n" +
+                                    "Content-Disposition: attachment; filename=\"questdb-query-0.csv\"\r\n" +
+                                    "Keep-Alive: timeout=5, max=10000\r\n" +
+                                    "\r\n" +
+                                    "0e\r\n" +
+                                    "\"\"\"foo\"\"\"\r\n" +
+                                    "5\r\n" +
+                                    "\r\n" +
+                                    "00\r\n",
+                            1,
+                            0,
+                            false
+                    );
+                });
+    }
+
+    @Test
     public void testTextQueryCorrectQuotingWithSpecialChars() throws Exception {
 
         new HttpQueryTestBuilder()
