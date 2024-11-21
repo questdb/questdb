@@ -219,7 +219,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
             this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
             this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
-            this.characterStore = new CharacterStore(configuration.getCharacterStoreCapacity(), configuration.getCharacterStorePoolCapacity());
+            this.characterStore = new CharacterStore(
+                    configuration.getCharacterStoreCapacity(),
+                    configuration.getCharacterStorePoolCapacity()
+            );
             this.maxBlobSize = configuration.getMaxBlobSizeOnQuery();
             this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
             this.circuitBreaker = circuitBreaker;
@@ -332,6 +335,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         totalReceived = 0;
         transactionState = IMPLICIT_TRANSACTION;
         entryPool.clear();
+        Misc.clear(characterStore);
     }
 
     @Override
@@ -1345,6 +1349,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 break;
             }
         }
+        characterStore.clear();
     }
 
     private PGPipelineEntry uncacheNamedPortal(CharSequence portalName) {

@@ -111,10 +111,10 @@ public class CleartextPasswordPgWireAuthenticator implements SocketAuthenticator
     @Override
     public void clear() {
         authType = AUTH_TYPE_NONE;
-
         circuitBreaker.setSecret(-1);
         circuitBreaker.resetMaxTimeToDefault();
         circuitBreaker.unsetTimer();
+        Misc.clear(characterStore);
     }
 
     @Override

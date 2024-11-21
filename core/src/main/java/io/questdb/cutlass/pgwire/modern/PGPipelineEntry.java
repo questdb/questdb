@@ -205,7 +205,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             tasCache.put(sqlText, tas);
             tas = null;
         } else if (tai != null && taiCache != null) {
-            taiCache.put(Chars.toString(sqlText), tai);
+            taiCache.put(sqlText, tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             insertOp = null;
         }
@@ -810,7 +810,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     ) throws BadProtocolException {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
-        this.sqlText = sqlText; // todo: should we intern this?
+        this.sqlText = sqlText;
         this.empty = sqlText == null || sqlText.length() == 0;
         cacheHit = false;
 
@@ -1454,6 +1454,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     final int index = pendingWriters.keyIndex(tableToken);
                     if (index < 0) {
                         updateOperation.withContext(sqlExecutionContext);
+                        // cached writers to remain in the list until transaction end
+                        @SuppressWarnings("resource")
                         TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
                         // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
                         tableWriterAPI.commit();

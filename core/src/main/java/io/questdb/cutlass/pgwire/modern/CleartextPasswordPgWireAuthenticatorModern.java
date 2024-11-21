@@ -122,6 +122,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthent
         circuitBreaker.setSecret(-1);
         circuitBreaker.resetMaxTimeToDefault();
         circuitBreaker.unsetTimer();
+        Misc.clear(characterStore);
     }
 
     @Override
