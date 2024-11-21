@@ -491,6 +491,21 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         this.suspendEvent = suspendEvent;
     }
 
+    private static void sendErrorResponseAndReset(PGResponseSink sink, CharSequence message) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        //TODO: reuse code from Authenticator
+        sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = sink.skipInt();
+        sink.put('C');
+        sink.putZ("00000");
+        sink.put('M');
+        sink.putZ(message);
+        sink.put('S');
+        sink.putZ("ERROR");
+        sink.put((char) 0);
+        sink.putLen(addr);
+        sink.sendBufferAndReset();
+    }
+
     private void addPipelineEntry() {
         if (pipelineCurrentEntry != null) {
             pipeline.add(pipelineCurrentEntry);
@@ -639,6 +654,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
         if (len != expectedLen) {
             LOG.error().$("request SSL message expected [actualLen=").$(len).I$();
+            sendErrorResponseAndReset(responseUtf8Sink, "request SSL message expected");
             throw BadProtocolException.INSTANCE;
         }
         long address = recvBuffer + recvBufferReadOffset;
@@ -647,12 +663,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         address += Integer.BYTES;
         if (msgLen != expectedLen) {
             LOG.error().$("unexpected request SSL message [msgLen=").$(msgLen).I$();
+            sendErrorResponseAndReset(responseUtf8Sink, "unexpected request SSL message");
             throw BadProtocolException.INSTANCE;
         }
         int request = getIntUnsafe(address);
         recvBufferReadOffset += Integer.BYTES;
         if (request != SSL_REQUEST) {
             LOG.error().$("unexpected request SSL message [request=").$(msgLen).I$();
+            sendErrorResponseAndReset(responseUtf8Sink, "unexpected request SSL message");
             throw BadProtocolException.INSTANCE;
         }
         // tell the client that SSL is supported
