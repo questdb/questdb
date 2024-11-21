@@ -724,15 +724,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelGroupByRegrIntercept() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
-        testParallelGroupByAllTypes(
-                "SELECT round(regr_intercept(adouble, along), 14) FROM tab", "round\n" +
-                        "0.50356769718027\n"
-        );
-    }
-
-    @Test
-    public void testParallelGroupByRegrIntercept() throws Exception {
-        Assume.assumeTrue(enableParallelGroupBy);
         testParallelGroupByAllTypes("SELECT round(regr_intercept(adouble, along), 14) FROM tab", "round\n" +
                 "0.50356769718027\n");
     }
