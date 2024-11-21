@@ -1629,14 +1629,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
 
             assertQueryNoLeakCheck(
-                    "ts\ti\tj\tavg\tsum\tfirst_value\tcount\tcount1\tcount2\tcount3\tcount4\n" +
-                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\t0\t0\t0\t0\t0\n" +
-                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\t0\t0\t0\t0\t0\n" +
-                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\n" +
-                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\t0\t0\t0\t0\t0\n" +
-                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\t0\t0\t0\t0\t0\n" +
-                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\n" +
-                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4.0\t2\t2\t2\t2\t2\n",
+                    "ts\ti\tj\tavg\tsum\tfirst_value\tcount\tcount1\tcount2\tcount3\tcount4\tmax\tmin\n" +
+                            "1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000002Z\t0\t2\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000003Z\t0\t3\t1.0\t1.0\t1.0\t1\t1\t1\t1\t1\t1.0\t1.0\n" +
+                            "1970-01-01T00:00:00.000004Z\t1\t4\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t0\tnull\tnull\tnull\t0\t0\t0\t0\t0\tnull\tnull\n" +
+                            "1970-01-01T00:00:00.000006Z\t1\t1\t4.0\t4.0\t4.0\t1\t1\t1\t1\t1\t4.0\t4.0\n" +
+                            "1970-01-01T00:00:00.000007Z\t1\t2\t2.0\t4.0\t4.0\t2\t2\t2\t2\t2\t4.0\t0.0\n",
                     "select ts, i, j, " +
                             "avg(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "sum(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
@@ -1645,7 +1645,9 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "count(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "count(s) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
                             "count(d) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
-                            "count(c) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding) " +
+                            "count(c) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                            "max(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding), " +
+                            "min(j) over (partition by i order by ts range between 1 second preceding and 2 microsecond preceding) " +
                             "from tab",
                     "ts",
                     false,
