@@ -4286,7 +4286,7 @@ public class SqlOptimiser implements Mutable {
 
             ExpressionNode firstOrderByArg = nested.getOrderBy().get(0);
 
-            if (!Chars.equals(firstOrderByArg.token, nested.getTimestamp().token)) {
+            if (!Chars.equalsIgnoreCase(firstOrderByArg.token, nested.getTimestamp().token)) {
                 return;
             }
 
@@ -4295,8 +4295,8 @@ public class SqlOptimiser implements Mutable {
             // first, copy the order by up
             for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
                 model.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
-                model.getOrderByAdvice().add(nested.getOrderBy().get(i));
-                model.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
+//                model.getOrderByAdvice().add(nested.getOrderBy().get(i));
+//                model.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
             }
 
             // reverse the scan
