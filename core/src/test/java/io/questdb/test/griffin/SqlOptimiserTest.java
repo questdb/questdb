@@ -1910,7 +1910,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testPushDownLimitFromChooseToNone() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(tripsDdl);
+            execute(tripsDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select cab_type, vendor_id, pickup_datetime from trips \n" +
                     "order by pickup_datetime desc, cab_type desc limit 100;", "Sort light lo: 100 partiallySorted: true\n" +
@@ -1924,7 +1924,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testPushDownLimitFromChooseToNoneWithHiLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(tripsDdl);
+            execute(tripsDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select cab_type, vendor_id, pickup_datetime from trips \n" +
                     "order by pickup_datetime desc, cab_type desc limit 100, 110;", "Sort light lo: 100 hi: 110\n" +
@@ -2616,7 +2616,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testRewriteNegativeLimitAndHiLimitAvoidsJoins() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(tradesDdl);
+            execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("SELECT trades.timestamp, * FROM trades\n" +
                     "ASOF JOIN (SELECT * from trades) trades2\n" +
@@ -2670,7 +2670,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testRewriteNegativeLimitHandlesExistingOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(tradesDdl);
+            execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;", "Sort light\n" +
                     "  keys: [timestamp, side desc]\n" +
@@ -2679,7 +2679,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        PageFrame\n" +
                     "            Row backward scan\n" +
                     "            Frame backward scan on: trades\n");
-            insert("insert into trades (timestamp, side, symbol) values " +
+            execute("insert into trades (timestamp, side, symbol) values " +
                     "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
             drainWalQueue();
             assertSql("timestamp\tside\n" +
@@ -2699,7 +2699,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testRewriteNegativeLimitHandlesExistingOrderByAscAsc() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(tradesDdl);
+            execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side ASC LIMIT -3;", "Sort light\n" +
                     "  keys: [timestamp, side]\n" +
@@ -2708,7 +2708,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        PageFrame\n" +
                     "            Row backward scan\n" +
                     "            Frame backward scan on: trades\n");
-            insert("insert into trades (timestamp, side, symbol) values " +
+            execute("insert into trades (timestamp, side, symbol) values " +
                     "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
             drainWalQueue();
             assertSql("timestamp\tside\n" +
@@ -2727,7 +2727,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testRewriteNegativeLimitHandlesExistingOrderByThreeTerms() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(tradesDdl);
+            execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC LIMIT -3;", "Sort light\n" +
                     "  keys: [timestamp, side desc, symbol]\n" +
@@ -2737,7 +2737,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "            Row backward scan\n" +
                     "            Frame backward scan on: trades\n");
 
-            insert("insert into trades (timestamp, side, symbol) values " +
+            execute("insert into trades (timestamp, side, symbol) values " +
                     "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
             drainWalQueue();
             assertSql("timestamp\tside\tsymbol\n" +
@@ -2756,14 +2756,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testRewriteNegativeLimitHandlesExistingOrderByWithHiLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(tradesDdl);
+            execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -1, -3;", "Sort light lo: -1 hi: -3 partiallySorted: true\n" +
                     "  keys: [timestamp, side desc]\n" +
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: trades\n");
-            insert("insert into trades (timestamp, side, symbol) values " +
+            execute("insert into trades (timestamp, side, symbol) values " +
                     "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
             drainWalQueue();
             assertSql("timestamp\tside\n" +
@@ -2828,7 +2828,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testRewriteNegativeLimitWithHiLimitHandleTimestampAndAliases() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(tradesDdl);
+            execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select timestamp ts1, timestamp ts2 from trades limit -3, -10", "Limit lo: -3 hi: -10\n" +
                     "    SelectedRecord\n" +
@@ -2841,7 +2841,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testRewriteNegativeLimitWithHiLimitHandlesWildcardsManualAliasing() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(tradesDdl);
+            execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3, -10;", "Limit lo: -3 hi: -10\n" +
                     "    SelectedRecord\n" +
@@ -2854,7 +2854,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testRewriteNegativeLimitWithHiLimitHandlesWildcardsTimestampNotFirst() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(tradesDdl);
+            execute(tradesDdl);
             drainWalQueue();
             assertPlanNoLeakCheck("select *, timestamp from trades limit -3, -10;", "Limit lo: -3 hi: -10\n" +
                     "    SelectedRecord\n" +
