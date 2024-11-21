@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin;
+package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionBy;
@@ -36,7 +36,6 @@ import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.fuzz.FuzzTransaction;
-import io.questdb.test.griffin.wal.AbstractFuzzTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
