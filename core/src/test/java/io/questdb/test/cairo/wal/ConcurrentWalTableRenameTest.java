@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal;
+package io.questdb.test.cairo.wal;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
