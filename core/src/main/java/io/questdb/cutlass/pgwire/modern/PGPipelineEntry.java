@@ -531,9 +531,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             taiPool
                     );
                     break;
-                case CompiledQuery.ALTER_USER:
-                case CompiledQuery.CREATE_USER:
-                    assert false : "TODO - these are Parsed-time executed and we need to recompile them again for another execution";
                 case CompiledQuery.DEALLOCATE:
                     // this is supposed to work instead of sending 'close' message via the
                     // network protocol. Reply format out of 'execute' message is
@@ -561,11 +558,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         fut.await();
                     }
                     break;
-                case CompiledQuery.SET:
-                    // SET is a parse-executes SQL for now and must not be acted during "execute" processing.
-                    break;
                 default:
-                    // execute DDL that has not been parse-executed
+                    // execute statements that either have not been parse-executed
+                    // or we are re-executing it from a prepared statement
                     if (!empty) {
                         engine.execute(sqlText, sqlExecutionContext);
                     }
@@ -2546,6 +2541,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         sqlType = 0;
         sqlTag = null;
         preparedStatementNameToDeallocate = null;
+        sqlText = null;
     }
 
     void clearState() {
