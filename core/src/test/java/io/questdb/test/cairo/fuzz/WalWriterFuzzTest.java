@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.wal;
+package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.std.FilesFacadeImpl;
@@ -34,7 +34,7 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
-import static io.questdb.test.griffin.wal.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
+import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
 
 /**
  * These tests are designed to produce unstable runs, e.g. random generator is created
