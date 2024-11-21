@@ -352,4 +352,18 @@ public interface Utf8Sink extends CharSink<Utf8Sink> {
         putAscii('\"').put(cs).putAscii('\"');
         return this;
     }
+
+    /**
+     * Encodes the given UTF-16 string or its fragment to UTF-8 and appends it
+     * to this sink.
+     *
+     * @param cs       UTF-16 string
+     * @param maxBytes maximum number of bytes to write to sink; the limit is applied
+     *                 with character boundaries, so the actual number of written bytes
+     *                 may be lower than this value
+     * @return true if the string was written fully; false otherwise
+     */
+    default boolean putWithLimit(@NotNull CharSequence cs, int maxBytes) {
+        return Utf8s.encodeUtf16WithLimit(this, cs, maxBytes);
+    }
 }

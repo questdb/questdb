@@ -698,10 +698,8 @@ public class SqlUtilTest {
     }
 
     static {
-        // this is required to initialize calendar indexes ahead of using it
+        // this is required to initialize calendar indexes ahead of using them
         // otherwise sink can end up having odd characters
         TimestampFormatUtils.init();
     }
-
-
 }
