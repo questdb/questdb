@@ -2725,6 +2725,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRewriteNegativeLimitHandlesExistingOrderByCaseCheck() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(tradesDdl);
+            drainWalQueue();
+            assertPlanNoLeakCheck("SELECT timestamp, side FROM tRaDEs ORDER BY tiMesTAmP ASC, sIDe DESC LIMIT -3;", "Sort light\n" +
+                    "  keys: [timestamp, side desc]\n" +
+                    "    Sort light lo: 3 partiallySorted: true\n" +
+                    "      keys: [timestamp desc, side desc]\n" +
+                    "        PageFrame\n" +
+                    "            Row backward scan\n" +
+                    "            Frame backward scan on: trades\n");
+            execute("insert into trades (timestamp, side, symbol) values " +
+                    "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
+            drainWalQueue();
+            assertSql("timestamp\tside\n" +
+                    "1970-01-01T00:00:00.000000Z\tsell\n" +
+                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC; ");
+            assertSql("timestamp\tside\n" +
+                    "1970-01-01T00:00:00.000000Z\tsell\n" +
+                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;");
+
+        });
+    }
+
+    @Test
     public void testRewriteNegativeLimitHandlesExistingOrderByThreeTerms() throws Exception {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
