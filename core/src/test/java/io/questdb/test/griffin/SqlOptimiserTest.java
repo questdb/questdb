@@ -2618,17 +2618,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("SELECT trades.timestamp, * FROM trades\n" +
-                    "ASOF JOIN (SELECT * from trades) trades2\n" +
-                    " LIMIT -3, -10;", "Limit lo: -3 hi: -10\n" +
-                    "    SelectedRecord\n" +
-                    "        AsOf Join Fast Scan\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: trades\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: trades\n");
+            assertPlanNoLeakCheck(
+                    "SELECT trades.timestamp, * FROM trades\n" +
+                            "ASOF JOIN (SELECT * from trades) trades2\n" +
+                            " LIMIT -3, -10;",
+                    "Limit lo: -3 hi: -10\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n");
         });
     }
 
@@ -2637,17 +2639,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("SELECT trades.timestamp, * FROM trades\n" +
-                    "ASOF JOIN (SELECT * from trades) trades2\n" +
-                    " LIMIT -3;", "Limit lo: -3\n" +
-                    "    SelectedRecord\n" +
-                    "        AsOf Join Fast Scan\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: trades\n" +
-                    "            PageFrame\n" +
-                    "                Row forward scan\n" +
-                    "                Frame forward scan on: trades\n");
+            assertPlanNoLeakCheck(
+                    "SELECT trades.timestamp, * FROM trades\n" +
+                            "ASOF JOIN (SELECT * from trades) trades2\n" +
+                            " LIMIT -3;",
+                    "Limit lo: -3\n" +
+                            "    SelectedRecord\n" +
+                            "        AsOf Join Fast Scan\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: trades\n");
         });
     }
 
@@ -2656,14 +2660,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("select timestamp ts1, timestamp ts2 from trades limit -3", "SelectedRecord\n" +
-                    "    Radix sort light\n" +
-                    "      keys: [timestamp]\n" +
-                    "        SelectedRecord\n" +
-                    "            Limit lo: 3\n" +
-                    "                PageFrame\n" +
-                    "                    Row backward scan\n" +
-                    "                    Frame backward scan on: trades\n");
+            assertPlanNoLeakCheck("select timestamp ts1, timestamp ts2 from trades limit -3",
+                    "SelectedRecord\n" +
+                            "    Radix sort light\n" +
+                            "      keys: [timestamp]\n" +
+                            "        SelectedRecord\n" +
+                            "            Limit lo: 3\n" +
+                            "                PageFrame\n" +
+                            "                    Row backward scan\n" +
+                            "                    Frame backward scan on: trades\n");
         });
     }
 
@@ -2672,26 +2677,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;", "Sort light\n" +
-                    "  keys: [timestamp, side desc]\n" +
-                    "    Sort light lo: 3 partiallySorted: true\n" +
-                    "      keys: [timestamp desc, side desc]\n" +
-                    "        PageFrame\n" +
-                    "            Row backward scan\n" +
-                    "            Frame backward scan on: trades\n");
+            assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;",
+                    "Sort light\n" +
+                            "  keys: [timestamp, side desc]\n" +
+                            "    Sort light lo: 3 partiallySorted: true\n" +
+                            "      keys: [timestamp desc, side desc]\n" +
+                            "        PageFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: trades\n");
             execute("insert into trades (timestamp, side, symbol) values " +
                     "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
             drainWalQueue();
             assertSql("timestamp\tside\n" +
-                    "1970-01-01T00:00:00.000000Z\tsell\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC; ");
+                            "1970-01-01T00:00:00.000000Z\tsell\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000001Z\tsell\n",
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC; ");
             assertSql("timestamp\tside\n" +
-                    "1970-01-01T00:00:00.000000Z\tsell\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;");
+                            "1970-01-01T00:00:00.000000Z\tsell\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000001Z\tsell\n",
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;");
 
         });
     }
@@ -2701,26 +2709,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side ASC LIMIT -3;", "Sort light\n" +
-                    "  keys: [timestamp, side]\n" +
-                    "    Sort light lo: 3 partiallySorted: true\n" +
-                    "      keys: [timestamp desc, side]\n" +
-                    "        PageFrame\n" +
-                    "            Row backward scan\n" +
-                    "            Frame backward scan on: trades\n");
+            assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side ASC LIMIT -3;",
+                    "Sort light\n" +
+                            "  keys: [timestamp, side]\n" +
+                            "    Sort light lo: 3 partiallySorted: true\n" +
+                            "      keys: [timestamp desc, side]\n" +
+                            "        PageFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: trades\n");
             execute("insert into trades (timestamp, side, symbol) values " +
                     "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
             drainWalQueue();
             assertSql("timestamp\tside\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000000Z\tsell\n" +
-                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side ASC; ");
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000000Z\tsell\n" +
+                            "1970-01-01T00:00:00.000001Z\tsell\n",
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side ASC; ");
             assertSql("timestamp\tside\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side ASC LIMIT -3;");
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000001Z\tsell\n",
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side ASC LIMIT -3;");
         });
     }
 
@@ -2729,26 +2740,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("SELECT timestamp, side FROM tRaDEs ORDER BY tiMesTAmP ASC, sIDe DESC LIMIT -3;", "Sort light\n" +
-                    "  keys: [timestamp, side desc]\n" +
-                    "    Sort light lo: 3 partiallySorted: true\n" +
-                    "      keys: [timestamp desc, side desc]\n" +
-                    "        PageFrame\n" +
-                    "            Row backward scan\n" +
-                    "            Frame backward scan on: trades\n");
+            assertPlanNoLeakCheck("SELECT timestamp, side FROM tRaDEs ORDER BY tiMesTAmP ASC, sIDe DESC LIMIT -3;",
+                    "Sort light\n" +
+                            "  keys: [timestamp, side desc]\n" +
+                            "    Sort light lo: 3 partiallySorted: true\n" +
+                            "      keys: [timestamp desc, side desc]\n" +
+                            "        PageFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: trades\n");
             execute("insert into trades (timestamp, side, symbol) values " +
                     "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
             drainWalQueue();
             assertSql("timestamp\tside\n" +
-                    "1970-01-01T00:00:00.000000Z\tsell\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC; ");
+                            "1970-01-01T00:00:00.000000Z\tsell\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000001Z\tsell\n",
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC; ");
             assertSql("timestamp\tside\n" +
-                    "1970-01-01T00:00:00.000000Z\tsell\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;");
+                            "1970-01-01T00:00:00.000000Z\tsell\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000001Z\tsell\n",
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;");
 
         });
     }
@@ -2758,27 +2772,30 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC LIMIT -3;", "Sort light\n" +
-                    "  keys: [timestamp, side desc, symbol]\n" +
-                    "    Sort light lo: 3 partiallySorted: true\n" +
-                    "      keys: [timestamp desc, side desc, symbol]\n" +
-                    "        PageFrame\n" +
-                    "            Row backward scan\n" +
-                    "            Frame backward scan on: trades\n");
+            assertPlanNoLeakCheck("SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC LIMIT -3;",
+                    "Sort light\n" +
+                            "  keys: [timestamp, side desc, symbol]\n" +
+                            "    Sort light lo: 3 partiallySorted: true\n" +
+                            "      keys: [timestamp desc, side desc, symbol]\n" +
+                            "        PageFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: trades\n");
 
             execute("insert into trades (timestamp, side, symbol) values " +
                     "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
             drainWalQueue();
             assertSql("timestamp\tside\tsymbol\n" +
-                    "1970-01-01T00:00:00.000000Z\tsell\tabc\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\tabc\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\tdef\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\tfgh\n" +
-                    "1970-01-01T00:00:00.000001Z\tsell\tabc\n", "SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC;");
+                            "1970-01-01T00:00:00.000000Z\tsell\tabc\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\tabc\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\tdef\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\tfgh\n" +
+                            "1970-01-01T00:00:00.000001Z\tsell\tabc\n",
+                    "SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC;");
             assertSql("timestamp\tside\tsymbol\n" +
-                    "1970-01-01T00:00:00.000000Z\tsell\tabc\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\tabc\n" +
-                    "1970-01-01T00:00:00.000001Z\tsell\tabc\n", "SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC LIMIT -3;");
+                            "1970-01-01T00:00:00.000000Z\tsell\tabc\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\tabc\n" +
+                            "1970-01-01T00:00:00.000001Z\tsell\tabc\n",
+                    "SELECT timestamp, side, symbol FROM trades ORDER BY timestamp ASC, side DESC, symbol ASC LIMIT -3;");
         });
     }
 
@@ -2787,24 +2804,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -1, -3;", "Sort light lo: -1 hi: -3 partiallySorted: true\n" +
-                    "  keys: [timestamp, side desc]\n" +
-                    "    PageFrame\n" +
-                    "        Row forward scan\n" +
-                    "        Frame forward scan on: trades\n");
+            assertPlanNoLeakCheck("SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -1, -3;",
+                    "Sort light lo: -1 hi: -3 partiallySorted: true\n" +
+                            "  keys: [timestamp, side desc]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: trades\n");
             execute("insert into trades (timestamp, side, symbol) values " +
                     "(0, 'sell', 'abc'), (0, 'buy', 'abc'), (0, 'buy', 'def'), (0, 'buy', 'fgh'), (1, 'sell', 'abc')");
             drainWalQueue();
             assertSql("timestamp\tside\n" +
-                    "1970-01-01T00:00:00.000000Z\tsell\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC; ");
+                            "1970-01-01T00:00:00.000000Z\tsell\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000001Z\tsell\n",
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC; ");
             assertSql("timestamp\tside\n" +
-                    "1970-01-01T00:00:00.000000Z\tsell\n" +
-                    "1970-01-01T00:00:00.000000Z\tbuy\n" +
-                    "1970-01-01T00:00:00.000001Z\tsell\n", "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;");
+                            "1970-01-01T00:00:00.000000Z\tsell\n" +
+                            "1970-01-01T00:00:00.000000Z\tbuy\n" +
+                            "1970-01-01T00:00:00.000001Z\tsell\n",
+                    "SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3;");
 
         });
     }
@@ -2814,13 +2834,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("select timestamp, * from trades limit -3", "Radix sort light\n" +
-                    "  keys: [timestamp]\n" +
-                    "    SelectedRecord\n" +
-                    "        Limit lo: 3\n" +
-                    "            PageFrame\n" +
-                    "                Row backward scan\n" +
-                    "                Frame backward scan on: trades\n");
+            assertPlanNoLeakCheck("select timestamp, * from trades limit -3",
+                    "Radix sort light\n" +
+                            "  keys: [timestamp]\n" +
+                            "    SelectedRecord\n" +
+                            "        Limit lo: 3\n" +
+                            "            PageFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: trades\n");
         });
     }
 
@@ -2829,13 +2850,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3", "Radix sort light\n" +
-                    "  keys: [timestamp]\n" +
-                    "    SelectedRecord\n" +
-                    "        Limit lo: 3\n" +
-                    "            PageFrame\n" +
-                    "                Row backward scan\n" +
-                    "                Frame backward scan on: trades\n");
+            assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3",
+                    "Radix sort light\n" +
+                            "  keys: [timestamp]\n" +
+                            "    SelectedRecord\n" +
+                            "        Limit lo: 3\n" +
+                            "            PageFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: trades\n");
         });
     }
 
@@ -2844,13 +2866,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("select *, timestamp from trades limit -3", "Radix sort light\n" +
-                    "  keys: [timestamp]\n" +
-                    "    SelectedRecord\n" +
-                    "        Limit lo: 3\n" +
-                    "            PageFrame\n" +
-                    "                Row backward scan\n" +
-                    "                Frame backward scan on: trades\n");
+            assertPlanNoLeakCheck("select *, timestamp from trades limit -3",
+                    "Radix sort light\n" +
+                            "  keys: [timestamp]\n" +
+                            "    SelectedRecord\n" +
+                            "        Limit lo: 3\n" +
+                            "            PageFrame\n" +
+                            "                Row backward scan\n" +
+                            "                Frame backward scan on: trades\n");
         });
     }
 
@@ -2859,11 +2882,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("select timestamp ts1, timestamp ts2 from trades limit -3, -10", "Limit lo: -3 hi: -10\n" +
-                    "    SelectedRecord\n" +
-                    "        PageFrame\n" +
-                    "            Row forward scan\n" +
-                    "            Frame forward scan on: trades\n");
+            assertPlanNoLeakCheck("select timestamp ts1, timestamp ts2 from trades limit -3, -10",
+                    "Limit lo: -3 hi: -10\n" +
+                            "    SelectedRecord\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n");
         });
     }
 
@@ -2872,11 +2896,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3, -10;", "Limit lo: -3 hi: -10\n" +
-                    "    SelectedRecord\n" +
-                    "        PageFrame\n" +
-                    "            Row forward scan\n" +
-                    "            Frame forward scan on: trades\n");
+            assertPlanNoLeakCheck("select *, timestamp ts1, timestamp ts2 from trades limit -3, -10;",
+                    "Limit lo: -3 hi: -10\n" +
+                            "    SelectedRecord\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n");
         });
     }
 
@@ -2885,11 +2910,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertPlanNoLeakCheck("select *, timestamp from trades limit -3, -10;", "Limit lo: -3 hi: -10\n" +
-                    "    SelectedRecord\n" +
-                    "        PageFrame\n" +
-                    "            Row forward scan\n" +
-                    "            Frame forward scan on: trades\n");
+            assertPlanNoLeakCheck("select *, timestamp from trades limit -3, -10;",
+                    "Limit lo: -3 hi: -10\n" +
+                            "    SelectedRecord\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: trades\n");
         });
     }
 
