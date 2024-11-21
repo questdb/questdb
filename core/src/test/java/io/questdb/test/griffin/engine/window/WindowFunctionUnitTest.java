@@ -251,7 +251,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testCountConstOverRowsFuzz() throws Exception {
-        fuzzTestLong(
+        fuzzTestCountBase(
                 TestUtils.generateRandom(LOG),
                 false,
                 true,
@@ -274,7 +274,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testCountConstOverPartitionRowsFuzz() throws Exception {
-        fuzzTestLong(
+        fuzzTestCountBase(
                 TestUtils.generateRandom(LOG),
                 true,
                 true,
@@ -294,7 +294,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testCountDoubleOverRowsFuzz() throws Exception {
-        fuzzTestLong(
+        fuzzTestCountBase(
                 TestUtils.generateRandom(LOG),
                 false,
                 true,
@@ -320,7 +320,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testCountDoubleOverPartitionRowsFuzz() throws Exception {
-        fuzzTestLong(
+        fuzzTestCountBase(
                 TestUtils.generateRandom(LOG),
                 true,
                 true,
@@ -343,7 +343,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testCountDoubleOverPartitionRangeFuzz() throws Exception {
-        fuzzTestLong(
+        fuzzTestCountBase(
                 TestUtils.generateRandom(LOG),
                 true,
                 false,
@@ -368,7 +368,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testCountDoubleRangeFuzz() throws Exception {
-        fuzzTestLong(
+        fuzzTestCountBase(
                 TestUtils.generateRandom(LOG),
                 false,
                 false,
@@ -387,7 +387,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         );
     }
 
-    private void fuzzTestLong(
+    private void fuzzTestCountBase(
             Rnd rnd,
             boolean partitioned,
             boolean rows,
