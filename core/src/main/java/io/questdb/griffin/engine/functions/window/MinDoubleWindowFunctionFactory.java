@@ -84,6 +84,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                         public String getName() {
                             return NAME;
                         }
+
                         @Override
                         protected boolean compare(double a, double b) {
                             return Double.compare(a, b) > 0;
@@ -107,6 +108,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                         public String getName() {
                             return NAME;
                         }
+
                         @Override
                         protected boolean compare(double a, double b) {
                             return Double.compare(a, b) > 0;
@@ -160,6 +162,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                             public String getName() {
                                 return NAME;
                             }
+
                             @Override
                             protected boolean compare(double a, double b) {
                                 return Double.compare(a, b) > 0;
@@ -191,6 +194,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                         public String getName() {
                             return NAME;
                         }
+
                         @Override
                         protected boolean compare(double a, double b) {
                             return Double.compare(a, b) > 0;
@@ -222,6 +226,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                         public String getName() {
                             return NAME;
                         }
+
                         @Override
                         protected boolean compare(double a, double b) {
                             return Double.compare(a, b) > 0;
@@ -268,6 +273,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                             public String getName() {
                                 return NAME;
                             }
+
                             @Override
                             protected boolean compare(double a, double b) {
                                 return Double.compare(a, b) > 0;
@@ -290,6 +296,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                         public String getName() {
                             return NAME;
                         }
+
                         @Override
                         protected boolean compare(double a, double b) {
                             return Double.compare(a, b) > 0;
@@ -303,6 +310,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                         public String getName() {
                             return NAME;
                         }
+
                         @Override
                         protected boolean compare(double a, double b) {
                             return Double.compare(a, b) > 0;
@@ -344,6 +352,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                             public String getName() {
                                 return NAME;
                             }
+
                             @Override
                             protected boolean compare(double a, double b) {
                                 return Double.compare(a, b) > 0;
@@ -363,6 +372,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                         public String getName() {
                             return NAME;
                         }
+
                         @Override
                         protected boolean compare(double a, double b) {
                             return Double.compare(a, b) > 0;
@@ -370,7 +380,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                     };
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
-                    return new MaxDoubleWindowFunctionFactory.MaxOverCurrentRowFunction(args.get(0)){
+                    return new MaxDoubleWindowFunctionFactory.MaxOverCurrentRowFunction(args.get(0)) {
                         @Override
                         public String getName() {
                             return NAME;
@@ -383,6 +393,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                         public String getName() {
                             return NAME;
                         }
+
                         @Override
                         protected boolean compare(double a, double b) {
                             return Double.compare(a, b) > 0;
@@ -414,6 +425,7 @@ public class MinDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                         public String getName() {
                             return NAME;
                         }
+
                         @Override
                         protected boolean compare(double a, double b) {
                             return Double.compare(a, b) > 0;
