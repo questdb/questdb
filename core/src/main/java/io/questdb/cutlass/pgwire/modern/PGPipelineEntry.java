@@ -2457,12 +2457,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 sqlTag = TAG_UPDATE;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
-                stateParseExecuted = true;
                 sqlTag = TAG_INSERT_AS_SELECT;
                 break;
             case CompiledQuery.SET:
                 sqlTag = TAG_SET;
-                stateParseExecuted = true;
                 break;
             case CompiledQuery.DEALLOCATE:
                 this.preparedStatementNameToDeallocate = Chars.toString(cq.getStatementName());
@@ -2478,14 +2476,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 sqlTag = TAG_ROLLBACK;
                 break;
             case CompiledQuery.ALTER_USER:
-                sqlTextHasSecret = sqlExecutionContext.containsSecret();
                 sqlTag = TAG_ALTER_ROLE;
-                stateParseExecuted = true;
                 break;
             case CompiledQuery.CREATE_USER:
-                sqlTextHasSecret = sqlExecutionContext.containsSecret();
                 sqlTag = TAG_CREATE_ROLE;
-                stateParseExecuted = true;
                 break;
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
@@ -2496,9 +2490,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             default:
                 // DDL
                 sqlTag = TAG_OK;
-                stateParseExecuted = true;
                 break;
         }
+        sqlTextHasSecret = sqlExecutionContext.containsSecret();
+        stateParseExecuted = cq.executedAtParseTime();
     }
 
     // Returns false if column size is known to be the same in both text and binary formats.
