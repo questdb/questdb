@@ -22,49 +22,21 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb.metrics;
 
-public interface WorkerPoolConfiguration {
+public class MetricsConfigurationWrapper implements MetricsConfiguration {
+    private final MetricsConfiguration delegate;
 
-    default long getNapThreshold() {
-        return 7000;
+    protected MetricsConfigurationWrapper() {
+        delegate = null;
     }
 
-    default String getPoolName() {
-        return "worker";
+    @Override
+    public boolean isEnabled() {
+        return getDelegate().isEnabled();
     }
 
-    default long getSleepThreshold() {
-        return 10000;
-    }
-
-    default long getSleepTimeout() {
-        return 10;
-    }
-
-    default int[] getWorkerAffinity() {
-        return null;
-    }
-
-    int getWorkerCount();
-
-    default long getYieldThreshold() {
-        return 10;
-    }
-
-    default boolean haltOnError() {
-        return false;
-    }
-
-    default boolean isDaemonPool() {
-        return false;
-    }
-
-    default boolean isEnabled() {
-        return true;
-    }
-
-    default int workerPoolPriority() {
-        return Thread.NORM_PRIORITY;
+    protected MetricsConfiguration getDelegate() {
+        return delegate;
     }
 }

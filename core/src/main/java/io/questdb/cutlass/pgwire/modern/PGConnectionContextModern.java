@@ -215,6 +215,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             this.engine = engine;
             this.configuration = configuration;
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
+            // TODO: read from props
             this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
             this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
             this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();

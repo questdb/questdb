@@ -22,49 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb;
 
-public interface WorkerPoolConfiguration {
+public class MemoryConfigurationWrapper implements MemoryConfiguration {
+    private final MemoryConfiguration delegate;
 
-    default long getNapThreshold() {
-        return 7000;
+    protected MemoryConfigurationWrapper() {
+        delegate = null;
     }
 
-    default String getPoolName() {
-        return "worker";
+    @Override
+    public long getRamUsageLimitBytes() {
+        return getDelegate().getRamUsageLimitBytes();
     }
 
-    default long getSleepThreshold() {
-        return 10000;
+    @Override
+    public long getRamUsageLimitPercent() {
+        return getDelegate().getRamUsageLimitPercent();
     }
 
-    default long getSleepTimeout() {
-        return 10;
+    @Override
+    public long getResolvedRamUsageLimitBytes() {
+        return getDelegate().getResolvedRamUsageLimitBytes();
     }
 
-    default int[] getWorkerAffinity() {
-        return null;
+    @Override
+    public long getTotalSystemMemory() {
+        return getDelegate().getTotalSystemMemory();
     }
 
-    int getWorkerCount();
-
-    default long getYieldThreshold() {
-        return 10;
-    }
-
-    default boolean haltOnError() {
-        return false;
-    }
-
-    default boolean isDaemonPool() {
-        return false;
-    }
-
-    default boolean isEnabled() {
-        return true;
-    }
-
-    default int workerPoolPriority() {
-        return Thread.NORM_PRIORITY;
+    protected MemoryConfiguration getDelegate() {
+        return delegate;
     }
 }

@@ -22,49 +22,33 @@
  *
  ******************************************************************************/
 
-package io.questdb.mp;
+package io.questdb;
 
-public interface WorkerPoolConfiguration {
+import io.questdb.std.CharSequenceObjHashMap;
 
-    default long getNapThreshold() {
-        return 7000;
+public class PublicPassthroughConfigurationWrapper implements PublicPassthroughConfiguration {
+    private final PublicPassthroughConfiguration delegate;
+
+    protected PublicPassthroughConfigurationWrapper() {
+        delegate = null;
     }
 
-    default String getPoolName() {
-        return "worker";
+    @Override
+    public String getPosthogApiKey() {
+        return getDelegate().getPosthogApiKey();
     }
 
-    default long getSleepThreshold() {
-        return 10000;
+    @Override
+    public boolean isPosthogEnabled() {
+        return getDelegate().isPosthogEnabled();
     }
 
-    default long getSleepTimeout() {
-        return 10;
+    @Override
+    public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
+        getDelegate().populateSettings(settings);
     }
 
-    default int[] getWorkerAffinity() {
-        return null;
-    }
-
-    int getWorkerCount();
-
-    default long getYieldThreshold() {
-        return 10;
-    }
-
-    default boolean haltOnError() {
-        return false;
-    }
-
-    default boolean isDaemonPool() {
-        return false;
-    }
-
-    default boolean isEnabled() {
-        return true;
-    }
-
-    default int workerPoolPriority() {
-        return Thread.NORM_PRIORITY;
+    protected PublicPassthroughConfiguration getDelegate() {
+        return delegate;
     }
 }
