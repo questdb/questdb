@@ -32,7 +32,6 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.NanosecondClock;
@@ -44,10 +43,9 @@ import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import java.io.IOException;
 import java.io.InputStream;
 
-public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
+public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfiguration implements HttpServerConfiguration {
 
     protected final MimeTypesCache mimeTypesCache;
-    private final IODispatcherConfiguration dispatcherConfiguration;
     private final HttpContextConfiguration httpContextConfiguration;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new DefaultJsonQueryProcessorConfiguration() {
     };
@@ -89,25 +87,12 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     public DefaultHttpServerConfiguration(HttpContextConfiguration httpContextConfiguration) {
-        this(httpContextConfiguration, DefaultIODispatcherConfiguration.INSTANCE);
-    }
-
-    public DefaultHttpServerConfiguration(
-            HttpContextConfiguration httpContextConfiguration,
-            IODispatcherConfiguration dispatcherConfiguration
-    ) {
         try (InputStream inputStream = DefaultHttpServerConfiguration.class.getResourceAsStream("/io/questdb/site/conf/mime.types")) {
             this.mimeTypesCache = new MimeTypesCache(inputStream);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
         this.httpContextConfiguration = httpContextConfiguration;
-        this.dispatcherConfiguration = dispatcherConfiguration;
-    }
-
-    @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return dispatcherConfiguration;
     }
 
     @Override
@@ -206,13 +191,13 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public boolean preAllocateBuffers() {
-        return false;
+    public boolean isQueryCacheEnabled() {
+        return true;
     }
 
     @Override
-    public boolean isQueryCacheEnabled() {
-        return true;
+    public boolean preAllocateBuffers() {
+        return false;
     }
 
     public class DefaultJsonQueryProcessorConfiguration implements JsonQueryProcessorConfiguration {

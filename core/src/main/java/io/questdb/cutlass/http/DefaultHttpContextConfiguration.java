@@ -34,6 +34,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultHttpContextConfiguration implements HttpContextConfiguration {
+
     @Override
     public boolean allowDeflateBeforeSend() {
         return false;

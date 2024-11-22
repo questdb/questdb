@@ -33,8 +33,6 @@ import io.questdb.cutlass.http.MimeTypesCache;
 import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
@@ -68,23 +66,6 @@ public class HttpServerConfigurationBuilder {
     private int workerCount;
 
     public DefaultHttpServerConfiguration build() {
-        final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-            @Override
-            public int getBindPort() {
-                return port != -1 ? port : super.getBindPort();
-            }
-
-            @Override
-            public NetworkFacade getNetworkFacade() {
-                return nf;
-            }
-
-            @Override
-            public int getSendBufferSize() {
-                return tcpSndBufSize == 0 ? super.getSendBufferSize() : tcpSndBufSize;
-            }
-        };
-
         return new DefaultHttpServerConfiguration() {
             private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new JsonQueryProcessorConfiguration() {
                 @Override
@@ -165,8 +146,8 @@ public class HttpServerConfigurationBuilder {
             };
 
             @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return ioDispatcherConfiguration;
+            public int getBindPort() {
+                return port != -1 ? port : super.getBindPort();
             }
 
             @Override
@@ -236,8 +217,18 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
+            public NetworkFacade getNetworkFacade() {
+                return nf;
+            }
+
+            @Override
             public byte getRequiredAuthType() {
                 return httpHealthCheckAuthType;
+            }
+
+            @Override
+            public int getSendBufferSize() {
+                return tcpSndBufSize == 0 ? super.getSendBufferSize() : tcpSndBufSize;
             }
 
             @Override

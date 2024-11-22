@@ -83,10 +83,9 @@ public class HttpMinTest extends AbstractBootstrapTest {
                     Os.sleep(10);
                 }
 
-                int httpMinPort = serverMain.getConfiguration().getHttpMinServerConfiguration().getDispatcherConfiguration().getBindPort();
+                int httpMinPort = serverMain.getConfiguration().getHttpMinServerConfiguration().getBindPort();
                 long buff = 0, rssAvailable = 0;
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
-
                     while (true) {
                         try {
                             rssAvailable = Unsafe.getRssMemAvailable();

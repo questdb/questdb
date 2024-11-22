@@ -28,7 +28,11 @@ import io.questdb.FactoryProvider;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.KqueueFacade;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.SelectFacade;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     private final HttpServerConfiguration delegate;
@@ -38,8 +42,33 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     }
 
     @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return getDelegate().getDispatcherConfiguration();
+    public int getBindIPv4Address() {
+        return getDelegate().getBindIPv4Address();
+    }
+
+    @Override
+    public int getBindPort() {
+        return getDelegate().getBindPort();
+    }
+
+    @Override
+    public MillisecondClock getClock() {
+        return getDelegate().getClock();
+    }
+
+    @Override
+    public String getDispatcherLogName() {
+        return getDelegate().getDispatcherLogName();
+    }
+
+    @Override
+    public EpollFacade getEpollFacade() {
+        return getDelegate().getEpollFacade();
+    }
+
+    @Override
+    public int getEventCapacity() {
+        return getDelegate().getEventCapacity();
     }
 
     @Override
@@ -48,8 +77,33 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     }
 
     @Override
+    public long getHeartbeatInterval() {
+        return getDelegate().getHeartbeatInterval();
+    }
+
+    @Override
+    public boolean getHint() {
+        return getDelegate().getHint();
+    }
+
+    @Override
     public HttpContextConfiguration getHttpContextConfiguration() {
         return getDelegate().getHttpContextConfiguration();
+    }
+
+    @Override
+    public int getIOQueueCapacity() {
+        return getDelegate().getIOQueueCapacity();
+    }
+
+    @Override
+    public int getInitialBias() {
+        return getDelegate().getInitialBias();
+    }
+
+    @Override
+    public int getInterestQueueCapacity() {
+        return getDelegate().getInterestQueueCapacity();
     }
 
     @Override
@@ -58,8 +112,23 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     }
 
     @Override
+    public KqueueFacade getKqueueFacade() {
+        return getDelegate().getKqueueFacade();
+    }
+
+    @Override
+    public int getLimit() {
+        return getDelegate().getLimit();
+    }
+
+    @Override
     public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
         return getDelegate().getLineHttpProcessorConfiguration();
+    }
+
+    @Override
+    public int getListenBacklog() {
+        return getDelegate().getListenBacklog();
     }
 
     @Override
@@ -68,8 +137,18 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     }
 
     @Override
+    public NetworkFacade getNetworkFacade() {
+        return getDelegate().getNetworkFacade();
+    }
+
+    @Override
     public String getPassword() {
         return getDelegate().getPassword();
+    }
+
+    @Override
+    public boolean getPeerNoLinger() {
+        return getDelegate().getPeerNoLinger();
     }
 
     @Override
@@ -88,8 +167,28 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     }
 
     @Override
+    public long getQueueTimeout() {
+        return getDelegate().getQueueTimeout();
+    }
+
+    @Override
+    public int getRecvBufferSize() {
+        return getDelegate().getRecvBufferSize();
+    }
+
+    @Override
     public byte getRequiredAuthType() {
         return getDelegate().getRequiredAuthType();
+    }
+
+    @Override
+    public SelectFacade getSelectFacade() {
+        return getDelegate().getSelectFacade();
+    }
+
+    @Override
+    public int getSendBufferSize() {
+        return getDelegate().getSendBufferSize();
     }
 
     @Override
@@ -105,6 +204,16 @@ public class HttpServerConfigurationWrapper implements HttpServerConfiguration {
     @Override
     public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
         return getDelegate().getStaticContentProcessorConfiguration();
+    }
+
+    @Override
+    public int getTestConnectionBufferSize() {
+        return getDelegate().getTestConnectionBufferSize();
+    }
+
+    @Override
+    public long getTimeout() {
+        return getDelegate().getTimeout();
     }
 
     @Override

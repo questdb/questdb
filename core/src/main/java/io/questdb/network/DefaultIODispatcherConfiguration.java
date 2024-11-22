@@ -28,7 +28,6 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultIODispatcherConfiguration implements IODispatcherConfiguration {
-
     public static final IODispatcherConfiguration INSTANCE = new DefaultIODispatcherConfiguration();
 
     @Override
@@ -54,7 +53,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     @Override
     public long getHeartbeatInterval() {
         // don't send heartbeat messages by default
-        return -1L;
+        return -1;
     }
 
     @Override

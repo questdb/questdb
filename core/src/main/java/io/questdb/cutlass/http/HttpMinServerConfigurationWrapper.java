@@ -25,7 +25,11 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.FactoryProvider;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.KqueueFacade;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.SelectFacade;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class HttpMinServerConfigurationWrapper implements HttpMinServerConfiguration {
     private final HttpMinServerConfiguration delegate;
@@ -35,8 +39,33 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
     }
 
     @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return getDelegate().getDispatcherConfiguration();
+    public int getBindIPv4Address() {
+        return getDelegate().getBindIPv4Address();
+    }
+
+    @Override
+    public int getBindPort() {
+        return getDelegate().getBindPort();
+    }
+
+    @Override
+    public MillisecondClock getClock() {
+        return getDelegate().getClock();
+    }
+
+    @Override
+    public String getDispatcherLogName() {
+        return getDelegate().getDispatcherLogName();
+    }
+
+    @Override
+    public EpollFacade getEpollFacade() {
+        return getDelegate().getEpollFacade();
+    }
+
+    @Override
+    public int getEventCapacity() {
+        return getDelegate().getEventCapacity();
     }
 
     @Override
@@ -45,8 +74,48 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
     }
 
     @Override
+    public long getHeartbeatInterval() {
+        return getDelegate().getHeartbeatInterval();
+    }
+
+    @Override
+    public boolean getHint() {
+        return getDelegate().getHint();
+    }
+
+    @Override
     public HttpContextConfiguration getHttpContextConfiguration() {
         return getDelegate().getHttpContextConfiguration();
+    }
+
+    @Override
+    public int getIOQueueCapacity() {
+        return getDelegate().getIOQueueCapacity();
+    }
+
+    @Override
+    public int getInitialBias() {
+        return getDelegate().getInitialBias();
+    }
+
+    @Override
+    public int getInterestQueueCapacity() {
+        return getDelegate().getInterestQueueCapacity();
+    }
+
+    @Override
+    public KqueueFacade getKqueueFacade() {
+        return getDelegate().getKqueueFacade();
+    }
+
+    @Override
+    public int getLimit() {
+        return getDelegate().getLimit();
+    }
+
+    @Override
+    public int getListenBacklog() {
+        return getDelegate().getListenBacklog();
     }
 
     @Override
@@ -55,13 +124,43 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
     }
 
     @Override
+    public NetworkFacade getNetworkFacade() {
+        return getDelegate().getNetworkFacade();
+    }
+
+    @Override
+    public boolean getPeerNoLinger() {
+        return getDelegate().getPeerNoLinger();
+    }
+
+    @Override
     public String getPoolName() {
         return getDelegate().getPoolName();
     }
 
     @Override
+    public long getQueueTimeout() {
+        return getDelegate().getQueueTimeout();
+    }
+
+    @Override
+    public int getRecvBufferSize() {
+        return getDelegate().getRecvBufferSize();
+    }
+
+    @Override
     public byte getRequiredAuthType() {
         return getDelegate().getRequiredAuthType();
+    }
+
+    @Override
+    public SelectFacade getSelectFacade() {
+        return getDelegate().getSelectFacade();
+    }
+
+    @Override
+    public int getSendBufferSize() {
+        return getDelegate().getSendBufferSize();
     }
 
     @Override
@@ -72,6 +171,16 @@ public class HttpMinServerConfigurationWrapper implements HttpMinServerConfigura
     @Override
     public long getSleepTimeout() {
         return getDelegate().getSleepTimeout();
+    }
+
+    @Override
+    public int getTestConnectionBufferSize() {
+        return getDelegate().getTestConnectionBufferSize();
+    }
+
+    @Override
+    public long getTimeout() {
+        return getDelegate().getTimeout();
     }
 
     @Override

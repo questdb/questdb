@@ -193,9 +193,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final FactoryProviderFactory fpf;
     private final PropHttpContextConfiguration httpContextConfiguration;
     private final boolean httpFrozenClock;
-    private final IODispatcherConfiguration httpIODispatcherConfiguration = new PropHttpIODispatcherConfiguration();
     private final PropHttpContextConfiguration httpMinContextConfiguration;
-    private final PropHttpMinIODispatcherConfiguration httpMinIODispatcherConfiguration = new PropHttpMinIODispatcherConfiguration();
     private final boolean httpMinServerEnabled;
     private final boolean httpNetConnectionHint;
     private final String httpPassword;
@@ -3342,89 +3340,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
     }
 
-    private class PropHttpIODispatcherConfiguration implements IODispatcherConfiguration {
-        @Override
-        public int getBindIPv4Address() {
-            return httpNetBindIPv4Address;
-        }
+    public class PropHttpMinServerConfiguration implements HttpMinServerConfiguration {
 
-        @Override
-        public int getBindPort() {
-            return httpNetBindPort;
-        }
-
-        @Override
-        public MillisecondClock getClock() {
-            return MillisecondClockImpl.INSTANCE;
-        }
-
-        @Override
-        public String getDispatcherLogName() {
-            return "http-server";
-        }
-
-        @Override
-        public EpollFacade getEpollFacade() {
-            return EpollFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public long getHeartbeatInterval() {
-            return -1L;
-        }
-
-        @Override
-        public boolean getHint() {
-            return httpNetConnectionHint;
-        }
-
-        @Override
-        public KqueueFacade getKqueueFacade() {
-            return KqueueFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getLimit() {
-            return httpNetConnectionLimit;
-        }
-
-        @Override
-        public NetworkFacade getNetworkFacade() {
-            return NetworkFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public long getQueueTimeout() {
-            return httpNetConnectionQueueTimeout;
-        }
-
-        @Override
-        public int getRecvBufferSize() {
-            return httpNetConnectionRcvBuf;
-        }
-
-        @Override
-        public SelectFacade getSelectFacade() {
-            return SelectFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getSendBufferSize() {
-            return httpNetConnectionSndBuf;
-        }
-
-        @Override
-        public int getTestConnectionBufferSize() {
-            return netTestConnectionBufferSize;
-        }
-
-        @Override
-        public long getTimeout() {
-            return httpNetConnectionTimeout;
-        }
-    }
-
-    private class PropHttpMinIODispatcherConfiguration implements IODispatcherConfiguration {
         @Override
         public int getBindIPv4Address() {
             return httpMinBindIPv4Address;
@@ -3451,6 +3368,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
+        }
+
+        @Override
         public long getHeartbeatInterval() {
             return -1L;
         }
@@ -3458,6 +3380,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getHint() {
             return httpMinNetConnectionHint;
+        }
+
+        @Override
+        public HttpContextConfiguration getHttpContextConfiguration() {
+            return httpMinContextConfiguration;
         }
 
         @Override
@@ -3471,8 +3398,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getNapThreshold() {
+            return httpMinWorkerNapThreshold;
+        }
+
+        @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "minhttp";
         }
 
         @Override
@@ -3486,6 +3423,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public byte getRequiredAuthType() {
+            return httpHealthCheckAuthType;
+        }
+
+        @Override
         public SelectFacade getSelectFacade() {
             return SelectFacadeImpl.INSTANCE;
         }
@@ -3496,49 +3438,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getTestConnectionBufferSize() {
-            return netTestConnectionBufferSize;
-        }
-
-        @Override
-        public long getTimeout() {
-            return httpMinNetConnectionTimeout;
-        }
-    }
-
-    public class PropHttpMinServerConfiguration implements HttpMinServerConfiguration {
-
-        @Override
-        public IODispatcherConfiguration getDispatcherConfiguration() {
-            return httpMinIODispatcherConfiguration;
-        }
-
-        @Override
-        public FactoryProvider getFactoryProvider() {
-            return factoryProvider;
-        }
-
-        @Override
-        public HttpContextConfiguration getHttpContextConfiguration() {
-            return httpMinContextConfiguration;
-        }
-
-        @Override
-        public long getNapThreshold() {
-            return httpMinWorkerNapThreshold;
-        }
-
-        @Override
-        public String getPoolName() {
-            return "minhttp";
-        }
-
-        @Override
-        public byte getRequiredAuthType() {
-            return httpHealthCheckAuthType;
-        }
-
-        @Override
         public long getSleepThreshold() {
             return httpMinWorkerSleepThreshold;
         }
@@ -3546,6 +3445,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSleepTimeout() {
             return httpMinWorkerSleepTimeout;
+        }
+
+        @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
+        }
+
+        @Override
+        public long getTimeout() {
+            return httpMinNetConnectionTimeout;
         }
 
         @Override
@@ -3597,13 +3506,43 @@ public class PropServerConfiguration implements ServerConfiguration {
     public class PropHttpServerConfiguration implements HttpServerConfiguration {
 
         @Override
-        public IODispatcherConfiguration getDispatcherConfiguration() {
-            return httpIODispatcherConfiguration;
+        public int getBindIPv4Address() {
+            return httpNetBindIPv4Address;
+        }
+
+        @Override
+        public int getBindPort() {
+            return httpNetBindPort;
+        }
+
+        @Override
+        public MillisecondClock getClock() {
+            return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
+        public String getDispatcherLogName() {
+            return "http-server";
+        }
+
+        @Override
+        public EpollFacade getEpollFacade() {
+            return EpollFacadeImpl.INSTANCE;
         }
 
         @Override
         public FactoryProvider getFactoryProvider() {
             return factoryProvider;
+        }
+
+        @Override
+        public long getHeartbeatInterval() {
+            return -1L;
+        }
+
+        @Override
+        public boolean getHint() {
+            return httpNetConnectionHint;
         }
 
         @Override
@@ -3617,6 +3556,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getLimit() {
+            return httpNetConnectionLimit;
+        }
+
+        @Override
         public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
             return lineHttpProcessorConfiguration;
         }
@@ -3624,6 +3573,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getNapThreshold() {
             return httpWorkerNapThreshold;
+        }
+
+        @Override
+        public NetworkFacade getNetworkFacade() {
+            return NetworkFacadeImpl.INSTANCE;
         }
 
         @Override
@@ -3647,8 +3601,28 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getQueueTimeout() {
+            return httpNetConnectionQueueTimeout;
+        }
+
+        @Override
+        public int getRecvBufferSize() {
+            return httpNetConnectionRcvBuf;
+        }
+
+        @Override
         public byte getRequiredAuthType() {
             return httpHealthCheckAuthType;
+        }
+
+        @Override
+        public SelectFacade getSelectFacade() {
+            return SelectFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getSendBufferSize() {
+            return httpNetConnectionSndBuf;
         }
 
         @Override
@@ -3664,6 +3638,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public StaticContentProcessorConfiguration getStaticContentProcessorConfiguration() {
             return staticContentProcessorConfiguration;
+        }
+
+        @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
+        }
+
+        @Override
+        public long getTimeout() {
+            return httpNetConnectionTimeout;
         }
 
         @Override
