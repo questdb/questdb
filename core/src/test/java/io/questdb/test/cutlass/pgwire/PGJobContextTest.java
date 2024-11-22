@@ -30,6 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
@@ -189,6 +190,12 @@ public class PGJobContextTest extends BasePGTest {
     public PGJobContextTest(LegacyMode legacyMode, WalMode walMode) {
         super(legacyMode);
         this.walEnabled = (walMode == WalMode.WITH_WAL);
+    }
+
+    public static void drainWalAndAssertTableExists(CharSequence tableName) {
+        try (Path path = new Path()) {
+            assertEquals(TableUtils.TABLE_EXISTS, engine.getTableStatus(path, engine.getTableTokenIfExists(tableName)));
+        }
     }
 
     @BeforeClass
@@ -1989,16 +1996,6 @@ if __name__ == "__main__":
         testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.MONTH);
     }
 
-    @Test
-    public void testBindVariableDropLastPartitionListByNoneHigherPrecision() throws Exception {
-        try {
-            testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.NONE);
-            Assert.fail();
-        } catch (PSQLException e) {
-            TestUtils.assertContains(e.getMessage(), "ERROR: table is not partitioned");
-        }
-    }
-
 //Testing through postgres - need to establish connection
 //    @Test
 //    public void testReadINet() throws SQLException, IOException {
@@ -2020,6 +2017,16 @@ if __name__ == "__main__":
 //                    "12.2.65.90\n", sink, rs);
 //        }
 //    }
+
+    @Test
+    public void testBindVariableDropLastPartitionListByNoneHigherPrecision() throws Exception {
+        try {
+            testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.NONE);
+            Assert.fail();
+        } catch (PSQLException e) {
+            TestUtils.assertContains(e.getMessage(), "ERROR: table is not partitioned");
+        }
+    }
 
     @Test
     public void testBindVariableDropLastPartitionListByWeekHigherPrecision() throws Exception {
@@ -7842,6 +7849,38 @@ nodejs code:
                     workerPool.halt();
                 }
             }
+        });
+    }
+
+    @Test
+    public void testPreparedStatementRenameTableReexecution() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.prepareStatement("CREATE TABLE ts as" +
+                    " (select x, timestamp_sequence('2022-02-24T04', 2) ts from long_sequence(2) )" +
+                    " TIMESTAMP(ts) PARTITION BY MONTH").execute();
+            drainWalAndAssertTableExists("ts");
+
+            PreparedStatement tsToTs2 = connection.prepareStatement("rename table ts to ts2");
+            tsToTs2.execute();
+            drainWalAndAssertTableExists("ts2");
+
+            PreparedStatement ts2ToTs3 = connection.prepareStatement("rename table ts2 to ts3");
+            ts2ToTs3.execute();
+            drainWalAndAssertTableExists("ts3");
+
+            PreparedStatement ts3ToTs = connection.prepareStatement("rename table ts3 to ts");
+            ts3ToTs.execute();
+            drainWalAndAssertTableExists("ts");
+
+            // now re-execute already parsed statements again
+            tsToTs2.execute();
+            drainWalAndAssertTableExists("ts2");
+
+            ts2ToTs3.execute();
+            drainWalAndAssertTableExists("ts3");
+
+            ts3ToTs.execute();
+            drainWalAndAssertTableExists("ts");
         });
     }
 

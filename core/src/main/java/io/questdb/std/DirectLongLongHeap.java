@@ -22,19 +22,31 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.map;
+package io.questdb.std;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.DirectLongLongHeap;
+import io.questdb.cairo.Reopenable;
 
-public interface MapRecordCursor extends RecordCursor {
+/**
+ * Off-heap min/max heap for long values accompanied by a long index.
+ */
+public interface DirectLongLongHeap extends QuietCloseable, Mutable, Reopenable {
 
-    @Override
-    MapRecord getRecord();
+    void add(long index, long value);
 
-    @Override
-    MapRecord getRecordB();
+    int getCapacity();
 
-    void longTopK(DirectLongLongHeap heap, Function recordFunction);
+    Cursor getCursor();
+
+    int size();
+
+    interface Cursor {
+
+        boolean hasNext();
+
+        long index();
+
+        void toTop();
+
+        long value();
+    }
 }

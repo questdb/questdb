@@ -28,23 +28,23 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectLongLongHeap;
+import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.Bytes;
 
-public final class UnorderedVarcharMapCursor implements MapRecordCursor {
-    private final long entrySize;
-    private final UnorderedVarcharMap map;
-    private final UnorderedVarcharMapRecord recordA;
-    private final UnorderedVarcharMapRecord recordB;
-    private long address;
-    private int count;
-    private long memLimit;
-    private long memStart;
+class OrderedMapVarSizeCursor implements OrderedMapCursor {
+    private final OrderedMapVarSizeRecord recordA;
+    private final OrderedMapVarSizeRecord recordB;
+    private final long valueSize;
+    private long heapAddr;
+    private long heapStart;
     private int remaining;
+    private int size;
 
-    UnorderedVarcharMapCursor(UnorderedVarcharMapRecord record, UnorderedVarcharMap map) {
+    OrderedMapVarSizeCursor(OrderedMapVarSizeRecord record, OrderedMap map) {
+        assert map.keySize() == -1;
         this.recordA = record;
         this.recordB = record.clone();
-        this.map = map;
-        this.entrySize = map.entrySize();
+        this.valueSize = map.valueSize();
     }
 
     @Override
@@ -73,8 +73,9 @@ public final class UnorderedVarcharMapCursor implements MapRecordCursor {
     @Override
     public boolean hasNext() {
         if (remaining > 0) {
-            recordA.of(address);
-            skipToNonZeroKey();
+            recordA.of(heapAddr);
+            final int keySize = Unsafe.getUnsafe().getInt(heapAddr);
+            heapAddr = Bytes.align8b(heapAddr + OrderedMap.VAR_KEY_HEADER_SIZE + keySize + valueSize);
             remaining--;
             return true;
         }
@@ -82,48 +83,38 @@ public final class UnorderedVarcharMapCursor implements MapRecordCursor {
     }
 
     @Override
+    public OrderedMapVarSizeCursor init(long heapStart, long heapLimit, int size) {
+        this.heapAddr = this.heapStart = heapStart;
+        this.remaining = this.size = size;
+        recordA.setLimit(heapLimit);
+        recordB.setLimit(heapLimit);
+        return this;
+    }
+
+    @Override
     public void longTopK(DirectLongLongHeap heap, Function recordFunction) {
-        for (long addr = memStart; addr < memLimit; addr += entrySize) {
-            if (!map.isZeroKey(addr)) {
-                recordA.of(addr);
-                long v = recordFunction.getLong(recordA);
-                heap.add(addr, v);
-            }
+        long addr = heapStart;
+        for (int i = 0; i < size; i++) {
+            recordA.of(addr);
+            long v = recordFunction.getLong(recordA);
+            heap.add(addr, v);
+            addr += Bytes.align8b(OrderedMap.VAR_KEY_HEADER_SIZE + recordA.keySize() + valueSize);
         }
     }
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((UnorderedVarcharMapRecord) record).of(atRowId);
+        ((OrderedMapVarSizeRecord) record).of(atRowId);
     }
 
     @Override
     public long size() {
-        return map.size();
+        return size;
     }
 
     @Override
     public void toTop() {
-        address = memStart;
-        remaining = count;
-        if (count > 0 && map.isZeroKey(address)) {
-            skipToNonZeroKey();
-        }
-    }
-
-    private void skipToNonZeroKey() {
-        do {
-            address += entrySize;
-        } while (address < memLimit && map.isZeroKey(address));
-    }
-
-    UnorderedVarcharMapCursor init(long memStart, long memLimit, int count) {
-        this.memStart = memStart;
-        this.memLimit = memLimit;
-        this.count = count;
-        toTop();
-        recordA.setLimit(memLimit);
-        recordB.setLimit(memLimit);
-        return this;
+        heapAddr = heapStart;
+        remaining = size;
     }
 }
