@@ -138,8 +138,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
     public Utf8StringSink repeat(char value, int n) {
         if (value < 128) {
             // fast path for ASCII
-            putByte0Repeat((byte) value, n);
-            return this;
+            return putByte0Repeat((byte) value, n);
         }
 
         for (int i = 0; i < n; i++) {
