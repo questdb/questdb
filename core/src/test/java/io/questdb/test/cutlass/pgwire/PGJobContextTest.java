@@ -54,6 +54,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -3283,6 +3284,46 @@ if __name__ == "__main__":
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("")) {
                 statement.execute();
+            }
+        });
+    }
+
+    @Test
+    public void testErrnoInErrorMessage() throws Exception {
+        Assume.assumeFalse(legacyMode); // only modern server prints errno
+        skipOnWalRun(); // non-partitioned table
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return 4; // Too many open files
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d")) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+
+        assertWithPgServerExtendedBinaryOnly((connection, binary, mode, port) -> {
+            try (
+                    PreparedStatement stmt = connection.prepareStatement(
+                            "create table x as (" +
+                                    " select x, timestamp_sequence(0, 1000) ts" +
+                                    " from long_sequence(1)" +
+                                    ") timestamp (ts)"
+                    )
+            ) {
+                stmt.execute();
+            }
+
+            try (PreparedStatement stmt = connection.prepareStatement("x")) {
+                stmt.executeQuery();
+                Assert.fail();
+            } catch (PSQLException ex) {
+                assertContains(ex.getMessage(), "[4]");
             }
         });
     }
@@ -12245,7 +12286,6 @@ create table tab as (
                     try (Connection ignored1 = getConnectionWitSslInitRequest(Mode.EXTENDED, server.getPort(), false, -2)) {
                         assertExceptionNoLeakCheck("Connection should not be established when server disconnects during authentication");
                     } catch (PSQLException ignored) {
-
                     }
                     Assert.assertEquals(0, nf.getAfterDisconnectInteractions());
                     TestUtils.assertEventually(() -> Assert.assertTrue(nf.isSocketClosed()));

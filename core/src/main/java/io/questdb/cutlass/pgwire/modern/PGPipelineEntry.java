@@ -26,6 +26,7 @@ package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.GeoHashes;
@@ -252,10 +253,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 pendingWriter.value = Misc.free(w);
             }
             pendingWriters.clear();
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             // free remaining writers
             rollback(pendingWriters);
-            throw kaput().put(e);
+            throw kaput().put(th);
         }
     }
 
@@ -288,8 +289,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
             }
             copyPgResultSetColumnTypes();
-        } catch (Throwable e) {
-            throw kaput().put(e);
+        } catch (Throwable th) {
+            throw kaput().put(th);
         }
     }
 
@@ -576,7 +577,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         } catch (Throwable th) {
             if (th instanceof FlyweightMessageContainer) {
                 setErrorMessagePosition(((FlyweightMessageContainer) th).getPosition());
-                getErrorMessageSink().put(((FlyweightMessageContainer) th).getFlyweightMessage());
+                final StringSink errorMsgSink = getErrorMessageSink();
+                int errno;
+                if (th instanceof CairoException && (errno = ((CairoException) th).getErrno()) != CairoException.NON_CRITICAL) {
+                    errorMsgSink.put('[');
+                    errorMsgSink.put(errno);
+                    errorMsgSink.put("] ");
+                }
+                errorMsgSink.put(((FlyweightMessageContainer) th).getFlyweightMessage());
             } else {
                 String msg = th.getMessage();
                 if (msg != null) {
@@ -1900,7 +1908,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // We'll be sending an error to the client, so reset to the start of the last sent message.
             utf8Sink.resetToBookmark(recordStartAddress);
             if (th instanceof FlyweightMessageContainer) {
-                getErrorMessageSink().put(((FlyweightMessageContainer) th).getFlyweightMessage());
+                final StringSink errorMsgSink = getErrorMessageSink();
+                int errno;
+                if (th instanceof CairoException && (errno = ((CairoException) th).getErrno()) != CairoException.NON_CRITICAL) {
+                    errorMsgSink.put('[');
+                    errorMsgSink.put(errno);
+                    errorMsgSink.put("] ");
+                }
+                errorMsgSink.put(((FlyweightMessageContainer) th).getFlyweightMessage());
             } else {
                 String msg = th.getMessage();
                 if (msg != null) {
