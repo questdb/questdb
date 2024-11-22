@@ -97,7 +97,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
-    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException {
+    public OperationFuture execute(
+            SqlExecutionContext sqlExecutionContext,
+            SCSequence eventSubSeq,
+            boolean closeOnDone
+    ) throws SqlException {
         switch (type) {
             case INSERT:
                 return insertOp.execute(sqlExecutionContext);
@@ -145,7 +149,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
-    public String getSqlStatement() {
+    public String getSqlText() {
         return sqlStatement;
     }
 
@@ -305,8 +309,8 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         return this;
     }
 
-    public void withSqlStatement(String sqlStatement) {
-        this.sqlStatement = sqlStatement;
+    public void withSqlText(String sqlText) {
+        this.sqlStatement = sqlText;
     }
 
     private CompiledQuery of(short type, RecordCursorFactory factory) {

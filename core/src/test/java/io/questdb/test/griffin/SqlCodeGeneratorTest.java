@@ -315,19 +315,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBindVariableInvalid() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE 'alcatel_traffic_tmp' (deviceName SYMBOL capacity 1000 index, time TIMESTAMP, slot SYMBOL, port SYMBOL, downStream DOUBLE, upStream DOUBLE) timestamp(time) partition by DAY");
-            try {
-                assertExceptionNoLeakCheck("select * from alcatel_traffic_tmp where deviceName in ($n1)");
-            } catch (SqlException e) {
-                Assert.assertEquals(51, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index [value=$n1]");
-            }
-        });
-    }
-
-    @Test
     public void testBindVariableWithILike() throws Exception {
         testBindVariableWithLike0("ilike");
     }

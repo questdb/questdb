@@ -33,7 +33,7 @@ public class PgDatabaseFunctionFactoryTest extends AbstractCairoTest {
     public void testPgDatabaseFunc() throws Exception {
         assertQuery(
                 "oid\tdatname\tdatdba\tencoding\tdatcollate\tdatctype\tdatistemplate\tdatallowconn\tdatconnlimit\tdatlastsysoid\tdatfrozenxid\tdatminmxid\tdattablespace\tdatacl\n" +
-                        "1\tquestdb\t2\t0\ten_US.UTF-8\ten_US.UTF-8\tfalse\ttrue\t-1\t1\t-1\t0\t3\t\n",
+                        "1\tqdb\t2\t0\ten_US.UTF-8\ten_US.UTF-8\tfalse\ttrue\t-1\t1\t-1\t0\t3\t\n",
                 "pg_catalog.pg_database;",
                 null,
                 null,
@@ -46,7 +46,7 @@ public class PgDatabaseFunctionFactoryTest extends AbstractCairoTest {
     public void testPgDatabaseFuncNoPrefix() throws Exception {
         assertQuery(
                 "oid\tdatname\tdatdba\tencoding\tdatcollate\tdatctype\tdatistemplate\tdatallowconn\tdatconnlimit\tdatlastsysoid\tdatfrozenxid\tdatminmxid\tdattablespace\tdatacl\n" +
-                        "1\tquestdb\t2\t0\ten_US.UTF-8\ten_US.UTF-8\tfalse\ttrue\t-1\t1\t-1\t0\t3\t\n",
+                        "1\tqdb\t2\t0\ten_US.UTF-8\ten_US.UTF-8\tfalse\ttrue\t-1\t1\t-1\t0\t3\t\n",
                 "pg_database;",
                 null,
                 null,

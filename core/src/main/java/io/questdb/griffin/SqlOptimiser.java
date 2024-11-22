@@ -55,8 +55,6 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowColumn;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.BoolList;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceIntHashMap;
@@ -84,13 +82,13 @@ import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.isNoneKeyword;
 import static io.questdb.griffin.model.ExpressionNode.*;
+import static io.questdb.griffin.model.QueryModel.*;
 
 public class SqlOptimiser implements Mutable {
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
-    private static final Log LOG = LogFactory.getLog(SqlOptimiser.class);
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_EQUAL = 8;
@@ -732,7 +730,7 @@ public class SqlOptimiser implements Mutable {
 
         JoinContext jc;
         boolean canMovePredicate = joinBarriers.excludes(joinModel.getJoinType());
-        int joinIndex = parent.getJoinModels().indexOf(joinModel);
+        int joinIndex = parent.getJoinModels().indexOfRef(joinModel);
 
         //switch code below assumes expression are simple column references
         if (literalCollector.functionCount > 0) {
@@ -2269,6 +2267,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         CharSequence nestedAlias = getTranslatedColumnAlias(model.getNestedModel(), stopModel, token);
+
         if (nestedAlias != null) {
             CharSequence alias = model.getColumnNameToAliasMap().get(nestedAlias);
             if (alias == null) {
@@ -2279,29 +2278,6 @@ public class SqlOptimiser implements Mutable {
         } else {
             return null;
         }
-    }
-
-    private boolean hasAggregateQueryColumn(QueryModel model) {
-        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-
-        for (int i = 0, k = columns.size(); i < k; i++) {
-            QueryColumn qc = columns.getQuick(i);
-            if (qc.getAst().type != LITERAL) {
-                if (qc.getAst().type == ExpressionNode.FUNCTION) {
-                    if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
-                        return true;
-                    } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
-                        continue;
-                    }
-                }
-
-                if (checkForAggregates(qc.getAst())) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
     }
 
     private boolean hasAggregates(ExpressionNode node) {
@@ -2334,6 +2310,29 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    private boolean hasNoAggregateQueryColumns(QueryModel model) {
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+
+        for (int i = 0, k = columns.size(); i < k; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.getAst().type != LITERAL) {
+                if (qc.getAst().type == ExpressionNode.FUNCTION) {
+                    if (functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
+                        return false;
+                    } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
+                        continue;
+                    }
+                }
+
+                if (checkForAggregates(qc.getAst())) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
     }
 
     private void homogenizeCrossJoins(QueryModel parent) {
@@ -3577,6 +3576,64 @@ public class SqlOptimiser implements Mutable {
         optimiseOrderBy(jm1, orderByMnemonic);
     }
 
+    /**
+     * For a query like this: SELECT ts, b, c from x ORDER BY ts DESC, b DESC LIMIT 100
+     * See the model:
+     * `select-choose ts, b, c from (x timestamp (ts) order by ts desc, b desc) limit 100`
+     * <p>
+     * The limit is on the outer select-choose, and not the select-none.
+     * This means that we fail to specialise the query whereas we would automatically
+     * perform this push down in the case of negative limits.
+     * <p>
+     * After transformation, we get this model:
+     * `select-choose ts, b, c from (x timestamp (ts) order by ts desc, b desc limit 100)`
+     */
+    private void pushLimitFromChooseToNone(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        if (model == null) {
+            return;
+        }
+
+        QueryModel nested = model.getNestedModel();
+        Function loFunction;
+        long limitValue;
+
+        if (
+                model.getSelectModelType() == SELECT_MODEL_CHOOSE
+                        && model.getLimitLo() != null
+                        && model.getLimitHi() == null
+                        && model.getUnionModel() == null
+                        && model.getJoinModels().size() == 1
+                        && model.getGroupBy().size() == 0
+                        && model.getSampleBy() == null
+                        && !model.isDistinct()
+                        && hasNoAggregateQueryColumns(model)
+                        && nested != null
+                        && nested.getSelectModelType() == SELECT_MODEL_NONE
+                        && nested.getOrderBy().size() > 1 // only for multi-sort case, to get limited size cursor
+                        && nested.getWhereClause() == null
+                        && nested.getTimestamp() != null
+                        && Chars.equalsIgnoreCase(nested.getTimestamp().token, nested.getOrderBy().get(0).token)
+                        && nested.getOrderByDirection().get(0) == ORDER_DIRECTION_DESCENDING
+                        && (loFunction = getLoFunction(model.getLimitLo(), executionContext)) != null
+                        && loFunction.isConstant()
+                        && (limitValue = loFunction.getLong(null)) > 0
+                        && (limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit())) {
+
+            nested.setLimit(model.getLimitLo(), null);
+            model.setLimit(null, null);
+
+            if (nested.getOrderByAdvice().size() == 0) {
+                for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                    nested.getOrderByAdvice().add(nested.getOrderBy().get(i));
+                    nested.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
+                }
+                nested.setAllowPropagationOfOrderByAdvice(false);
+            }
+        } else {
+            pushLimitFromChooseToNone(model.getNestedModel(), executionContext);
+        }
+    }
+
     private ExpressionNode pushOperationOutsideAgg(ExpressionNode agg, ExpressionNode op, ExpressionNode column, ExpressionNode constant, QueryModel model) {
         final QueryColumn qc = checkSimpleIntegerColumn(column, model);
         if (qc == null) {
@@ -4075,15 +4132,12 @@ public class SqlOptimiser implements Mutable {
         if (model != null) {
 
             if (!rewriteNegativeLimitGuard(model, executionContext)) {
-                // try to condense potential wildcard model
-                rewriteToCondenseWildcardModels(model);
+                rewriteNegativeLimitWithOrderBy(model);
             }
 
             final QueryModel nested = model.getNestedModel();
 
-            if (
-                    rewriteNegativeLimitGuard(model, executionContext)
-            ) {
+            if (rewriteNegativeLimitGuard(model, executionContext)) {
                 Function loFunction = getLoFunction(model.getLimitLo(), executionContext);
                 ObjList<ExpressionNode> orderBy = nested.getOrderBy();
                 assert loFunction != null; // covered by the guard
@@ -4126,7 +4180,7 @@ public class SqlOptimiser implements Mutable {
 
                 if (orderBy.size() == 0) {
                     if (order != null) {
-                        order.addOrderBy(nested.getTimestamp(), QueryModel.ORDER_DIRECTION_ASCENDING);
+                        order.addOrderBy(nested.getTimestamp(), ORDER_DIRECTION_ASCENDING);
                     }
 
                     nested.addOrderBy(nested.getTimestamp(), QueryModel.ORDER_DIRECTION_DESCENDING);
@@ -4147,10 +4201,10 @@ public class SqlOptimiser implements Mutable {
                     }
 
                     int newOrder;
-                    if (orderByDirection.getQuick(0) == QueryModel.ORDER_DIRECTION_ASCENDING) {
+                    if (orderByDirection.getQuick(0) == ORDER_DIRECTION_ASCENDING) {
                         newOrder = QueryModel.ORDER_DIRECTION_DESCENDING;
                     } else {
-                        newOrder = QueryModel.ORDER_DIRECTION_ASCENDING;
+                        newOrder = ORDER_DIRECTION_ASCENDING;
                     }
                     orderByDirection.setQuick(0, newOrder);
                 }
@@ -4176,7 +4230,7 @@ public class SqlOptimiser implements Mutable {
                         && model.getJoinModels().size() == 1
                         && model.getGroupBy().size() == 0
                         && model.getSampleBy() == null
-                        && !hasAggregateQueryColumn(model)
+                        && hasNoAggregateQueryColumns(model)
                         && !model.isDistinct()
                         && nested != null
                         && nested.getJoinModels().size() == 1
@@ -4192,6 +4246,80 @@ public class SqlOptimiser implements Mutable {
                                         && nested.isOrderByTimestamp(orderBy.getQuick(0).token)
                         ))
                 );
+    }
+
+    /**
+     * Handle queries like:
+     * SELECT timestamp, side FROM trades ORDER BY timestamp ASC, side DESC LIMIT -3
+     * With a model like this:
+     * `select-choose timestamp, side from (trades timestamp (timestamp) order by timestamp, side desc) limit -(3)`
+     * <p>
+     * This would ordinarily compile to a `LimitedSizePartiallySortedRecordCursor`.
+     * That means it will forward scan - and run out of memory on demo!
+     * Instead, we aim to subquery a backwards scan and sort.
+     * This then needs to be compiled into a `LimitedSizePartiallySortedRecordCursor`, but in reverse
+     * in order to correctly handle duplicates.
+     * <p>
+     * So we produce a model like this:
+     * `select-choose timestamp, side from (trades timestamp (timestamp) order by timestamp desc, side desc limit 3) order by timestamp, side desc`
+     */
+    private void rewriteNegativeLimitWithOrderBy(QueryModel model) {
+        if (
+                model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
+                        && model.getNestedModel() != null
+                        && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE
+                        && model.getNestedModel().getOrderBy() != null
+                        && model.getNestedModel().getOrderBy().size() > 1
+                        && model.getNestedModel().getTimestamp() != null
+                        && model.getLimitLo() != null
+                        && model.getLimitHi() == null
+                        && Chars.equals(model.getLimitLo().token, '-')
+        ) {
+
+            QueryModel nested = model.getNestedModel();
+
+            int firstOrderByDir = nested.getOrderByDirection().get(0);
+
+            if (firstOrderByDir != ORDER_DIRECTION_ASCENDING) {
+                return;
+            }
+
+            ExpressionNode firstOrderByArg = nested.getOrderBy().get(0);
+
+            if (!Chars.equalsIgnoreCase(firstOrderByArg.token, nested.getTimestamp().token)) {
+                return;
+            }
+
+            // we want to push down a limited reverse scan, and then sort into the intended ordering afterwards
+
+            // first, copy the order by up
+            for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                model.addOrderBy(nested.getOrderBy().get(i), nested.getOrderByDirection().get(i));
+                model.getOrderByAdvice().add(nested.getOrderBy().get(i));
+                model.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
+            }
+
+            // reverse the scan
+            nested.getOrderByDirection().set(0, ORDER_DIRECTION_DESCENDING);
+
+            if (nested.getOrderByAdvice().size() == 0) {
+                for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                    nested.getOrderByAdvice().add(nested.getOrderBy().get(i));
+                    nested.getOrderByDirectionAdvice().add(nested.getOrderByDirection().get(i));
+                }
+            } else {
+                // assume already filled
+                nested.getOrderByDirectionAdvice().set(0, ORDER_DIRECTION_DESCENDING);
+            }
+
+            nested.setAllowPropagationOfOrderByAdvice(false); // stop propagation
+
+            // copy the integral part i.e if it's -3, then 3
+            nested.setLimit(model.getLimitLo().rhs, null);
+
+            // remove limit from outer
+            model.setLimit(null, null);
+        }
     }
 
     /**
@@ -5792,95 +5920,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    /**
-     * Condenses unnecessary select-choose models generated by wildcards '*'
-     * Take: `SELECT timestamp, * FROM trades LIMIT -3;`
-     * This generates:
-     * ```
-     * select-choose timestamp, symbol, side, price, amount, timestamp timestamp1
-     * from (select-choose timestamp, symbol, side, price, amount
-     * from (trades timestamp (timestamp))) limit -(3)
-     * ```
-     * But this inner model is not required, since it is the same as the outer model,
-     * just without the extra timestamp alias.
-     *
-     * @param model
-     * @throws SqlException
-     */
-    private void rewriteToCondenseWildcardModels(QueryModel model) throws SqlException {
-
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
-                && model.getNestedModel() != null
-                && model.getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_CHOOSE
-                && model.getNestedModel().getNestedModel() != null
-                && model.getNestedModel().getNestedModel().getSelectModelType() == QueryModel.SELECT_MODEL_NONE) {
-
-            // Something like this: SELECT timestamp, * FROM trades LIMIT -3;
-            // compiles to:
-            // select-choose timestamp, symbol, side, price, amount, timestamp timestamp1
-            // from (select-choose timestamp, symbol, side, price, amount
-            // from (trades timestamp (timestamp))) limit -(3)
-            // We have this extra select choose to alias the already selected columns.
-            // We may be able to compact this
-
-            QueryModel nested = model.getNestedModel();
-            QueryModel none = nested.getNestedModel();
-
-            if (model.getLimitLo() != null
-                    && Chars.equals(model.getLimitLo().token, "-")
-                    && model.getLimitHi() == null
-                    && model.getUnionModel() == null
-                    && model.getJoinModels().size() == 1
-                    && nested.getJoinModels().size() == 1
-                    && none.getJoinModels().size() == 1
-                    && model.getGroupBy().size() == 0
-                    && nested.getGroupBy().size() == 0
-                    && none.getGroupBy().size() == 0
-                    && model.getSampleBy() == null
-                    && nested.getSampleBy() == null
-                    && !hasAggregateQueryColumn(model)
-                    && !model.isDistinct()
-                    && model.getBottomUpColumns().size() >= nested.getBottomUpColumns().size()) {
-                IntList copiedColumns = new IntList();
-
-                // since it is possible that this is a redundant model, or we can push down the extra select choose
-                for (int i = 0, n = nested.getBottomUpColumns().size(); i < n; i++) {
-                    QueryColumn nestedColumn = nested.getBottomUpColumns().get(i);
-
-                    if (!model.getColumnNameToAliasMap().contains(nestedColumn.getName())) {
-                        // if it is not part of it, then is it the same as another column?
-                        CharSequence token = nestedColumn.getAst().token;
-
-                        if (model.getColumnNameToAliasMap().contains(token)) {
-                            // we can pull up this column
-                            model.addBottomUpColumn(nestedColumn);
-                            copiedColumns.add(nested.getBottomUpColumns().size() - 1);
-                        }
-                    } else {
-                        // catch cases like
-                        // select-choose ts1, ts1 ts2 from (select-choose timestamp ts1 from (trades timestamp (timestamp))) limit -(3)
-                        // here, the outer model relies on an earlier alias, so we must reify the alias
-                        if (nestedColumn.getAlias() != null && model.getColumnNameToAliasMap().contains(nestedColumn.getAlias())) {
-                            // we must reify the alias
-                            QueryColumn aliasedCol = model.getAliasToColumnMap().get(nestedColumn.getAlias());
-                            aliasedCol.getAst().token = nestedColumn.getAst().token;
-
-                            // check for any other columns relying on it
-                            for (int j = 0, m = model.getBottomUpColumns().size(); j < m; j++) {
-                                QueryColumn modelColumn = model.getBottomUpColumns().get(j);
-
-                                if (Chars.equals(modelColumn.getAst().token, aliasedCol.getAlias())) {
-                                    modelColumn.getAst().token = aliasedCol.getAst().token;
-                                }
-                            }
-                        }
-                    }
-                }
-                model.setNestedModel(nested.getNestedModel());
-            }
-        }
-    }
-
     // the intent is to either validate top-level columns in select columns or replace them with function calls
     // if columns do not exist
     private void rewriteTopLevelLiteralsToFunctions(QueryModel model) {
@@ -5920,9 +5959,11 @@ public class SqlOptimiser implements Mutable {
      * @param orderByDirectionAdvice The advice direction
      */
     private void setAndCopyAdvice(QueryModel model, ObjList<ExpressionNode> advice, int orderByMnemonic, IntList orderByDirectionAdvice) {
-        model.setOrderByAdviceMnemonic(orderByMnemonic);
-        model.copyOrderByAdvice(advice);
-        model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+        if (model.getAllowPropagationOfOrderByAdvice()) {
+            model.setOrderByAdviceMnemonic(orderByMnemonic);
+            model.copyOrderByAdvice(advice);
+            model.copyOrderByDirectionAdvice(orderByDirectionAdvice);
+        }
     }
 
     private CharSequence setAndGetModelAlias(QueryModel model) {
@@ -6196,9 +6237,11 @@ public class SqlOptimiser implements Mutable {
         return _model;
     }
 
+    @SuppressWarnings("unused")
     protected void authorizeColumnAccess(SqlExecutionContext executionContext, QueryModel model) {
     }
 
+    @SuppressWarnings("unused")
     protected void authorizeUpdate(QueryModel updateQueryModel, TableToken token) {
     }
 
@@ -6222,8 +6265,10 @@ public class SqlOptimiser implements Mutable {
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             optimiseJoins(rewrittenModel);
+            collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
             rewriteNegativeLimit(rewrittenModel, sqlExecutionContext);
+            pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);
             rewrittenModel = rewriteOrderBy(rewrittenModel);
@@ -6231,7 +6276,6 @@ public class SqlOptimiser implements Mutable {
             createOrderHash(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel);
             eraseColumnPrefixInWhereClauses(rewrittenModel);
-            collapseStackedChooseModels(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);

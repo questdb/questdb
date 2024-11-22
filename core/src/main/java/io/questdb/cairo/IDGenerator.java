@@ -24,7 +24,11 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -95,7 +99,7 @@ public class IDGenerator implements Closeable {
     }
 
     long getCurrentId() {
-        assert uniqueIdMem > 0;
+        assert uniqueIdMem != 0;
         return Unsafe.getUnsafe().getLong(uniqueIdMem);
     }
 }

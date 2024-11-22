@@ -44,6 +44,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -148,7 +149,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static CairoConfiguration configuration;
     protected static TestCairoConfigurationFactory configurationFactory;
     protected static long currentMicros = -1;
-    protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    protected static final MicrosecondClock defaultMicrosecondClock = () ->
+            currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static CairoEngine engine;
     protected static TestCairoEngineFactory engineFactory;
@@ -1406,6 +1408,19 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static TableWriter getWriter(CharSequence tableName) {
         return TestUtils.getWriter(engine, tableName);
+    }
+
+    protected PoolListener createWriterReleaseListener(CharSequence tableName, SOCountDownLatch latch) {
+        return (factoryType, thread, tableToken, event, segment, position) -> {
+            if (
+                    factoryType == PoolListener.SRC_WRITER
+                            && event == PoolListener.EV_RETURN
+                            && tableToken != null
+                            && Chars.equalsIgnoreCase(tableToken.getTableName(), tableName)
+            ) {
+                latch.countDown();
+            }
+        };
     }
 
     protected static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {

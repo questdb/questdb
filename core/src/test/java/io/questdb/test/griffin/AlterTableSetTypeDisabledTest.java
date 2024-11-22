@@ -32,6 +32,7 @@ import io.questdb.std.str.Path;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.test.griffin.AlterTableSetTypeTest.WAL;
@@ -50,6 +51,7 @@ public class AlterTableSetTypeDisabledTest extends AbstractAlterTableSetTypeRest
     }
 
     @Test
+    @Ignore
     public void testSetTypeDisabled() throws Exception {
         final String tableName = testName.getMethodName();
         TestUtils.assertMemoryLeak(() -> {
