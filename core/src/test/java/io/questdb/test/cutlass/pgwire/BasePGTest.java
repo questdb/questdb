@@ -39,8 +39,6 @@ import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.IntIntHashMap;
@@ -393,10 +391,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
         });
     }
 
-    protected void assertWithPgServerExtendedBinaryOnly(PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
-        assertWithPgServer(Mode.EXTENDED, true, -1, runnable);
-    }
-
     protected void assertWithPgServer(
             Mode mode,
             boolean binary,
@@ -445,6 +439,10 @@ public abstract class BasePGTest extends AbstractCairoTest {
             assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, -1, runnable);  // EXTENDED + BINARY PARAMS + TEXT RESULT (P/D/S and B/E/S)
             assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -1, runnable);   // EXTENDED + TEXT PARAMS + TEXT RESULT (P/D/S and B/E/S)
         }
+    }
+
+    protected void assertWithPgServerExtendedBinaryOnly(PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
+        assertWithPgServer(Mode.EXTENDED, true, -1, runnable);
     }
 
     protected IPGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
@@ -500,11 +498,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;
-            }
-
-            @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return super.getDispatcherConfiguration();
             }
 
             @Override
@@ -613,13 +606,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected DefaultPGWireConfiguration getStdPgWireConfig() {
         return new DefaultPGWireConfiguration() {
             @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return new DefaultIODispatcherConfiguration() {
-                    @Override
-                    public int getBindPort() {
-                        return getPGWirePort();
-                    }
-                };
+            public int getBindPort() {
+                return getPGWirePort();
             }
 
             @Override
@@ -638,6 +626,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected DefaultPGWireConfiguration getStdPgWireConfigAltCreds() {
         return new DefaultPGWireConfiguration() {
             @Override
+            public int getBindPort() {
+                return getPGWirePort();
+            }
+
+            @Override
             public String getDefaultPassword() {
                 return "oh";
             }
@@ -645,16 +638,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public String getDefaultUsername() {
                 return "xyz";
-            }
-
-            @Override
-            public IODispatcherConfiguration getDispatcherConfiguration() {
-                return new DefaultIODispatcherConfiguration() {
-                    @Override
-                    public int getBindPort() {
-                        return getPGWirePort();
-                    }
-                };
             }
 
             @Override

@@ -26,10 +26,13 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.SelectFacade;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateLocale;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 
 public class PGWireConfigurationWrapper implements PGWireConfiguration {
     private final PGWireConfiguration delegate;
@@ -41,6 +44,16 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public int getBinParamCountCapacity() {
         return getDelegate().getBinParamCountCapacity();
+    }
+
+    @Override
+    public int getBindIPv4Address() {
+        return getDelegate().getBindIPv4Address();
+    }
+
+    @Override
+    public int getBindPort() {
+        return getDelegate().getBindPort();
     }
 
     @Override
@@ -56,6 +69,11 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return getDelegate().getCircuitBreakerConfiguration();
+    }
+
+    @Override
+    public MillisecondClock getClock() {
+        return getDelegate().getClock();
     }
 
     @Override
@@ -79,13 +97,23 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return getDelegate().getDispatcherConfiguration();
+    public String getDispatcherLogName() {
+        return getDelegate().getDispatcherLogName();
     }
 
     @Override
     public boolean getDumpNetworkTraffic() {
         return getDelegate().getDumpNetworkTraffic();
+    }
+
+    @Override
+    public EpollFacade getEpollFacade() {
+        return getDelegate().getEpollFacade();
+    }
+
+    @Override
+    public int getEventCapacity() {
+        return getDelegate().getEventCapacity();
     }
 
     @Override
@@ -104,6 +132,26 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
+    public long getHeartbeatInterval() {
+        return getDelegate().getHeartbeatInterval();
+    }
+
+    @Override
+    public boolean getHint() {
+        return getDelegate().getHint();
+    }
+
+    @Override
+    public int getIOQueueCapacity() {
+        return getDelegate().getIOQueueCapacity();
+    }
+
+    @Override
+    public int getInitialBias() {
+        return getDelegate().getInitialBias();
+    }
+
+    @Override
     public int getInsertCacheBlockCount() {
         return getDelegate().getInsertCacheBlockCount();
     }
@@ -111,6 +159,26 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public int getInsertCacheRowCount() {
         return getDelegate().getInsertCacheRowCount();
+    }
+
+    @Override
+    public int getInterestQueueCapacity() {
+        return getDelegate().getInterestQueueCapacity();
+    }
+
+    @Override
+    public KqueueFacade getKqueueFacade() {
+        return getDelegate().getKqueueFacade();
+    }
+
+    @Override
+    public int getLimit() {
+        return getDelegate().getLimit();
+    }
+
+    @Override
+    public int getListenBacklog() {
+        return getDelegate().getListenBacklog();
     }
 
     @Override
@@ -144,6 +212,11 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
+    public boolean getPeerNoLinger() {
+        return getDelegate().getPeerNoLinger();
+    }
+
+    @Override
     public int getPendingWritersCacheSize() {
         return getDelegate().getPendingWritersCacheSize();
     }
@@ -151,6 +224,11 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public String getPoolName() {
         return getDelegate().getPoolName();
+    }
+
+    @Override
+    public long getQueueTimeout() {
+        return getDelegate().getQueueTimeout();
     }
 
     @Override
@@ -184,6 +262,11 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
+    public SelectFacade getSelectFacade() {
+        return getDelegate().getSelectFacade();
+    }
+
+    @Override
     public int getSendBufferSize() {
         return getDelegate().getSendBufferSize();
     }
@@ -201,6 +284,16 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     @Override
     public long getSleepTimeout() {
         return getDelegate().getSleepTimeout();
+    }
+
+    @Override
+    public int getTestConnectionBufferSize() {
+        return getDelegate().getTestConnectionBufferSize();
+    }
+
+    @Override
+    public long getTimeout() {
+        return getDelegate().getTimeout();
     }
 
     @Override

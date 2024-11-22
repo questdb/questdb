@@ -49,8 +49,6 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.SuspendEvent;
@@ -8463,21 +8461,6 @@ nodejs code:
         assertMemoryLeak(() -> {
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
-                public IODispatcherConfiguration getDispatcherConfiguration() {
-                    return new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public int getBindPort() {
-                            return getPGWirePort();
-                        }
-
-                        @Override
-                        public String getDispatcherLogName() {
-                            return "pg-server";
-                        }
-                    };
-                }
-
-                @Override
                 public int getSendBufferSize() {
                     return 192;
                 }
@@ -12248,16 +12231,6 @@ create table tab as (
         DisconnectOnSendNetworkFacade nf = new DisconnectOnSendNetworkFacade(allowedSendCount);
         assertMemoryLeak(() -> {
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
-                @Override
-                public IODispatcherConfiguration getDispatcherConfiguration() {
-                    return new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public NetworkFacade getNetworkFacade() {
-                            return nf;
-                        }
-                    };
-                }
-
                 @Override
                 public NetworkFacade getNetworkFacade() {
                     return nf;

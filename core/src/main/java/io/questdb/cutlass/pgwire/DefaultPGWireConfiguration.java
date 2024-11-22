@@ -28,31 +28,35 @@ import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.EpollFacadeImpl;
+import io.questdb.network.KqueueFacade;
+import io.questdb.network.KqueueFacadeImpl;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.SelectFacade;
+import io.questdb.network.SelectFacadeImpl;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
 public class DefaultPGWireConfiguration implements PGWireConfiguration {
-
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
-    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-        @Override
-        public int getBindPort() {
-            return 8812;
-        }
-
-        @Override
-        public String getDispatcherLogName() {
-            return "pg-server";
-        }
-    };
 
     @Override
     public int getBinParamCountCapacity() {
         return 4;
+    }
+
+    @Override
+    public int getBindIPv4Address() {
+        return 0;
+    }
+
+    @Override
+    public int getBindPort() {
+        return 8812;
     }
 
     @Override
@@ -68,6 +72,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return circuitBreakerConfiguration;
+    }
+
+    @Override
+    public MillisecondClock getClock() {
+        return MillisecondClockImpl.INSTANCE;
     }
 
     @Override
@@ -91,8 +100,13 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return ioDispatcherConfiguration;
+    public String getDispatcherLogName() {
+        return "pg-server";
+    }
+
+    @Override
+    public EpollFacade getEpollFacade() {
+        return EpollFacadeImpl.INSTANCE;
     }
 
     @Override
@@ -111,6 +125,12 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public long getHeartbeatInterval() {
+        // don't send heartbeat messages by default
+        return -1L;
+    }
+
+    @Override
     public int getInsertCacheBlockCount() {
         return 4;
     }
@@ -118,6 +138,16 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public int getInsertCacheRowCount() {
         return 4;
+    }
+
+    @Override
+    public KqueueFacade getKqueueFacade() {
+        return KqueueFacadeImpl.INSTANCE;
+    }
+
+    @Override
+    public int getLimit() {
+        return 64;
     }
 
     @Override
@@ -157,6 +187,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public long getQueueTimeout() {
+        return 300_000;
+    }
+
+    @Override
     public String getReadOnlyPassword() {
         return "quest";
     }
@@ -182,6 +217,11 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     }
 
     @Override
+    public SelectFacade getSelectFacade() {
+        return SelectFacadeImpl.INSTANCE;
+    }
+
+    @Override
     public int getSendBufferSize() {
         return 1024 * 1024;
     }
@@ -189,6 +229,16 @@ public class DefaultPGWireConfiguration implements PGWireConfiguration {
     @Override
     public String getServerVersion() {
         return "11.3";
+    }
+
+    @Override
+    public int getTestConnectionBufferSize() {
+        return 64;
+    }
+
+    @Override
+    public long getTimeout() {
+        return 5 * 60 * 1000L;
     }
 
     @Override

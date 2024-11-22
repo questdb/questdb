@@ -89,11 +89,11 @@ public interface IODispatcherConfiguration {
 
     long getQueueTimeout();
 
-    int getRcvBufSize();
+    int getRecvBufferSize();
 
     SelectFacade getSelectFacade();
 
-    int getSndBufSize();
+    int getSendBufferSize();
 
     int getTestConnectionBufferSize();
 

@@ -78,7 +78,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public int getRcvBufSize() {
+    public int getRecvBufferSize() {
         return -1; // use system default
     }
 
@@ -88,7 +88,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
-    public int getSndBufSize() {
+    public int getSendBufferSize() {
         return -1; // use system default
     }
 

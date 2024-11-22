@@ -26,14 +26,22 @@ package io.questdb.test.cutlass.http;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.SecurityContext;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.DefaultHttpContextConfiguration;
+import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.MimeTypesCache;
+import io.questdb.cutlass.http.WaitProcessorConfiguration;
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.Numbers;
+import io.questdb.std.StationaryMillisClock;
+import io.questdb.std.StationaryNanosClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -72,8 +80,8 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
-            public int getSndBufSize() {
-                return tcpSndBufSize == 0 ? super.getSndBufSize() : tcpSndBufSize;
+            public int getSendBufferSize() {
+                return tcpSndBufSize == 0 ? super.getSendBufferSize() : tcpSndBufSize;
             }
         };
 

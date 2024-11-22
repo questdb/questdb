@@ -298,7 +298,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final String posthogApiKey;
     private final boolean posthogEnabled;
-    private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
@@ -564,11 +563,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean pgReadOnlySecurityContext;
     private boolean pgReadOnlyUserEnabled;
     private String pgReadOnlyUsername;
-    private int pgRecvBufferSize;
     private int pgSelectCacheBlockCount;
     private boolean pgSelectCacheEnabled;
     private int pgSelectCacheRowCount;
-    private int pgSendBufferSize;
     private int pgUpdateCacheBlockCount;
     private boolean pgUpdateCacheEnabled;
     private int pgUpdateCacheRowCount;
@@ -1051,14 +1048,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgNetIdleConnectionTimeout = getMillis(properties, env, PropertyKey.PG_NET_CONNECTION_TIMEOUT, this.pgNetIdleConnectionTimeout);
                 this.pgNetConnectionQueueTimeout = getMillis(properties, env, PropertyKey.PG_NET_CONNECTION_QUEUE_TIMEOUT, 300_000);
 
-                // deprecated
-                this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.PG_NET_RECV_BUF_SIZE, -1);
-                this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.PG_NET_CONNECTION_RCVBUF, this.pgNetConnectionRcvBuf);
-
-                // deprecated
-                this.pgNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.PG_NET_SEND_BUF_SIZE, -1);
-                this.pgNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.PG_NET_CONNECTION_SNDBUF, this.pgNetConnectionSndBuf);
-
                 this.pgCharacterStoreCapacity = getInt(properties, env, PropertyKey.PG_CHARACTER_STORE_CAPACITY, 4096);
                 this.pgBinaryParamsCapacity = getInt(properties, env, PropertyKey.PG_BINARY_PARAM_COUNT_CAPACITY, 2);
                 this.pgCharacterStorePoolCapacity = getInt(properties, env, PropertyKey.PG_CHARACTER_STORE_POOL_CAPACITY, 64);
@@ -1070,8 +1059,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgReadOnlyUserEnabled = getBoolean(properties, env, PropertyKey.PG_RO_USER_ENABLED, false);
                 this.pgReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.PG_SECURITY_READONLY, false);
                 this.pgMaxBlobSizeOnQuery = getIntSize(properties, env, PropertyKey.PG_MAX_BLOB_SIZE_ON_QUERY, 512 * 1024);
-                this.pgRecvBufferSize = getIntSize(properties, env, PropertyKey.PG_RECV_BUFFER_SIZE, Numbers.SIZE_1MB);
-                this.pgSendBufferSize = getIntSize(properties, env, PropertyKey.PG_SEND_BUFFER_SIZE, Numbers.SIZE_1MB);
+
+                // deprecated
+                this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.PG_RECV_BUFFER_SIZE, Numbers.SIZE_1MB);
+                this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.PG_NET_CONNECTION_RCVBUF, pgNetConnectionRcvBuf);
+                // deprecated
+                this.pgNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.PG_SEND_BUFFER_SIZE, Numbers.SIZE_1MB);
+                this.pgNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.PG_NET_CONNECTION_SNDBUF, pgNetConnectionSndBuf);
+
                 final String dateLocale = getString(properties, env, PropertyKey.PG_DATE_LOCALE, "en");
                 this.pgDefaultLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
                 if (this.pgDefaultLocale == null) {
@@ -1969,8 +1964,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.HTTP_NET_QUEUED_CONNECTION_TIMEOUT,
                     PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT
             );
+            registerDeprecated(PropertyKey.HTTP_NET_SND_BUF_SIZE);
             registerDeprecated(
-                    PropertyKey.HTTP_NET_SND_BUF_SIZE,
+                    PropertyKey.PG_SEND_BUFFER_SIZE,
                     PropertyKey.HTTP_NET_CONNECTION_SNDBUF
             );
             registerDeprecated(
@@ -1981,8 +1977,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.PG_NET_IDLE_TIMEOUT,
                     PropertyKey.PG_NET_CONNECTION_TIMEOUT
             );
+            registerDeprecated(PropertyKey.PG_NET_RECV_BUF_SIZE);
             registerDeprecated(
-                    PropertyKey.PG_NET_RECV_BUF_SIZE,
+                    PropertyKey.PG_RECV_BUFFER_SIZE,
                     PropertyKey.PG_NET_CONNECTION_RCVBUF
             );
             registerDeprecated(
@@ -3402,7 +3399,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getRcvBufSize() {
+        public int getRecvBufferSize() {
             return httpNetConnectionRcvBuf;
         }
 
@@ -3412,7 +3409,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSndBufSize() {
+        public int getSendBufferSize() {
             return httpNetConnectionSndBuf;
         }
 
@@ -3484,7 +3481,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getRcvBufSize() {
+        public int getRecvBufferSize() {
             return httpMinNetConnectionRcvBuf;
         }
 
@@ -3494,7 +3491,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSndBufSize() {
+        public int getSendBufferSize() {
             return httpMinNetConnectionSndBuf;
         }
 
@@ -4079,7 +4076,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getRcvBufSize() {
+        public int getRecvBufferSize() {
             return lineTcpNetConnectionRcvBuf;
         }
 
@@ -4089,7 +4086,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSndBufSize() {
+        public int getSendBufferSize() {
             return -1;
         }
 
@@ -4264,6 +4261,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getBindIPv4Address() {
+            return pgNetBindIPv4Address;
+        }
+
+        @Override
+        public int getBindPort() {
+            return pgNetBindPort;
+        }
+
+        @Override
         public int getCharacterStoreCapacity() {
             return pgCharacterStoreCapacity;
         }
@@ -4276,6 +4283,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
             return circuitBreakerConfiguration;
+        }
+
+        @Override
+        public MillisecondClock getClock() {
+            return MillisecondClockImpl.INSTANCE;
         }
 
         @Override
@@ -4299,8 +4311,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public IODispatcherConfiguration getDispatcherConfiguration() {
-            return propPGWireDispatcherConfiguration;
+        public String getDispatcherLogName() {
+            return "pg-server";
+        }
+
+        @Override
+        public EpollFacade getEpollFacade() {
+            return EpollFacadeImpl.INSTANCE;
         }
 
         @Override
@@ -4319,6 +4336,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getHeartbeatInterval() {
+            return -1L;
+        }
+
+        @Override
+        public boolean getHint() {
+            return pgNetConnectionHint;
+        }
+
+        @Override
         public int getInsertCacheBlockCount() {
             return pgInsertCacheBlockCount;
         }
@@ -4326,6 +4353,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getInsertCacheRowCount() {
             return pgInsertCacheRowCount;
+        }
+
+        @Override
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getLimit() {
+            return pgNetConnectionLimit;
         }
 
         @Override
@@ -4369,6 +4406,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getQueueTimeout() {
+            return pgNetConnectionQueueTimeout;
+        }
+
+        @Override
         public String getReadOnlyPassword() {
             return pgReadOnlyPassword;
         }
@@ -4380,7 +4422,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getRecvBufferSize() {
-            return pgRecvBufferSize;
+            return pgNetConnectionRcvBuf;
         }
 
         @Override
@@ -4394,8 +4436,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public SelectFacade getSelectFacade() {
+            return SelectFacadeImpl.INSTANCE;
+        }
+
+        @Override
         public int getSendBufferSize() {
-            return pgSendBufferSize;
+            return pgNetConnectionSndBuf;
         }
 
         @Override
@@ -4406,6 +4453,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSleepThreshold() {
             return pgWorkerSleepThreshold;
+        }
+
+        @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
+        }
+
+        @Override
+        public long getTimeout() {
+            return pgNetIdleConnectionTimeout;
         }
 
         @Override
@@ -4476,89 +4533,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean readOnlySecurityContext() {
             return pgReadOnlySecurityContext || isReadOnlyInstance;
-        }
-    }
-
-    private class PropPGWireDispatcherConfiguration implements IODispatcherConfiguration {
-
-        @Override
-        public int getBindIPv4Address() {
-            return pgNetBindIPv4Address;
-        }
-
-        @Override
-        public int getBindPort() {
-            return pgNetBindPort;
-        }
-
-        @Override
-        public MillisecondClock getClock() {
-            return MillisecondClockImpl.INSTANCE;
-        }
-
-        @Override
-        public String getDispatcherLogName() {
-            return "pg-server";
-        }
-
-        @Override
-        public EpollFacade getEpollFacade() {
-            return EpollFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public long getHeartbeatInterval() {
-            return -1L;
-        }
-
-        @Override
-        public boolean getHint() {
-            return pgNetConnectionHint;
-        }
-
-        @Override
-        public KqueueFacade getKqueueFacade() {
-            return KqueueFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getLimit() {
-            return pgNetConnectionLimit;
-        }
-
-        @Override
-        public NetworkFacade getNetworkFacade() {
-            return NetworkFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public long getQueueTimeout() {
-            return pgNetConnectionQueueTimeout;
-        }
-
-        @Override
-        public int getRcvBufSize() {
-            return pgNetConnectionRcvBuf;
-        }
-
-        @Override
-        public SelectFacade getSelectFacade() {
-            return SelectFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getSndBufSize() {
-            return pgNetConnectionSndBuf;
-        }
-
-        @Override
-        public int getTestConnectionBufferSize() {
-            return netTestConnectionBufferSize;
-        }
-
-        @Override
-        public long getTimeout() {
-            return pgNetIdleConnectionTimeout;
         }
     }
 
