@@ -22,42 +22,46 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.ndarr;
+package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.ndarr.NdArrFormat;
 import io.questdb.std.str.DirectUtf8String;
 
 /**
- * Parse N-dimensional array literals.
+ * Parse N-dimensional arrays for ILP input.
  *
  * <p>Here are a few examples:</p>
  *
- * <p>An empty array of unspecified dimensions and type:</p>
- * <pre><code>NULL</code></pre>
- *
- * <p>Semantically equivalent to <code>NULL</code> is an empty array:</p>
- * <pre><code>{}</code></pre>
- *
  * <p>A 1-D array of longs:</p>
- * <pre><code>{1, 2, 3}</code></pre>
+ * <pre><code>{64i1,2,3}</code></pre>
  *
  * <p>A 2-D array of doubles:</p>
  * <pre><code>
  * {
  *     -- a comment
- *     {NULL, 1},
- *     {2.5, 3}  -- yet another comment
+ *     {64fNaN,1},
+ *     {64f2.5,3}  -- yet another comment
  * }
  * </code></pre>
  *
+ * <p>The type marker is as follows: <code>[precision][number_class]</code></p>
+ * <dl>
+ *     <dt>precision</dt>
+ *     <dd>number of bits in the numeric type, e.g. <code>8</code>, <code>16</code>, <code>32</code>, <code>64</code></dd>
+ *     <dt>number_class</dt>
+ *     <dd>type of number, <code>i</code> for signed integer, <code>u</code> for unsigned,
+ *         <code>f</code> for floating point</dd>
+ * </dl>
+ *
  * <p>There is also support for specifying the array as a CSC or CSR 1D vectors and 2D matrices.
  * For example:</p>
- * <pre><code>{R{0,1,3,4,5}{2,0,3,4,1}{3,5,4,7,8}}</code></pre>
- * <p>is equivalent to:</p>
+ * <pre><code>{32uR{0,1,3,4,5}{2,0,3,4,1}{3,5,4,7,8}}</code></pre>
+ * <p>is equivalent to (extra invalid whitespace added for readability):</p>
  * <pre><code>
- * {
+ * {32u
  *     {0, 0, 3, 0, 0},
  *     {5, 0, 0, 4, 0},
  *     {0, 0, 0, 0, 7},
@@ -65,16 +69,15 @@ import io.questdb.std.str.DirectUtf8String;
  * }
  * </code></pre>
  *
- * <p>"R" tags CSR and "C" tags CSC. The three following arrays of numbers indicate:</p>
+ * <p><code>R</code> tags <strong>CSR</strong> and <code>C</code> tags <strong>CSC</strong>.</p>
+ * <p>The three following arrays of numbers indicate:</p>
  * <ul>
  *   <li><code>{row_pointers/col_pointers}</code></li>
  *   <li><code>{column_indices/row_indices}</code></li>
  *   <li><code>{values}</code></li>
  * </ul>
- *
- * <p><strong>NOTE:</strong> The element type is inferred but can also be fixed during parsing.</p>
  */
-public class NdArrLiteralParser implements QuietCloseable {
+public class NdArrParser implements QuietCloseable {
     /**
      * The current number of elements in the current dimension (for `NdArrFormat.RM` parsing).
      */
@@ -100,8 +103,9 @@ public class NdArrLiteralParser implements QuietCloseable {
      * When format is `NdArrFormat.CSR` or `NdArrFormat.CSC`, this is set after parsing.
      */
     private final IntList dims = new IntList(8);
+    private int format = NdArrFormat.UNDEFINED;
 
-    private int elementType = ColumnType.UNDEFINED;
+    private int type = ColumnType.UNDEFINED;
 
     @Override
     public void close() {
@@ -109,27 +113,24 @@ public class NdArrLiteralParser implements QuietCloseable {
     }
 
     /**
-     * Get the inferred element ColumnType.
-     * One of UNDEFINED, DOUBLE or LONG.
-     * If a column type invariant was specified during parsing, this will be that same type.
-     * If the parsing is ambiguous, e.g. for literals such as `{}` or `{1, 2, 3}`:
-     *   * Returns UNDEFINED.
-     *   * The buffer holds LONG numbers.
-     * <p>
-     * N.B.: This method should only be called once parsing is complete.
+     * Get the array ColumnType.
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
-    public int getElementType() {
-        return elementType;
+    public int getType() {
+        return type;
     }
 
     /**
-     * The parsed array is effectively NULL.
-     * These are some inputs that cause this method to return true:
-     *   * NULL
-     *   * { }
-     *   * { { {} } }
-     * <p>
-     * N.B.: This method should only be called once parsing is complete.
+     * Returns a value from the `NdArrFormat` enum indicating how the array is represented in memory.
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
+     */
+    public int getFormat() {
+        return format;
+    }
+
+    /**
+     * The parsed array is effectively NULL, i.e. contains no values.
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
     public boolean isNullArray() {
         throw new UnsupportedOperationException("nyi");
@@ -137,8 +138,9 @@ public class NdArrLiteralParser implements QuietCloseable {
 
     /**
      * Get the address of the {row_pointers/col_pointers} vector for the CSR/CSC sparse array.
-     * Returns a nullptr if `getFormat()` is dense (i.e. `RM`).
+     * Returns a null address if `getFormat()` is dense (i.e. `RM`).
      * The returned buffer contains 32-bit integers.
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
     public long getSparsePointers() {
         throw new UnsupportedOperationException("nyi");
@@ -147,6 +149,7 @@ public class NdArrLiteralParser implements QuietCloseable {
     /**
      * Get the count of numbers present in the vector returned by `getSparsePointers()`.
      * Call `getSparsePointersSize()` to get the byte size.
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
     public int getSparsePointersCount() {
         throw new UnsupportedOperationException("nyi");
@@ -154,6 +157,7 @@ public class NdArrLiteralParser implements QuietCloseable {
 
     /**
      * Number of bytes in the vector returned by `getSparsePointers()`.
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
     public int getSparsePointersSize() {
         return getSparsePointersCount() * Integer.BYTES;
@@ -163,6 +167,7 @@ public class NdArrLiteralParser implements QuietCloseable {
      * Get the {column_indices/row_indices} vector for the CSR/CSC sparse array.
      * Returns a nullptr if `getFormat()` is dense (i.e. `RM`).
      * The returned buffer contains 32-bit integers.
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
     public long getSparseIndices() {
         throw new UnsupportedOperationException("nyi");
@@ -171,6 +176,7 @@ public class NdArrLiteralParser implements QuietCloseable {
     /**
      * Get the count of numbers present in the vector returned by `getSparseIndices()`.
      * Call `getSparseIndicesSize()` to get the byte size.
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
     public int getSparseIndicesCount() {
         throw new UnsupportedOperationException("nyi");
@@ -178,6 +184,7 @@ public class NdArrLiteralParser implements QuietCloseable {
 
     /**
      * Number of bytes in the vector returned by `getSparseIndices()`.
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
     public int getSparseIndicesSize() {
         return getSparseIndicesCount() * Integer.BYTES;
@@ -189,7 +196,7 @@ public class NdArrLiteralParser implements QuietCloseable {
      * <p>
      * When the format is `NdArrFormat.RM` (dense, row-major) it's a
      * flattened array of all the elements.
-     *
+     * <p>
      * For example, for the 4x3x2 matrix: {
      *     {{1, 2}, {3, 4}, {5, 6}},
      *     {{7, 8}, {9, 0}, {1, 2}},
@@ -198,8 +205,8 @@ public class NdArrLiteralParser implements QuietCloseable {
      * }
      * The buffer would contain a flat vector of elements (see getElementType)
      * with the numbers [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]
-     * <p>
-     * When
+     *
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
     public long getElements() {
         throw new UnsupportedOperationException("nyi");
@@ -207,23 +214,26 @@ public class NdArrLiteralParser implements QuietCloseable {
 
     /**
      * Number of bytes in the buffer.
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
     public int getElementsSize() {
-        return ColumnType.sizeOf(getElementType()) * getElementsCount();
+        return ColumnType.sizeOf(getType()) * getElementsCount();
     }
 
-    /** Number of elements returned by `getElements()` */
+    /**
+     * Number of elements returned by `getElements()`
+     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
+     */
     public int getElementsCount() {
         throw new UnsupportedOperationException("nyi");
     }
 
-    private void reset(int targetType) {
+    private void reset() {
         currDimLen = 0;
         dimIndex = -1;  // No dimensions until the first `{`
         dims.clear();
-        assert (targetType == ColumnType.UNDEFINED)
-                || ColumnType.isNdArrayElemType(targetType);
-        elementType = ColumnType.UNDEFINED;
+        type = ColumnType.UNDEFINED;
+        format = NdArrFormat.UNDEFINED;
     }
 
     /**
@@ -247,7 +257,7 @@ public class NdArrLiteralParser implements QuietCloseable {
      *   * That grammar does not support whitespace or comments.
      */
     public long parse(DirectUtf8String value) {
-        reset(elementType);
+        reset();
         throw new UnsupportedOperationException("array parsing not yet implemented");
     }
 }

@@ -31,19 +31,24 @@ package io.questdb.std.ndarr;
  */
 public interface NdArrFormat {
     /**
+     * Invalid value, used until the format is determined during parsing.
+     */
+    int UNDEFINED = 0;
+
+    /**
      * Dense, row-major
      */
-    int RM = 0;
+    int RM = 1;
 
     /**
      * Sparse, CSR
-     * 32-bit int indices
+     * 32-bit int pointers/indices
      */
     int CSR = RM + 1;  // = 1
 
     /**
      * Sparse, CSC
-     * 32-bit int indices
+     * 32-bit int pointers/indices
      */
     int CSC = CSR + 1;  // = 2
 }

@@ -31,10 +31,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.ndarr.NdArrLiteralParser;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.Utf8String;
 
 public class LineTcpParser {
 
@@ -658,7 +656,7 @@ public class LineTcpParser {
         private boolean booleanValue;
         private double floatValue;
         private long longValue;
-        private final NdArrLiteralParser ndArrParser = new NdArrLiteralParser();
+        private final NdArrParser ndArrParser = new NdArrParser();
         private byte type = ENTITY_TYPE_NONE;
         private byte unit = ENTITY_UNIT_NONE;
 
