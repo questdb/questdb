@@ -255,6 +255,8 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
             }
 
             engine.releaseAllReaders();
+            // change spin timeout for the test to fail faster
+            spinLockTimeout = 100;
             try (TableReader ignored = getReader("X")) {
                 Assert.fail();
             } catch (CairoException ignored) {
