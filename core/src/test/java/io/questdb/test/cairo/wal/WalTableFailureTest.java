@@ -1836,6 +1836,8 @@ public class WalTableFailureTest extends AbstractCairoTest {
             // Table should be suspended
             execute("update " + tableName + " set x = 1111");
 
+            // minimize time spent opening metadata that cannot be opened
+            spinLockTimeout = 100;
             drainWalQueue();
 
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName(tableName)));
