@@ -423,6 +423,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getPGWireConfiguration().isReadOnlyUserEnabled());
         Assert.assertEquals("quest", configuration.getPGWireConfiguration().getReadOnlyPassword());
         Assert.assertEquals("user", configuration.getPGWireConfiguration().getReadOnlyUsername());
+        Assert.assertEquals(10_000, configuration.getPGWireConfiguration().getNamedStatementLimit());
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
         Assert.assertEquals(127, configuration.getCairoConfiguration().getMaxFileNameLength());
@@ -1147,6 +1148,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals("my_user", configuration.getPGWireConfiguration().getReadOnlyUsername());
             Assert.assertEquals(16, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(new DefaultPGWireConfiguration().getServerVersion(), configuration.getPGWireConfiguration().getServerVersion());
+            Assert.assertEquals(10, configuration.getPGWireConfiguration().getNamedStatementLimit());
 
             Assert.assertEquals(255, configuration.getLineTcpReceiverConfiguration().getMaxFileNameLength());
             Assert.assertEquals(255, configuration.getLineUdpReceiverConfiguration().getMaxFileNameLength());

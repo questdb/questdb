@@ -178,8 +178,7 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
         @Override
         public Entry<K, V> next() {
             entry.key = keys[index];
-            int index1 = index++;
-            entry.value = values[index1];
+            entry.value = values[index++];
             return entry;
         }
 

@@ -58,7 +58,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
+public class AvgDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
 
     public static final ArrayColumnTypes AVG_COLUMN_TYPES;
     public static final ArrayColumnTypes AVG_OVER_PARTITION_RANGE_COLUMN_TYPES;
@@ -73,11 +73,6 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public boolean isWindow() {
-        return true;
-    }
-
-    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -85,53 +80,8 @@ public class AvgDoubleWindowFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        if (windowContext.isEmpty()) {
-            throw SqlException.emptyWindowContext(position);
-        }
-
-        long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getRowsHi();
-
-        if (!windowContext.isDefaultFrame()) {
-            if (rowsLo > 0) {
-                throw SqlException.$(windowContext.getRowsLoKindPos(), "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
-            }
-            if (rowsHi > 0) {
-                if (rowsHi != Long.MAX_VALUE) {
-                    throw SqlException.$(windowContext.getRowsHiKindPos(), "frame end supports _number_ PRECEDING and CURRENT ROW only");
-                } else if (rowsLo != Long.MIN_VALUE) {
-                    throw SqlException.$(windowContext.getRowsHiKindPos(), "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
-                }
-            }
-        }
-
-        int exclusionKind = windowContext.getExclusionKind();
-        int exclusionKindPos = windowContext.getExclusionKindPos();
-        if (exclusionKind != WindowColumn.EXCLUDE_NO_OTHERS
-                && exclusionKind != WindowColumn.EXCLUDE_CURRENT_ROW) {
-            throw SqlException.$(exclusionKindPos, "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
-        }
-
-        if (exclusionKind == WindowColumn.EXCLUDE_CURRENT_ROW) {
-            // assumes frame doesn't use 'following'
-            if (rowsHi == Long.MAX_VALUE) {
-                throw SqlException.$(exclusionKindPos, "EXCLUDE CURRENT ROW not supported with UNBOUNDED FOLLOWING frame boundary");
-            }
-
-            if (rowsHi == 0) {
-                rowsHi = -1;
-            }
-            if (rowsHi < rowsLo) {
-                throw SqlException.$(exclusionKindPos, "end of window is higher than start of window due to exclusion mode");
-            }
-        }
-
+        checkWindowParameter(position, sqlExecutionContext);
         int framingMode = windowContext.getFramingMode();
-        if (framingMode == WindowColumn.FRAMING_GROUPS) {
-            throw SqlException.$(position, "function not implemented for given window parameters");
-        }
-
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();

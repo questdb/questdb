@@ -24,12 +24,13 @@
 
 package io.questdb.test.sqllogictest;
 
-import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.Collection;
 
-@RunWith(Parameterized.class)
+/**
+ * Tests various SQL features.
+ */
 public class SqlTest extends AbstractSqllogicTestRunner {
     public SqlTest(String testFile) {
         super(testFile);

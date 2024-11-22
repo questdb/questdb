@@ -44,8 +44,8 @@ import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
+import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
@@ -76,7 +76,7 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
-    protected PGWireServer pgWireServer;
+    protected IPGWireServer pgWireServer;
     private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private boolean initialized;

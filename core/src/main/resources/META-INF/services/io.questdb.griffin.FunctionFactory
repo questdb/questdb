@@ -40,7 +40,7 @@ io.questdb.griffin.engine.functions.test.TestSumTDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestSumStringGroupByFunctionFactory
 io.questdb.griffin.engine.functions.test.TestNPEFactory
 io.questdb.griffin.engine.functions.test.TestSleepFunctionFactory
-io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory
+io.questdb.griffin.engine.functions.test.TestLargeErrorMsgFunctionFactory
 
 # logical operations
 io.questdb.griffin.engine.functions.bool.OrFunctionFactory
@@ -62,6 +62,7 @@ io.questdb.griffin.engine.functions.eq.EqIntFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIPv4FunctionFactory
 io.questdb.griffin.engine.functions.eq.EqIPv4StrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqLongCharFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqLong128FunctionFactory
 io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqLong256StrFunctionFactory
@@ -259,6 +260,7 @@ io.questdb.griffin.engine.functions.rnd.ListFunctionFactory
 io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory
 io.questdb.griffin.engine.functions.rnd.RndIntervalFunctionFactory
+io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory
 
 # date conversion functions
 
@@ -803,6 +805,11 @@ io.questdb.griffin.engine.functions.catalogue.PgGetSITExprFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgProcFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PgEnumFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.ReferentialConstraintsFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.TableConstraintsFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.KeyColumnUsageFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.InformationSchemaCharacterSetsFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgRangeFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgGetKeywordsFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory
@@ -953,6 +960,16 @@ io.questdb.griffin.engine.functions.str.LowerVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.UpperFunctionFactory
 io.questdb.griffin.engine.functions.str.UpperVarcharFunctionFactory
 
+# hash functions
+io.questdb.griffin.engine.functions.str.MD5BinFunctionFactory
+io.questdb.griffin.engine.functions.str.MD5StrFunctionFactory
+io.questdb.griffin.engine.functions.str.SHA1BinFunctionFactory
+io.questdb.griffin.engine.functions.str.SHA1StrFunctionFactory
+io.questdb.griffin.engine.functions.str.SHA1VarcharFunctionFactory
+io.questdb.griffin.engine.functions.str.SHA256BinFunctionFactory
+io.questdb.griffin.engine.functions.str.SHA256StrFunctionFactory
+io.questdb.griffin.engine.functions.str.SHA256VarcharFunctionFactory
+
 # Pad string
 io.questdb.griffin.engine.functions.str.LPadFunctionFactory
 io.questdb.griffin.engine.functions.str.LPadStrFunctionFactory
@@ -977,6 +994,10 @@ io.questdb.griffin.engine.functions.window.RankFunctionFactory
 io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory
 io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.CountConstWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.CountSymbolWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory
 
 # metadata functions
 io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory

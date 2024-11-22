@@ -130,7 +130,7 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            executionContext.getSecurityContext().authorizeAdminAction();
+            executionContext.getSecurityContext().authorizeSystemAdmin();
             engine = executionContext.getCairoEngine();
             super.init(symbolTableSource, executionContext);
             for (int i = 0, n = tableTokens.size(); i < n; i++) {

@@ -101,7 +101,6 @@ public class GeoHashes {
         }
     }
 
-
     public static void appendBinary(long hash, int bits, CharSink<?> sink) {
         if (hash != NULL) {
             appendBinaryStringUnsafe(hash, bits, sink);
