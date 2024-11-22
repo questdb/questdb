@@ -130,7 +130,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextBoolean(),
                 rnd.nextInt(2_000_000),
                 rnd.nextInt(1000),
-                rnd.nextInt(1000),
+                randomiseStringLengths(rnd),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1_000_000),
@@ -138,6 +138,13 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         );
 
         assertMemoryLeak(() -> fuzzer.runFuzz(getTestName(), rnd));
+    }
+
+    private static int randomiseStringLengths(Rnd rnd) {
+        // Make extremely long strings rare
+        // but still possible
+        double randomDriver = rnd.nextDouble();
+        return (int)(30 * randomDriver + Math.round(Math.pow(1000 - 30, randomDriver)));
     }
 
     protected void fullRandomFuzz(Rnd rnd, int tableCount) throws Exception {
@@ -278,11 +285,13 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, walChunk);
 
-        configuration.getFilesFacade().allowMixedIO(root);
-//        boolean allowMixedIO = rnd.nextBoolean();
-//        if (configuration.getFilesFacade().allowMixedIO(root)) {
-//            node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, allowMixedIO);
-//        }
+        // Make call to move random even if will not be used
+        // To avoid zfs runs being very different to the non-zfs
+        // with the same seeds
+        boolean allowMixedIO = rnd.nextBoolean();
+        if (configuration.getFilesFacade().allowMixedIO(root)) {
+            node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, allowMixedIO);
+        }
     }
 
     protected void setRandomAppendPageSize(Rnd rnd) {
