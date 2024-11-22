@@ -136,6 +136,12 @@ public class Utf8StringSink implements MutableUtf8Sink {
     }
 
     public Utf8StringSink repeat(char value, int n) {
+        if (value < 128) {
+            // fast path for ASCII
+            putByte0Repeat((byte) value, n);
+            return this;
+        }
+
         for (int i = 0; i < n; i++) {
             put(value);
         }
@@ -160,7 +166,7 @@ public class Utf8StringSink implements MutableUtf8Sink {
     private void checkCapacity(int extra) {
         assert extra >= 0;
         int size = pos + extra;
-        if (buffer.length > size) {
+        if (buffer.length >= size) {
             return;
         }
         size = Math.max(pos * 2, size);
@@ -173,6 +179,15 @@ public class Utf8StringSink implements MutableUtf8Sink {
     private Utf8StringSink putByte0(byte b) {
         checkCapacity(1);
         buffer[pos++] = b;
+        return this;
+    }
+
+    @NotNull
+    private Utf8StringSink putByte0Repeat(byte b, int n) {
+        checkCapacity(n);
+        for (int i = 0; i < n; i++) {
+            buffer[pos++] = b;
+        }
         return this;
     }
 }
