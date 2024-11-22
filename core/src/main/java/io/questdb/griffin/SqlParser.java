@@ -196,6 +196,12 @@ public class SqlParser {
         }
     }
 
+    private static CreateTableOperationBuilder parseCreateTableExt(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback, CharSequence tok, CreateTableOperationBuilder builder) throws SqlException {
+        boolean expectedTok = tok == null || Chars.equals(tok, ';');
+        sqlParserCallback.createTableExt(lexer, executionContext.getSecurityContext(), builder, expectedTok ? null : tok);
+        return builder;
+    }
+
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && isIsolationKeyword(tok)) {
@@ -662,7 +668,8 @@ public class SqlParser {
             if (isLikeKeyword(tok)) {
                 builder.setBatchSize(-1);
                 parseCreateTableLikeTable(lexer);
-                return builder;
+                tok = optTok(lexer);
+                return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
             } else {
                 lexer.unparseLast();
                 parseCreateTableColumns(lexer);
@@ -681,8 +688,10 @@ public class SqlParser {
 
             // if we use atomic or batch keywords, then throw an error
             if (atomicSpecified || batchSpecified) {
-                throw SqlException.$(lexer.lastTokenPosition(),
-                        "'atomic' or 'batch' keywords can only be used in CREATE ... AS SELECT statements.");
+                throw SqlException.$(
+                        lexer.lastTokenPosition(),
+                        "'atomic' or 'batch' keywords can only be used in CREATE ... AS SELECT statements."
+                );
             }
         }
 
@@ -865,10 +874,7 @@ public class SqlParser {
                 throw SqlException.position(lexer.getPosition()).put("column list expected");
             }
         }
-
-        boolean expectedTok = tok == null || Chars.equals(tok, ';');
-        sqlParserCallback.createTableExt(lexer, executionContext.getSecurityContext(), builder, expectedTok ? null : tok);
-        return builder;
+        return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
     }
 
     private void parseCreateTableAsSelect(
@@ -1087,10 +1093,6 @@ public class SqlParser {
         );
         tok = tok(lexer, ")");
         if (!Chars.equals(tok, ')')) {
-            throw errUnexpected(lexer, tok);
-        }
-        tok = optTok(lexer);
-        if (tok != null && !Chars.equals(tok, ';')) {
             throw errUnexpected(lexer, tok);
         }
     }
