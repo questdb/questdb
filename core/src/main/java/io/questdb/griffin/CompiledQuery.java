@@ -86,6 +86,8 @@ public interface CompiledQuery {
     @Transient
     OperationFuture execute(SqlExecutionContext context, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException;
 
+    boolean executedAtParseTime();
+
     /**
      * Returns number of rows changed by this command. Used e.g. in pg wire protocol.
      *
@@ -96,9 +98,9 @@ public interface CompiledQuery {
     @Transient
     AlterOperation getAlterOperation();
 
-    Operation getOperation();
-
     InsertOperation getInsertOperation();
+
+    Operation getOperation();
 
     RecordCursorFactory getRecordCursorFactory();
 

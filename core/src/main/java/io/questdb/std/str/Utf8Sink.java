@@ -30,6 +30,67 @@ import org.jetbrains.annotations.Nullable;
 
 public interface Utf8Sink extends CharSink<Utf8Sink> {
 
+
+    /**
+     * Differs from `escapeJsonStr` by instead escaping double quotes `"` with double
+     * double quotes `""`. This follows recommendation from RFC 4180.
+     * <a href="https://www.ietf.org/rfc/rfc4180.txt">...</a>
+     */
+    default Utf8Sink escapeCsvStr(@NotNull CharSequence cs, int lo, int hi) {
+        int i = lo;
+        while (i < hi) {
+            char c = cs.charAt(i++);
+            if (c < 32) {
+                escapeJsonStrChar(c);
+            } else if (c < 128) {
+                switch (c) {
+                    case '"':
+                        putAscii("\"\"");
+                        break;
+                    case '\\':
+                        putAscii("\\\\");
+                        break;
+                    default:
+                        putAscii(c);
+                }
+            } else {
+                i = Utf8s.encodeUtf16Char(this, cs, hi, i, c);
+            }
+        }
+
+        return this;
+    }
+
+    default Utf8Sink escapeCsvStr(Utf8Sequence utf8) {
+        int i = 0;
+        final int hi = utf8.size();
+
+        while (i < hi) {
+            char c = (char) utf8.byteAt(i++);
+            if (c > 0 && c < 32) {
+                escapeJsonStrChar(c);
+            } else if (c > 0 && c < 128) {
+                switch (c) {
+                    case '"':
+                        putAscii("\"\"");
+                        break;
+                    case '\\':
+                        putAscii("\\\\");
+                        break;
+                    default:
+                        putAscii(c);
+                }
+            } else {
+                put((byte) c);
+            }
+        }
+        return this;
+    }
+
+    default Utf8Sink escapeCsvStr(@NotNull CharSequence cs) {
+        return escapeCsvStr(cs, 0, cs.length());
+    }
+
     default Utf8Sink escapeJsonStr(@NotNull CharSequence cs) {
         return escapeJsonStr(cs, 0, cs.length());
     }

@@ -34,7 +34,8 @@ import io.questdb.std.fastdouble.FastFloatParser;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;import org.jetbrains.annotations.NotNull;
+import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 //#if jdk.version==8
 //$import sun.misc.FDBigInteger;
 //#else
@@ -488,6 +489,14 @@ public final class Numbers {
             return;
         }
         appendHex(sink, a, false);
+    }
+
+    public static void appendLong256FromUnsafe(long address, CharSink<?> sink) {
+        final long a = Unsafe.getUnsafe().getLong(address);
+        final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+        final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);
+        final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);
+        appendLong256(a, b, c, d, sink);
     }
 
     public static void appendUuid(long lo, long hi, CharSink<?> sink) {
@@ -1082,7 +1091,6 @@ public final class Numbers {
     }
 
     public static long parseInt000Greedy(CharSequence sequence, final int p, int lim) throws NumericException {
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
@@ -1140,7 +1148,6 @@ public final class Numbers {
     }
 
     public static long parseIntSafely(CharSequence sequence, final int p, int lim) throws NumericException {
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
@@ -2165,8 +2172,6 @@ public final class Numbers {
             decExp = binExp2 + 1;
             firstDigitIndex = digitIndex;
             nDigits = digits.length - digitIndex;
-
-            //
         } else {
             int estDecExp = estimateDecExpDouble(fractionBits, binExp);
             int B5 = Math.max(0, -estDecExp);
@@ -2973,7 +2978,6 @@ public final class Numbers {
     }
 
     private static int parseInt0(CharSequence sequence, final int p, int lim) throws NumericException {
-
         if (lim == p) {
             throw NumericException.INSTANCE;
         }
