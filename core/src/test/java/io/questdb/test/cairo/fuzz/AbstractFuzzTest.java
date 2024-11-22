@@ -130,7 +130,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextBoolean(),
                 rnd.nextInt(2_000_000),
                 rnd.nextInt(1000),
-                randomiseStringLengths(rnd),
+                fuzzer.randomiseStringLengths(rnd, 1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1000),
                 rnd.nextInt(1_000_000),
@@ -138,13 +138,6 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         );
 
         assertMemoryLeak(() -> fuzzer.runFuzz(getTestName(), rnd));
-    }
-
-    private static int randomiseStringLengths(Rnd rnd) {
-        // Make extremely long strings rare
-        // but still possible
-        double randomDriver = rnd.nextDouble();
-        return (int)(30 * randomDriver + Math.round(Math.pow(1000 - 30, randomDriver)));
     }
 
     protected void fullRandomFuzz(Rnd rnd, int tableCount) throws Exception {
