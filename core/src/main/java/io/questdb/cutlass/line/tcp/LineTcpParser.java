@@ -34,6 +34,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.ndarr.NdArrLiteralParser;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8String;
 
 public class LineTcpParser {
 
@@ -160,6 +161,7 @@ public class LineTcpParser {
     }
 
     public ParseResult parseMeasurement(long bufHi) {
+        final long lineStart = bufAt;
         assert bufAt != 0 && bufHi >= bufAt;
         // We can resume from random place of the line message
         // the class member variables should resume byte by byte parsing from the last place
@@ -183,7 +185,17 @@ public class LineTcpParser {
         // Main parsing loop
         int braceCount = 0;
         while (bufAt < bufHi) {
+            DirectUtf8String soFar = new DirectUtf8String();
+            soFar.of(lineStart, bufAt + 1);
+            System.err.println("entityHandler=" + entityHandler + ", braceCount=" + braceCount + ", soFar=`" + soFar + "`");
             byte b = Unsafe.getUnsafe().getByte(bufAt);
+
+            if ((char)b == '}') {
+                System.err.println("  -> }");
+            }
+            if ((char)b == 'i') {
+                System.err.println("  -> i");
+            }
 
             if (nEscapedChars == 0 && !controlBytes[b & 0xff]) {
                 // hot path
@@ -283,14 +295,14 @@ public class LineTcpParser {
                     }
 
                 case '{':
-                    if (entityHandler == ENTITY_HANDLER_VALUE) {
+                    if (tagsComplete && entityHandler == ENTITY_HANDLER_VALUE) {
                         ++braceCount;
                         appendByte = true;
                         break;
                     }
 
                 case '}':
-                    if (entityHandler == ENTITY_HANDLER_VALUE) {
+                    if (tagsComplete && entityHandler == ENTITY_HANDLER_VALUE) {
                         --braceCount;
                         appendByte = true;
                         break;
@@ -765,6 +777,12 @@ public class LineTcpParser {
                     type = ENTITY_TYPE_SYMBOL;
                     return false;
                 }
+                case '}': {
+                    // TODO(amunra): complete this, handle errors
+                    ndArrParser.parse(value);
+                    type = ENTITY_TYPE_ND_ARRAY;
+                    return true;
+                }
                 // fall through
                 default:
                     try {
@@ -822,7 +840,7 @@ public class LineTcpParser {
     }
 
     static {
-        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', '{'};
+        char[] chars = new char[]{'\n', '\r', '=', ',', ' ', '\\', '"', '\0', '/', '{', '}'};
         controlBytes = new boolean[256];
         for (char ch : chars) {
             controlBytes[ch] = true;

@@ -27,6 +27,7 @@ package io.questdb.std.ndarr;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.IntList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.DirectUtf8String;
 
 /**
  * Parse N-dimensional array literals.
@@ -245,8 +246,8 @@ public class NdArrLiteralParser implements QuietCloseable {
      *   * That grammar performs no validation, such as checking that all rows have the same element count.
      *   * That grammar does not support whitespace or comments.
      */
-    public long parse(int elementType, long str, long size, boolean sqlMode) {
+    public long parse(DirectUtf8String value) {
         reset(elementType);
-        throw new UnsupportedOperationException("nyi");
+        throw new UnsupportedOperationException("array parsing not yet implemented");
     }
 }
