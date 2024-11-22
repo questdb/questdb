@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
@@ -52,6 +51,7 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.std.DirectLongLongHeap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -78,7 +78,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private MapRecordCursor mapCursor;
 
     public AsyncGroupByRecordCursor(
-            CairoConfiguration configuration,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             MessageBus messageBus
@@ -142,6 +141,14 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             buildMap();
         }
         return mapCursor.hasNext();
+    }
+
+    @Override
+    public void longTopK(DirectLongLongHeap heap, int columnIndex) {
+        if (!isDataMapBuilt) {
+            buildMap();
+        }
+        mapCursor.longTopK(heap, recordFunctions.getQuick(columnIndex));
     }
 
     @Override
@@ -305,7 +312,11 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                         GroupByMergeShardTask task = queue.get(cursor);
                         GroupByMergeShardJob.run(-1, task, subSeq, cursor, atom);
                         reclaimed++;
+                    } else {
+                        Os.pause();
                     }
+                } else {
+                    Os.pause();
                 }
                 mergedCount = mergeDoneLatch.getCount();
             }

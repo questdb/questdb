@@ -724,10 +724,8 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelGroupByRegrIntercept() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
-        testParallelGroupByAllTypes(
-                "SELECT round(regr_intercept(adouble, along), 14) FROM tab", "round\n" +
-                        "0.50356769718027\n"
-        );
+        testParallelGroupByAllTypes("SELECT round(regr_intercept(adouble, along), 14) FROM tab", "round\n" +
+                "0.50356769718027\n");
     }
 
     @Test
@@ -809,6 +807,26 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k2\t338.86\t338.86\n" +
                         "k1\t350.17\t350.17\n" +
                         "k0\t327.49\t327.49\n"
+        );
+    }
+
+    @Test
+    public void testParallelLongKeyGroupByWithLimit() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelSymbolKeyGroupBy(
+                "SELECT quantity, max(price) FROM tab ORDER BY quantity ASC LIMIT 10",
+                "quantity\tmax\n" +
+                        "1\t1.0\n" +
+                        "2\t2.0\n" +
+                        "3\t3.0\n" +
+                        "4\t4.0\n" +
+                        "5\t5.0\n" +
+                        "6\t6.0\n" +
+                        "7\t7.0\n" +
+                        "8\t8.0\n" +
+                        "9\t9.0\n" +
+                        "10\t10.0\n"
         );
     }
 
@@ -1953,6 +1971,18 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k2\t2024.5\t1639600.0\t1600\n" +
                         "k3\t2025.5\t1640400.0\t1600\n" +
                         "k4\t2026.5\t1641200.0\t1600\n"
+        );
+    }
+
+    @Test
+    public void testParallelStringAndVarcharKeyGroupByWithLimit() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelStringAndVarcharKeyGroupBy(
+                "SELECT key, avg(value), sum(colTop), first(ts)::long c FROM tab ORDER BY c DESC LIMIT 2",
+                "key\tavg\tsum\tc\n" +
+                        "k0\t2027.5\t1642000.0\t4320000000\n" +
+                        "k4\t2026.5\t1641200.0\t3456000000\n"
         );
     }
 
