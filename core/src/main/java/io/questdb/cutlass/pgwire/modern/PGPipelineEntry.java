@@ -531,9 +531,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             taiPool
                     );
                     break;
-                case CompiledQuery.ALTER_USER:
-                case CompiledQuery.CREATE_USER:
-                    assert false : "TODO - these are Parsed-time executed and we need to recompile them again for another execution";
                 case CompiledQuery.DEALLOCATE:
                     // this is supposed to work instead of sending 'close' message via the
                     // network protocol. Reply format out of 'execute' message is
@@ -561,11 +558,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         fut.await();
                     }
                     break;
-                case CompiledQuery.SET:
-                    // SET is a parse-executes SQL for now and must not be acted during "execute" processing.
-                    break;
                 default:
-                    // execute DDL that has not been parse-executed
+                    // execute statements that either have not been parse-executed
+                    // or we are re-executing it from a prepared statement
                     if (!empty) {
                         engine.execute(sqlText, sqlExecutionContext);
                     }
@@ -2462,12 +2457,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 sqlTag = TAG_UPDATE;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
-                stateParseExecuted = true;
                 sqlTag = TAG_INSERT_AS_SELECT;
                 break;
             case CompiledQuery.SET:
                 sqlTag = TAG_SET;
-                stateParseExecuted = true;
                 break;
             case CompiledQuery.DEALLOCATE:
                 this.preparedStatementNameToDeallocate = Chars.toString(cq.getStatementName());
@@ -2483,14 +2476,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 sqlTag = TAG_ROLLBACK;
                 break;
             case CompiledQuery.ALTER_USER:
-                sqlTextHasSecret = sqlExecutionContext.containsSecret();
                 sqlTag = TAG_ALTER_ROLE;
-                stateParseExecuted = true;
                 break;
             case CompiledQuery.CREATE_USER:
-                sqlTextHasSecret = sqlExecutionContext.containsSecret();
                 sqlTag = TAG_CREATE_ROLE;
-                stateParseExecuted = true;
                 break;
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
@@ -2501,9 +2490,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             default:
                 // DDL
                 sqlTag = TAG_OK;
-                stateParseExecuted = true;
                 break;
         }
+        sqlTextHasSecret = sqlExecutionContext.containsSecret();
+        stateParseExecuted = cq.executedAtParseTime();
     }
 
     // Returns false if column size is known to be the same in both text and binary formats.
@@ -2546,6 +2536,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         sqlType = 0;
         sqlTag = null;
         preparedStatementNameToDeallocate = null;
+        sqlText = null;
     }
 
     void clearState() {
