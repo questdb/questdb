@@ -22,31 +22,26 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.sql.*;
-import io.questdb.griffin.PlanSink;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class PageFrameFwdRowCursorFactory implements RowCursorFactory {
-    private final PageFrameFwdRowCursor cursor = new PageFrameFwdRowCursor();
+public class CountVarcharWindowFunctionFactory extends AbsWindowFunctionFactory {
+    private static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((arg, record) -> arg.getVarcharA(record) != null);
 
     @Override
-    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        cursor.of(pageFrame);
-        return cursor;
+    public String getSignature() {
+        return "count(Ø)";
     }
 
     @Override
-    public boolean isEntity() {
-        return true;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == PartitionFrameCursorFactory.ORDER_DESC) {
-            sink.type("Row backward scan");
-        } else {
-            sink.type("Row forward scan");
-        }
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        return CountFunctionFactoryHelper.newCountWindowFunction(this, position, args, argPositions, configuration, sqlExecutionContext, isRecordNotNull);
     }
 }
