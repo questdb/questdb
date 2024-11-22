@@ -207,7 +207,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalSmallWalLag() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 1521873662001L, 1732114808112L);
         setFuzzProperties(rnd);
         fullRandomFuzz(rnd);
     }

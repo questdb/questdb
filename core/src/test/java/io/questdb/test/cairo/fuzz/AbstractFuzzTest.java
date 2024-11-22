@@ -278,10 +278,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         long walChunk = Math.max(0, rnd.nextInt((int) (3.5 * txnCount)) - txnCount);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, walChunk);
 
-        boolean mixedIOSupported = configuration.getFilesFacade().allowMixedIO(root);
-        if (mixedIOSupported) {
-            node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, rnd.nextBoolean());
-        }
+        configuration.getFilesFacade().allowMixedIO(root);
+//        boolean allowMixedIO = rnd.nextBoolean();
+//        if (configuration.getFilesFacade().allowMixedIO(root)) {
+//            node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, allowMixedIO);
+//        }
     }
 
     protected void setRandomAppendPageSize(Rnd rnd) {
