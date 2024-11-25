@@ -711,12 +711,6 @@ public class FirstNotNullValueDoubleWindowFunctionFactory extends AbsWindowFunct
         }
 
         @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.getUnsafe().putDouble(spi.getAddress(recordOffset, columnIndex), firstValue);
-        }
-
-        @Override
         public void reopen() {
             super.reopen();
             firstNotNullIdx = -1;
