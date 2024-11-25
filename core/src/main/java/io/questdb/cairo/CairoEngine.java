@@ -1395,9 +1395,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableNameRegistry.unlockTableName(tableToken);
                 unlockTableCreate(tableToken);
             }
-
-            getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
-
             return tableToken;
         }
     }

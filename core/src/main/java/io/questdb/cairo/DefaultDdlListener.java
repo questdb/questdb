@@ -36,10 +36,6 @@ public class DefaultDdlListener implements DdlListener {
     }
 
     @Override
-    public void onTableCreated(SecurityContext securityContext, TableToken tableToken) {
-    }
-
-    @Override
     public void onTableRenamed(SecurityContext securityContext, TableToken oldTableToken, TableToken newTableToken) {
 
     }

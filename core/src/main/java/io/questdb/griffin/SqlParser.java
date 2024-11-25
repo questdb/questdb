@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -80,7 +81,7 @@ public class SqlParser {
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
-    private final CreateTableOperationBuilder createTableOperationBuilder = new CreateTableOperationBuilder();
+    private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -196,10 +197,15 @@ public class SqlParser {
         }
     }
 
-    private static CreateTableOperationBuilder parseCreateTableExt(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback, CharSequence tok, CreateTableOperationBuilder builder) throws SqlException {
+    private static CreateTableOperationBuilder parseCreateTableExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence tok,
+            CreateTableOperationBuilder builder
+    ) throws SqlException {
         boolean expectedTok = tok == null || Chars.equals(tok, ';');
-        sqlParserCallback.createTableExt(lexer, executionContext.getSecurityContext(), builder, expectedTok ? null : tok);
-        return builder;
+        return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, expectedTok ? null : tok);
     }
 
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
@@ -603,7 +609,7 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        CreateTableOperationBuilder builder = createTableOperationBuilder;
+        CreateTableOperationBuilderImpl builder = createTableOperationBuilder;
         builder.clear();
         builder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
         final CharSequence tableName;
