@@ -37,7 +37,7 @@ public class LastBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllFalse() throws SqlException {
-        ddl("create table tab (f boolean)");
+        execute("create table tab (f boolean)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 10; i > 0; i--) {

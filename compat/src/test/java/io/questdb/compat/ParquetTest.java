@@ -106,26 +106,26 @@ public class ParquetTest extends AbstractTest {
 
         try (final ServerMain serverMain = ServerMain.create(root)) {
             serverMain.start();
-            serverMain.getEngine().compile(ddl); // txn 1
+            serverMain.getEngine().execute(ddl); // txn 1
 
-            serverMain.getEngine().compile("alter table " + tableName + " add column an_int_top int");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_long_top long");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_float_top float");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_double_top double");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_symbol_top symbol");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_geo_byte_top geohash(4b)");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_geo_short_top geohash(8b)");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_geo_int_top geohash(16b)");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_geo_long_top geohash(32b)");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_string_top string");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_bin_top binary");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_varchar_top varchar");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_ip_top ipv4");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_uuid_top uuid");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_long128_top long128");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_long256_top long256");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_date_top date");
-            serverMain.getEngine().compile("alter table " + tableName + " add column a_ts_top timestamp");
+            serverMain.getEngine().execute("alter table " + tableName + " add column an_int_top int");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_long_top long");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_float_top float");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_double_top double");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_symbol_top symbol");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_byte_top geohash(4b)");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_short_top geohash(8b)");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_int_top geohash(16b)");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_geo_long_top geohash(32b)");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_string_top string");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_bin_top binary");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_varchar_top varchar");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_ip_top ipv4");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_uuid_top uuid");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_long128_top long128");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_long256_top long256");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_date_top date");
+            serverMain.getEngine().execute("alter table " + tableName + " add column a_ts_top timestamp");
 
             String insert = "insert into " + tableName + "(id, an_int_top, a_long_top, a_float_top, a_double_top,\n" +
                     " a_symbol_top, a_geo_byte_top, a_geo_short_top, a_geo_int_top, a_geo_long_top,\n" +
@@ -159,7 +159,7 @@ public class ParquetTest extends AbstractTest {
                     " timestamp_sequence(1600000000000, 500)" +
                     " from long_sequence(" + UPDATE_ROWS + ");";
 
-            serverMain.getEngine().compile(insert); // txn 20
+            serverMain.getEngine().execute(insert); // txn 20
 
             serverMain.awaitTxn("x", 20);
 
@@ -223,8 +223,8 @@ public class ParquetTest extends AbstractTest {
 
     private static void assertLong128(long expectedLo, long expectedHi, Object value) {
         if (value == null) {
-            Assert.assertEquals(expectedLo, Long.MIN_VALUE);
-            Assert.assertEquals(expectedHi, Long.MIN_VALUE);
+            Assert.assertEquals(Long.MIN_VALUE, expectedLo);
+            Assert.assertEquals(Long.MIN_VALUE, expectedHi);
             return;
         }
         GenericData.Fixed long128 = (GenericData.Fixed) value;
@@ -273,8 +273,8 @@ public class ParquetTest extends AbstractTest {
     private static void assertSchema(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType, int maxDefinitionLevel) {
         Assert.assertEquals(descriptor.getPath()[0], expectedName);
         Assert.assertEquals(descriptor.getPrimitiveType().getPrimitiveTypeName(), expectedType);
-        Assert.assertEquals(descriptor.getMaxRepetitionLevel(), 0);
-        Assert.assertEquals(descriptor.getMaxDefinitionLevel(), maxDefinitionLevel);
+        Assert.assertEquals(0, descriptor.getMaxRepetitionLevel());
+        Assert.assertEquals(maxDefinitionLevel, descriptor.getMaxDefinitionLevel());
     }
 
     private static void assertSchemaNonNullable(ColumnDescriptor descriptor, String expectedName, PrimitiveType.PrimitiveTypeName expectedType) {
@@ -287,8 +287,8 @@ public class ParquetTest extends AbstractTest {
 
     private static void assertUuid(StringSink sink, long expectedLo, long expectedHi, Object actual) {
         if (actual == null) {
-            Assert.assertEquals(expectedLo, Long.MIN_VALUE);
-            Assert.assertEquals(expectedHi, Long.MIN_VALUE);
+            Assert.assertEquals(Long.MIN_VALUE, expectedLo);
+            Assert.assertEquals(Long.MIN_VALUE, expectedHi);
             return;
         }
         Uuid uuid = new Uuid(expectedLo, expectedHi);
@@ -391,11 +391,11 @@ public class ParquetTest extends AbstractTest {
         try (ParquetFileReader parquetFileReader = ParquetFileReader.open(inputFile)) {
             ParquetMetadata metadata = parquetFileReader.getFooter();
             FileMetaData fileMetaData = metadata.getFileMetaData();
-            Assert.assertEquals(fileMetaData.getCreatedBy(), "QuestDB version 8.0");
+            Assert.assertEquals("QuestDB version 8.0", fileMetaData.getCreatedBy());
 
             MessageType schema = fileMetaData.getSchema();
             List<ColumnDescriptor> columns = schema.getColumns();
-            Assert.assertEquals(schema.getColumns().size(), 42);
+            Assert.assertEquals(42, schema.getColumns().size());
 
             assertSchemaNullable(columns.get(0), "id", PrimitiveType.PrimitiveTypeName.INT64);
             assertSchemaNonNullable(columns.get(1), "a_boolean", PrimitiveType.PrimitiveTypeName.BOOLEAN);

@@ -71,8 +71,12 @@ public class TableSequencerImpl implements TableSequencer {
     private TableToken tableToken;
 
     TableSequencerImpl(
-            TableSequencerAPI pool, CairoEngine engine, TableToken tableToken,
-            SeqTxnTracker txnTracker, int tableId, @Nullable TableStructure tableStruct
+            TableSequencerAPI pool,
+            CairoEngine engine,
+            TableToken tableToken,
+            SeqTxnTracker txnTracker,
+            int tableId,
+            @Nullable TableStructure tableStruct
     ) {
         this.pool = pool;
         this.engine = engine;
@@ -175,8 +179,10 @@ public class TableSequencerImpl implements TableSequencer {
     public void dropTable() {
         checkDropped();
         final long timestamp = microClock.getTicks();
-        final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
-                0, 0, timestamp, 0, 0, 0);
+        final long txn = tableTransactionLog.addEntry(
+                getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
+                0, 0, timestamp, 0, 0, 0
+        );
         metadata.dropTable();
         notifyTxnCommitted(Long.MAX_VALUE);
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
@@ -234,7 +240,9 @@ public class TableSequencerImpl implements TableSequencer {
                     metadata.getIndexValueBlockCapacity(i),
                     metadata.isSymbolTableStatic(i),
                     i,
-                    metadata.isDedupKey(i)
+                    metadata.isDedupKey(i),
+                    metadata.getColumnMetadata(i).isSymbolCacheFlag(),
+                    metadata.getColumnMetadata(i).getSymbolCapacity()
             );
             if (columnType > -1) {
                 reorderNeeded |= lastOrder > columnOrder;

@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.SqlWalMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
@@ -120,7 +119,7 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
     @Test
     public void testWalEnabledNameInCreateAsSelect() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table wm as (" +
+            execute("create table wm as (" +
                     "select x, cast(x as timestamp) as ts " +
                     "from long_sequence(2) " +
                     ") timestamp(ts) partition by DAY WAL");
@@ -132,7 +131,7 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
     @Test
     public void testWalEnabledNameInCreateAsSelect2() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table wm as (" +
+            execute("create table wm as (" +
                     "select x, cast(x as timestamp) as ts " +
                     "from long_sequence(2) " +
                     ") timestamp(ts) partition by DAY Bypass WaL");
@@ -188,12 +187,12 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
     private void checkWalEnabledBeforeAfterAlter(String alterSuffix) throws SqlException {
         createTableWrite("my_table_wal", "WAL", "DAY");
         assertWalEnabled("my_table_wal", true);
-        ddl("alter table my_table_wal " + alterSuffix, sqlExecutionContext);
+        execute("alter table my_table_wal " + alterSuffix, sqlExecutionContext);
         assertWalEnabled("my_table_wal", true);
 
         createTableWrite("my_table_dir", "BYPASS WAL", "DAY");
         assertWalEnabled("my_table_dir", false);
-        ddl("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
+        execute("alter table my_table_dir " + alterSuffix, sqlExecutionContext);
         assertWalEnabled("my_table_dir", false);
 
         assertSql("table_name\twalEnabled\n" +
@@ -203,7 +202,7 @@ public class AlterTableWalEnabledTest extends AbstractCairoTest {
     }
 
     private void createTableWrite(String tableName, String walMode, String partitionBY) throws SqlException {
-        compile(
+        execute(
                 "create table " + tableName +
                         " (ts TIMESTAMP, x long, s symbol) timestamp(ts)" +
                         " PARTITION BY " + partitionBY +

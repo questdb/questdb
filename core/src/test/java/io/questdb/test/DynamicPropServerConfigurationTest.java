@@ -213,6 +213,27 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testPgNamedStatementLimitReloadWithChangedProp() throws Exception {
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                int namedStatementLimit = serverMain.getConfiguration().getPGWireConfiguration().getNamedStatementLimit();
+                Assert.assertEquals(10_000, namedStatementLimit);
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("pg.named.statement.limit=10\n");
+                }
+
+                latch.await();
+
+                namedStatementLimit = serverMain.getConfiguration().getPGWireConfiguration().getNamedStatementLimit();
+                Assert.assertEquals(10, namedStatementLimit);
+            }
+        });
+    }
+
+    @Test
     public void testReloadDisabled() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {

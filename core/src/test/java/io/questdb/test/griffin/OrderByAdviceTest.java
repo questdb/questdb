@@ -75,7 +75,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     @Test
     public void testDistinctWithOrderByAnotherColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " x a," +

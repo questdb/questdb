@@ -108,7 +108,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                         }
                     }
 
-                    ddl("cancel query " + queryId, adminUserContext1);
+                    execute("cancel query " + queryId, adminUserContext1);
                 }
 
             } finally {
@@ -124,7 +124,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
     public void testAdminUserCanNotCancelQueriesNotInRegistry() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                ddl("cancel query 123456789", adminUserContext1);
+                execute("cancel query 123456789", adminUserContext1);
                 Assert.fail();
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getMessage(), "query to cancel not found in registry [id=123456789]");
@@ -204,7 +204,7 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
                             false
                     );
 
-                    ddl("cancel query " + queryId, adminUserContext2);
+                    execute("cancel query " + queryId, adminUserContext2);
                 }
             } finally {
                 stopped.await();
@@ -231,20 +231,10 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testRegularUserCanNotCancelQueries() throws Exception {
-        assertException("cancel query 123456789", 13, "Write permission denied", regularUserContext1);
+        assertException("cancel query 123456789", 13, "Query cancellation is disabled", regularUserContext1);
     }
 
     private static class AdminContext extends AllowAllSecurityContext {
-        @Override
-        public void authorizeAdminAction() {
-            // do nothing
-        }
-
-        @Override
-        public void authorizeCancelQuery() {
-            // do nothing
-        }
-
         @Override
         public String getPrincipal() {
             return "admin";
@@ -253,8 +243,8 @@ public class QueryActivityFunctionFactoryTest extends AbstractCairoTest {
 
     private static class UserContext extends ReadOnlySecurityContext {
         @Override
-        public void authorizeAdminAction() {
-            throw new CairoException();
+        public void authorizeSqlEngineAdmin() {
+            throw CairoException.authorization().put("Access denied for ").put(getPrincipal()).put(" [SQL ENGINE ADMIN]");
         }
 
         @Override

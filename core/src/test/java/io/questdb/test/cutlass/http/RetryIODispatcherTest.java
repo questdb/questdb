@@ -187,7 +187,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                                 .withNetwork(getSendDelayNetworkFacade(startDelay))
                                 .withRerunProcessingQueueSize(rerunProcessingQueueSize)
                 )
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table and do 1 import
                     new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
                     TableWriter writer = lockWriter(engine, "fhv_tripdata_2017-02.csv");
@@ -258,7 +258,7 @@ public class RetryIODispatcherTest extends AbstractTest {
     ) throws Exception {
         final int parallelCount = httpQueryTestBuilder.getWorkerCount();
         httpQueryTestBuilder
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table and do 1 import
                     new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
 
@@ -376,7 +376,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withWorkerCount(4)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     for (int i = 0; i < 10; i++) {
                         System.out.println("*************************************************************************************");
                         System.out.println("**************************         Run " + i + "            ********************************");
@@ -414,7 +414,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(
                         new HttpServerConfigurationBuilder()
                                 .withReceiveBufferSize(50)
-                ).run((engine) -> new SendAndReceiveRequestBuilder()
+                ).run((engine, sqlExecutionContext) -> new SendAndReceiveRequestBuilder()
                         .execute(
                                 ValidImportRequest,
                                 "HTTP/1.1 200 OK\r\n" +
@@ -495,7 +495,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
@@ -543,7 +543,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withWorkerCount(2)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run((engine) -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table and do 1 import
                     new SendAndReceiveRequestBuilder().execute(ValidImportRequest, ValidImportResponse);
 
@@ -609,7 +609,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withRerunProcessingQueueSize(rerunProcessingQueueSize))
                 .withTelemetry(false)
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
@@ -673,7 +673,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withWorkerCount(parallelCount)
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withTelemetry(false)
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     // create table
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
                             "GET /query?query=%0A%0A%0Acreate+table+balances_x+(%0A%09cust_id+int%2C+%0A%09balance_ccy+symbol%2C+%0A%09balance+double%2C+%0A%09status+byte%2C+%0A%09timestamp+timestamp%0A)&limit=0%2C1000&count=true HTTP/1.1\r\n",
@@ -737,7 +737,7 @@ public class RetryIODispatcherTest extends AbstractTest {
                 .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
                 .withMetrics(metrics)
                 .withTelemetry(false)
-                .run(engine -> {
+                .run((engine, sqlExecutionContext) -> {
                     long nonInsertQueries = 0;
 
                     // create table

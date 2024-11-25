@@ -38,7 +38,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "'{\"path\": 10000.5}'";
             final String expected = "json_extract\n" +
                     "10000.5\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
@@ -50,7 +50,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "'{\"path\": [1, 2, 3]}'";
             final String expected = "json_extract\n" +
                     "[1, 2, 3]\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
@@ -62,7 +62,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "'{\"path\": 100000000000000000000000000}'";
             final String expected = "json_extract\n" +
                     "100000000000000000000000000\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
@@ -72,7 +72,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testColumnAsJsonPath() throws Exception {
         assertMemoryLeak(() -> {
             final String json = "'{\"path\": 0.0000000000000000000000000001}'";
-            ddl("create table json_test as (select " + json + "::varchar text, '.path' path)");
+            execute("create table json_test as (select " + json + "::varchar text, '.path' path)");
             assertException("select json_extract(text, path) from json_test", 26, "constant or bind variable expected");
         });
     }
@@ -83,7 +83,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "'{\"path\": 0.0000000000000000000000000001}'";
             final String expected = "json_extract\n" +
                     "0.0000000000000000000000000001\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
@@ -95,7 +95,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "'{\"path\": {\"a\": 1, \"b\": 2}}'";
             final String expected = "json_extract\n" +
                     "{\"a\": 1, \"b\": 2}\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
@@ -113,7 +113,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                             "\n" +
                             "5 \r\n" +
                             " ]}'";
-                    ddl("create table json_test as (select " + json + "::varchar text)");
+                    execute("create table json_test as (select " + json + "::varchar text)");
                     assertSql(
                             "k\n" +
                                     "3\n",
@@ -127,7 +127,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testString() throws Exception {
         assertMemoryLeak(
                 () -> {
-                    ddl("create table json_test as (" +
+                    execute("create table json_test as (" +
                             "select rnd_str('{\n" +
                             "    \"hello\": \"world\",\n" +
                             "    \"list\": [\n" +
@@ -195,7 +195,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "'{}'";
             final String expected = "json_extract\n" +
                     "\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
@@ -204,12 +204,12 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testExtractChar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table json_test (text varchar)");
-            insert("insert into json_test values ('{\"path\": \"c\"}')");
-            insert("insert into json_test values ('{\"path\": \"2klll\"}')");
-            insert("insert into json_test values ('{\"path\": \"a\"}')");
-            insert("insert into json_test values ('{\"path2\": \"4\"}')");
-            insert("insert into json_test values ('{\"path\": \"1\"}')");
+            execute("create table json_test (text varchar)");
+            execute("insert into json_test values ('{\"path\": \"c\"}')");
+            execute("insert into json_test values ('{\"path\": \"2klll\"}')");
+            execute("insert into json_test values ('{\"path\": \"a\"}')");
+            execute("insert into json_test values ('{\"path2\": \"4\"}')");
+            execute("insert into json_test values ('{\"path\": \"1\"}')");
             assertSql(
                     "x\n" +
                             "c\n" +
@@ -225,12 +225,12 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testExtractSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table json_test (text varchar)");
-            insert("insert into json_test values ('{\"path\": \"blue\"}')");
-            insert("insert into json_test values ('{\"path\": \"klll\"}')");
-            insert("insert into json_test values ('{\"path\": \"appl\"}')");
-            insert("insert into json_test values ('{\"path2\": \"4\"}')");
-            insert("insert into json_test values ('{\"path\": \"1on1\"}')");
+            execute("create table json_test (text varchar)");
+            execute("insert into json_test values ('{\"path\": \"blue\"}')");
+            execute("insert into json_test values ('{\"path\": \"klll\"}')");
+            execute("insert into json_test values ('{\"path\": \"appl\"}')");
+            execute("insert into json_test values ('{\"path2\": \"4\"}')");
+            execute("insert into json_test values ('{\"path\": \"1on1\"}')");
             assertSqlWithTypes(
                     "x\n" +
                             "klll:SYMBOL\n" +
@@ -246,12 +246,12 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testExtractString() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table json_test (text varchar)");
-            insert("insert into json_test values ('{\"path\": \"blue\"}')");
-            insert("insert into json_test values ('{\"path\": \"klll\"}')");
-            insert("insert into json_test values ('{\"path\": \"appl\"}')");
-            insert("insert into json_test values ('{\"path2\": \"4\"}')");
-            insert("insert into json_test values ('{\"path\": \"1on1\"}')");
+            execute("create table json_test (text varchar)");
+            execute("insert into json_test values ('{\"path\": \"blue\"}')");
+            execute("insert into json_test values ('{\"path\": \"klll\"}')");
+            execute("insert into json_test values ('{\"path\": \"appl\"}')");
+            execute("insert into json_test values ('{\"path2\": \"4\"}')");
+            execute("insert into json_test values ('{\"path\": \"1on1\"}')");
             assertSqlWithTypes(
                     "x\n" +
                             "klll:STRING\n" +
@@ -267,12 +267,12 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testGeoHash() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table json_test (text varchar)");
-            insert("insert into json_test values ('{\"path\": \"sp052w9\"}')");
-            insert("insert into json_test values ('{\"path\": \"gbsuv7z\"}')");
-            insert("insert into json_test values ('{\"path\": null}')");
-            insert("insert into json_test values ('{\"path2\": \"4\"}')");
-            insert("insert into json_test values ('{\"path\": \"1on1\"}')");
+            execute("create table json_test (text varchar)");
+            execute("insert into json_test values ('{\"path\": \"sp052w9\"}')");
+            execute("insert into json_test values ('{\"path\": \"gbsuv7z\"}')");
+            execute("insert into json_test values ('{\"path\": null}')");
+            execute("insert into json_test values ('{\"path2\": \"4\"}')");
+            execute("insert into json_test values ('{\"path\": \"1on1\"}')");
             assertSqlWithTypes(
                     "x\n" +
                             "sp052w9:GEOHASH(7c)\n" +
@@ -288,10 +288,10 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testExtractUUID() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table json_test (text varchar)");
-            insert("insert into json_test values ('{\"path\": \"6e18f80d-8b8f-4561-a9c8-703b73d5560d\"}')");
-            insert("insert into json_test values ('{\"path\": \"7d4bb839-98e4-4c31-9a5a-2dc39834a2a2\"}')");
-            insert("insert into json_test values ('{\"path\": \"58e9a7c6-6112-4c48-8723-8765c706773a\"}')");
+            execute("create table json_test (text varchar)");
+            execute("insert into json_test values ('{\"path\": \"6e18f80d-8b8f-4561-a9c8-703b73d5560d\"}')");
+            execute("insert into json_test values ('{\"path\": \"7d4bb839-98e4-4c31-9a5a-2dc39834a2a2\"}')");
+            execute("insert into json_test values ('{\"path\": \"58e9a7c6-6112-4c48-8723-8765c706773a\"}')");
             assertSql(
                     "x\n" +
                             "7d4bb839-98e4-4c31-9a5a-2dc39834a2a2\n" +
@@ -313,8 +313,8 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                 .withTelemetry(false);
 
         try (TestHttpClient httpClient = new TestHttpClient()) {
-            http.run(engine -> {
-                engine.ddl("create table json_test as (select " + json + "::varchar text)", sqlExecutionContext);
+            http.run((engine, sqlExecutionContext) -> {
+                engine.execute("create table json_test as (select " + json + "::varchar text)", sqlExecutionContext);
                 httpClient.assertGet(
                         "{\"query\":\"select json_extract(text, '.path') from json_test\",\"columns\":[{\"name\":\"json_extract\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[\"0.0000000000000000000000000001\"]],\"count\":1}",
                         "select json_extract(text, '.path') from json_test");
@@ -334,7 +334,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMixOfAvailableAndUnavailableJsonAttributes() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table json_test as (" +
+            execute("create table json_test as (" +
                     "select rnd_str('{\n" +
                     "    \"hello\": \"world\",\n" +
                     "    \"list\": [\n" +
@@ -387,7 +387,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMixOfGoodAndBadJson() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table json_test as (" +
+            execute("create table json_test as (" +
                     "select rnd_str('{\n" +
                     "    \"hello\": \"world\",\n" +
                     "    \"list\": [\n" +
@@ -437,7 +437,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "'{\"path\": -123.5}'";
             final String expected = "json_extract\n" +
                     "-123.5\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
@@ -449,7 +449,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "null";
             final String expected = "json_extract\n" +
                     "\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
@@ -461,7 +461,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "'{\"path\": null}'";
             final String expected = "json_extract\n" +
                     "\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
@@ -482,7 +482,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "'{\"path\": 1}'";
             final String expected = "json_extract\n" +
                     "1\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
@@ -502,7 +502,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                     "\n" +
                     "5 \r\n" +
                     " ]}'";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             final String[][] scenarios = new String[][]{
                     // path, expected
                     {".path1", "  abc  "},
@@ -536,11 +536,11 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table json_test (text varchar)");
-            insert("insert into json_test values ('{\"path\": 10000.5}')");
-            insert("insert into json_test values ('{\"path\": 30000.5}')");
-            insert("insert into json_test values ('{\"path\": 20000.5}')");
-            insert("insert into json_test values ('{\"path\": 40000.5}')");
+            execute("create table json_test (text varchar)");
+            execute("insert into json_test values ('{\"path\": 10000.5}')");
+            execute("insert into json_test values ('{\"path\": 30000.5}')");
+            execute("insert into json_test values ('{\"path\": 20000.5}')");
+            execute("insert into json_test values ('{\"path\": 40000.5}')");
             assertSql(
                     "x\n" +
                             "40000.5\n" +
@@ -558,7 +558,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "'{\"path\": \"abc\"}'";
             final String expected = "json_extract\n" +
                     "abc\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
@@ -570,7 +570,7 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
             final String json = "'{\"path\": 9999999999999999999}'";
             final String expected = "json_extract\n" +
                     "9999999999999999999\n";
-            ddl("create table json_test as (select " + json + "::varchar text)");
+            execute("create table json_test as (select " + json + "::varchar text)");
             assertSql(expected, "select json_extract(" + json + ", '.path')");
             assertSql(expected, "select json_extract(text, '.path') from json_test");
         });
