@@ -48,6 +48,7 @@ import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -55,7 +56,7 @@ import io.questdb.std.Vect;
 // Returns value evaluated at the row that is the first row of the window frame.
 public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    private static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES;
+    protected static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES;
 
     private static final String NAME = "first_value";
     private static final String SIGNATURE = NAME + "(D)";
@@ -213,12 +214,12 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // if there's no order by then all elements are equal in range mode, thus calculation is done on whole result set
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new FirstValueOverWholeResultSetFunction(args.get(0));
+                    return new FirstValueOverWholeResultSetFunction(args.get(0), false);
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
                     // if lower bound is unbounded then it's the same as over ()
-                    return new FirstValueOverWholeResultSetFunction(args.get(0));
+                    return new FirstValueOverWholeResultSetFunction(args.get(0), false);
                 } // range between [unbounded | x] preceding and [y preceding | current row]
                 else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
@@ -239,7 +240,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 // between unbounded preceding and [current row | unbounded following]
                 if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
-                    return new FirstValueOverWholeResultSetFunction(args.get(0));
+                    return new FirstValueOverWholeResultSetFunction(args.get(0), false);
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsLo == rowsHi) {
                     return new FirstValueOverCurrentRowFunction(args.get(0));
@@ -351,19 +352,19 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     // Removable cumulative aggregation with timestamp & value stored in resizable ring buffers
     public static class FirstValueOverPartitionRangeFrameFunction extends BasePartitionedDoubleWindowFunction {
 
-        private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
+        protected static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        protected final boolean frameIncludesCurrentValue;
+        protected final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
-        private final LongList freeList = new LongList();
-        private final int initialBufferSize;
-        private final long maxDiff;
+        protected final LongList freeList = new LongList();
+        protected final int initialBufferSize;
+        protected final long maxDiff;
         // holds resizable ring buffers
-        private final MemoryARW memory;
-        private final long minDiff;
-        private final int timestampIndex;
+        protected final MemoryARW memory;
+        protected final long minDiff;
+        protected final int timestampIndex;
 
-        private double firstValue;
+        protected double firstValue;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
 
         public FirstValueOverPartitionRangeFrameFunction(
@@ -588,13 +589,13 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
+        protected final int bufferSize;
+        protected final boolean frameIncludesCurrentValue;
+        protected final boolean frameLoBounded;
+        protected final int frameSize;
         // holds fixed-size ring buffers of double values
-        private final MemoryARW memory;
-        private double firstValue;
+        protected final MemoryARW memory;
+        protected double firstValue;
 
         public FirstValueOverPartitionRowsFrameFunction(
                 Map map,
@@ -734,22 +735,23 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
     // Handles first_value() over ([order by ts] range between x preceding and [ y preceding | current row ] ); no partition by key
     public static class FirstValueOverRangeFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
-        private final int RECORD_SIZE = Long.BYTES + Double.BYTES;
-        private final boolean frameLoBounded;
-        private final long initialCapacity;
-        private final long maxDiff;
+        protected final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        protected final boolean frameLoBounded;
+        protected final long initialCapacity;
+        protected final long maxDiff;
         // holds resizable ring buffers
         // actual frame data - [timestamp, value] pairs - is stored in mem at [ offset + first_idx*16, offset + last_idx*16]
         // note: we ignore nulls to reduce memory usage
-        private final MemoryARW memory;
-        private final long minDiff;
-        private final int timestampIndex;
-        private long capacity;
-        private long firstIdx;
-        private double firstValue;
-        private long frameSize;
-        private long size;
-        private long startOffset;
+        protected final MemoryARW memory;
+        protected final long minDiff;
+        protected final int timestampIndex;
+        protected long capacity;
+        protected long firstIdx;
+        protected double firstValue;
+        protected long frameSize;
+        protected long size;
+        protected long startOffset;
+        protected final boolean frameIncludesCurrentValue;
 
         public FirstValueOverRangeFrameFunction(
                 long rangeLo,
@@ -770,6 +772,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
             firstIdx = 0;
             frameSize = 0;
+            frameIncludesCurrentValue = rangeHi == 0;
         }
 
         @Override
@@ -934,14 +937,14 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     // Handles first_value() over ([order by o] rows between y and z); there's no partition by.
     // Removable cumulative aggregation.
     public static class FirstValueOverRowsFrameFunction extends BaseDoubleWindowFunction implements Reopenable {
-        private final MemoryARW buffer;
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
-        private long count = 0;
-        private double firstValue;
-        private int loIdx = 0;
+        protected final MemoryARW buffer;
+        protected final int bufferSize;
+        protected final boolean frameIncludesCurrentValue;
+        protected final boolean frameLoBounded;
+        protected final int frameSize;
+        protected long count = 0;
+        protected double firstValue;
+        protected int loIdx = 0;
 
         public FirstValueOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory) {
             super(arg);
@@ -1068,7 +1071,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     // - first_value(a) over (partition by x order by ts range between unbounded preceding and [current row | x preceding])
     static class FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedDoubleWindowFunction {
 
-        private double value;
+        protected double value;
 
         public FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -1113,7 +1116,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val(NAME);
+            sink.val(getName());
             sink.val('(').val(arg).val(')');
             sink.val(" over (");
             sink.val("partition by ");
@@ -1128,17 +1131,23 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
     public static class FirstValueOverWholeResultSetFunction extends BaseDoubleWindowFunction {
         private boolean found;
         private double value = Double.NaN;
+        private final boolean ignoreNulls;
 
-        public FirstValueOverWholeResultSetFunction(Function arg) {
+        public FirstValueOverWholeResultSetFunction(Function arg, boolean ignoreNulls) {
             super(arg);
+            this.ignoreNulls = ignoreNulls;
         }
-
 
         @Override
         public void computeNext(Record record) {
             if (!found) {
-                this.value = arg.getDouble(record);
-                this.found = true;
+                double d = arg.getDouble(record);
+                if (!ignoreNulls || Numbers.isFinite(d)) {
+                    if (Numbers.isFinite(d)) {
+                        this.value = d;
+                        this.found = true;
+                    }
+                }
             }
         }
 
