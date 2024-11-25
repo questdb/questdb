@@ -472,11 +472,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.net.connection.hint\tQDB_LINE_TCP_NET_CONNECTION_HINT\tfalse\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.connection.limit\tQDB_LINE_TCP_NET_CONNECTION_LIMIT\t256\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.connection.queue.timeout\tQDB_LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
-                                    "line.tcp.net.connection.rcvbuf\tQDB_LINE_TCP_NET_CONNECTION_RCVBUF\t-1\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.net.connection.rcvbuf\tQDB_LINE_TCP_NET_CONNECTION_RCVBUF\t32768\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.connection.timeout\tQDB_LINE_TCP_NET_CONNECTION_TIMEOUT\t0\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.idle.timeout\tQDB_LINE_TCP_NET_IDLE_TIMEOUT\t0\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.queued.timeout\tQDB_LINE_TCP_NET_QUEUED_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
-                                    "line.tcp.net.recv.buf.size\tQDB_LINE_TCP_NET_RECV_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.symbol.cache.wait.before.reload\tQDB_LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD\t500000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.timestamp\tQDB_LINE_TCP_TIMESTAMP\tn\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.undocumented.string.to.char.cast.allowed\tQDB_LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED\tfalse\tdefault\tfalse\tfalse\n" +

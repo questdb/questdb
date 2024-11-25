@@ -83,7 +83,6 @@ import java.util.Map;
 import java.util.Properties;
 
 public class PropServerConfigurationTest {
-
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     protected static final Log LOG = LogFactory.getLog(PropServerConfigurationTest.class);
@@ -339,21 +338,20 @@ public class PropServerConfigurationTest {
 
         // influxdb line TCP protocol
         Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
-        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getLimit());
-        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindIPv4Address());
-        Assert.assertEquals(9009, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort());
-        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getEventCapacity());
-        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getIOQueueCapacity());
-        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTimeout());
-        Assert.assertEquals(5000, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getQueueTimeout());
-        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getInterestQueueCapacity());
-        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getListenBacklog());
-        Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getRecvBufferSize());
-        Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getSendBufferSize());
-        Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getLimit());
+        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getBindIPv4Address());
+        Assert.assertEquals(9009, configuration.getLineTcpReceiverConfiguration().getBindPort());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getEventCapacity());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getIOQueueCapacity());
+        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getTimeout());
+        Assert.assertEquals(5000, configuration.getLineTcpReceiverConfiguration().getQueueTimeout());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getInterestQueueCapacity());
+        Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getListenBacklog());
+        Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(8, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(LineNanoTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter().getDefaultAdapter());
-        Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
+        Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
+        Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getSendBufferSize());
         Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
         Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getWriterQueueCapacity());
         Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
@@ -718,13 +716,13 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.LINE_TCP_MSG_BUFFER_SIZE.getPropertyPath(), "8192");
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
-        Assert.assertEquals(8192, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
+        Assert.assertEquals(8192, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
 
         properties.setProperty(PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE.getPropertyPath(), "1024");
         properties.setProperty(PropertyKey.LINE_TCP_MSG_BUFFER_SIZE.getPropertyPath(), "1024");
         configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
-        Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
+        Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
 
         // if the msg buffer size is smaller than the max measurement size,
         // then msg buffer size is adjusted to have enough space at least for a single measurement
@@ -732,7 +730,7 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.LINE_TCP_MSG_BUFFER_SIZE.getPropertyPath(), "256");
         configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
         Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
-        Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
+        Assert.assertEquals(1024, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
     }
 
     @Test
@@ -1087,20 +1085,19 @@ public class PropServerConfigurationTest {
 
             // influxdb line TCP protocol
             Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().isEnabled());
-            Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getLimit());
-            Assert.assertEquals(167903521, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindIPv4Address());
-            Assert.assertEquals(9916, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort());
-            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getEventCapacity());
-            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getIOQueueCapacity());
-            Assert.assertEquals(400_000, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTimeout());
-            Assert.assertEquals(1_002, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getQueueTimeout());
-            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getInterestQueueCapacity());
-            Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getListenBacklog());
-            Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getRecvBufferSize());
-            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
+            Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getLimit());
+            Assert.assertEquals(167903521, configuration.getLineTcpReceiverConfiguration().getBindIPv4Address());
+            Assert.assertEquals(9916, configuration.getLineTcpReceiverConfiguration().getBindPort());
+            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getEventCapacity());
+            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getIOQueueCapacity());
+            Assert.assertEquals(400_000, configuration.getLineTcpReceiverConfiguration().getTimeout());
+            Assert.assertEquals(1_002, configuration.getLineTcpReceiverConfiguration().getQueueTimeout());
+            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getInterestQueueCapacity());
+            Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getListenBacklog());
+            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(32, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
             Assert.assertEquals(LineMicroTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter().getDefaultAdapter());
-            Assert.assertEquals(2049, configuration.getLineTcpReceiverConfiguration().getNetMsgBufferSize());
+            Assert.assertEquals(2049, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
             Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
             Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getWriterQueueCapacity());
             Assert.assertEquals(2, configuration.getLineTcpReceiverConfiguration().getWriterWorkerPoolConfiguration().getWorkerCount());
@@ -1206,11 +1203,11 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getHttpMinServerConfiguration().getHint());
 
             // influxdb line TCP protocol
-            Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getLimit());
-            Assert.assertEquals(400_000, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getTimeout());
-            Assert.assertEquals(1_002, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getQueueTimeout());
-            Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getRecvBufferSize());
-            Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getDispatcherConfiguration().getHint());
+            Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getLimit());
+            Assert.assertEquals(400_000, configuration.getLineTcpReceiverConfiguration().getTimeout());
+            Assert.assertEquals(1_002, configuration.getLineTcpReceiverConfiguration().getQueueTimeout());
+            Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
+            Assert.assertTrue(configuration.getLineTcpReceiverConfiguration().getHint());
 
             // Pg wire
             Assert.assertEquals(11, configuration.getPGWireConfiguration().getLimit());

@@ -66,7 +66,6 @@ import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.EpollFacade;
 import io.questdb.network.EpollFacadeImpl;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.KqueueFacade;
 import io.questdb.network.KqueueFacadeImpl;
 import io.questdb.network.Net;
@@ -238,7 +237,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean lineTcpEnabled;
     private final WorkerPoolConfiguration lineTcpIOWorkerPoolConfiguration = new PropLineTcpIOWorkerPoolConfiguration();
     private final LineTcpReceiverConfiguration lineTcpReceiverConfiguration = new PropLineTcpReceiverConfiguration();
-    private final IODispatcherConfiguration lineTcpReceiverDispatcherConfiguration = new PropLineTcpReceiverIODispatcherConfiguration();
     private final WorkerPoolConfiguration lineTcpWriterWorkerPoolConfiguration = new PropLineTcpWriterWorkerPoolConfiguration();
     private final int lineUdpCommitMode;
     private final int lineUdpCommitRate;
@@ -507,7 +505,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpIOWorkerYieldThreshold;
     private long lineTcpMaintenanceInterval;
     private int lineTcpMaxMeasurementSize;
-    private int lineTcpMsgBufferSize;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
     private long lineTcpNetConnectionHeartbeatInterval;
@@ -1348,16 +1345,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpNetConnectionQueueTimeout = getMillis(properties, env, PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT, 5_000);
                 this.lineTcpNetConnectionQueueTimeout = getMillis(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT, this.lineTcpNetConnectionQueueTimeout);
 
-                // deprecated
-                this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE, -1);
-                this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF, this.lineTcpNetConnectionRcvBuf);
-
                 this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.LINE_TCP_CONNECTION_POOL_CAPACITY, 8);
 
-                this.lineTcpMsgBufferSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MSG_BUFFER_SIZE, 32768);
+                // deprecated
+                this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_MSG_BUFFER_SIZE, 32768);
+                this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF, this.lineTcpNetConnectionRcvBuf);
                 this.lineTcpMaxMeasurementSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE, 32768);
-                if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
-                    lineTcpMsgBufferSize = lineTcpMaxMeasurementSize;
+                if (lineTcpMaxMeasurementSize > lineTcpNetConnectionRcvBuf) {
+                    lineTcpNetConnectionRcvBuf = lineTcpMaxMeasurementSize;
                 }
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
                 this.lineTcpWriterWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 0);
@@ -1992,8 +1987,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT,
                     PropertyKey.LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT
             );
+            registerDeprecated(PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE);
             registerDeprecated(
-                    PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE,
+                    PropertyKey.LINE_TCP_MSG_BUFFER_SIZE,
                     PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF
             );
             registerDeprecated(
@@ -3865,6 +3861,21 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getBindIPv4Address() {
+            return lineTcpNetBindIPv4Address;
+        }
+
+        @Override
+        public int getBindPort() {
+            return lineTcpNetBindPort;
+        }
+
+        @Override
+        public MillisecondClock getClock() {
+            return MillisecondClockImpl.INSTANCE;
+        }
+
+        @Override
         public long getCommitInterval() {
             return LineTcpReceiverConfigurationHelper.calcCommitInterval(
                     cairoConfiguration.getO3MinLag(),
@@ -3908,8 +3919,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public IODispatcherConfiguration getDispatcherConfiguration() {
-            return lineTcpReceiverDispatcherConfiguration;
+        public String getDispatcherLogName() {
+            return "tcp-line-server";
+        }
+
+        @Override
+        public EpollFacade getEpollFacade() {
+            return EpollFacadeImpl.INSTANCE;
         }
 
         @Override
@@ -3923,8 +3939,28 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getHeartbeatInterval() {
+            return lineTcpNetConnectionHeartbeatInterval;
+        }
+
+        @Override
+        public boolean getHint() {
+            return lineTcpNetConnectionHint;
+        }
+
+        @Override
         public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
             return lineTcpIOWorkerPoolConfiguration;
+        }
+
+        @Override
+        public KqueueFacade getKqueueFacade() {
+            return KqueueFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getLimit() {
+            return lineTcpNetConnectionLimit;
         }
 
         @Override
@@ -3953,18 +3989,43 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getNetMsgBufferSize() {
-            return lineTcpMsgBufferSize;
-        }
-
-        @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }
 
         @Override
+        public long getQueueTimeout() {
+            return lineTcpNetConnectionQueueTimeout;
+        }
+
+        @Override
+        public int getRecvBufferSize() {
+            return lineTcpNetConnectionRcvBuf;
+        }
+
+        @Override
+        public SelectFacade getSelectFacade() {
+            return SelectFacadeImpl.INSTANCE;
+        }
+
+        @Override
+        public int getSendBufferSize() {
+            return -1;
+        }
+
+        @Override
         public long getSymbolCacheWaitBeforeReload() {
             return symbolCacheWaitBeforeReload;
+        }
+
+        @Override
+        public int getTestConnectionBufferSize() {
+            return netTestConnectionBufferSize;
+        }
+
+        @Override
+        public long getTimeout() {
+            return lineTcpNetConnectionTimeout;
         }
 
         @Override
@@ -4000,88 +4061,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isUseLegacyStringDefault() {
             return useLegacyStringDefault;
-        }
-    }
-
-    private class PropLineTcpReceiverIODispatcherConfiguration implements IODispatcherConfiguration {
-
-        @Override
-        public int getBindIPv4Address() {
-            return lineTcpNetBindIPv4Address;
-        }
-
-        @Override
-        public int getBindPort() {
-            return lineTcpNetBindPort;
-        }
-
-        @Override
-        public MillisecondClock getClock() {
-            return MillisecondClockImpl.INSTANCE;
-        }
-
-        @Override
-        public String getDispatcherLogName() {
-            return "tcp-line-server";
-        }
-
-        @Override
-        public EpollFacade getEpollFacade() {
-            return EpollFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public long getHeartbeatInterval() {
-            return lineTcpNetConnectionHeartbeatInterval;
-        }
-
-        @Override
-        public boolean getHint() {
-            return lineTcpNetConnectionHint;
-        }
-
-        @Override
-        public KqueueFacade getKqueueFacade() {
-            return KqueueFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getLimit() {
-            return lineTcpNetConnectionLimit;
-        }
-
-        public NetworkFacade getNetworkFacade() {
-            return NetworkFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public long getQueueTimeout() {
-            return lineTcpNetConnectionQueueTimeout;
-        }
-
-        @Override
-        public int getRecvBufferSize() {
-            return lineTcpNetConnectionRcvBuf;
-        }
-
-        @Override
-        public SelectFacade getSelectFacade() {
-            return SelectFacadeImpl.INSTANCE;
-        }
-
-        @Override
-        public int getSendBufferSize() {
-            return -1;
-        }
-
-        @Override
-        public int getTestConnectionBufferSize() {
-            return netTestConnectionBufferSize;
-        }
-
-        @Override
-        public long getTimeout() {
-            return lineTcpNetConnectionTimeout;
         }
     }
 

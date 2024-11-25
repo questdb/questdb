@@ -39,7 +39,12 @@ import io.questdb.log.LogRecord;
 import io.questdb.network.IOContext;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
-import io.questdb.std.*;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8StringObjHashMap;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
@@ -214,8 +219,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
         if (recvBufStart == 0) {
-            recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
-            recvBufEnd = recvBufStart + configuration.getNetMsgBufferSize();
+            recvBufStart = Unsafe.malloc(configuration.getRecvBufferSize(), MemoryTag.NATIVE_ILP_RSS);
+            recvBufEnd = recvBufStart + configuration.getRecvBufferSize();
             recvBufPos = recvBufStart;
             resetParser();
         }

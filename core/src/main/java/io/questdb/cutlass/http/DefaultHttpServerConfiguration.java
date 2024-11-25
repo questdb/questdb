@@ -44,7 +44,6 @@ import java.io.IOException;
 import java.io.InputStream;
 
 public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfiguration implements HttpServerConfiguration {
-
     protected final MimeTypesCache mimeTypesCache;
     private final HttpContextConfiguration httpContextConfiguration;
     private final JsonQueryProcessorConfiguration jsonQueryProcessorConfiguration = new DefaultJsonQueryProcessorConfiguration() {

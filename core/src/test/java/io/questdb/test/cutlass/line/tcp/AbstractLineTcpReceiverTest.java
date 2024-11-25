@@ -35,14 +35,25 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.line.tcp.*;
+import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiver;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
+import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
+import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.Net;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -53,7 +64,6 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Assert;
 
-import java.lang.ThreadLocal;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.PrivateKey;
@@ -102,22 +112,6 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected long minIdleMsBeforeWriterRelease = 30000;
     protected int msgBufferSize = 256 * 1024;
     protected NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-    private final IODispatcherConfiguration ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
-        @Override
-        public int getBindPort() {
-            return bindPort;
-        }
-
-        @Override
-        public long getHeartbeatInterval() {
-            return 15;
-        }
-
-        @Override
-        public NetworkFacade getNetworkFacade() {
-            return nf;
-        }
-    };
     protected int partitionByDefault = PartitionBy.DAY;
     protected boolean useLegacyStringDefault = true;
 
@@ -125,6 +119,11 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         @Override
         public boolean getAutoCreateNewColumns() {
             return autoCreateNewColumns;
+        }
+
+        @Override
+        public int getBindPort() {
+            return bindPort;
         }
 
         @Override
@@ -157,13 +156,13 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public IODispatcherConfiguration getDispatcherConfiguration() {
-            return ioDispatcherConfiguration;
+        public FactoryProvider getFactoryProvider() {
+            return factoryProvider;
         }
 
         @Override
-        public FactoryProvider getFactoryProvider() {
-            return factoryProvider;
+        public long getHeartbeatInterval() {
+            return 15;
         }
 
         @Override
@@ -182,13 +181,13 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
         }
 
         @Override
-        public int getNetMsgBufferSize() {
-            return msgBufferSize;
+        public NetworkFacade getNetworkFacade() {
+            return nf;
         }
 
         @Override
-        public NetworkFacade getNetworkFacade() {
-            return nf;
+        public int getRecvBufferSize() {
+            return msgBufferSize;
         }
 
         @Override

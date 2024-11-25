@@ -27,8 +27,10 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.FactoryProvider;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.EpollFacade;
+import io.questdb.network.KqueueFacade;
 import io.questdb.network.NetworkFacade;
+import io.questdb.network.SelectFacade;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -53,6 +55,21 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     @Override
     public boolean getAutoCreateNewTables() {
         return getDelegate().getAutoCreateNewTables();
+    }
+
+    @Override
+    public int getBindIPv4Address() {
+        return getDelegate().getBindIPv4Address();
+    }
+
+    @Override
+    public int getBindPort() {
+        return getDelegate().getBindPort();
+    }
+
+    @Override
+    public MillisecondClock getClock() {
+        return getDelegate().getClock();
     }
 
     @Override
@@ -96,8 +113,18 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return getDelegate().getDispatcherConfiguration();
+    public String getDispatcherLogName() {
+        return getDelegate().getDispatcherLogName();
+    }
+
+    @Override
+    public EpollFacade getEpollFacade() {
+        return getDelegate().getEpollFacade();
+    }
+
+    @Override
+    public int getEventCapacity() {
+        return getDelegate().getEventCapacity();
     }
 
     @Override
@@ -111,8 +138,48 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
+    public long getHeartbeatInterval() {
+        return getDelegate().getHeartbeatInterval();
+    }
+
+    @Override
+    public boolean getHint() {
+        return getDelegate().getHint();
+    }
+
+    @Override
+    public int getIOQueueCapacity() {
+        return getDelegate().getIOQueueCapacity();
+    }
+
+    @Override
     public WorkerPoolConfiguration getIOWorkerPoolConfiguration() {
         return getDelegate().getIOWorkerPoolConfiguration();
+    }
+
+    @Override
+    public int getInitialBias() {
+        return getDelegate().getInitialBias();
+    }
+
+    @Override
+    public int getInterestQueueCapacity() {
+        return getDelegate().getInterestQueueCapacity();
+    }
+
+    @Override
+    public KqueueFacade getKqueueFacade() {
+        return getDelegate().getKqueueFacade();
+    }
+
+    @Override
+    public int getLimit() {
+        return getDelegate().getLimit();
+    }
+
+    @Override
+    public int getListenBacklog() {
+        return getDelegate().getListenBacklog();
     }
 
     @Override
@@ -141,18 +208,48 @@ public class LineTcpReceiverConfigurationWrapper implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getNetMsgBufferSize() {
-        return getDelegate().getNetMsgBufferSize();
-    }
-
-    @Override
     public NetworkFacade getNetworkFacade() {
         return getDelegate().getNetworkFacade();
     }
 
     @Override
+    public boolean getPeerNoLinger() {
+        return getDelegate().getPeerNoLinger();
+    }
+
+    @Override
+    public long getQueueTimeout() {
+        return getDelegate().getQueueTimeout();
+    }
+
+    @Override
+    public int getRecvBufferSize() {
+        return getDelegate().getRecvBufferSize();
+    }
+
+    @Override
+    public SelectFacade getSelectFacade() {
+        return getDelegate().getSelectFacade();
+    }
+
+    @Override
+    public int getSendBufferSize() {
+        return getDelegate().getSendBufferSize();
+    }
+
+    @Override
     public long getSymbolCacheWaitBeforeReload() {
         return getDelegate().getSymbolCacheWaitBeforeReload();
+    }
+
+    @Override
+    public int getTestConnectionBufferSize() {
+        return getDelegate().getTestConnectionBufferSize();
+    }
+
+    @Override
+    public long getTimeout() {
+        return getDelegate().getTimeout();
     }
 
     @Override

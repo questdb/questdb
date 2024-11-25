@@ -31,7 +31,6 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cutlass.line.LineTcpTimestampAdapter;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.FilesFacade;
@@ -41,7 +40,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 
-public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfiguration {
+public class DefaultLineTcpReceiverConfiguration extends DefaultIODispatcherConfiguration implements LineTcpReceiverConfiguration {
     private static final WorkerPoolConfiguration SHARED_CONFIGURATION = new WorkerPoolConfiguration() {
         @Override
         public String getPoolName() {
@@ -114,11 +113,6 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public IODispatcherConfiguration getDispatcherConfiguration() {
-        return DefaultIODispatcherConfiguration.INSTANCE;
-    }
-
-    @Override
     public FactoryProvider getFactoryProvider() {
         return DefaultFactoryProvider.INSTANCE;
     }
@@ -159,13 +153,13 @@ public class DefaultLineTcpReceiverConfiguration implements LineTcpReceiverConfi
     }
 
     @Override
-    public int getNetMsgBufferSize() {
-        return 2048;
+    public NetworkFacade getNetworkFacade() {
+        return NetworkFacadeImpl.INSTANCE;
     }
 
     @Override
-    public NetworkFacade getNetworkFacade() {
-        return NetworkFacadeImpl.INSTANCE;
+    public int getRecvBufferSize() {
+        return 2048;
     }
 
     @Override
