@@ -4056,7 +4056,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                 //TODO: inspect
                 assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts asc rows between 1 preceding and current row) from tab where sym in ( 'A', 'B') ".replace("#FUNCT_NAME", func),
-                        "first_value".equals(func.trim()) || "first_not_null_value".equals(func.trim())?
+                        "first_value".equals(func.trim()) || "first_not_null_value".equals(func.trim()) ?
                                 "Window\n" +
                                         "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME(1)", replace) +
                                         "    FilterOnValues\n" +
