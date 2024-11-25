@@ -308,7 +308,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     public StringSink getErrorMessageSink() {
-        error = true;
+        if (!error) {
+            errorMessageSink.clear();
+            error = true;
+        }
         return errorMessageSink;
     }
 
@@ -1392,26 +1395,36 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
             sqlExecutionContext.setCacheHit(cacheHit);
             try {
-                RecordMetadata oldMeta = factory.getMetadata();
+                RecordMetadata oldMeta = null;
                 for (int attempt = 1; ; attempt++) {
-                    try {
-                        copyParameterValuesToBindVariableService(
-                                sqlExecutionContext,
-                                characterStore,
-                                utf8String,
-                                binarySequenceParamsPool
-                        );
-                        cursor = factory.getCursor(sqlExecutionContext);
-                        break;
-                    } catch (TableReferenceOutOfDateException e) {
-                        if (attempt == maxRecompileAttempts) {
-                            throw e;
+                    // check if factory is null, what might happen is that
+                    // prepared statement (entry we held on to) failed to compile, factory is null
+                    // The goal would be to just recompile from text.
+                    if (factory != null) {
+                        try {
+                            copyParameterValuesToBindVariableService(
+                                    sqlExecutionContext,
+                                    characterStore,
+                                    utf8String,
+                                    binarySequenceParamsPool
+                            );
+                            cursor = factory.getCursor(sqlExecutionContext);
+                            // when factory is not null, and we can obtain cursor without issues
+                            // we would exit early
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            if (attempt == maxRecompileAttempts) {
+                                throw e;
+                            }
                         }
-                        cacheHit = false;
-                        sqlExecutionContext.setCacheHit(false);
-                        factory.close();
-                        pgResultSetColumnTypes.clear();
-                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                        oldMeta = factory.getMetadata();
+                        factory = Misc.free(factory);
+                    }
+                    cacheHit = false;
+                    sqlExecutionContext.setCacheHit(false);
+                    pgResultSetColumnTypes.clear();
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                    if (oldMeta != null) {
                         validateMetadataAfterRecompileSelect(oldMeta);
                     }
                 }

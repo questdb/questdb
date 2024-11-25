@@ -385,6 +385,34 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testPreparedStatementErrorConsistency() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            execute("create table abc(x double, y double, t timestamp) timestamp(t)");
+            try (PreparedStatement ps = connection.prepareStatement("select y from abc")) {
+                for (int i = 0; i < 10; i++) {
+                    ps.execute();
+                }
+
+                Statement statement = connection.createStatement();
+                statement.execute("alter table abc drop column y");
+
+                for (int i = 0; i < 10; i++) {
+                    try {
+                        ps.execute();
+                        Assert.fail();
+                    } catch (SQLException e) {
+                        TestUtils.assertEquals(
+                                "ERROR: Invalid column: y\n" +
+                                        "  Position: 8",
+                                e.getMessage()
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     @Ignore("Statement executed at parse time fails when captured as server-side prepared statement and reused")
     public void testRepeatedDropCreate() throws Exception {
         Assume.assumeFalse(walEnabled); // no partitioned tables here
