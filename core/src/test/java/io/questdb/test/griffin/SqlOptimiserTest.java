@@ -3691,11 +3691,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToParallelDeduceTimeStampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE 't' (\n" +
+            execute("CREATE TABLE 't' (\n" +
                     "  name SYMBOL capacity 256 CACHE,\n" +
                     "  timestamp TIMESTAMP\n" +
                     ") timestamp (timestamp) PARTITION BY DAY;");
-            insert("INSERT INTO t (name, timestamp) VALUES" +
+            execute("INSERT INTO t (name, timestamp) VALUES" +
                     " ('a', '2023-09-01T00:00:00.000Z')," +
                     " ('a', '2023-09-01T00:10:00.000Z')");
             final String parallel = "SELECT timestamp+60000000 as 'timestamp', 0 AS \"extra_column\", 0 AS \"extra_column2\"\n" +
