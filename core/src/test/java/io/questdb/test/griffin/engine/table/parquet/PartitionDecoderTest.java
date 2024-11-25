@@ -42,7 +42,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final long columns = 24;
             final long rows = 1001;
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
                     " rnd_byte() a_byte," +

@@ -114,8 +114,6 @@ public interface CairoConfiguration {
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
-    int getColumnCastModelPoolCapacity();
-
     int getColumnIndexerQueueCapacity();
 
     int getColumnPurgeQueueCapacity();
@@ -148,9 +146,9 @@ public interface CairoConfiguration {
 
     int getCreateAsSelectRetryCount();
 
-    long getCreateTableModelBatchSize();
+    int getCreateTableColumnModelPoolCapacity();
 
-    int getCreateTableModelPoolCapacity();
+    long getCreateTableModelBatchSize();
 
     long getDataAppendPageSize();
 
@@ -204,9 +202,9 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
-    long getGroupByPresizeMaxHeapSize();
-
     long getGroupByPresizeMaxCapacity();
+
+    long getGroupByPresizeMaxHeapSize();
 
     int getGroupByShardingThreshold();
 

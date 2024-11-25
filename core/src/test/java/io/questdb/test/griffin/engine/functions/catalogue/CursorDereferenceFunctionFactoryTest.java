@@ -31,7 +31,7 @@ public class CursorDereferenceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCatalogue() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table pg_test(a int)");
+            execute("create table pg_test(a int)");
             assertQuery(
                     "x\tpg_class\n" +
                             "11\t\n" +

@@ -369,6 +369,8 @@ public class TimestampFormatUtils {
         return referenceYear;
     }
 
+    // may be used to initialize calendar indexes ahead of using them
+    @TestOnly
     public static void init() {
     }
 

@@ -25,12 +25,13 @@
 package io.questdb.test.sqllogictest.parquet;
 
 import io.questdb.test.sqllogictest.AbstractSqllogicTestRunner;
-import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.util.Collection;
 
-@RunWith(Parameterized.class)
+/**
+ * Tests read_parquet()/parquet_scan() SQL function.
+ */
 public class ParquetTest extends AbstractSqllogicTestRunner {
     public ParquetTest(String testFile) {
         super(testFile);

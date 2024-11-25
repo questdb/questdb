@@ -258,8 +258,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertModelPoolCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getInsertModelBatchSize());
-        Assert.assertEquals(16, configuration.getCairoConfiguration().getColumnCastModelPoolCapacity());
-        Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableModelPoolCapacity());
+        Assert.assertEquals(16, configuration.getCairoConfiguration().getCreateTableColumnModelPoolCapacity());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getCreateTableModelBatchSize());
         Assert.assertEquals(1, configuration.getCairoConfiguration().getPartitionPurgeListCapacity());
         Assert.assertEquals(ff.allowMixedIO(root), configuration.getCairoConfiguration().isWriterMixedIOEnabled());
@@ -424,6 +423,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.getPGWireConfiguration().isReadOnlyUserEnabled());
         Assert.assertEquals("quest", configuration.getPGWireConfiguration().getReadOnlyPassword());
         Assert.assertEquals("user", configuration.getPGWireConfiguration().getReadOnlyUsername());
+        Assert.assertEquals(10_000, configuration.getPGWireConfiguration().getNamedStatementLimit());
 
         Assert.assertEquals(128, configuration.getCairoConfiguration().getColumnPurgeQueueCapacity());
         Assert.assertEquals(127, configuration.getCairoConfiguration().getMaxFileNameLength());
@@ -1148,6 +1148,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals("my_user", configuration.getPGWireConfiguration().getReadOnlyUsername());
             Assert.assertEquals(16, configuration.getPGWireConfiguration().getDispatcherConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(new DefaultPGWireConfiguration().getServerVersion(), configuration.getPGWireConfiguration().getServerVersion());
+            Assert.assertEquals(10, configuration.getPGWireConfiguration().getNamedStatementLimit());
 
             Assert.assertEquals(255, configuration.getLineTcpReceiverConfiguration().getMaxFileNameLength());
             Assert.assertEquals(255, configuration.getLineUdpReceiverConfiguration().getMaxFileNameLength());
@@ -1438,8 +1439,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024, configuration.getWithClauseModelPoolCapacity());
         Assert.assertEquals(512, configuration.getRenameTableModelPoolCapacity());
         Assert.assertEquals(128, configuration.getInsertModelPoolCapacity());
-        Assert.assertEquals(256, configuration.getColumnCastModelPoolCapacity());
-        Assert.assertEquals(64, configuration.getCreateTableModelPoolCapacity());
+        Assert.assertEquals(256, configuration.getCreateTableColumnModelPoolCapacity());
         Assert.assertEquals(2001, configuration.getSampleByIndexSearchPageSize());
         Assert.assertFalse(configuration.getSampleByDefaultAlignmentCalendar());
         Assert.assertEquals(16, configuration.getWriterCommandQueueCapacity());

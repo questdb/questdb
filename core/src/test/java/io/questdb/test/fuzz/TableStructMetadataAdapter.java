@@ -81,6 +81,12 @@ public class TableStructMetadataAdapter implements TableStructure {
     }
 
     @Override
+    public long getMetadataVersion() {
+        // new table only
+        return 0;
+    }
+
+    @Override
     public long getO3MaxLag() {
         return configuration.getO3MaxLag();
     }
@@ -119,11 +125,6 @@ public class TableStructMetadataAdapter implements TableStructure {
     @Override
     public boolean isIndexed(int columnIndex) {
         return ColumnType.isSymbol(metadata.getColumnType(columnIndex));
-    }
-
-    @Override
-    public boolean isSequential(int columnIndex) {
-        return true;
     }
 
     @Override

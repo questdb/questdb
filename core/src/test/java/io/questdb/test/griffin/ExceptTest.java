@@ -34,8 +34,8 @@ public class ExceptTest extends AbstractCairoTest {
     @Test
     public void testExceptAllCastDuplicateRows() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
-            ddl("create table y as (SELECT rnd_int(1,3,0) i, rnd_str('A', 'B', 'C') s FROM long_sequence(3))");
+            execute("create table x as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
+            execute("create table y as (SELECT rnd_int(1,3,0) i, rnd_str('A', 'B', 'C') s FROM long_sequence(3))");
 
             final String expected = "i\ts\n" +
                     "3\tC\n" +
@@ -55,8 +55,8 @@ public class ExceptTest extends AbstractCairoTest {
     @Test
     public void testExceptAllDuplicateRows() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
-            ddl("create table y as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(3))");
+            execute("create table x as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
+            execute("create table y as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(3))");
 
             final String expected = "i\ts\n" +
                     "3\tC\n" +
@@ -115,7 +115,7 @@ public class ExceptTest extends AbstractCairoTest {
                     "-1433178628\tfalse\tW\t0.9246085617322545\t0.9217\t578\t2015-06-28T14:27:36.686Z\t\t7861908914614478025\t1970-01-01T05:00:00.000000Z\t32\t00000000 0e 98 0a 8a 0b 1e c4 fd a2 9e b3 77 f8 f6 78\tRPXZSFXUNYQXT\t0x98065c0bf90d68899f5ac37d91bde62260af712d2a1cbb23579b0bab5109229c\tI\n" +
                     "94087085\ttrue\tY\t0.5675831821917149\t0.4634\t872\t2015-11-16T04:04:55.664Z\tPEHN\t8951464047863942551\t1970-01-01T05:16:40.000000Z\t26\t00000000 33 3f b2 67 da 98 47 47 bf 4f ea 5f 48 ed\tDDCIHCNP\t0x680d2fd4ebf181c6960658463c4b85af603e1494ba44804a7fa40f7e4efac82e\tP\n";
 
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -145,7 +145,7 @@ public class ExceptTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl(
+            execute(
                     "create table y as " +
                             "(" +
                             "select" +
@@ -190,7 +190,7 @@ public class ExceptTest extends AbstractCairoTest {
             final String expected2 = "t\n" +
                     "CAR\n";
 
-            ddl(
+            execute(
                     "CREATE TABLE x as " +
                             "(SELECT " +
                             " rnd_symbol('CAR', 'VAN', 'MOTORBIKE') t " +
@@ -204,14 +204,14 @@ public class ExceptTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl(
+            execute(
                     "CREATE TABLE y as " +
                             "(SELECT " +
                             " rnd_symbol('PLANE', 'MOTORBIKE', 'SCOOTER') t " +
                             " FROM long_sequence(7) x)"
             );
 
-            ddl(
+            execute(
                     "CREATE TABLE z as " +
                             "(SELECT " +
                             " rnd_symbol('MOTORBIKE', 'HELICOPTER', 'VAN') t " +
@@ -228,8 +228,8 @@ public class ExceptTest extends AbstractCairoTest {
     @Test
     public void testExceptCastNoDuplicateRows() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
-            ddl("create table y as (SELECT rnd_int(1,3,0) i, rnd_str('A', 'B', 'C') s FROM long_sequence(3))");
+            execute("create table x as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
+            execute("create table y as (SELECT rnd_int(1,3,0) i, rnd_str('A', 'B', 'C') s FROM long_sequence(3))");
 
             final String expected = "i\ts\n" +
                     "3\tC\n" +
@@ -247,8 +247,8 @@ public class ExceptTest extends AbstractCairoTest {
     @Test
     public void testExceptNoDuplicateRows() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
-            ddl("create table y as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(3))");
+            execute("create table x as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(10))");
+            execute("create table y as (SELECT rnd_int(1,3,0) i, rnd_symbol('A', 'B', 'C') s FROM long_sequence(3))");
 
             final String expected = "i\ts\n" +
                     "3\tC\n" +
@@ -305,7 +305,7 @@ public class ExceptTest extends AbstractCairoTest {
                     "-1433178628\tfalse\tW\t0.9246085617322545\t0.9217\t578\t2015-06-28T14:27:36.686Z\t\t7861908914614478025\t1970-01-01T05:00:00.000000Z\t32\t00000000 0e 98 0a 8a 0b 1e c4 fd a2 9e b3 77 f8 f6 78\tRPXZSFXUNYQXT\t0x98065c0bf90d68899f5ac37d91bde62260af712d2a1cbb23579b0bab5109229c\tI\n" +
                     "94087085\ttrue\tY\t0.5675831821917149\t0.4634\t872\t2015-11-16T04:04:55.664Z\tPEHN\t8951464047863942551\t1970-01-01T05:16:40.000000Z\t26\t00000000 33 3f b2 67 da 98 47 47 bf 4f ea 5f 48 ed\tDDCIHCNP\t0x680d2fd4ebf181c6960658463c4b85af603e1494ba44804a7fa40f7e4efac82e\tP\n";
 
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "select" +
@@ -335,7 +335,7 @@ public class ExceptTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.get().reset();
 
-            ddl(
+            execute(
                     "create table y as " +
                             "(" +
                             "select" +

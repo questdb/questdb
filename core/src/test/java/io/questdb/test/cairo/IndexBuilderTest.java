@@ -161,7 +161,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
             engine.releaseAllWriters();
 
-            insert("insert into xxx values(500100000000L, 50001, 'D', 'I2')");
+            execute("insert into xxx values(500100000000L, 50001, 'D', 'I2')");
 
             int sym1D = countByFullScan("select * from xxx where sym1 = 'D'");
             Assert.assertEquals(1, sym1D);
@@ -643,7 +643,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
 
     private static void runReindexSql(String query) {
         try {
-            ddl(query);
+            execute(query);
         } catch (SqlException ex) {
             LOG.error().$((Throwable) ex).I$();
             Assert.fail(ex.getMessage());
@@ -653,12 +653,12 @@ public class IndexBuilderTest extends AbstractCairoTest {
     private void checkRebuildIndexes(FilesFacade ff, String createTableSql, Action<String> changeTable, Action<IndexBuilder> rebuildIndexAction) throws Exception {
         assertMemoryLeak(ff, () -> {
             for (String sql : createTableSql.split(";")) {
-                ddl(sql);
+                execute(sql);
             }
             int sym1A = countByFullScan("select * from xxx where sym1 = 'A'");
             int sym1B = countByFullScan("select * from xxx where sym1 = 'B'");
             int sym1C = countByFullScan("select * from xxx where sym1 = 'C'");
-            ddl("create table copy as (select * from xxx)", sqlExecutionContext);
+            execute("create table copy as (select * from xxx)", sqlExecutionContext);
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
@@ -679,7 +679,7 @@ public class IndexBuilderTest extends AbstractCairoTest {
             Assert.assertEquals(sym1B, sym1B2);
             Assert.assertEquals(sym1C, sym1C2);
 
-            insert("insert into xxx select * from copy");
+            execute("insert into xxx select * from copy");
 
             int sym1A3 = countByFullScan("select * from xxx where sym1 = 'A'");
             int sym1B3 = countByFullScan("select * from xxx where sym1 = 'B'");
