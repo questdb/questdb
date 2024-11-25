@@ -744,7 +744,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     final TypesAndSelectModern tas = tasCache.poll(pipelineCurrentEntry.getSqlText());
                     if (tas != null) {
                         if (pe.msgParseReconcileParameterTypes(tas)) {
-                            pe.ofSelect(pipelineCurrentEntry.getSqlText(), tas);
+                            pe.ofCachedSelect(pipelineCurrentEntry.getSqlText(), tas);
                             cachedStatus = CACHE_HIT_SELECT_VALID;
                         } else {
                             tas.close();
@@ -1046,7 +1046,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             final TypesAndSelectModern tas = tasCache.poll(utf16SqlText);
             if (tas != null) {
                 if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
-                    pipelineCurrentEntry.ofSelect(utf16SqlText, tas);
+                    pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
                     cachedStatus = CACHE_HIT_SELECT_VALID;
                 } else {
                     tas.close();

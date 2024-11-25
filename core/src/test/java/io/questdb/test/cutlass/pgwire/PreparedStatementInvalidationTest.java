@@ -36,6 +36,8 @@ import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
+import org.postgresql.PGConnection;
+import org.postgresql.jdbc.PreferQueryMode;
 import org.postgresql.util.PSQLException;
 
 import java.sql.CallableStatement;
@@ -865,7 +867,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 "ALTER TABLE tango RENAME COLUMN x TO y",
                 "ALTER TABLE tango RENAME COLUMN y TO x",
                 "query table",
-                "Invalid column: y", () -> {
+                tolerateCachedPlanChangeWhenInQuirkyMode("Invalid column: y", connection), () -> {
                     try (Statement s = connection.createStatement()) {
                         ResultSet rs = s.executeQuery("SELECT y FROM tango");
                         int rowCount = 0;
@@ -929,7 +931,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                         "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
                         "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
                         "query table",
-                        "Invalid column: y", () -> {
+                        tolerateCachedPlanChangeWhenInQuirkyMode("Invalid column: y", connection), () -> {
                             ResultSet rs = s.executeQuery();
                             int rowCount = 0;
                             while (rs.next()) {
@@ -946,21 +948,24 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
         assertWithPgServer(
                 CONN_AWARE_ALL,
                 (connection, binary, mode, port) ->
-                        executeStatementWhileConcurrentlyChangingSchema(
-                                connection,
-                                "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
-                                "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
-                                "query table",
-                                "Invalid column: y", () -> {
-                                    try (Statement s = connection.createStatement()) {
-                                        ResultSet rs = s.executeQuery("SELECT y FROM tango");
-                                        int rowCount = 0;
-                                        while (rs.next()) {
-                                            rowCount++;
-                                        }
-                                        Assert.assertEquals(10, rowCount);
+                {
+                    executeStatementWhileConcurrentlyChangingSchema(
+                            connection,
+                            "DROP TABLE tango; CREATE TABLE tango as (SELECT x as y FROM long_sequence(10))",
+                            "DROP TABLE tango; CREATE TABLE tango as (SELECT x FROM long_sequence(10))",
+                            "query table",
+                            tolerateCachedPlanChangeWhenInQuirkyMode("Invalid column: y", connection), () -> {
+                                try (Statement s = connection.createStatement()) {
+                                    ResultSet rs = s.executeQuery("SELECT y FROM tango");
+                                    int rowCount = 0;
+                                    while (rs.next()) {
+                                        rowCount++;
                                     }
-                                }));
+                                    Assert.assertEquals(10, rowCount);
+                                }
+                            });
+                }
+        );
     }
 
     @Test
@@ -1321,6 +1326,18 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                                         s.executeUpdate("UPDATE tango SET y = 42");
                                     }
                                 }));
+    }
+
+    private static String tolerateCachedPlanChangeWhenInQuirkyMode(String currentError, Connection connection) throws SQLException {
+        PGConnection pgConnection = connection.unwrap(PGConnection.class);
+        int prepareThreshold = pgConnection.getPrepareThreshold();
+        PreferQueryMode preferQueryMode = pgConnection.getPreferQueryMode();
+
+        boolean isQuirk = (preferQueryMode != PreferQueryMode.SIMPLE && prepareThreshold == -1);
+        if (!isQuirk) {
+            return currentError;
+        }
+        return String.format("(%s|cached plan must not change result type)", currentError);
     }
 
     private void assertMessageMatches(Exception e, String expectedRegex) {
