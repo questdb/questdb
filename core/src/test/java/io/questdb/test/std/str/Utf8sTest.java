@@ -499,13 +499,13 @@ public class Utf8sTest {
             LongList expectedOffsets = new LongList(n);
             for (int i = 0; i < n; i++) {
                 utf8Sink.clear();
-                utf8Sink.repeat("a", len);
+                utf8Sink.repeat('a', len);
                 VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
                 expectedOffsets.add(dataMem.getAppendOffset());
             }
 
             utf8Sink.clear();
-            utf8Sink.repeat("a", len);
+            utf8Sink.repeat('a', len);
             String expectedStr = utf8Sink.toString();
             for (int i = 0; i < n; i++) {
                 Utf8Sequence varchar = VarcharTypeDriver.getSplitValue(auxMem, dataMem, i, 1);
