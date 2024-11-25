@@ -80,7 +80,6 @@ import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyFactory;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
-import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.DropAllTablesOperation;
 import io.questdb.griffin.engine.ops.DropTableOperation;
 import io.questdb.griffin.engine.ops.DropTableOperationBuilder;
