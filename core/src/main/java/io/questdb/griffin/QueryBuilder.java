@@ -65,7 +65,7 @@ public final class QueryBuilder implements Mutable {
     public TableToken createTable(SqlExecutionContext executionContext) throws SqlException {
         try (
                 final Operation op = compiler.compile(sink, executionContext).getOperation();
-                CreateTableOperationFuture fut = (CreateTableOperationFuture) op.execute(executionContext, null)
+                final CreateTableOperationFuture fut = (CreateTableOperationFuture) op.execute(executionContext, null)
         ) {
             fut.await();
             return fut.getTableToken();
