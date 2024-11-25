@@ -411,10 +411,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return memUsed;
     }
 
-    protected static void execute(CharSequence sqlText) throws SqlException {
-        engine.execute(sqlText, sqlExecutionContext);
-    }
-
     public static void printFactoryMemoryUsageDiff() {
         for (int i = 0; i < MemoryTag.SIZE; i++) {
             if (!FACTORY_TAGS[i]) {
@@ -544,6 +540,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     public void tearDown() throws Exception {
         tearDown(true);
         super.tearDown();
+        spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     }
 
     public void tearDown(boolean removeDir) {
@@ -1360,6 +1357,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    protected static void execute(CharSequence sqlText) throws SqlException {
+        engine.execute(sqlText, sqlExecutionContext);
+    }
+
     protected static void execute(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         engine.execute(dropSql, sqlExecutionContext);
     }
@@ -1408,19 +1409,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static TableWriter getWriter(CharSequence tableName) {
         return TestUtils.getWriter(engine, tableName);
-    }
-
-    protected PoolListener createWriterReleaseListener(CharSequence tableName, SOCountDownLatch latch) {
-        return (factoryType, thread, tableToken, event, segment, position) -> {
-            if (
-                    factoryType == PoolListener.SRC_WRITER
-                            && event == PoolListener.EV_RETURN
-                            && tableToken != null
-                            && Chars.equalsIgnoreCase(tableToken.getTableName(), tableName)
-            ) {
-                latch.countDown();
-            }
-        };
     }
 
     protected static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {
@@ -1999,6 +1987,19 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
             return token;
         }
+    }
+
+    protected PoolListener createWriterReleaseListener(CharSequence tableName, SOCountDownLatch latch) {
+        return (factoryType, thread, tableToken, event, segment, position) -> {
+            if (
+                    factoryType == PoolListener.SRC_WRITER
+                            && event == PoolListener.EV_RETURN
+                            && tableToken != null
+                            && Chars.equalsIgnoreCase(tableToken.getTableName(), tableName)
+            ) {
+                latch.countDown();
+            }
+        };
     }
 
     protected ExplainPlanFactory getPlanFactory(CharSequence query) throws SqlException {
