@@ -823,9 +823,21 @@ public class SqlUtil {
         } else if (Chars.equalsIgnoreCase(tok, "s64") || Chars.equalsIgnoreCase(tok, "long")) {
             typeClass = 's';
             precision = 6;
+        } else if (Chars.equalsIgnoreCase(tok, "f8")) {
+            typeClass = 'f';
+            precision = 3;
+        } else if (Chars.equalsIgnoreCase(tok, "f16")) {
+            typeClass = 'f';
+            precision = 4;
+        } else if (Chars.equalsIgnoreCase(tok, "f32") || Chars.equalsIgnoreCase(tok, "float")) {
+            typeClass = 'f';
+            precision = 5;
+        } else if (Chars.equalsIgnoreCase(tok, "f64") || Chars.equalsIgnoreCase(tok, "double")) {
+            typeClass = 'f';
+            precision = 6;
         }
         else {
-            throw SqlException.$(tokPosition, "non-array type: ").put(tok);
+            throw SqlException.$(tokPosition, "non-array element type: ").put(tok);
         }
         return ColumnType.buildNdArrayType(typeClass, precision);
     }
