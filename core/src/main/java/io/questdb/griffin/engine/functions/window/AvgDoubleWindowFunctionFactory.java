@@ -56,7 +56,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class AvgDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
+public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     public static final ArrayColumnTypes AVG_COLUMN_TYPES;
     public static final ArrayColumnTypes AVG_OVER_PARTITION_RANGE_COLUMN_TYPES;
@@ -407,6 +407,7 @@ public class AvgDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
         private final int timestampIndex;
         protected double sum;
         private double avg;
+        private final  RingBufferDesc memoryDesc = new RingBufferDesc();
 
         public AvgOverPartitionRangeFrameFunction(
                 Map map,
@@ -529,7 +530,7 @@ public class AvgDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
                 // add new element if not null
                 if (Numbers.isFinite(d)) {
                     if (size == capacity) { //buffer full
-                        RingBufferDesc memoryDesc = new RingBufferDesc(capacity, startOffset, size, firstIdx, freeList);
+                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
                         expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
                         capacity = memoryDesc.capacity;
                         startOffset = memoryDesc.startOffset;

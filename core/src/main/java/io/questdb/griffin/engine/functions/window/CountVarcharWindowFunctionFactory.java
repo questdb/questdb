@@ -26,13 +26,12 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class CountVarcharWindowFunctionFactory extends AbsWindowFunctionFactory {
+public class CountVarcharWindowFunctionFactory extends AbstractWindowFunctionFactory {
     private static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((arg, record) -> arg.getVarcharA(record) != null);
 
     @Override
