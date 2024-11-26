@@ -134,15 +134,15 @@ public class DropTableFuzzTest extends AbstractCairoTest {
                             dropsStart.await();
                             engine.execute("DROP TABLE tango;", sqlExecutionContext);
                         } catch (CairoException ex) {
-                            if (ex.isTableDoesNotExist()) {
-                                // it's ok
+                            if (!ex.isTableDoesNotExist()) {
+                                exception.set(ex);
                             }
+
                         } catch (SqlException ex) {
-                            if (ex.isTableDoesNotExist()) {
-                                // it's ok
+                            if (!ex.isTableDoesNotExist()) {
+                                exception.set(ex);
                             }
-                        }
-                        catch (Throwable e) {
+                        } catch (Throwable e) {
                             exception.set(e);
                         }
                     }));
