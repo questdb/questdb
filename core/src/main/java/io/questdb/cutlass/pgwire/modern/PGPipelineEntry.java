@@ -1064,30 +1064,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return recordSize;
     }
 
-    private void clearForPooling() {
-        clearState();
-        msgBindSelectFormatCodes.clear();
-        stateParseExecuted = false;
-        outResendCursorRecord = false;
-        outResendRecordHeader = true;
-        outResendColumnIndex = 0;
-        sqlReturnRowCountLimit = 0;
-        sqlReturnRowCountToBeSent = 0;
-        parameterValueArenaHi = parameterValueArenaPtr;
-        compiledQuery = compiledQueryCopy;
-        isCopy = false;
-        preparedStatement = false;
-        preparedStatementName = null;
-        portal = false;
-        portalName = null;
-        sqlType = 0;
-        sqlTag = null;
-        preparedStatementNameToDeallocate = null;
-        sqlText = null;
-        pgResultSetColumnNames.clear();
-        pgResultSetColumnTypes.clear();
-    }
-
     private void copyOf(PGPipelineEntry blueprint) {
         this.msgParseParameterTypeOIDs.clear();
         this.msgParseParameterTypeOIDs.addAll(blueprint.msgParseParameterTypeOIDs);
