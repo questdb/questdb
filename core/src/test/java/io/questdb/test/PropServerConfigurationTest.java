@@ -350,7 +350,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(8, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(LineNanoTimestampAdapter.INSTANCE, configuration.getLineTcpReceiverConfiguration().getTimestampAdapter().getDefaultAdapter());
-        Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
+        Assert.assertEquals(131072, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
         Assert.assertEquals(-1, configuration.getLineTcpReceiverConfiguration().getSendBufferSize());
         Assert.assertEquals(32768, configuration.getLineTcpReceiverConfiguration().getMaxMeasurementSize());
         Assert.assertEquals(128, configuration.getLineTcpReceiverConfiguration().getWriterQueueCapacity());
