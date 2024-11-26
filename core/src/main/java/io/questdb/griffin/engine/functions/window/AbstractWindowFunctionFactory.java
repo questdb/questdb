@@ -33,7 +33,7 @@ import io.questdb.griffin.model.WindowColumn;
 import io.questdb.std.LongList;
 import io.questdb.std.Vect;
 
-public abstract class AbsWindowFunctionFactory implements FunctionFactory {
+public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
     protected long rowsLo;
     protected long rowsHi;
@@ -99,7 +99,7 @@ public abstract class AbsWindowFunctionFactory implements FunctionFactory {
         long firstIdx;
         LongList freeList;
 
-        RingBufferDesc(long capacity, long startOffset, long size, long firstIdx, LongList freeList) {
+        void reset(long capacity, long startOffset, long size, long firstIdx, LongList freeList) {
             this.capacity = capacity;
             this.startOffset = startOffset;
             this.size = size;
