@@ -1598,17 +1598,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             throw e;
         } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
             for (long i = 0; i < columnCount; i++) {
                 final long dstAuxFd = columnFdAndDataSize.get(3L * i);
                 ff.close(dstAuxFd);
                 final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
                 ff.close(dstDataFd);
             }
-            Misc.free(columnFdAndDataSize);
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
+            columnFdAndDataSize.close();
+            parquetDecoder.close();
             ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            Misc.free(parquetDecoder);
         }
 
         LOG.info().$("copying index files to native [path=").$substr(pathRootSize, path).I$();
@@ -8768,11 +8768,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 path.trimTo(pathSize);
             }
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             Misc.free(indexer);
             LOG.error().$("rolling back index created so far [path=").$substr(pathRootSize, path).I$();
             removeIndexFiles(columnName, columnIndex);
-            throw e;
+            throw th;
         }
     }
 
