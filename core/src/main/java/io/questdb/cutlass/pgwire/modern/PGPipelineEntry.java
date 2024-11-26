@@ -99,9 +99,22 @@ import static io.questdb.cutlass.pgwire.modern.PGUtils.estimateColumnTxtSize;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable, Mutable {
+    // SYNC_DESC_ constants describe the state of the "describe" message
+    // they have no relation to the state of SYNC message processing as such
+    public static final int SYNC_DESC_NONE = 0;
+    public static final int SYNC_DESC_PARAMETER_DESCRIPTION = 2;
+    public static final int SYNC_DESC_ROW_DESCRIPTION = 1;
     private static final int ERROR_TAIL_MAX_SIZE = 23;
     // tableOid + column number + type + type size + type modifier + format code
     private static final int ROW_DESCRIPTION_COLUMN_RECORD_FIXED_SIZE = 3 * Short.BYTES + 3 * Integer.BYTES;
+    private static final int SYNC_BIND = 1;
+    private static final int SYNC_COMPUTE_CURSOR_SIZE = 3;
+    private static final int SYNC_DATA = 4;
+    private static final int SYNC_DATA_EXHAUSTED = 6;
+    private static final int SYNC_DATA_SUSPENDED = 7;
+    private static final int SYNC_DESCRIBE = 2;
+    private static final int SYNC_DONE = 5;
+    private static final int SYNC_PARSE = 0;
     private final CompiledQueryImpl compiledQueryCopy;
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
@@ -632,27 +645,26 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             outError(utf8Sink, pendingWriters);
         } else {
             switch (stateSync) {
-                case 0:
+                case SYNC_PARSE:
                     if (stateParse) {
                         outParseComplete(utf8Sink);
                     }
-                    stateSync = 1;
-                case 1:
+                    stateSync = SYNC_BIND;
+                case SYNC_BIND:
                     if (stateBind) {
                         outBindComplete(utf8Sink);
                     }
-                    stateSync = 2;
-                case 2:
+                    stateSync = SYNC_DESCRIBE;
+                case SYNC_DESCRIBE:
                     switch (stateDesc) {
-                        case 3:
+                        case SYNC_DESC_PARAMETER_DESCRIPTION:
                             // named prepared statement
                             outParameterTypeDescription(utf8Sink);
                             // row description can be sent in parts
                             // do not resend parameter description
-                            stateDesc = 2;
+                            stateDesc = SYNC_DESC_ROW_DESCRIPTION;
                             // fall through
-                        case 2:
-                        case 1:
+                        case SYNC_DESC_ROW_DESCRIPTION:
                             // portal
                             if (factory != null) {
                                 outRowDescription(utf8Sink);
@@ -661,15 +673,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             }
                             break;
                     }
-                    stateSync = 4;
-                case 4:
-                case 5:
+                    stateSync = SYNC_COMPUTE_CURSOR_SIZE;
+                case SYNC_COMPUTE_CURSOR_SIZE:
+                case SYNC_DATA:
                     // state goes deeper
                     if (empty && !preparedStatement && !portal) {
                         // strangely, Java driver does not need the server to produce
                         // empty query if his query was "prepared"
                         outEmptyQuery(utf8Sink);
-                        stateSync = 6;
+                        stateSync = SYNC_DONE;
                     } else {
                         if (stateExec) {
                             // the flow when the pipeline entry was executed
@@ -691,13 +703,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                     long addr = utf8Sink.skipInt();
                                     utf8Sink.put(sqlTag).putAscii(" 0 ").put(sqlAffectedRowCount).put((byte) 0);
                                     utf8Sink.putLen(addr);
-                                    stateSync = 6;
+                                    stateSync = SYNC_DONE;
                                     break;
                                 }
                                 case CompiledQuery.UPDATE:
                                 case CompiledQuery.CREATE_TABLE_AS_SELECT:
                                     outCommandComplete(utf8Sink, sqlAffectedRowCount);
-                                    stateSync = 6;
+                                    stateSync = SYNC_DONE;
                                     break;
                                 default:
                                     // create table is just "OK"
@@ -705,13 +717,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                     long addr = utf8Sink.skipInt();
                                     utf8Sink.put(sqlTag).put((byte) 0);
                                     utf8Sink.putLen(addr);
-                                    stateSync = 6;
+                                    stateSync = SYNC_DONE;
                                     break;
                             }
                         }
                     }
-                case 20:
-                case 30:
+                case SYNC_DATA_EXHAUSTED:
+                case SYNC_DATA_SUSPENDED:
                     // ignore these, they are set by outCursor() call and should be processed outside of this
                     // switch statement
                     break;
@@ -723,11 +735,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // is set withing the top switch. These values are set by outCursor()
 
             switch (stateSync) {
-                case 20:
+                case SYNC_DATA_EXHAUSTED:
                     cursor = Misc.free(cursor);
                     outCommandComplete(utf8Sink, sqlReturnRowCount);
                     break;
-                case 30:
+                case SYNC_DATA_SUSPENDED:
                     outPortalSuspended(utf8Sink);
                     if (!portal) {
                         // if this is not a named portal
@@ -779,7 +791,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     public void ofSimpleCachedSelect(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, TypesAndSelectModern tas) throws SqlException {
-        setStateDesc(2); // send out the row description message
+        setStateDesc(SYNC_DESC_ROW_DESCRIPTION); // send out the row description message
         this.empty = sqlText == null || sqlText.length() == 0;
         this.sqlText = sqlText;
         this.factory = tas.getFactory();
@@ -790,7 +802,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.outParameterTypeDescriptionTypeOIDs.clear();
         assert tas.getPgOutParameterTypeOIDs().size() == 0;
 
-        // We cannot use regular msgExecuteSelect() since this method is called from a callback in sqlcompiler and
+        // We cannot use regular msgExecuteSelect() since this method is called from a callback in SqlCompiler and
         // msgExecuteSelect() may try to recompile the query on its own when it gets TableReferenceOutOfDateException.
         // Calling a compiler while being called from a compiler is a bad idea.
         sqlExecutionContext.setCacheHit(cacheHit);
@@ -829,7 +841,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 || cq.getType() == CompiledQuery.EXPLAIN
                 || cq.getType() == CompiledQuery.PSEUDO_SELECT
         ) {
-            setStateDesc(2); // 2 = portal
+            setStateDesc(SYNC_DESC_ROW_DESCRIPTION);
         }
     }
 
@@ -1876,10 +1888,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
 
         switch (stateSync) {
-            case 4:
+            case SYNC_COMPUTE_CURSOR_SIZE:
                 outComputeCursorSize();
-                stateSync = 5;
-            case 5:
+                stateSync = SYNC_DATA;
+            case SYNC_DATA:
                 utf8Sink.bookmark();
                 outCursor(
                         sqlExecutionContext,
@@ -1941,10 +1953,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // send as the suffix.
 
         if (sqlReturnRowCount < sqlReturnRowCountToBeSent) {
-            stateSync = 20;
+            stateSync = SYNC_DATA_EXHAUSTED;
         } else {
             // we sent as many rows as was requested, but we have more to send
-            stateSync = 30;
+            stateSync = SYNC_DATA_SUSPENDED;
         }
     }
 
@@ -1960,10 +1972,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         utf8Sink.putAscii('C'); // C = SQLSTATE
         if (stalePlanError) {
-            // this is what PostgreSQL sends when recompiling a query produces a different resultset.
+            // this is what PostgresSQL sends when recompiling a query produces a different ResultSet.
             // some clients act on it by restarting the query from the beginning.
             utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
-            utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgreSQL here
+            utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgresSQL here
             utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
         } else {
             utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
@@ -2590,7 +2602,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
 
             // we still override the column type with the current one, because even if the column types have the same
-            // pgwire representation, the questdb type might still be different and they have to be fetched differently.
+            // pgwire representation, the questdb type might still be different, and they have to be fetched differently.
             // example: VARCHAR and SYMBOL. They are both represented as TEXT in pgwire, but they are fetched differently
             // from questdb record
             pgResultSetColumnTypes.setQuick(2 * i, currentColumnType);
@@ -2625,10 +2637,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     void clearState() {
         error = false;
         stalePlanError = false;
-        stateSync = 0;
+        stateSync = SYNC_PARSE;
         stateParse = false;
         stateBind = false;
-        stateDesc = 0;
+        stateDesc = SYNC_DESC_NONE;
         stateExec = false;
         stateClosed = false;
     }
