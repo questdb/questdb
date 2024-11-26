@@ -300,8 +300,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             if (pipelineCurrentEntry != null) {
                 // do not return named portals and statements, since they are returned later
                 if (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal()) {
-                    Misc.free(pipelineCurrentEntry);
-                    entryPool.release(pipelineCurrentEntry);
+                    releaseToPool(pipelineCurrentEntry);
                 }
             }
         } while ((pipelineCurrentEntry = pipeline.poll()) != null);
@@ -553,8 +552,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             pe.setStateClosed(true, isStatementClose);
             // return the factory back to global cache in case of a select
             pe.cacheIfPossible(tasCache, null);
-            Misc.free(pe);
-            entryPool.release(pe);
+            releaseToPool(pe);
         }
         cache.clear();
     }
@@ -1260,6 +1258,11 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         Misc.clear(characterStore);
     }
 
+    private void releaseToPool(@NotNull PGPipelineEntry pe) {
+        pe.close();
+        entryPool.release(pe);
+    }
+
     private void replaceCurrentPipelineEntry(PGPipelineEntry nextEntry) {
         if (nextEntry == pipelineCurrentEntry) {
             return;
@@ -1324,9 +1327,17 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     }
                 }
             } while (true);
+
+            // we want the pipelineCurrentEntry to retain the last entry of the pipeline
+            // unless this entry was already executed, closed and is an error
+            // additionally, we do not want to "cacheIfPossible" the last entry, because
+            // "cacheIfPossible" has side effects on the entry.
+
             PGPipelineEntry nextEntry = pipeline.poll();
             if (nextEntry != null || isExec || isError || isClosed) {
-                pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
+                if (!isError) {
+                    pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
+                }
                 releaseToPoolIfAbandoned(pipelineCurrentEntry);
                 pipelineCurrentEntry = nextEntry;
             } else {
@@ -1433,8 +1444,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     void releaseToPoolIfAbandoned(PGPipelineEntry pe) {
         if (pe != null) {
             if (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal())) {
-                Misc.free(pe);
-                entryPool.release(pe);
+                releaseToPool(pe);
             } else {
                 pe.clearState();
             }
