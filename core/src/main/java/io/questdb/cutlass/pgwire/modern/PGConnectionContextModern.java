@@ -1032,7 +1032,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         final TypesAndInsertModern tai = taiCache.peek(taiKeyIndex);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
-                pipelineCurrentEntry.ofInsert(utf16SqlText, tai);
+                pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
                 cachedStatus = CACHE_HIT_INSERT_VALID;
             } else {
                 TypesAndInsertModern tai2 = taiCache.poll(taiKeyIndex);
