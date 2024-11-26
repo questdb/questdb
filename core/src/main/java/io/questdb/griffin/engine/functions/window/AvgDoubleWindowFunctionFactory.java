@@ -407,7 +407,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final int timestampIndex;
         protected double sum;
         private double avg;
-        private final  RingBufferDesc memoryDesc = new RingBufferDesc();
+        private final RingBufferDesc memoryDesc = new RingBufferDesc();
 
         public AvgOverPartitionRangeFrameFunction(
                 Map map,
