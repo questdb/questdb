@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -80,7 +81,7 @@ public class SqlParser {
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
-    private final CreateTableOperationBuilder createTableOperationBuilder = new CreateTableOperationBuilder();
+    private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -194,6 +195,17 @@ public class SqlParser {
             default:
                 return false;
         }
+    }
+
+    private static CreateTableOperationBuilder parseCreateTableExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence tok,
+            CreateTableOperationBuilder builder
+    ) throws SqlException {
+        CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
+        return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
     }
 
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
@@ -597,7 +609,7 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        CreateTableOperationBuilder builder = createTableOperationBuilder;
+        CreateTableOperationBuilderImpl builder = createTableOperationBuilder;
         builder.clear();
         builder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
         final CharSequence tableName;
@@ -662,7 +674,8 @@ public class SqlParser {
             if (isLikeKeyword(tok)) {
                 builder.setBatchSize(-1);
                 parseCreateTableLikeTable(lexer);
-                return builder;
+                tok = optTok(lexer);
+                return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
             } else {
                 lexer.unparseLast();
                 parseCreateTableColumns(lexer);
@@ -681,8 +694,10 @@ public class SqlParser {
 
             // if we use atomic or batch keywords, then throw an error
             if (atomicSpecified || batchSpecified) {
-                throw SqlException.$(lexer.lastTokenPosition(),
-                        "'atomic' or 'batch' keywords can only be used in CREATE ... AS SELECT statements.");
+                throw SqlException.$(
+                        lexer.lastTokenPosition(),
+                        "'atomic' or 'batch' keywords can only be used in CREATE ... AS SELECT statements."
+                );
             }
         }
 
@@ -865,10 +880,7 @@ public class SqlParser {
                 throw SqlException.position(lexer.getPosition()).put("column list expected");
             }
         }
-
-        boolean expectedTok = tok == null || Chars.equals(tok, ';');
-        sqlParserCallback.createTableExt(lexer, executionContext.getSecurityContext(), builder, expectedTok ? null : tok);
-        return builder;
+        return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
     }
 
     private void parseCreateTableAsSelect(
@@ -1087,10 +1099,6 @@ public class SqlParser {
         );
         tok = tok(lexer, ")");
         if (!Chars.equals(tok, ')')) {
-            throw errUnexpected(lexer, tok);
-        }
-        tok = optTok(lexer);
-        if (tok != null && !Chars.equals(tok, ';')) {
             throw errUnexpected(lexer, tok);
         }
     }

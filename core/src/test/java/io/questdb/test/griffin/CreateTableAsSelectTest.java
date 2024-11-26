@@ -31,6 +31,19 @@ import org.junit.Test;
 public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
+    public void testCreateAsSelectAndLikeIsInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            createSrcTable();
+
+            assertException(
+                    "create table dest as (select * from src) like src",
+                    41,
+                    "unexpected token [like]"
+            );
+        });
+    }
+
+    @Test
     public void testCreateNonPartitionedTableAsSelectTimestampDescOrder() throws Exception {
         assertMemoryLeak(() -> {
             createSrcTable();
