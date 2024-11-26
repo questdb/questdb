@@ -1287,7 +1287,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             final long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
                             final long columnAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);
-                            partitionDescriptor.addColumnAddr(columnAddr, columnSize);
+                            partitionDescriptor.setColumnAddr(columnAddr, columnSize);
 
                             // root symbol files use separate txn
                             final long defaultColumnNameTxn = columnVersionWriter.getDefaultColumnNameTxn(columnIndex);
@@ -1307,12 +1307,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final int symbolCount = getSymbolMapWriter(columnIndex).getSymbolCount();
                             final long offsetsMemSize = SymbolMapWriter.keyToOffset(symbolCount + 1);
                             final long symbolOffsetsAddr = mapRO(ff, path.$(), LOG, offsetsMemSize, memoryTag);
-                            partitionDescriptor.addSymbolOffsetsAddr(symbolOffsetsAddr + HEADER_SIZE, symbolCount);
+                            partitionDescriptor.setSymbolOffsetsAddr(symbolOffsetsAddr + HEADER_SIZE, symbolCount);
 
                             final LPSZ charFileName = charFileName(path.trimTo(pathSize), columnName, defaultColumnNameTxn);
                             final long columnSecondarySize = ff.length(charFileName);
                             final long columnSecondaryAddr = mapRO(ff, charFileName, LOG, columnSecondarySize, memoryTag);
-                            partitionDescriptor.addSecondaryColumnAddr(columnSecondaryAddr, columnSecondarySize);
+                            partitionDescriptor.setSecondaryColumnAddr(columnSecondaryAddr, columnSecondarySize);
 
                             // recover partition path
                             setPathForNativePartition(path.trimTo(pathSize), partitionBy, partitionTimestamp, partitionNameTxn);
@@ -1322,7 +1322,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                             final long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
                             final long auxVectorAddr = mapRO(ff, iFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, auxVectorSize, memoryTag);
-                            partitionDescriptor.addSecondaryColumnAddr(auxVectorAddr, auxVectorSize);
+                            partitionDescriptor.setSecondaryColumnAddr(auxVectorAddr, auxVectorSize);
 
                             final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
                             if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
@@ -1338,7 +1338,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final long dataAddr = dataSize > 0
                                     ? mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, dataSize, memoryTag)
                                     : 0;
-                            partitionDescriptor.addColumnAddr(dataAddr, dataSize);
+                            partitionDescriptor.setColumnAddr(dataAddr, dataSize);
                         } else {
                             final long mapBytes = columnRowCount * ColumnType.sizeOf(columnType);
                             final long fixedAddr = mapRO(ff, dFile(path.trimTo(partitionDirLen), columnName, columnNameTxn), LOG, mapBytes, memoryTag);

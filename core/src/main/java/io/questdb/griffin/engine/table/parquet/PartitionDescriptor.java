@@ -106,24 +106,6 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
         columnData.add(0); // symbolOffsetsSize
     }
 
-    // must be called after addColumn
-    public void addColumnAddr(long columnAddr, long columnSize) {
-        columnData.set(pendingEntryIndex + COLUMN_ADDR_OFFSET, columnAddr);
-        columnData.set(pendingEntryIndex + COLUMN_SIZE_OFFSET, columnSize);
-    }
-
-    // must be called after addColumn
-    public void addSecondaryColumnAddr(long columnSecondaryAddr, long columnSecondarySize) {
-        columnData.set(pendingEntryIndex + COLUMN_SECONDARY_ADDR_OFFSET, columnSecondaryAddr);
-        columnData.set(pendingEntryIndex + COLUMN_SECONDARY_SIZE_OFFSET, columnSecondarySize);
-    }
-
-    // must be called after addColumn
-    public void addSymbolOffsetsAddr(long symbolOffsetsAddr, long symbolOffsetsSize) {
-        columnData.set(pendingEntryIndex + SYMBOL_OFFSET_ADDR_OFFSET, symbolOffsetsAddr);
-        columnData.set(pendingEntryIndex + SYMBOL_OFFSET_SIZE_OFFSET, symbolOffsetsSize);
-    }
-
     @Override
     public void clear() {
         pendingEntryIndex = 0;
@@ -178,5 +160,23 @@ public class PartitionDescriptor implements QuietCloseable, Mutable {
         this.partitionRowCount = partitionRowCount;
         this.timestampIndex = timestampIndex;
         return this;
+    }
+
+    // must be called after addColumn
+    public void setColumnAddr(long columnAddr, long columnSize) {
+        columnData.set(pendingEntryIndex + COLUMN_ADDR_OFFSET, columnAddr);
+        columnData.set(pendingEntryIndex + COLUMN_SIZE_OFFSET, columnSize);
+    }
+
+    // must be called after addColumn
+    public void setSecondaryColumnAddr(long columnSecondaryAddr, long columnSecondarySize) {
+        columnData.set(pendingEntryIndex + COLUMN_SECONDARY_ADDR_OFFSET, columnSecondaryAddr);
+        columnData.set(pendingEntryIndex + COLUMN_SECONDARY_SIZE_OFFSET, columnSecondarySize);
+    }
+
+    // must be called after addColumn
+    public void setSymbolOffsetsAddr(long symbolOffsetsAddr, long symbolOffsetsSize) {
+        columnData.set(pendingEntryIndex + SYMBOL_OFFSET_ADDR_OFFSET, symbolOffsetsAddr);
+        columnData.set(pendingEntryIndex + SYMBOL_OFFSET_SIZE_OFFSET, symbolOffsetsSize);
     }
 }
