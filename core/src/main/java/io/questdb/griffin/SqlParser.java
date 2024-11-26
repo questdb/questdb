@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
 import io.questdb.griffin.model.CopyModel;
 import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExecutionModel;
@@ -42,6 +43,7 @@ import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.griffin.model.WithClauseModel;
+import io.questdb.std.BufferWindowCharSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
@@ -79,7 +81,7 @@ public class SqlParser {
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
     private final ObjectPool<CreateTableColumnModel> createTableColumnModelPool;
-    private final CreateTableOperationBuilder createTableOperationBuilder = new CreateTableOperationBuilder();
+    private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -153,6 +155,16 @@ public class SqlParser {
         return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
     }
 
+    public static boolean isPublicKeyword(CharSequence tok, int len) {
+        return len == 6
+                && (tok.charAt(0) | 32) == 'p'
+                && (tok.charAt(1) | 32) == 'u'
+                && (tok.charAt(2) | 32) == 'b'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'i'
+                && (tok.charAt(5) | 32) == 'c';
+    }
+
     private static SqlException err(GenericLexer lexer, @Nullable CharSequence tok, @NotNull String msg) {
         return SqlException.parserErr(lexer.lastTokenPosition(), tok, msg);
     }
@@ -183,6 +195,17 @@ public class SqlParser {
             default:
                 return false;
         }
+    }
+
+    private static CreateTableOperationBuilder parseCreateTableExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence tok,
+            CreateTableOperationBuilder builder
+    ) throws SqlException {
+        CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
+        return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
     }
 
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
@@ -586,7 +609,7 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        CreateTableOperationBuilder builder = createTableOperationBuilder;
+        CreateTableOperationBuilderImpl builder = createTableOperationBuilder;
         builder.clear();
         builder.setDefaultSymbolCapacity(configuration.getDefaultSymbolCapacity());
         final CharSequence tableName;
@@ -651,7 +674,8 @@ public class SqlParser {
             if (isLikeKeyword(tok)) {
                 builder.setBatchSize(-1);
                 parseCreateTableLikeTable(lexer);
-                return builder;
+                tok = optTok(lexer);
+                return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
             } else {
                 lexer.unparseLast();
                 parseCreateTableColumns(lexer);
@@ -670,8 +694,10 @@ public class SqlParser {
 
             // if we use atomic or batch keywords, then throw an error
             if (atomicSpecified || batchSpecified) {
-                throw SqlException.$(lexer.lastTokenPosition(),
-                        "'atomic' or 'batch' keywords can only be used in CREATE ... AS SELECT statements.");
+                throw SqlException.$(
+                        lexer.lastTokenPosition(),
+                        "'atomic' or 'batch' keywords can only be used in CREATE ... AS SELECT statements."
+                );
             }
         }
 
@@ -854,10 +880,7 @@ public class SqlParser {
                 throw SqlException.position(lexer.getPosition()).put("column list expected");
             }
         }
-
-        boolean expectedTok = tok == null || Chars.equals(tok, ';');
-        sqlParserCallback.createTableExt(lexer, executionContext.getSecurityContext(), builder, expectedTok ? null : tok);
-        return builder;
+        return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
     }
 
     private void parseCreateTableAsSelect(
@@ -1076,10 +1099,6 @@ public class SqlParser {
         );
         tok = tok(lexer, ")");
         if (!Chars.equals(tok, ')')) {
-            throw errUnexpected(lexer, tok);
-        }
-        tok = optTok(lexer);
-        if (tok != null && !Chars.equals(tok, ';')) {
             throw errUnexpected(lexer, tok);
         }
     }
@@ -2431,18 +2450,26 @@ public class SqlParser {
             throw SqlException.position(lexer.lastTokenPosition()).put("table name expected");
         }
         CharSequence tableName = expr.token;
-
-        // todo: validate table name for overlap with keywords
         switch (expr.type) {
             case ExpressionNode.LITERAL:
             case ExpressionNode.CONSTANT:
-                final ExpressionNode literal = literal(tableName, expr.position);
                 final WithClauseModel withClause = masterModel.get(tableName);
                 if (withClause != null) {
                     model.setNestedModel(parseWith(lexer, withClause, sqlParserCallback));
-                    model.setAlias(literal);
+                    model.setAlias(literal(tableName, expr.position));
                 } else {
-                    model.setTableNameExpr(literal);
+                    int dot = Chars.indexOf(tableName, '.');
+                    if (dot == -1) {
+                        model.setTableNameExpr(literal(tableName, expr.position));
+                    } else {
+                        if (isPublicKeyword(tableName, dot)) {
+                            BufferWindowCharSequence fs = (BufferWindowCharSequence) tableName;
+                            fs.shiftLo(dot + 1);
+                            model.setTableNameExpr(literal(tableName, expr.position + dot + 1));
+                        } else {
+                            model.setTableNameExpr(literal(tableName, expr.position));
+                        }
+                    }
                 }
                 break;
             case ExpressionNode.FUNCTION:
@@ -2746,6 +2773,10 @@ public class SqlParser {
             addConcatArgs(node.args, node.rhs);
             addConcatArgs(node.args, node.lhs);
             node.paramCount = node.args.size();
+            if (node.paramCount > 2) {
+                node.rhs = null;
+                node.lhs = null;
+            }
         }
     }
 
@@ -2880,6 +2911,12 @@ public class SqlParser {
                 node.rhs.token = "double";
             } else if (SqlKeywords.isFloat4Keyword(node.rhs.token)) {
                 node.rhs.token = "float";
+            } else if (SqlKeywords.isInt4Keyword(node.rhs.token)) {
+                node.rhs.token = "int";
+            } else if (SqlKeywords.isInt8Keyword(node.rhs.token)) {
+                node.rhs.token = "long";
+            } else if (SqlKeywords.isInt2Keyword(node.rhs.token)) {
+                node.rhs.token = "short";
             }
         }
     }

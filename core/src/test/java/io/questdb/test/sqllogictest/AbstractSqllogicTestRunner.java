@@ -24,16 +24,21 @@
 
 package io.questdb.test.sqllogictest;
 
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.Sqllogictest;
 import io.questdb.test.TestServerMain;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -58,60 +63,6 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
         this.testFile = testFile;
     }
 
-    public static void removeNonSystemTables(CharSequence dbRoot) {
-        try (Path path = new Path()) {
-            path.of(dbRoot);
-            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-            path.slash();
-            if (!removeNonSystemTables(path, false)) {
-                StringSink dir = new StringSink();
-                dir.put(path.$());
-                Assert.fail("Test dir " + dir + " cleanup error: " + ff.errno());
-            }
-        }
-    }
-
-    public static boolean removeNonSystemTables(Path path, boolean haltOnFail) {
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
-        path.$();
-        long pFind = ff.findFirst(path.$());
-        if (pFind > 0L) {
-            int len = path.size();
-            boolean res;
-            int type;
-            long nameUtf8Ptr;
-            try {
-                do {
-                    nameUtf8Ptr = ff.findName(pFind);
-                    path.trimTo(len).concat(nameUtf8Ptr).$();
-                    type = ff.findType(pFind);
-                    if (type == Files.DT_FILE) {
-                        if (!ff.removeQuiet(path.$()) && haltOnFail) {
-                            return false;
-                        }
-                    } else if (notDots(nameUtf8Ptr)) {
-                        if (path.size() - len < 4 || !Utf8s.equalsAscii("sys.", path, len, len + 4)) {
-                            res = type == Files.DT_LNK ? ff.unlink(path.$()) == 0 : ff.rmdir(path, haltOnFail);
-                            if (!res && haltOnFail) {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                while (ff.findNext(pFind) > 0);
-            } finally {
-                ff.findClose(pFind);
-                path.trimTo(len).$();
-            }
-
-            if (ff.isSoftLink(path.$())) {
-                return ff.unlink(path.$()) == 0;
-            }
-            return true;
-        }
-        return false;
-    }
-
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractBootstrapTest.setUpStatic();
@@ -126,44 +77,34 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
         }
     }
 
-    @AfterClass
-    public static void tearDownUpStatic() {
-        serverMain = Misc.free(serverMain);
-        AbstractBootstrapTest.tearDownStatic();
-    }
-
     @Before
     public void setUp() {
         super.setUp();
         try (Path path = new Path()) {
-            if (serverMain == null) {
+            if (pgPort == 0) {
                 pgPort = (short) (10000 + TestUtils.generateRandom(null).nextInt(1000));
-                String testResourcePath = getTestResourcePath();
-                path.of(testResourcePath).concat("test");
-
-                serverMain = startWithEnvVariables(
-                        PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
-                        CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath,
-                        CONFIG_RELOAD_ENABLED.getEnvVarName(), "false",
-                        HTTP_MIN_ENABLED.getEnvVarName(), "false",
-                        HTTP_ENABLED.getEnvVarName(), "false",
-                        LINE_TCP_ENABLED.getEnvVarName(), "false",
-                        TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true"
-                );
-                serverMain.start();
-            } else {
-                serverMain.reset();
             }
+            String testResourcePath = getTestResourcePath();
+            path.of(testResourcePath).concat("test");
+
+            serverMain = startWithEnvVariables(
+                    PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
+                    CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath,
+                    CONFIG_RELOAD_ENABLED.getEnvVarName(), "false",
+                    HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                    HTTP_ENABLED.getEnvVarName(), "false",
+                    LINE_TCP_ENABLED.getEnvVarName(), "false",
+                    TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true"
+            );
+            serverMain.start();
         }
     }
 
     @After
     public void tearDown() throws Exception {
-        LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        if (serverMain != null) {
-            serverMain.reset();
-            removeNonSystemTables(root + Files.SEPARATOR + "db");
-        }
+        serverMain = Misc.free(serverMain);
+        pgPort = 0;
+        super.tearDown();
     }
 
     @Test
