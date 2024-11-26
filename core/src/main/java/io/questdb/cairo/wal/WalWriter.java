@@ -2024,10 +2024,6 @@ public class WalWriter implements TableWriterAPI {
                                     }
                                 }
                             }
-
-                            if (securityContext != null) {
-                                ddlListener.onColumnTypeChanged(securityContext, metadata.getTableToken(), columnName, existingColumnType, newType);
-                            }
                             path.trimTo(pathSize);
                         } else {
                             throw CairoException.critical(0).put("column '").put(columnName)
