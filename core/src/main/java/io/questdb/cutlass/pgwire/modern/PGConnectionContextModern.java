@@ -1148,8 +1148,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         outReadForNewQuery();
         resumeCallback = null;
         responseUtf8Sink.sendBufferAndReset();
-
-        // todo: this is a wrap, prepare for new query execution
         prepareForNewQuery();
     }
 
@@ -1255,17 +1253,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    // clears whole state except for characterStore because top-level batch text is using it
-    private void prepareForNewBatchQuery() {
+    private void prepareForNewQuery() {
         LOG.debug().$("prepare for new query").$();
         Misc.clear(bindVariableService);
         freezeRecvBuffer = false;
         sqlExecutionContext.setCacheHit(false);
         sqlExecutionContext.containsSecret(false);
-    }
-
-    private void prepareForNewQuery() {
-        prepareForNewBatchQuery();
         Misc.clear(characterStore);
     }
 
@@ -1341,8 +1334,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             } else {
                 LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
                         .$(", sql=").$(pipelineCurrentEntry.getSqlText())
-                        .$(", isExec=").$(isExec)
-                        .$(", isError=").$(isError)
                         .$(", stmt=").$(pipelineCurrentEntry.getPreparedStatementName())
                         .$(", portal=").$(pipelineCurrentEntry.getPortalName())
                         .I$();
