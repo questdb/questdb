@@ -284,13 +284,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlText = sqlText;
         this.empty = sqlText == null || sqlText.length() == 0;
         if (empty) {
-            cacheHit = true;
+            sqlExecutionContext.setCacheHit(cacheHit = true);
             return;
         }
         // try insert, peek because this is our private cache,
         // and we do not want to remove statement from it
         try {
-            cacheHit = false;
+            sqlExecutionContext.setCacheHit(cacheHit = false);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 // Define the provided PostgresSQL types on the BindVariableService. The compilation
                 // below will use these types to build the plan, and it will also define any missing bind
@@ -1448,10 +1448,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         }
                         factory = Misc.free(factory);
                     }
-                    cacheHit = false;
-                    sqlExecutionContext.setCacheHit(false);
                     compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
-                    validatePgResultSetColumnTypes();
                 }
             } catch (Throwable e) {
                 // un-cache the erroneous SQL
