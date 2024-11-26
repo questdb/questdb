@@ -144,7 +144,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
     private static final int SSL_REQUEST = 80877103;
-    private static final long TIMEOUT_MILLIS = 5000; // 5 seconds timeout
+    // Timeout to prevent getting stuck while draining socket's receive buffer
+    // before closing the socket. Ensures exit if malformed client keeps sending data.
+    private static final long MALFORMED_CLIENT_READ_TIMEOUT_MILLIS = 5000;
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final BindVariableService bindVariableService;
@@ -1332,8 +1334,8 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         while (true) {
             final int n = socket.recv(recvBuffer, recvBufferSize);
             // receive buffer is empty or connection is closed
-            // timeout is for malformed clients, we are not expecting streaming clients
-            if (n <= 0 || clock.getTicks() - startTime > TIMEOUT_MILLIS) {
+            // the timeout ensures that the loop exits if all data isn't drained within the specified time limit.
+            if (n <= 0 || clock.getTicks() - startTime > MALFORMED_CLIENT_READ_TIMEOUT_MILLIS) {
                 break;
             }
         }
