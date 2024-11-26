@@ -37,6 +37,7 @@ import io.questdb.mp.SPSequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjLongMatrix;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -66,7 +67,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected static final int OPM_OPERATION = 2;
     private static final String[] DISCONNECT_SOURCES;
     protected final Log LOG;
-    protected final int activeConnectionLimit;
     protected final MillisecondClock clock;
     protected final MPSequence disconnectPubSeq;
     protected final RingQueue<IOEvent<C>> disconnectQueue;
@@ -87,8 +87,6 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
-    private final int rcvBufSize;
-    private final int sndBufSize;
     private final int testConnectionBufSize;
     protected boolean closed = false;
     protected long heartbeatIntervalMs;
@@ -126,13 +124,10 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.disconnectPubSeq.then(disconnectSubSeq).then(disconnectPubSeq);
 
         this.clock = configuration.getClock();
-        this.activeConnectionLimit = configuration.getLimit();
         this.ioContextFactory = ioContextFactory;
         this.initialBias = configuration.getInitialBias();
         this.idleConnectionTimeout = configuration.getTimeout() > 0 ? configuration.getTimeout() : Long.MIN_VALUE;
         this.queuedConnectionTimeoutMs = configuration.getQueueTimeout() > 0 ? configuration.getQueueTimeout() : 0;
-        this.sndBufSize = configuration.getSendBufferSize();
-        this.rcvBufSize = configuration.getRecvBufferSize();
         this.peerNoLinger = configuration.getPeerNoLinger();
         this.port = 0;
         this.heartbeatIntervalMs = configuration.getHeartbeatInterval() > 0 ? configuration.getHeartbeatInterval() : Long.MIN_VALUE;
@@ -310,7 +305,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     }
 
     protected void accept(long timestamp) {
-        int tlConCount = this.connectionCount.get();
+        final int activeConnectionLimit = configuration.getLimit();
+        int tlConCount = connectionCount.get();
         while (tlConCount < activeConnectionLimit) {
             // this 'accept' is greedy, rather than to rely on epoll (or similar) to
             // fire accept requests at us one at a time we will be actively accepting
@@ -341,12 +337,14 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 nf.configureNoLinger(fd);
             }
 
+            final int sndBufSize = configuration.getSendBufferSize();
             if (sndBufSize > 0) {
-                nf.setSndBuf(fd, sndBufSize);
+                nf.setSndBuf(fd, Numbers.ceilPow2(sndBufSize));
             }
 
+            final int rcvBufSize = configuration.getRecvBufferSize();
             if (rcvBufSize > 0) {
-                nf.setRcvBuf(fd, rcvBufSize);
+                nf.setRcvBuf(fd, Numbers.ceilPow2(rcvBufSize));
             }
             nf.configureKeepAlive(fd);
 
@@ -381,6 +379,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         } else {
             ioContextFactory.done(context);
         }
+
+        final int activeConnectionLimit = configuration.getLimit();
         if (connectionCount.getAndDecrement() >= activeConnectionLimit) {
             if (connectionCount.get() < activeConnectionLimit) {
                 if (serverFd < 0) {
