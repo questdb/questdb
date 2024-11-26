@@ -432,8 +432,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         ErrorTag errorTag;
         String errorMessage;
 
-        if (engine.isTableDropped(tableToken)
-                || ((throwable instanceof CairoException) && ((CairoException) throwable).isTableDropped())) {
+        if (engine.isTableDropped(tableToken)) {
             // Sometimes we can have SQL exceptions when re-compiling ALTER or UPDATE statements
             // that the table we work on is already dropped. In this case, we can ignore the exception.
             // WARNING: do not treat "table does not exist" same as "table is dropped"
