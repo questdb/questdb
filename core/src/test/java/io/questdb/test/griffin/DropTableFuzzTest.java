@@ -24,15 +24,22 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
+
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -69,6 +76,85 @@ public class DropTableFuzzTest extends AbstractCairoTest {
                     try (OperationFuture fut = op.execute(sqlExecutionContext, null)) {
                         fut.await();
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropTableIfExistsDoesNotFailWhenTableDoesNotExist() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int c = 0; c < 10; c++) {
+                execute("CREATE TABLE tango (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL");
+
+                int dropThreads = 5;
+                CyclicBarrier dropsStart = new CyclicBarrier(dropThreads);
+                AtomicReference<Throwable> exception = new AtomicReference<>();
+
+                ObjList<Thread> threads = new ObjList<>();
+                for (int i = 0; i < dropThreads; i++) {
+                    threads.add(new Thread(() -> {
+                        try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                            sqlExecutionContext.with(AllowAllSecurityContext.INSTANCE);
+                            dropsStart.await();
+                            engine.execute("DROP TABLE IF EXISTS tango;", sqlExecutionContext);
+                        } catch (Throwable e) {
+                            exception.set(e);
+                        }
+                    }));
+                    threads.getLast().start();
+                }
+
+                for (int i = 0, threadsSize = threads.size(); i < threadsSize; i++) {
+                    threads.get(i).join();
+                }
+
+                if (exception.get() != null) {
+                    throw new RuntimeException(exception.get());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDropTableDoesNotReturnErrorThatTableIsDropped() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int c = 0; c < 1000; c++) {
+                execute("CREATE TABLE tango (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL");
+
+                int dropThreads = 5;
+                CyclicBarrier dropsStart = new CyclicBarrier(dropThreads);
+                AtomicReference<Throwable> exception = new AtomicReference<>();
+
+                ObjList<Thread> threads = new ObjList<>();
+                for (int i = 0; i < dropThreads; i++) {
+                    threads.add(new Thread(() -> {
+                        try (SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+                            sqlExecutionContext.with(AllowAllSecurityContext.INSTANCE);
+                            dropsStart.await();
+                            engine.execute("DROP TABLE tango;", sqlExecutionContext);
+                        } catch (CairoException ex) {
+                            if (!ex.isTableDoesNotExist()) {
+                                exception.set(ex);
+                            }
+
+                        } catch (SqlException ex) {
+                            if (!ex.isTableDoesNotExist()) {
+                                exception.set(ex);
+                            }
+                        } catch (Throwable e) {
+                            exception.set(e);
+                        }
+                    }));
+                    threads.getLast().start();
+                }
+
+                for (int i = 0, threadsSize = threads.size(); i < threadsSize; i++) {
+                    threads.get(i).join();
+                }
+
+                if (exception.get() != null) {
+                    throw new RuntimeException(exception.get());
                 }
             }
         });
