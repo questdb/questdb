@@ -364,7 +364,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         private final int timestampIndex;
 
         private double firstValue;
-        private final  RingBufferDesc memoryDesc = new RingBufferDesc();
+        private final RingBufferDesc memoryDesc = new RingBufferDesc();
 
         public FirstValueOverPartitionRangeFrameFunction(
                 Map map,
