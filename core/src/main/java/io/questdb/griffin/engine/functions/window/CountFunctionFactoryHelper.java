@@ -60,7 +60,7 @@ public class CountFunctionFactoryHelper {
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES;
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES;
 
-    static Function newCountWindowFunction(AbsWindowFunctionFactory factory,
+    static Function newCountWindowFunction(AbstractWindowFunctionFactory factory,
                                            int position,
                                            ObjList<Function> args,
                                            IntList argPositions,
@@ -376,6 +376,7 @@ public class CountFunctionFactoryHelper {
         private final int timestampIndex;
         private final IsRecordNotNull isNotNullFunc;
         private long count;
+        private final AbstractWindowFunctionFactory.RingBufferDesc memoryDesc = new AbstractWindowFunctionFactory.RingBufferDesc();
 
         public CountOverPartitionRangeFrameFunction(
                 Map map,
@@ -480,8 +481,8 @@ public class CountFunctionFactoryHelper {
 
                 if (isNotNullFunc.isNotNull(arg, record)) {
                     if (size == capacity) { // buffer full
-                        AbsWindowFunctionFactory.RingBufferDesc memoryDesc = new AbsWindowFunctionFactory.RingBufferDesc(capacity, startOffset, size, firstIdx, freeList);
-                        AbsWindowFunctionFactory.expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
+                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                        AbstractWindowFunctionFactory.expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
                         capacity = memoryDesc.capacity;
                         startOffset = memoryDesc.startOffset;
                         firstIdx = memoryDesc.firstIdx;
