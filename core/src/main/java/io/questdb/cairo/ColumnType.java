@@ -123,7 +123,15 @@ public final class ColumnType {
 
     /**
      * Build an array type from a type class and type precision.
-     * The precision is expressed as a power of 2. E.g. 5 is 2^5 == 32.
+     * <p>The precision is expressed as a power of 2. E.g. 5 is 2^5 == 32.</p>
+     * <p>The resulting type is laid out as follows:</p>
+     * <pre>
+     *     31                 23                 15                 7                 0
+     * +-------------------+-------------------+-------------------+-------------------+
+     * |    Reserved       |   typeClass       |   typePrecision   |     ND_ARRAY      |
+     * +-------------------+-------------------+-------------------+-------------------+
+     *  <--- Unused ---  >   8 bits (char)        8 bits (byte)       8 bits (ND_ARRAY)
+     * </pre>
      */
     public static int buildNdArrayType(char typeClass, byte typePrecision) {
         if (
@@ -142,10 +150,8 @@ public final class ColumnType {
                         (typePrecision == 4 && typeClass == 'f') ||
                         (typePrecision == 5 && typeClass == 'f') ||
                         (typePrecision == 6 && typeClass == 'f')) {
-            int elementType = (byte) typeClass;
-            elementType <<= 8;
-            elementType |= typePrecision;
-            return getGeoHashTypeWithBits(elementType);
+            final int elementType = (typeClass << BITS_OFFSET) | typePrecision;
+            return ND_ARRAY | (elementType << BITS_OFFSET);
         } else {
             return -1;
         }
@@ -184,9 +190,7 @@ public final class ColumnType {
      */
     public static int getNdArrayElementTypeClass(int type) {
         if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
-            int elementType = getGeoHashBits(type);
-            elementType >>= 8;
-            return elementType;
+            return type >> BITS_OFFSET;
         }
         return -1;
     }
