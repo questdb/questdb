@@ -227,11 +227,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     @Override
     public void clear() {
-        clearForPooling();
+        // no-op, we clear entries before returning them to the pool
     }
 
     @Override
     public void close() {
+        clearState();
         cursor = Misc.free(cursor);
         factory = Misc.free(factory);
         if (parameterValueArenaPtr != 0) {
@@ -242,15 +243,37 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             insertOp = Misc.free(insertOp);
             operation = Misc.free(operation);
             Misc.free(compiledQuery.getUpdateOperation());
-            // hack: remove me!
+        } else {
+            insertOp = null;
+            operation = null;
         }
         outParameterTypeDescriptionTypeOIDs.clear();
         msgParseParameterTypeOIDs.clear();
         pgResultSetColumnTypes.clear();
         portalNames.clear();
         errorMessageSink.clear();
+        msgBindSelectFormatCodes.clear();
+        pgResultSetColumnNames.clear();
+        pgResultSetColumnTypes.clear();
         tai = null;
         tas = null;
+        stateParseExecuted = false;
+        outResendCursorRecord = false;
+        outResendRecordHeader = true;
+        outResendColumnIndex = 0;
+        sqlReturnRowCountLimit = 0;
+        sqlReturnRowCountToBeSent = 0;
+        parameterValueArenaHi = parameterValueArenaPtr;
+        compiledQuery = compiledQueryCopy;
+        isCopy = false;
+        preparedStatement = false;
+        preparedStatementName = null;
+        portal = false;
+        portalName = null;
+        sqlType = 0;
+        sqlTag = null;
+        preparedStatementNameToDeallocate = null;
+        sqlText = null;
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
@@ -301,7 +324,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
             }
-            validatePgResultSetColumnTypes();
+            validatePgResultSetColumnTypesAndNames();
         } catch (Throwable e) {
             throw kaput().put(e);
         }
@@ -1041,6 +1064,30 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         return recordSize;
     }
 
+    private void clearForPooling() {
+        clearState();
+        msgBindSelectFormatCodes.clear();
+        stateParseExecuted = false;
+        outResendCursorRecord = false;
+        outResendRecordHeader = true;
+        outResendColumnIndex = 0;
+        sqlReturnRowCountLimit = 0;
+        sqlReturnRowCountToBeSent = 0;
+        parameterValueArenaHi = parameterValueArenaPtr;
+        compiledQuery = compiledQueryCopy;
+        isCopy = false;
+        preparedStatement = false;
+        preparedStatementName = null;
+        portal = false;
+        portalName = null;
+        sqlType = 0;
+        sqlTag = null;
+        preparedStatementNameToDeallocate = null;
+        sqlText = null;
+        pgResultSetColumnNames.clear();
+        pgResultSetColumnTypes.clear();
+    }
+
     private void copyOf(PGPipelineEntry blueprint) {
         this.msgParseParameterTypeOIDs.clear();
         this.msgParseParameterTypeOIDs.addAll(blueprint.msgParseParameterTypeOIDs);
@@ -1162,14 +1209,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void copyPgResultSetColumnTypesAndNames() {
+        // typically, this method called right after sql text has been compiled for the first time.
+        // but for example when a factory is obtained from a cache then we postpone calling this method as much as possible.
+
+        // invariant: this method can be called only once per pipeline entry. if an entry already has column types and names
+        // set then subsequent compilation should use validatePgResultSetColumnTypesAndNames()
+        assert pgResultSetColumnTypes.size() == 0;
+        assert pgResultSetColumnNames.size() == 0;
+
         if (factory == null) {
             return;
         }
         final RecordMetadata m = factory.getMetadata();
         final int columnCount = m.getColumnCount();
-
-        assert pgResultSetColumnTypes.size() == 0;
-        assert pgResultSetColumnNames.size() == 0;
 
         pgResultSetColumnTypes.setPos(2 * columnCount);
         pgResultSetColumnNames.setPos(columnCount);
@@ -2552,7 +2604,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 && typeTag != ColumnType.SYMBOL;
     }
 
-    private void validatePgResultSetColumnTypes() throws BadProtocolException {
+    private void validatePgResultSetColumnTypesAndNames() throws BadProtocolException {
         if (factory == null) {
             return;
         }
@@ -2605,30 +2657,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             pgResultSetColumnTypes.setQuick(2 * i, currentColumnType);
             pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(currentColumnType));
         }
-    }
-
-    void clearForPooling() {
-        clearState();
-        msgBindSelectFormatCodes.clear();
-        stateParseExecuted = false;
-        outResendCursorRecord = false;
-        outResendRecordHeader = true;
-        outResendColumnIndex = 0;
-        sqlReturnRowCountLimit = 0;
-        sqlReturnRowCountToBeSent = 0;
-        parameterValueArenaHi = parameterValueArenaPtr;
-        compiledQuery = compiledQueryCopy;
-        isCopy = false;
-        preparedStatement = false;
-        preparedStatementName = null;
-        portal = false;
-        portalName = null;
-        sqlType = 0;
-        sqlTag = null;
-        preparedStatementNameToDeallocate = null;
-        sqlText = null;
-        pgResultSetColumnNames.clear();
-        pgResultSetColumnTypes.clear();
     }
 
     void clearState() {

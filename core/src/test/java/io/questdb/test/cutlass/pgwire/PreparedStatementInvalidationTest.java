@@ -1334,10 +1334,10 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
         PreferQueryMode preferQueryMode = pgConnection.getPreferQueryMode();
 
         boolean isQuirk = (preferQueryMode != PreferQueryMode.SIMPLE && prepareThreshold == -1);
-        if (!isQuirk) {
-            return currentError;
-        }
-        return String.format("(%s|cached plan must not change result type)", currentError);
+//        if (!isQuirk) {
+        return currentError;
+//        }
+//        return String.format("(%s|cached plan must not change result type)", currentError);
     }
 
     private void assertMessageMatches(Exception e, String expectedRegex) {

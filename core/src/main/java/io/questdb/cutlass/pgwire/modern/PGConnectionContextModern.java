@@ -301,7 +301,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 // do not return named portals and statements, since they are returned later
                 if (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal()) {
                     Misc.free(pipelineCurrentEntry);
-                    pipelineCurrentEntry.clearForPooling();
                     entryPool.release(pipelineCurrentEntry);
                 }
             }
@@ -555,7 +554,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             // return the factory back to global cache in case of a select
             pe.cacheIfPossible(tasCache, null);
             Misc.free(pe);
-            pe.clearForPooling();
             entryPool.release(pe);
         }
         cache.clear();
@@ -1436,7 +1434,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         if (pe != null) {
             if (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal())) {
                 Misc.free(pe);
-                pe.clearForPooling();
                 entryPool.release(pe);
             } else {
                 pe.clearState();
