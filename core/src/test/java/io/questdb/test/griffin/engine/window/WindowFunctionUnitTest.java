@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFacto
 import io.questdb.griffin.engine.functions.window.CountFunctionFactoryHelper;
 import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -396,7 +397,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 false,
                 rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536),
                 rnd -> -rnd.nextLong(65536),
-                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction(
+                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction(
                         TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), rangeLo == Long.MIN_VALUE ?
                                 MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES :
                                 MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES),
@@ -408,13 +409,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createMemoryCARW(),
                         TestDefaults.createMemoryCARW(),
                         2,
-                        0
-                ) {
-                    @Override
-                    protected boolean compare(double a, double b) {
-                        return Double.compare(a, b) > 0;
-                    }
-                },
+                        0,
+                        MinDoubleWindowFunctionFactory.LESS_THAN,
+                        MinDoubleWindowFunctionFactory.NAME
+                ),
                 Double::min
         );
     }
@@ -427,7 +425,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 true,
                 rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
                 rnd -> -rnd.nextLong(1024) - 1,
-                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxOverPartitionRowsFrameFunction(
+                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRowsFrameFunction(
                         TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]),
                                 rangeLo == Long.MIN_VALUE ? MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_COLUMN_TYPES :
                                         MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES),
@@ -437,13 +435,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         rangeHi,
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
                         TestDefaults.createMemoryCARW(),
-                        TestDefaults.createMemoryCARW()
-                ) {
-                    @Override
-                    protected boolean compare(double a, double b) {
-                        return Double.compare(a, b) > 0;
-                    }
-                },
+                        TestDefaults.createMemoryCARW(),
+                        MinDoubleWindowFunctionFactory.LESS_THAN,
+                        MinDoubleWindowFunctionFactory.NAME
+                ),
                 Double::min
         );
     }
@@ -458,22 +453,21 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 rnd -> -rnd.nextLong(1024),
                 (rangeLo, rangeHi) -> {
                     if (rangeLo == Long.MIN_VALUE && rangeHi == 0) {
-                        return new MaxDoubleWindowFunctionFactory.MaxOverUnboundedRowsFrameFunction(
-                                TestDefaults.createLongFunction(x -> x.getLong(2))
+                        return new MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedRowsFrameFunction(
+                                TestDefaults.createLongFunction(x -> x.getLong(2)),
+                                MinDoubleWindowFunctionFactory.LESS_THAN,
+                                MinDoubleWindowFunctionFactory.NAME
                         );
                     }
-                    return new MaxDoubleWindowFunctionFactory.MaxOverRowsFrameFunction(
+                    return new MaxDoubleWindowFunctionFactory.MaxMinOverRowsFrameFunction(
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             rangeLo,
                             rangeHi,
                             TestDefaults.createMemoryCARW(),
-                            TestDefaults.createMemoryCARW()
-                    ) {
-                        @Override
-                        protected boolean compare(double a, double b) {
-                            return Double.compare(a, b) > 0;
-                        }
-                    };
+                            TestDefaults.createMemoryCARW(),
+                            MinDoubleWindowFunctionFactory.LESS_THAN,
+                            MinDoubleWindowFunctionFactory.NAME
+                    );
                 },
                 Double::min
         );
@@ -487,27 +481,24 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 false,
                 rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536),
                 rnd -> -rnd.nextLong(65536),
-                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxOverRangeFrameFunction(
+                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxMinOverRangeFrameFunction(
                         rangeLo,
                         rangeHi,
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
                         configuration,
                         TestDefaults.createMemoryCARW(),
                         TestDefaults.createMemoryCARW(),
-                        0
-                ) {
-                    @Override
-                    protected boolean compare(double a, double b) {
-                        return Double.compare(a, b) > 0;
-                    }
-                },
+                        0,
+                        MinDoubleWindowFunctionFactory.LESS_THAN,
+                        MinDoubleWindowFunctionFactory.NAME
+                ),
                 Double::min
         );
     }
 
     @Test
     public void testMinOverPartitionRangeWithBothBounds() {
-        MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction(
+        MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction(
                 TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES),
                 TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                 TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
@@ -517,13 +508,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 TestDefaults.createMemoryCARW(),
                 TestDefaults.createMemoryCARW(),
                 configuration.getSqlWindowInitialRangeBufferSize(),
-                0
-        ) {
-            @Override
-            protected boolean compare(double a, double b) {
-                return Double.compare(a, b) > 0;
-            }
-        };
+                0,
+                MinDoubleWindowFunctionFactory.LESS_THAN,
+                MinDoubleWindowFunctionFactory.NAME
+        );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
 
@@ -536,20 +524,17 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testMinRangeUnbounded() {
-        MaxDoubleWindowFunctionFactory.MaxOverRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxOverRangeFrameFunction(
+        MaxDoubleWindowFunctionFactory.MaxMinOverRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxMinOverRangeFrameFunction(
                 Long.MIN_VALUE,
                 0,
                 TestDefaults.createLongFunction(x -> x.getLong(2)),
                 configuration,
                 TestDefaults.createMemoryCARW(),
                 TestDefaults.createMemoryCARW(),
-                0
-        ) {
-            @Override
-            protected boolean compare(double a, double b) {
-                return Double.compare(a, b) > 0;
-            }
-        };
+                0,
+                MinDoubleWindowFunctionFactory.LESS_THAN,
+                MinDoubleWindowFunctionFactory.NAME
+        );
         long a = -1930193130;
         long b = -1137976524;
         long c = -1137976524;
@@ -561,7 +546,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testMinWithPartitionBufferResize() {
-        MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction(
+        MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction(
                 TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES),
                 TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                 TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
@@ -571,13 +556,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 TestDefaults.createMemoryCARW(),
                 null,
                 2,
-                0
-        ) {
-            @Override
-            protected boolean compare(double a, double b) {
-                return Double.compare(a, b) > 0;
-            }
-        };
+                0,
+                MinDoubleWindowFunctionFactory.LESS_THAN,
+                MinDoubleWindowFunctionFactory.NAME
+        );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 18579, 6, (long) 3));
@@ -588,7 +570,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testMinWithPartitionRangeUnbounded() {
-        MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction(
+        MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction(
                 TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES),
                 TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                 TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
@@ -598,13 +580,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 TestDefaults.createMemoryCARW(),
                 null,
                 1024,
-                0
-        ) {
-            @Override
-            protected boolean compare(double a, double b) {
-                return Double.compare(a, b) > 0;
-            }
-        };
+                0,
+                MinDoubleWindowFunctionFactory.LESS_THAN,
+                MinDoubleWindowFunctionFactory.NAME
+        );
         long a = -1930193130;
         long b = -1137976524;
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
@@ -620,7 +599,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 false,
                 rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536),
                 rnd -> -rnd.nextLong(65536),
-                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction(
+                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction(
                         TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), rangeLo == Long.MIN_VALUE ?
                                 MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES :
                                 MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES),
@@ -632,7 +611,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createMemoryCARW(),
                         TestDefaults.createMemoryCARW(),
                         2,
-                        0
+                        0,
+                        MaxDoubleWindowFunctionFactory.GREATER_THAN,
+                        MaxDoubleWindowFunctionFactory.NAME
                 ),
                 Double::max
         );
@@ -646,7 +627,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 true,
                 rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(1024),
                 rnd -> -rnd.nextLong(1024) - 1,
-                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxOverPartitionRowsFrameFunction(
+                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRowsFrameFunction(
                         TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]),
                                 rangeLo == Long.MIN_VALUE ? MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_COLUMN_TYPES :
                                         MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES),
@@ -656,7 +637,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         rangeHi,
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
                         TestDefaults.createMemoryCARW(),
-                        TestDefaults.createMemoryCARW()
+                        TestDefaults.createMemoryCARW(),
+                        MaxDoubleWindowFunctionFactory.GREATER_THAN,
+                        MaxDoubleWindowFunctionFactory.NAME
                 ),
                 Double::max
         );
@@ -672,16 +655,20 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 rnd -> -rnd.nextLong(1024),
                 (rangeLo, rangeHi) -> {
                     if (rangeLo == Long.MIN_VALUE && rangeHi == 0) {
-                        return new MaxDoubleWindowFunctionFactory.MaxOverUnboundedRowsFrameFunction(
-                                TestDefaults.createLongFunction(x -> x.getLong(2))
+                        return new MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedRowsFrameFunction(
+                                TestDefaults.createLongFunction(x -> x.getLong(2)),
+                                MaxDoubleWindowFunctionFactory.GREATER_THAN,
+                                MaxDoubleWindowFunctionFactory.NAME
                         );
                     }
-                    return new MaxDoubleWindowFunctionFactory.MaxOverRowsFrameFunction(
+                    return new MaxDoubleWindowFunctionFactory.MaxMinOverRowsFrameFunction(
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             rangeLo,
                             rangeHi,
                             TestDefaults.createMemoryCARW(),
-                            TestDefaults.createMemoryCARW()
+                            TestDefaults.createMemoryCARW(),
+                            MaxDoubleWindowFunctionFactory.GREATER_THAN,
+                            MaxDoubleWindowFunctionFactory.NAME
                     );
                 },
                 Double::max
@@ -696,14 +683,16 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 false,
                 rnd -> rnd.nextInt(8) == 0 ? Long.MIN_VALUE : -rnd.nextLong(65536),
                 rnd -> -rnd.nextLong(65536),
-                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxOverRangeFrameFunction(
+                (rangeLo, rangeHi) -> new MaxDoubleWindowFunctionFactory.MaxMinOverRangeFrameFunction(
                         rangeLo,
                         rangeHi,
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
                         configuration,
                         TestDefaults.createMemoryCARW(),
                         TestDefaults.createMemoryCARW(),
-                        0
+                        0,
+                        MaxDoubleWindowFunctionFactory.GREATER_THAN,
+                        MaxDoubleWindowFunctionFactory.NAME
                 ),
                 Double::max
         );
@@ -711,7 +700,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testMaxOverPartitionRangeWithBothBounds() {
-        MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction(
+        MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction(
                 TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES),
                 TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                 TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
@@ -721,7 +710,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 TestDefaults.createMemoryCARW(),
                 TestDefaults.createMemoryCARW(),
                 configuration.getSqlWindowInitialRangeBufferSize(),
-                0
+                0,
+                MaxDoubleWindowFunctionFactory.GREATER_THAN,
+                MaxDoubleWindowFunctionFactory.NAME
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
@@ -735,14 +726,16 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testMaxRangeUnbounded() {
-        MaxDoubleWindowFunctionFactory.MaxOverRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxOverRangeFrameFunction(
+        MaxDoubleWindowFunctionFactory.MaxMinOverRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxMinOverRangeFrameFunction(
                 Long.MIN_VALUE,
                 0,
                 TestDefaults.createLongFunction(x -> x.getLong(2)),
                 configuration,
                 TestDefaults.createMemoryCARW(),
                 TestDefaults.createMemoryCARW(),
-                0
+                0,
+                MaxDoubleWindowFunctionFactory.GREATER_THAN,
+                MaxDoubleWindowFunctionFactory.NAME
         );
         long a = -1930193130;
         long b = -1137976524;
@@ -755,7 +748,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testMaxWithPartitionBufferResize() {
-        MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction(
+        MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction(
                 TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES),
                 TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                 TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
@@ -765,7 +758,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 TestDefaults.createMemoryCARW(),
                 null,
                 2,
-                0
+                0,
+                MaxDoubleWindowFunctionFactory.GREATER_THAN,
+                MaxDoubleWindowFunctionFactory.NAME
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
@@ -777,7 +772,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testMaxWithPartitionRangeUnbounded() {
-        MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxOverPartitionRangeFrameFunction(
+        MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction f = new MaxDoubleWindowFunctionFactory.MaxMinOverPartitionRangeFrameFunction(
                 TestDefaults.createOrderedMap(new SingleColumnType(columnTypes[1]), MaxDoubleWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES),
                 TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                 TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
@@ -787,7 +782,9 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 TestDefaults.createMemoryCARW(),
                 null,
                 1024,
-                0
+                0,
+                MaxDoubleWindowFunctionFactory.GREATER_THAN,
+                MaxDoubleWindowFunctionFactory.NAME
         );
         long a = -1930193130;
         long b = -1137976524;

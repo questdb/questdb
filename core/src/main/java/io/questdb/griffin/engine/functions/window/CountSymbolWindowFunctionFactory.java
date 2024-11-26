@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class CountSymbolWindowFunctionFactory extends AbsWindowFunctionFactory {
+public class CountSymbolWindowFunctionFactory extends AbstractWindowFunctionFactory {
     private static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((arg, record) -> (arg.getInt(record) != SymbolTable.VALUE_IS_NULL));
 
     @Override

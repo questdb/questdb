@@ -32,7 +32,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CountDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
+public class CountDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
     public static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((arg, record) -> Numbers.isFinite(arg.getDouble(record)));
 
     @Override
