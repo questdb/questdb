@@ -143,6 +143,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
     private static final int SSL_REQUEST = 80877103;
+    private static final long TIMEOUT_MILLIS = 5000; // 5 seconds timeout
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final BindVariableService bindVariableService;
@@ -404,6 +405,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // BAU, not error metric
             throw e;
+        } catch (BadProtocolException bpe) {
+            shutdownSocketGracefully();
+            throw bpe; // request disconnection
         } catch (Throwable th) {
             metrics.pgWire().getErrorCounter().inc();
             throw th;
@@ -492,11 +496,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     }
 
     private static void sendErrorResponseAndReset(PGResponseSink sink, CharSequence message) throws PeerIsSlowToReadException, PeerDisconnectedException {
-        //TODO: reuse code from Authenticator
         sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = sink.skipInt();
         sink.put('C');
-        sink.putZ("00000");
+        sink.putZ("08P01"); // protocol violation
         sink.put('M');
         sink.putZ(message);
         sink.put('S');
@@ -1314,6 +1317,24 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         Vect.memmove(recvBuffer, recvBuffer + readOffsetBeforeParse, len);
         recvBufferWriteOffset = len;
         recvBufferReadOffset = 0;
+    }
+
+    private void shutdownSocketGracefully() {
+        // calling close on a socket with a
+        // non-empty receive kernel-buffer cause the connection to be RST and
+        // the send buffer discarded and not sent
+
+        socket.shutdown(Net.SHUT_WR); // sends a FIN packet and flushes the send buffer
+        long startTime = System.currentTimeMillis();
+        // drain the kernel receive-buffer until we either receive all data or hit the timeout
+        while (true) {
+            final int n = socket.recv(recvBuffer, recvBufferSize);
+            // receive buffer is empty or connection is closed
+            // timeout is for malformed clients, we are not expecting streaming clients
+            if (n <= 0 || System.currentTimeMillis() - startTime > TIMEOUT_MILLIS) {
+                break;
+            }
+        }
     }
 
     // Send responses from the pipeline entries we have accumulated so far.
