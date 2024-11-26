@@ -2547,8 +2547,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (factory == null) {
             return;
         }
-        final RecordMetadata m = factory.getMetadata();
-        final int columnCount = m.getColumnCount();
+        final RecordMetadata currentMetadata = factory.getMetadata();
+        final int currentColumnCount = currentMetadata.getColumnCount();
 
         int cachedColumnCount = pgResultSetColumnNames.size();
         if (cachedColumnCount == 0) {
@@ -2561,32 +2561,40 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
 
         // we have a result set already, we need to validate that the new result set matches the old one
-        if (cachedColumnCount != columnCount) {
+        if (cachedColumnCount != currentColumnCount) {
             stalePlanError = true;
             error = true;
             throw kaput().put("cached plan must not change result type");
         }
 
-        for (int i = 0; i < columnCount; i++) {
-            final int columnType = m.getColumnType(i);
-            int cachedColumnTypeA = pgResultSetColumnTypes.getQuick(2 * i);
-            int cachedColumnTypeB = pgResultSetColumnTypes.getQuick(2 * i + 1);
+        for (int i = 0; i < currentColumnCount; i++) {
+            final int currentColumnType = currentMetadata.getColumnType(i);
+            int currentPgColumnType = PGOids.getTypeOid(ColumnType.isNull(currentColumnType) ? ColumnType.STRING : currentColumnType);
 
-            // todo: compare PgWire types rather than QuestDB column types
-            if (cachedColumnTypeA != columnType || cachedColumnTypeB != GeoHashes.getBitFlags(columnType)) {
+            int cachedColumnType = pgResultSetColumnTypes.getQuick(2 * i);
+            int cachedPgColumnType = PGOids.getTypeOid(ColumnType.isNull(cachedColumnType) ? ColumnType.STRING : cachedColumnType);
+
+            if (currentPgColumnType != cachedPgColumnType) {
                 stalePlanError = true;
                 error = true;
                 throw kaput().put("cached plan must not change result type");
             }
 
-            String columnName = m.getColumnName(i);
+            String currentColumnName = currentMetadata.getColumnName(i);
             String cachedColumnName = pgResultSetColumnNames.getQuick(i);
 
-            if (!Chars.equals(columnName, cachedColumnName)) {
+            if (!Chars.equals(currentColumnName, cachedColumnName)) {
                 stalePlanError = true;
                 error = true;
                 throw kaput().put("cached plan must not change result type");
             }
+
+            // we still override the column type with the current one, because even if the column types have the same
+            // pgwire representation, the questdb type might still be different and they have to be fetched differently.
+            // example: VARCHAR and SYMBOL. They are both represented as TEXT in pgwire, but they are fetched differently
+            // from questdb record
+            pgResultSetColumnTypes.setQuick(2 * i, currentColumnType);
+            pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(currentColumnType));
         }
     }
 
