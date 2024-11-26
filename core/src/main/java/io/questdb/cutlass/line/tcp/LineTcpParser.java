@@ -643,6 +643,15 @@ public class LineTcpParser {
         INVALID_COLUMN_NAME,
         MISSING_FIELD_VALUE,
         MISSING_TAG_VALUE,
+
+        /** Unexpected early end of input */
+        ND_ARR_TOO_SHORT,
+
+        /** Unexpected token found */
+        ND_ARR_UNEXPECTED,
+
+        /** Invalid array dimension nesting. E.g. {{1, 2}, {1, 2, 3}} */
+        ND_ARR_UNALIGNED,
         NONE
     }
 

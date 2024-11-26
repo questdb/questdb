@@ -2850,9 +2850,9 @@ public class SqlParser {
         else if (ColumnType.ND_ARRAY == typeTag) {
             expectTok(lexer, '(');
             final CharSequence elementTypeTok = SqlUtil.fetchNext(lexer);
-            final int elementType = SqlUtil.toArrayElementType(elementTypeTok, lexer.lastTokenPosition());
+            final int ndArrayType = SqlUtil.toNdArrayType(elementTypeTok, lexer.lastTokenPosition());
             expectTok(lexer, ')');
-            return ColumnType.buildNdArrayType(elementType);
+            return ndArrayType;
         }
         return typeTag;
     }

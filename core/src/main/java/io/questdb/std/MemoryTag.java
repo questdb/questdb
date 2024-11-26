@@ -90,7 +90,8 @@ public final class MemoryTag {
     public static final int NATIVE_TABLE_WAL_WRITER = NATIVE_INDEX_READER + 1;
     public static final int NATIVE_METADATA_READER = NATIVE_TABLE_WAL_WRITER + 1;
     public static final int NATIVE_BIT_SET = NATIVE_METADATA_READER + 1;
-    public static final int SIZE = NATIVE_BIT_SET + 1;
+    public static final int NATIVE_ND_ARRAY = NATIVE_BIT_SET + 1;
+    public static final int SIZE = NATIVE_ND_ARRAY + 1;
 
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 

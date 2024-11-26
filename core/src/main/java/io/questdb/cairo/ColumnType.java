@@ -150,21 +150,53 @@ public final class ColumnType {
 
     /**
      * Get the backing type of the N-dimensional array type,
-     * or returns `UNDEFINED` if the type is not an array.
+     * or returns -1 if the type is not an array.
      */
-    public static int getNdArrayElementType(int type) {
+    public static int getNdArrayElementTypeClass(int type) {
         if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
-            final int elementType = getGeoHashBits(type);
-            assert elementType == ColumnType.DOUBLE || elementType == ColumnType.LONG;
+            int elementType = getGeoHashBits(type);
+            elementType >>= 8;
             return elementType;
         }
-        return UNDEFINED;
+        return -1;
     }
 
-    /** Build an array type from an element type. */
-    public static int buildNdArrayType(int elementType) {
-        assert elementType == ColumnType.DOUBLE || elementType == ColumnType.LONG;
-        return getGeoHashTypeWithBits(elementType);
+    public static int getNdArrayElementTypePrecision(int type) {
+        if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
+            final int elementType = getGeoHashBits(type);
+            return elementType & 0xff;
+        }
+        return -1;
+    }
+
+    /**
+     * Build an array type from a type class and type precision.
+     * The precision is expressed as a power of 2. E.g. 5 is 2^5 == 32.
+     */
+    public static int buildNdArrayType(char typeClass, byte typePrecision) {
+        if (
+                (typePrecision == 0 && typeClass == 'u') ||
+                (typePrecision == 1 && typeClass == 'u') ||
+                (typePrecision == 2 && typeClass == 'u') ||
+                (typePrecision == 3 && typeClass == 'u') ||
+                (typePrecision == 4 && typeClass == 'u') ||
+                (typePrecision == 5 && typeClass == 'u') ||
+                (typePrecision == 6 && typeClass == 'u') ||
+                (typePrecision == 3 && typeClass == 's') ||
+                (typePrecision == 4 && typeClass == 's') ||
+                (typePrecision == 5 && typeClass == 's') ||
+                (typePrecision == 6 && typeClass == 's') ||
+                (typePrecision == 3 && typeClass == 'f') ||
+                (typePrecision == 4 && typeClass == 'f') ||
+                (typePrecision == 5 && typeClass == 'f') ||
+                (typePrecision == 6 && typeClass == 'f')) {
+            int elementType = (byte) typeClass;
+            elementType <<= 8;
+            elementType |= typePrecision;
+            return getGeoHashTypeWithBits(elementType);
+        } else {
+            return -1;
+        }
     }
 
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
@@ -264,16 +296,6 @@ public final class ColumnType {
      */
     public static boolean isNdArray(int columnType) {
         return ColumnType.tagOf(columnType) == ColumnType.ND_ARRAY;
-    }
-
-    public static boolean isNdArrayElemType(int targetType) {
-        switch (targetType) {
-            case DOUBLE:
-            case LONG:
-                return true;
-            default:
-                return false;
-        }
     }
 
     public static boolean isNull(int columnType) {

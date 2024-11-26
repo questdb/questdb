@@ -787,12 +787,47 @@ public class SqlUtil {
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
     }
 
-    public static short toArrayElementType(CharSequence tok, int tokPosition) throws SqlException {
-        final short elementType = toPersistedTypeTag(tok, tokPosition);
-        if (!ColumnType.isNdArrayElemType(elementType)) {
+    public static int toNdArrayType(CharSequence tok, int tokPosition) throws SqlException {
+        final char typeClass;
+        final byte precision;  // power of 2
+        if (Chars.equalsIgnoreCase(tok, "u1") || Chars.equalsIgnoreCase(tok, "boolean")) {
+            typeClass = 'u';
+            precision = 0;
+        } else if (Chars.equalsIgnoreCase(tok, "u2")) {
+            typeClass = 'u';
+            precision = 1;
+        } else if (Chars.equalsIgnoreCase(tok, "u4")) {
+            typeClass = 'u';
+            precision = 2;
+        } else if (Chars.equalsIgnoreCase(tok, "u8")) {
+            typeClass = 'u';
+            precision = 3;
+        } else if (Chars.equalsIgnoreCase(tok, "u16")) {
+            typeClass = 'u';
+            precision = 4;
+        } else if (Chars.equalsIgnoreCase(tok, "u32")) {
+            typeClass = 'u';
+            precision = 5;
+        } else if (Chars.equalsIgnoreCase(tok, "u64")) {
+            typeClass = 'u';
+            precision = 6;
+        } else if (Chars.equalsIgnoreCase(tok, "s8") || Chars.equalsIgnoreCase(tok, "byte")) {
+            typeClass = 's';
+            precision = 3;
+        } else if (Chars.equalsIgnoreCase(tok, "s16") || Chars.equalsIgnoreCase(tok, "short")) {
+            typeClass = 's';
+            precision = 4;
+        } else if (Chars.equalsIgnoreCase(tok, "s32") || Chars.equalsIgnoreCase(tok, "int")) {
+            typeClass = 's';
+            precision = 5;
+        } else if (Chars.equalsIgnoreCase(tok, "s64") || Chars.equalsIgnoreCase(tok, "long")) {
+            typeClass = 's';
+            precision = 6;
+        }
+        else {
             throw SqlException.$(tokPosition, "non-array type: ").put(tok);
         }
-        return elementType;
+        return ColumnType.buildNdArrayType(typeClass, precision);
     }
 
     private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {
