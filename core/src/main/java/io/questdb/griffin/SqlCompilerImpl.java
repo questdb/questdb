@@ -2641,6 +2641,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
                 // all good, table dropped already
                 return;
+            } else if (!op.ifExists() && ex.isTableDropped()) {
+                // Concurrently dropped, this should report table does not exist
+                throw CairoException.tableDoesNotExist(op.getTableName());
             }
             throw ex;
         } finally {
