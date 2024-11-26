@@ -126,14 +126,16 @@ public final class ColumnType {
      * <p>The precision is expressed as a power of 2. E.g. 5 is 2^5 == 32.</p>
      * <p>The resulting type is laid out as follows:</p>
      * <pre>
-     *     31                 23                 15                 7                 0
-     * +-------------------+-------------------+-------------------+-------------------+
-     * |    Reserved       |   typeClass       |   typePrecision   |     ND_ARRAY      |
-     * +-------------------+-------------------+-------------------+-------------------+
-     *  <--- Unused ---  >   8 bits (char)        8 bits (byte)       8 bits (ND_ARRAY)
+     * Inclusive bit ranges:
+     *  31          16~30            8~15            0~7
+     * +----------+----------------+---------------+---------------+
+     * | Reserved | typeClass      | typePrecision | ND_ARRAY      |
+     * +----------+----------------+---------------+---------------+
+     *              15 bits (char)   8 bits (byte)   8 bits (tag)
      * </pre>
      */
     public static int buildNdArrayType(char typeClass, byte typePrecision) {
+        assert typeClass > 0;  // to avoid taking up the last reserved bit.
         if (
                 (typePrecision == 0 && typeClass == 'u') ||
                         (typePrecision == 1 && typeClass == 'u') ||
@@ -150,7 +152,7 @@ public final class ColumnType {
                         (typePrecision == 4 && typeClass == 'f') ||
                         (typePrecision == 5 && typeClass == 'f') ||
                         (typePrecision == 6 && typeClass == 'f')) {
-            final int elementType = (typeClass << BITS_OFFSET) | typePrecision;
+            final int elementType = (((int) typeClass) << BITS_OFFSET) | typePrecision;
             return ND_ARRAY | (elementType << BITS_OFFSET);
         } else {
             return -1;
@@ -185,20 +187,34 @@ public final class ColumnType {
     }
 
     /**
-     * Get the backing type of the N-dimensional array type,
-     * or returns -1 if the type is not an array.
+     * Get the N-dimensional array element type's class.
+     * <p>'s' for a signed integer, 'u' for an unsigned integer, 'f' for a floating point number.</p>
+     * returns -1 if the type is not an array.
      */
-    public static int getNdArrayElementTypeClass(int type) {
+    public static char getNdArrayElementTypeClass(int type) {
         if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
-            return type >> BITS_OFFSET;
+            return (char)((type >> BITS_OFFSET) & 0x7FFF);  // 15-bit mask.
         }
-        return -1;
+        return (char)-1;
     }
 
-    public static int getNdArrayElementTypePrecision(int type) {
+    /**
+     * Get the N-dimensional array element type's precision.
+     * <p>The returned value is to be interpreted as a power of two to obtain the number of bits in the type</p>
+     * <ul>
+     *     <li>0: 1-bit type</li>
+     *     <li>1: 2-bit type</li>
+     *     <li>2: 4-bit type</li>
+     *     <li>3: 8-bit type</li>
+     *     <li>4: 16-bit type</li>
+     *     <li>5: 32-bit type</li>
+     *     <li>6: 64-bit type</li>
+     * </ul>
+     * returns -1 if the type is not an array.
+     */
+    public static byte getNdArrayElementTypePrecision(int type) {
         if (ColumnType.tagOf(type) == ColumnType.ND_ARRAY) {
-            final int elementType = getGeoHashBits(type);
-            return elementType & 0xff;
+            return (byte) ((type >> BITS_OFFSET) & 0xFF);
         }
         return -1;
     }

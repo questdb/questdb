@@ -652,7 +652,7 @@ public class LineTcpParser {
 
         /** Invalid array dimension nesting. E.g. {{1, 2}, {1, 2, 3}} */
         ND_ARR_UNALIGNED,
-        NONE
+        ND_ARR_EARLY_TERMINATION, NONE
     }
 
     public enum ParseResult {

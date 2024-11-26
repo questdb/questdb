@@ -434,10 +434,10 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 ) {
                     sender.table(tableName)
                             .symbol("x", "42i")
-                            .symbol("y", "{1.0,2.0,NaN}")
+                            .symbol("y", "{6f1.0,2.5,3.0,4.5,5.0}")  // ensuring no array parsing for symbol
                             .longColumn("l1", 23452345)
-                            .arrayColumn("a1", "{1.0,2.0,NaN}")
-                            .arrayColumn("a2", "{-1,0,100000000}")
+                            .arrayColumn("a1", "{6f1.0,2.5,3.0,4.5,5.0}")
+                            .arrayColumn("a2", "{6i-1,0,100000000}")
                             .atNow();
                     sender.flush();
                 }

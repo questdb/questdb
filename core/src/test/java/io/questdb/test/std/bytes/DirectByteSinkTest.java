@@ -182,7 +182,7 @@ public class DirectByteSinkTest {
             }
             Assert.assertEquals(oneMiB, oneMegChunk.size());
 
-            dbs.checkCapacity(Integer.MAX_VALUE);
+            dbs.ensureCapacity(Integer.MAX_VALUE);
 
             final int numChunks = Integer.MAX_VALUE / oneMiB;
             for (int i = 0; i < numChunks; i++) {
