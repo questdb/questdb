@@ -34,8 +34,20 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Acceptor;
+import io.questdb.std.Long256FromCharSequenceDecoder;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.ThreadLocal;
-import io.questdb.std.*;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatCompiler;
@@ -776,6 +788,14 @@ public class SqlUtil {
         }
     }
 
+    public static int toNdArrayType(CharSequence tok, int tokPosition) throws SqlException {
+        final int ndArrayType = ColumnType.parseNdArrayType(tok);
+        if (ndArrayType == -1) {
+            throw SqlException.$(tokPosition, "non-array element type: ").put(tok);
+        }
+        return ndArrayType;
+    }
+
     public static short toPersistedTypeTag(CharSequence tok, int tokPosition) throws SqlException {
         final short typeTag = ColumnType.tagOf(tok);
         if (typeTag == -1) {
@@ -785,61 +805,6 @@ public class SqlUtil {
             return typeTag;
         }
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
-    }
-
-    public static int toNdArrayType(CharSequence tok, int tokPosition) throws SqlException {
-        final char typeClass;
-        final byte precision;  // power of 2
-        if (Chars.equalsIgnoreCase(tok, "u1") || Chars.equalsIgnoreCase(tok, "boolean")) {
-            typeClass = 'u';
-            precision = 0;
-        } else if (Chars.equalsIgnoreCase(tok, "u2")) {
-            typeClass = 'u';
-            precision = 1;
-        } else if (Chars.equalsIgnoreCase(tok, "u4")) {
-            typeClass = 'u';
-            precision = 2;
-        } else if (Chars.equalsIgnoreCase(tok, "u8")) {
-            typeClass = 'u';
-            precision = 3;
-        } else if (Chars.equalsIgnoreCase(tok, "u16")) {
-            typeClass = 'u';
-            precision = 4;
-        } else if (Chars.equalsIgnoreCase(tok, "u32")) {
-            typeClass = 'u';
-            precision = 5;
-        } else if (Chars.equalsIgnoreCase(tok, "u64")) {
-            typeClass = 'u';
-            precision = 6;
-        } else if (Chars.equalsIgnoreCase(tok, "s8") || Chars.equalsIgnoreCase(tok, "byte")) {
-            typeClass = 's';
-            precision = 3;
-        } else if (Chars.equalsIgnoreCase(tok, "s16") || Chars.equalsIgnoreCase(tok, "short")) {
-            typeClass = 's';
-            precision = 4;
-        } else if (Chars.equalsIgnoreCase(tok, "s32") || Chars.equalsIgnoreCase(tok, "int")) {
-            typeClass = 's';
-            precision = 5;
-        } else if (Chars.equalsIgnoreCase(tok, "s64") || Chars.equalsIgnoreCase(tok, "long")) {
-            typeClass = 's';
-            precision = 6;
-        } else if (Chars.equalsIgnoreCase(tok, "f8")) {
-            typeClass = 'f';
-            precision = 3;
-        } else if (Chars.equalsIgnoreCase(tok, "f16")) {
-            typeClass = 'f';
-            precision = 4;
-        } else if (Chars.equalsIgnoreCase(tok, "f32") || Chars.equalsIgnoreCase(tok, "float")) {
-            typeClass = 'f';
-            precision = 5;
-        } else if (Chars.equalsIgnoreCase(tok, "f64") || Chars.equalsIgnoreCase(tok, "double")) {
-            typeClass = 'f';
-            precision = 6;
-        }
-        else {
-            throw SqlException.$(tokPosition, "non-array element type: ").put(tok);
-        }
-        return ColumnType.buildNdArrayType(typeClass, precision);
     }
 
     private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {

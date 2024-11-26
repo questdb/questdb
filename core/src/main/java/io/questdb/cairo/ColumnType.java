@@ -121,6 +121,36 @@ public final class ColumnType {
     private ColumnType() {
     }
 
+    /**
+     * Build an array type from a type class and type precision.
+     * The precision is expressed as a power of 2. E.g. 5 is 2^5 == 32.
+     */
+    public static int buildNdArrayType(char typeClass, byte typePrecision) {
+        if (
+                (typePrecision == 0 && typeClass == 'u') ||
+                        (typePrecision == 1 && typeClass == 'u') ||
+                        (typePrecision == 2 && typeClass == 'u') ||
+                        (typePrecision == 3 && typeClass == 'u') ||
+                        (typePrecision == 4 && typeClass == 'u') ||
+                        (typePrecision == 5 && typeClass == 'u') ||
+                        (typePrecision == 6 && typeClass == 'u') ||
+                        (typePrecision == 3 && typeClass == 's') ||
+                        (typePrecision == 4 && typeClass == 's') ||
+                        (typePrecision == 5 && typeClass == 's') ||
+                        (typePrecision == 6 && typeClass == 's') ||
+                        (typePrecision == 3 && typeClass == 'f') ||
+                        (typePrecision == 4 && typeClass == 'f') ||
+                        (typePrecision == 5 && typeClass == 'f') ||
+                        (typePrecision == 6 && typeClass == 'f')) {
+            int elementType = (byte) typeClass;
+            elementType <<= 8;
+            elementType |= typePrecision;
+            return getGeoHashTypeWithBits(elementType);
+        } else {
+            return -1;
+        }
+    }
+
     public static boolean defaultStringImplementationIsUtf8() {
         return Chars.equals(nameOf(STRING), "VARCHAR");
     }
@@ -167,36 +197,6 @@ public final class ColumnType {
             return elementType & 0xff;
         }
         return -1;
-    }
-
-    /**
-     * Build an array type from a type class and type precision.
-     * The precision is expressed as a power of 2. E.g. 5 is 2^5 == 32.
-     */
-    public static int buildNdArrayType(char typeClass, byte typePrecision) {
-        if (
-                (typePrecision == 0 && typeClass == 'u') ||
-                (typePrecision == 1 && typeClass == 'u') ||
-                (typePrecision == 2 && typeClass == 'u') ||
-                (typePrecision == 3 && typeClass == 'u') ||
-                (typePrecision == 4 && typeClass == 'u') ||
-                (typePrecision == 5 && typeClass == 'u') ||
-                (typePrecision == 6 && typeClass == 'u') ||
-                (typePrecision == 3 && typeClass == 's') ||
-                (typePrecision == 4 && typeClass == 's') ||
-                (typePrecision == 5 && typeClass == 's') ||
-                (typePrecision == 6 && typeClass == 's') ||
-                (typePrecision == 3 && typeClass == 'f') ||
-                (typePrecision == 4 && typeClass == 'f') ||
-                (typePrecision == 5 && typeClass == 'f') ||
-                (typePrecision == 6 && typeClass == 'f')) {
-            int elementType = (byte) typeClass;
-            elementType <<= 8;
-            elementType |= typePrecision;
-            return getGeoHashTypeWithBits(elementType);
-        } else {
-            return -1;
-        }
     }
 
     public static int getWalDataColumnShl(int columnType, boolean designatedTimestamp) {
@@ -377,6 +377,60 @@ public final class ColumnType {
         // this check is just in case
         assert toTag > UNDEFINED : "Undefined not supported in overloads";
         return OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag];
+    }
+
+    public static int parseNdArrayType(CharSequence name) {
+        final char typeClass;
+        final byte precision;  // power of 2
+        if (Chars.equalsIgnoreCase(name, "u1") || Chars.equalsIgnoreCase(name, "boolean")) {
+            typeClass = 'u';
+            precision = 0;
+        } else if (Chars.equalsIgnoreCase(name, "u2")) {
+            typeClass = 'u';
+            precision = 1;
+        } else if (Chars.equalsIgnoreCase(name, "u4")) {
+            typeClass = 'u';
+            precision = 2;
+        } else if (Chars.equalsIgnoreCase(name, "u8")) {
+            typeClass = 'u';
+            precision = 3;
+        } else if (Chars.equalsIgnoreCase(name, "u16")) {
+            typeClass = 'u';
+            precision = 4;
+        } else if (Chars.equalsIgnoreCase(name, "u32")) {
+            typeClass = 'u';
+            precision = 5;
+        } else if (Chars.equalsIgnoreCase(name, "u64")) {
+            typeClass = 'u';
+            precision = 6;
+        } else if (Chars.equalsIgnoreCase(name, "s8") || Chars.equalsIgnoreCase(name, "byte")) {
+            typeClass = 's';
+            precision = 3;
+        } else if (Chars.equalsIgnoreCase(name, "s16") || Chars.equalsIgnoreCase(name, "short")) {
+            typeClass = 's';
+            precision = 4;
+        } else if (Chars.equalsIgnoreCase(name, "s32") || Chars.equalsIgnoreCase(name, "int")) {
+            typeClass = 's';
+            precision = 5;
+        } else if (Chars.equalsIgnoreCase(name, "s64") || Chars.equalsIgnoreCase(name, "long")) {
+            typeClass = 's';
+            precision = 6;
+        } else if (Chars.equalsIgnoreCase(name, "f8")) {
+            typeClass = 'f';
+            precision = 3;
+        } else if (Chars.equalsIgnoreCase(name, "f16")) {
+            typeClass = 'f';
+            precision = 4;
+        } else if (Chars.equalsIgnoreCase(name, "f32") || Chars.equalsIgnoreCase(name, "float")) {
+            typeClass = 'f';
+            precision = 5;
+        } else if (Chars.equalsIgnoreCase(name, "f64") || Chars.equalsIgnoreCase(name, "double")) {
+            typeClass = 'f';
+            precision = 6;
+        } else {
+            return -1;
+        }
+        return ColumnType.buildNdArrayType(typeClass, precision);
     }
 
     public static int pow2SizeOf(int columnType) {
