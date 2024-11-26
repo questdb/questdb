@@ -81,6 +81,7 @@ import io.questdb.std.SimpleAssociativeCache;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -1325,13 +1326,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // the send buffer discarded and not sent
 
         socket.shutdown(Net.SHUT_WR); // sends a FIN packet and flushes the send buffer
-        long startTime = System.currentTimeMillis();
+        final MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
+        final long startTime = clock.getTicks();
         // drain the kernel receive-buffer until we either receive all data or hit the timeout
         while (true) {
             final int n = socket.recv(recvBuffer, recvBufferSize);
             // receive buffer is empty or connection is closed
             // timeout is for malformed clients, we are not expecting streaming clients
-            if (n <= 0 || System.currentTimeMillis() - startTime > TIMEOUT_MILLIS) {
+            if (n <= 0 || clock.getTicks() - startTime > TIMEOUT_MILLIS) {
                 break;
             }
         }
