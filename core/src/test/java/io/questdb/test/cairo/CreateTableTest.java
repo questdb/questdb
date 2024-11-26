@@ -34,7 +34,7 @@ import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.ops.CreateTableOperation;
+import io.questdb.griffin.engine.ops.CreateTableOperationFuture;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
@@ -318,7 +318,7 @@ public class CreateTableTest extends AbstractCairoTest {
                                         .compile(executionContext);
                                 try (Operation op = query.getOperation()) {
                                     try (OperationFuture fut = op.execute(executionContext, null)) {
-                                        final TableToken token = ((CreateTableOperation.CreateTableOperationFuture) fut).getTableToken();
+                                        final TableToken token = ((CreateTableOperationFuture) fut).getTableToken();
                                         assertNotNull(token);
                                         assertEquals("tab" + j, token.getTableName());
                                     }
