@@ -1013,6 +1013,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.window.CountDoubleWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.CountSymbolWindowFunctionFactory,
             io.questdb.griffin.engine.functions.window.CountVarcharWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory,
+            io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory,
 
             // metadata functions
             io.questdb.griffin.engine.functions.metadata.BuildFunctionFactory,
