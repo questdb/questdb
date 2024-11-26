@@ -18,7 +18,7 @@ values
 (10, '2020-01-03T00:00:00.000Z');
 
 
-# add update data
+# update data
 statement ok
 update x set x = 100;
 
@@ -37,3 +37,24 @@ select * from x_new;
 100 2020-01-01T00:00:00.000000Z
 100 2020-01-01T00:00:00.000000Z
 100 2020-01-03T00:00:00.000000Z
+
+# update data
+statement ok
+update x_new set x = 100;
+
+# rename table
+statement ok
+rename table x_new to x_new_new;
+
+# drop table
+statement ok
+drop table x_new_new;
+
+# wait
+statement error
+select wait_wal_table('x_new_new');
+
+# check tables
+query TIT
+select * from tables();
+----

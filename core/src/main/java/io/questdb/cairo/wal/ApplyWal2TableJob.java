@@ -570,14 +570,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                 }
 
+                TableToken tableToken = tableWriter.getTableToken();
+
                 // Here means we got TableDoesNotExist SQL or Cairo Exception.
                 // Table may be renamed while processing the WAL transaction.
                 // Need to refresh the table token and retry.
-                if (engine.isTableDropped(tableWriter.getTableToken())) {
-                    // This is definitely dropped table.
-                    throw CairoException.tableDropped(tableWriter.getTableToken());
+                TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
+                if (updatedToken == null || tableToken.equals(updatedToken)) {
+                    if (engine.isTableDropped(tableToken)) {
+                        // This is definitely dropped table.
+                        throw CairoException.tableDropped(tableToken);
+                    }
+                    // No progress, same token or no token and it's not dropped. Avoid infinite loop.
+                    throw CairoException.tableDoesNotExist(tableToken.getTableName());
                 }
-                TableToken updatedToken = engine.getUpdatedTableToken(tableWriter.getTableToken());
                 tableWriter.updateTableToken(updatedToken);
             }
         } catch (SqlException ex) {
