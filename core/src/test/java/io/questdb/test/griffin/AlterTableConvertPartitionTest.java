@@ -195,7 +195,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                             " timestamp_sequence(500000000000, 600) a_ts," +
                             " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ") designated_ts" +
-                            " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
+                            " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
             assertException("alter table x convert partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
@@ -273,7 +273,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
                             " timestamp_sequence(500000000000, 600) a_ts," +
                             " timestamp_sequence(400000000000, " + Timestamps.DAY_MICROS / 12 + ") designated_ts" +
-                            " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
+                            " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
             ddl("create table y as (select * from x)", sqlExecutionContext);
