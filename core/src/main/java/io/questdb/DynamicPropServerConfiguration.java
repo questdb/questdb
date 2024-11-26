@@ -82,7 +82,8 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             PropertyKey.PG_RECV_BUFFER_SIZE, // deprecated, but someone may be using it
             PropertyKey.PG_NET_CONNECTION_RCVBUF,
             PropertyKey.PG_SEND_BUFFER_SIZE, // deprecated, but someone may be using it
-            PropertyKey.PG_NET_CONNECTION_SNDBUF
+            PropertyKey.PG_NET_CONNECTION_SNDBUF,
+            PropertyKey.PG_NET_CONNECTION_LIMIT
     ));
     private final BuildInformation buildInformation;
     private final CairoConfigurationImpl cairoConfig;

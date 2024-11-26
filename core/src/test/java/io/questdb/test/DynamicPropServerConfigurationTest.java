@@ -91,6 +91,47 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testPgWireConnectionLimitReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.net.connection.limit=1\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                try (Connection conn1 = getConnection("admin", "quest")) {
+                    Assert.assertFalse(conn1.isClosed());
+
+                    try {
+                        try (Connection ignore = getConnection("admin", "quest")) {
+                            Assert.fail();
+                        } catch (Exception e) {
+                            System.out.println(e);
+                        }
+                    } catch (Throwable ignore) {
+                    }
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("pg.net.connection.limit=2\n");
+                }
+
+                latch.await();
+
+                // we should be able to open two connections now
+                try (Connection conn1 = getConnection("admin", "quest")) {
+                    Assert.assertFalse(conn1.isClosed());
+
+                    try (Connection conn2 = getConnection("admin", "quest")) {
+                        Assert.assertFalse(conn2.isClosed());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPgWireCredentialsReloadByDeletingProp() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
@@ -291,6 +332,8 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
         Properties properties = new Properties();
         properties.setProperty("user", user);
         properties.setProperty("password", pass);
+        properties.setProperty("connectTimeout", "1");
+        properties.setProperty("socketTimeout", "1");
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", 8812);
         return DriverManager.getConnection(url, properties);
     }
