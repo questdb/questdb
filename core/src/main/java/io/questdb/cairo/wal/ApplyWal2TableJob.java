@@ -432,8 +432,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         ErrorTag errorTag;
         String errorMessage;
 
-        if (engine.isTableDropped(tableToken) |
-                ((throwable instanceof CairoException) && ((CairoException) throwable).isTableDropped())) {
+        if (engine.isTableDropped(tableToken)
+                || ((throwable instanceof CairoException) && ((CairoException) throwable).isTableDropped())
+                || engine.getTableTokenIfExists(tableToken.getTableName()) == null) {
             // Sometimes we can have SQL exceptions when re-compiling ALTER or UPDATE statements
             // that the table we work on is already dropped. In this case, we can ignore the exception.
             purgeTableFiles(tableToken, null, engine, Path.PATH.get());
@@ -558,11 +559,17 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
             }
         } catch (SqlException ex) {
+            if (ex.isTableDoesNotExist()) {
+                throw CairoException.tableDropped(tableWriter.getTableToken());
+            }
             throw CairoException.nonCritical().put("error applying SQL to wal table [table=")
                     .put(tableWriter.getTableToken().getTableName()).put(", sql=").put(sql)
                     .put(", position=").put(ex.getPosition())
                     .put(", error=").put(ex.getFlyweightMessage());
         } catch (CairoException e) {
+            if (e.isTableDropped()) {
+                throw e;
+            }
             LogRecord log = !e.isWALTolerable() ? LOG.error() : LOG.info();
             log.$("error applying SQL to wal table [table=")
                     .utf8(tableWriter.getTableToken().getTableName()).$(", sql=").$(sql)

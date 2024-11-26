@@ -814,6 +814,9 @@ public final class Utf8s {
             return TableUtils.NULL_LEN;
         }
         final int size = value.size();
+        if (value.isAscii()) {
+            return size;
+        }
 
         int continuationByteCount = 0;
         int i = 0;
