@@ -204,8 +204,8 @@ public class SqlParser {
             CharSequence tok,
             CreateTableOperationBuilder builder
     ) throws SqlException {
-        boolean expectedTok = tok == null || Chars.equals(tok, ';');
-        return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, expectedTok ? null : tok);
+        CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
+        return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
     }
 
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
