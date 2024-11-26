@@ -107,8 +107,6 @@ public class CreateTableOperationBuilderImpl implements Mutable, Sinkable, Creat
             );
         }
 
-        // create table "like" and "as select" are mutually exclusive
-        // todo: write a test for the above to ensure correctness of the diagnostic message
         if (this.likeTableNameExpr != null) {
             TableToken likeTableNameToken = compiler.getEngine().getTableTokenIfExists(this.likeTableNameExpr.token);
             if (likeTableNameToken == null) {
