@@ -53,7 +53,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 // Returns value evaluated at the row that is the first row of the window frame.
-public class FirstValueDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
+public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     private static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES;
 
@@ -364,6 +364,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbsWindowFunctionFact
         private final int timestampIndex;
 
         private double firstValue;
+        private final  RingBufferDesc memoryDesc = new RingBufferDesc();
 
         public FirstValueOverPartitionRangeFrameFunction(
                 Map map,
@@ -466,7 +467,7 @@ public class FirstValueDoubleWindowFunctionFactory extends AbsWindowFunctionFact
 
                 // add new element
                 if (size == capacity) { //buffer full
-                    RingBufferDesc memoryDesc = new RingBufferDesc(capacity, startOffset, size, firstIdx, freeList);
+                    memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
                     expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
                     capacity = memoryDesc.capacity;
                     startOffset = memoryDesc.startOffset;
