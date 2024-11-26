@@ -723,7 +723,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableToken getTableTokenIfExists(CharSequence tableName) {
         final TableToken token = tableNameRegistry.getTableToken(tableName);
-        if (token == TableNameRegistry.LOCKED_TOKEN) {
+        if (TableNameRegistry.isLocked(token)) {
             return null;
         }
         return token;
@@ -822,11 +822,11 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean isTableDropped(TableToken tableToken) {
-        return isTableDropped(tableToken.getDirName());
+        return tableNameRegistry.isTableDropped(tableToken);
     }
 
-    public boolean isTableDropped(CharSequence dirName) {
-        return tableNameRegistry.isTableDropped(dirName);
+    public boolean isWalTableDropped(CharSequence tableDir) {
+        return tableNameRegistry.isWalTableDropped(tableDir);
     }
 
     public boolean isWalTable(TableToken tableToken) {
