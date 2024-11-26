@@ -261,6 +261,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
 
             // Update indexes
+            final long newParquetSize = Files.length(path.$());
             updateParquetIndexes(
                     partitionBy,
                     partitionTimestamp,
@@ -268,6 +269,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     srcNameTxn,
                     o3Basket,
                     newPartitionSize,
+                    newParquetSize,
                     pathToTable,
                     path,
                     ff,
@@ -2014,6 +2016,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcNameTxn,
             O3Basket o3Basket,
             long newPartitionSize,
+            long newParquetSize,
             Path pathToTable,
             Path path,
             FilesFacade ff,
@@ -2022,14 +2025,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             DirectIntList columnIdsAndTypes,
             RowGroupBuffers rowGroupBuffers
     ) {
-        final long newParquetSize = Files.length(path.$());
         long parquetAddr = 0;
         try {
             parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, newParquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             partitionDecoder.of(
                     parquetAddr,
                     newParquetSize,
-                    MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER
+                    MemoryTag.NATIVE_PARQUET_PARTITION_DECODER
             );
             path.of(pathToTable);
             setPathForNativePartition(path, partitionBy, partitionTimestamp, srcNameTxn);
