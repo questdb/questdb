@@ -2041,16 +2041,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final int columnCount = tableWriterMetadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 if (tableWriterMetadata.getColumnType(columnIndex) == ColumnType.SYMBOL && tableWriterMetadata.isColumnIndexed(columnIndex)) {
-                    if (indexWriter == null) {
-                        indexWriter = o3Basket.nextIndexer();
-                    }
-
-                    final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
-                    final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
                     final int indexBlockCapacity = tableWriterMetadata.getIndexValueBlockCapacity(columnIndex);
                     if (indexBlockCapacity < 0) {
                         continue;
                     }
+
+                    final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
+                    final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
 
                     long kFd = 0;
                     long vFd = 0;
@@ -2073,9 +2070,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         throw th;
                     }
 
-                    try {
-                        indexWriter.of(tableWriter.getConfiguration(), kFd, vFd, true, indexBlockCapacity);
+                    if (indexWriter == null) {
+                        indexWriter = o3Basket.nextIndexer();
+                    }
 
+                    try {
                         final PartitionDecoder.Metadata parquetMetadata = partitionDecoder.metadata();
 
                         int parquetColumnIndex = -1;
@@ -2093,8 +2092,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             continue;
                         }
 
-                        final long columnTop = tableWriter.getColumnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
+                        indexWriter.of(tableWriter.getConfiguration(), kFd, vFd, true, indexBlockCapacity);
 
+                        final long columnTop = tableWriter.getColumnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
                         if (columnTop > -1 && newPartitionSize > columnTop) {
                             columnIdsAndTypes.clear();
                             columnIdsAndTypes.add(parquetColumnIndex);
