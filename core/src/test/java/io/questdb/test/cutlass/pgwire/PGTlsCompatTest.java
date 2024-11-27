@@ -173,17 +173,20 @@ public class PGTlsCompatTest extends BasePGTest {
                 Properties properties = newPGProperties();
                 properties.setProperty("sslmode", "allow");
                 // unencrypted connection
-                for (int i = 0; i < N; i++) {
-                    try (Connection ignore = DriverManager.getConnection(url, properties)) {
-                        Assert.fail();
-                    } catch (PSQLException ex) {
-                        TestUtils.assertContains(ex.getMessage(), "ERROR: request SSL message expected");
-                    }
+                try {
+                    for (int i = 0; i < N; i++) {
+                        try (Connection ignore = DriverManager.getConnection(url, properties)) {
+                            Assert.fail();
+                        } catch (PSQLException ex) {
+                            TestUtils.assertContains(ex.getMessage(), "ERROR: request SSL message expected");
+                        }
 
-                    Assert.assertEquals("No create TLS session calls expected: " + createTlsSessionCalls.get(), 0, createTlsSessionCalls.get());
-                    Assert.assertEquals("No TLS I/O calls expected: " + tlsIOCalls.get(), 0, tlsIOCalls.get());
+                        Assert.assertEquals("No create TLS session calls expected: " + createTlsSessionCalls.get(), 0, createTlsSessionCalls.get());
+                        Assert.assertEquals("No TLS I/O calls expected: " + tlsIOCalls.get(), 0, tlsIOCalls.get());
+                    }
+                } finally {
+                    workerPool.halt();
                 }
-                workerPool.halt();
             }
         });
     }
