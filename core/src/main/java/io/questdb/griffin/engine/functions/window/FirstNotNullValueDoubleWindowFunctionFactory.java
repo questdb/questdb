@@ -52,7 +52,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 // Returns value evaluated at the row that is the first not null row of the window frame.
-public class FirstNotNullValueDoubleWindowFunctionFactory extends AbsWindowFunctionFactory {
+public class FirstNotNullValueDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     private static final String NAME = "first_not_null_value";
     private static final String SIGNATURE = NAME + "(D)";
@@ -424,7 +424,7 @@ public class FirstNotNullValueDoubleWindowFunctionFactory extends AbsWindowFunct
                 double d = arg.getDouble(record);
                 if (Numbers.isFinite(d)) {
                     if (size == capacity) { //buffer full
-                        RingBufferDesc memoryDesc = new RingBufferDesc(capacity, startOffset, size, firstIdx, freeList);
+                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
                         expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
                         capacity = memoryDesc.capacity;
                         startOffset = memoryDesc.startOffset;
