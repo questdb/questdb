@@ -94,7 +94,8 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
                     HTTP_MIN_ENABLED.getEnvVarName(), "false",
                     HTTP_ENABLED.getEnvVarName(), "false",
                     LINE_TCP_ENABLED.getEnvVarName(), "false",
-                    TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true"
+                    TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true",
+                    CAIRO_SQL_BACKUP_ROOT.getEnvVarName(), testResourcePath
             );
             serverMain.start();
         }
