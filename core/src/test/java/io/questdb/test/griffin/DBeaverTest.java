@@ -44,7 +44,9 @@ public class DBeaverTest extends AbstractCairoTest {
                         "public\t16\t2200\tbool\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
                         "public\t17\t2200\tbinary\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
                         "public\t1082\t2200\tdate\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
-                        "public\t2950\t2200\tuuid\tb\tnull\tfalse\t\tnull\t\t\t\t0\n",
+                        "public\t2950\t2200\tuuid\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t2281\t2200\tinternal\tb\tnull\tfalse\t\tnull\t\t\t\t0\n" +
+                        "public\t26\t2200\toid\tb\tnull\tfalse\t\tnull\t\t\t\t0\n",
                 "SELECT ns.nspname, typ_and_elem_type.*,\n" +
                         "   CASE\n" +
                         "       WHEN typtype IN ('b', 'e', 'p') THEN 0           -- First base types, enums, pseudo-types\n" +
@@ -111,8 +113,8 @@ public class DBeaverTest extends AbstractCairoTest {
     @Test
     public void testListColumns() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xyz(a int, t timestamp)");
-            ddl("create table tab2(b long, z binary)");
+            execute("create table xyz(a int, t timestamp)");
+            execute("create table tab2(b long, z binary)");
 
             assertQueryNoLeakCheck(
                     "relname\tattrelid\tattname\tattnum\tatttypid\tattnotnull\tatttypmod\tattlen\tattidentity\tattisdropped\tatthasdef\tdef_value\tdescription\n" +
@@ -138,8 +140,8 @@ public class DBeaverTest extends AbstractCairoTest {
     @Test
     public void testListTables() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xyz(a int)");
-            ddl("create table tab2(b long)");
+            execute("create table xyz(a int)");
+            execute("create table tab2(b long)");
             assertQueryNoLeakCheck(
                     "oid tral\toid\trelname\trelnamespace\treltype\treloftype\trelowner\trelam\trelfilenode\treltablespace\trelpages\treltuples\trelallvisible\treltoastrelid\trelhasindex\trelisshared\trelpersistence\trelkind\trelnatts\trelchecks\trelhasrules\trelhastriggers\trelhassubclass\trelrowsecurity\trelforcerowsecurity\trelispopulated\trelreplident\trelispartition\trelrewrite\trelfrozenxid\trelminmxid\trelacl\treloptions\trelpartbound\trelhasoids\txmin\tdescription\tpartition_expr\tpartition_key\n" +
                             "2\t2\ttab2\t2200\t0\t0\t0\t0\t0\t0\tfalse\t-1.0000\t0\t0\tfalse\tfalse\tp\tr\t0\t0\tfalse\tfalse\tfalse\tfalse\tfalse\ttrue\td\tfalse\t0\t0\t0\t\t\t\tfalse\t0\t\t\t\n" +
@@ -165,11 +167,13 @@ public class DBeaverTest extends AbstractCairoTest {
                         "20\t20\tint8\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "21\t21\tint2\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t2\tfalse\tfalse\ttrue\tc\tp\t0\t0\t0\t\t\t\n" +
                         "23\t23\tint4\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "26\t26\toid\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "700\t700\tfloat4\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t4\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "701\t701\tfloat8\t0\t0\t2200\tfalse\t0\tb\tN\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "1043\t1043\tvarchar\t0\t0\t2200\tfalse\t0\tb\tS\tnull\t0\t0\t0\t0\t0\t-1\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "1082\t1082\tdate\t0\t0\t2200\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "1114\t1114\ttimestamp\t0\t0\t2200\tfalse\t0\tb\tD\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
+                        "2281\t2281\tinternal\t0\t0\t2200\tfalse\t0\tb\tP\tnull\t0\t0\t0\t0\t0\t8\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n" +
                         "2950\t2950\tuuid\t0\t0\t2200\tfalse\t0\tb\tU\tnull\t0\t0\t0\t0\t0\t16\tfalse\tfalse\ttrue\tc\tp\t0\t0\t\t\t\t\n",
                 "SELECT t.oid as oid1,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description\n" +
                         "FROM pg_catalog.pg_type t\n" +

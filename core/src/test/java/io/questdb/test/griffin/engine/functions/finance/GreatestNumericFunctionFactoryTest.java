@@ -93,7 +93,7 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
     @Test
     public void testGreatestNumericFunctionFactoryWithData() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
+            execute("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
             drainWalQueue();
             assertSqlWithTypes("greatest\n" +
                     "315515118:INT\n" +

@@ -75,7 +75,9 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
             await(engine.getConfiguration().getWriterAsyncCommandMaxTimeout() - busyWaitTimeout);
         }
         if (status != QUERY_COMPLETE) {
-            throw SqlTimeoutException.timeout("Timeout expired on waiting for the async command execution result [instance=").put(correlationId).put(']');
+            throw SqlTimeoutException
+                    .timeout("Timeout expired on waiting for the async command execution result [instance=").put(correlationId)
+                    .put(", timeout=").put(busyWaitTimeout).put("ms]");
         }
     }
 
@@ -104,11 +106,6 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
     @Override
     public long getAffectedRowsCount() {
         return affectedRowsCount;
-    }
-
-    @Override
-    public long getInstanceId() {
-        return correlationId;
     }
 
     @Override

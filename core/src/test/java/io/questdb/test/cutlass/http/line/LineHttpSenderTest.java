@@ -27,16 +27,21 @@ package io.questdb.test.cutlass.http.line;
 import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.cutlass.line.http.LineHttpSender;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -68,7 +73,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 serverMain.start();
-                serverMain.compile("create table tab (ts timestamp, ts2 timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.ddl("create table tab (ts timestamp, ts2 timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
@@ -144,7 +149,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
             )) {
                 serverMain.start();
-                serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, u uuid, tss timestamp, " +
+                serverMain.ddl("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, u uuid, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
@@ -201,6 +206,51 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             "http-status=400",
                             "error in line 1: table: ex_tbl, column: str; cast error from protocol type: FLOAT to column type: STRING"
                     );
+                }
+            }
+        });
+    }
+
+    public void assertSql(CairoEngine engine, CharSequence sql, CharSequence expectedResult) throws SqlException {
+        StringSink sink = Misc.getThreadLocalSink();
+        engine.print(sql, sink);
+        if (!Chars.equals(sink, expectedResult)) {
+            Assert.assertEquals(expectedResult, sink);
+        }
+    }
+
+    @Test
+    public void testHttpWithDrop() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                int httpPort = serverMain.getHttpServerPort();
+
+                int totalCount = 100;
+                int autoFlushRows = 1000;
+                String tableName = "accounts";
+
+                try (LineHttpSender sender = new LineHttpSender("localhost", httpPort, DefaultHttpClientConfiguration.INSTANCE, null, autoFlushRows, null, null, null, 0, 0, Long.MAX_VALUE)) {
+                    for (int i = 0; i < totalCount; i++) {
+                        // Add new symbol column with each second row
+                        sender.table(tableName)
+                                .symbol("balance" + i / 2, String.valueOf(i))
+                                .atNow();
+
+                        sender.flush();
+                    }
+                }
+
+                for (int i = 0; i < 10; i++) {
+                    serverMain.ddl("drop table " + tableName);
+                    assertSql(serverMain.getEngine(), "SELECT count() from tables() where table_name='" + tableName + "'", "count\n0\n");
+                    serverMain.ddl("create table " + tableName + " (" +
+                            "balance1 symbol capacity 16, " +
+                            "balance10 symbol capacity 16, " +
+                            "timestamp timestamp)" +
+                            " timestamp(timestamp) partition by DAY WAL " +
+                            " dedup upsert keys (balance1, balance10, timestamp)");
+                    assertSql(serverMain.getEngine(), "SELECT count() FROM (table_columns('Accounts')) WHERE upsertKey=true AND ( column = 'timestamp' )", "count\n" + 1 + "\n");
+                    Os.sleep(10);
                 }
             }
         });
@@ -383,7 +433,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 String tableName = "h2o_feet";
-                serverMain.compile("create table " + tableName + " (async symbol, location symbol, level varchar, water_level long, ts timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.ddl("create table " + tableName + " (async symbol, location symbol, level varchar, water_level long, ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int count = 10;
 
@@ -481,7 +531,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.LINE_AUTO_CREATE_NEW_COLUMNS.getEnvVarName(), "false"
             )) {
                 serverMain.start();
-                serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
+                serverMain.ddl("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
@@ -522,7 +572,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     PropertyKey.LINE_AUTO_CREATE_NEW_TABLES.getEnvVarName(), "false"
             )) {
                 serverMain.start();
-                serverMain.compile("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
+                serverMain.ddl("create table ex_tbl(b byte, s short, f float, d double, str string, sym symbol, tss timestamp, " +
                         "i int, l long, ip ipv4, g geohash(4c), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();

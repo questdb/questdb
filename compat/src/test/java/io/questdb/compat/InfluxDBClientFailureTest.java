@@ -189,7 +189,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && attempt.getAndIncrement() == 0) {
                     try {
-                        server.get().getEngine().compile("drop table m1");
+                        server.get().getEngine().execute("drop table m1");
                     } catch (SqlException e) {
                         throw new RuntimeException(e);
                     }
@@ -229,7 +229,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "x.d") && attempt.getAndIncrement() == 0) {
                     try {
-                        server.get().getEngine().compile("drop table m1");
+                        server.get().getEngine().execute("drop table m1");
                     } catch (SqlException e) {
                         throw new AssertionError(e);
                     }
@@ -346,7 +346,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
             public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "good_y.d") && attempt.getAndIncrement() == 0) {
                     try {
-                        server.get().getEngine().compile("drop table \"drop\"");
+                        server.get().getEngine().execute("drop table \"drop\"");
                     } catch (SqlException e) {
                         throw new RuntimeException(e);
                     }

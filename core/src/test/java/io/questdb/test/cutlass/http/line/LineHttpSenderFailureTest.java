@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.http.line;
 
 import io.questdb.client.Sender;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
@@ -131,9 +132,9 @@ public class LineHttpSenderFailureTest extends AbstractBootstrapTest {
             serverMain.start();
         }
 
-        public void startAndExecute(String sqlText) {
+        public void startAndExecute(String sqlText) throws SqlException {
             start();
-            serverMain.compile(sqlText);
+            serverMain.ddl(sqlText);
         }
 
         public void stop() {

@@ -32,8 +32,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testAvgVanilla() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y from temp)");
+            execute("create table temp as (select rnd_short()::long x from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y from temp)");
 
             assertSql(
                     "x\ty\n" +
@@ -46,8 +46,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedHourAvg() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y, ts from temp)");
+            execute("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y, ts from temp)");
 
             assertSql(
                     "hour\tx\ty\n" +
@@ -83,8 +83,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedHourMax() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y, ts from temp)");
+            execute("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y, ts from temp)");
 
             assertSql(
                     "hour\tx\ty\n" +
@@ -120,8 +120,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedHourMin() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y, ts from temp)");
+            execute("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y, ts from temp)");
 
             assertSql(
                     "hour\tx\ty\n" +
@@ -157,8 +157,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedHourSum() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y, ts from temp)");
+            execute("create table temp as (select rnd_short()::long x, timestamp_sequence(0, 10000000) ts from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y, ts from temp)");
 
             assertSql(
                     "hour\tx\ty\n" +
@@ -194,8 +194,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedIntAvg() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y, s from temp)");
+            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y, s from temp)");
 
             assertSql(
                     "s\tx\ty\n" +
@@ -209,8 +209,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedIntMax() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y, s from temp)");
+            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y, s from temp)");
 
             assertSql(
                     "s\tx\ty\n" +
@@ -224,8 +224,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedIntMin() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y, s from temp)");
+            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y, s from temp)");
 
             assertSql(
                     "s\tx\ty\n" +
@@ -239,8 +239,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testKeyedIntSum() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y, s from temp)");
+            execute("create table temp as (select rnd_short()::long x, rnd_symbol('aaa', 'bbb') s from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y, s from temp)");
 
             assertSql(
                     "s\tx\ty\n" +
@@ -255,7 +255,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     public void testMaxIsNanWhenNoData() throws Exception {
         // empty table should produce null as sum
         assertMemoryLeak(() -> {
-            ddl("create table abc (x short)");
+            execute("create table abc (x short)");
 
             assertSql(
                     "x\n" +
@@ -268,8 +268,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testMaxVanilla() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y from temp)");
+            execute("create table temp as (select rnd_short()::long x from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y from temp)");
 
             assertSql(
                     "x\ty\n" +
@@ -283,7 +283,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     public void testMinIsNanWhenNoData() throws Exception {
         // empty table should produce null as sum
         assertMemoryLeak(() -> {
-            ddl("create table abc (x short)");
+            execute("create table abc (x short)");
 
             assertSql(
                     "x\n" +
@@ -296,8 +296,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testMinVanilla() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y from temp)");
+            execute("create table temp as (select rnd_short()::long x from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y from temp)");
 
             assertSql(
                     "x\ty\n" +
@@ -311,7 +311,7 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     public void testSumIsNanWhenNoData() throws Exception {
         // empty table should produce null as sum
         assertMemoryLeak(() -> {
-            ddl("create table abc (x short)");
+            execute("create table abc (x short)");
 
             assertSql(
                     "x\n" +
@@ -324,8 +324,8 @@ public class ShortVectorAggregateTest extends AbstractCairoTest {
     @Test
     public void testSumVanilla() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table temp as (select rnd_short()::long x from long_sequence(100000));");
-            ddl("create table abc as (select x, x::short y from temp)");
+            execute("create table temp as (select rnd_short()::long x from long_sequence(100000));");
+            execute("create table abc as (select x, x::short y from temp)");
 
             assertSql(
                     "x\ty\n" +

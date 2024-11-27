@@ -623,13 +623,13 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptDoubleFloat() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -646,15 +646,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -673,13 +673,13 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptFloatDouble() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid float, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid float, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -696,15 +696,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testExceptSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -1457,15 +1457,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testIntersectDoubleFloatSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid float, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid float, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -1484,15 +1484,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
     @Test
     public void testIntersectSort() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table events1 (contact symbol, groupid double, eventid string)");
-            insert("insert into events1 values ('1', 1.5, 'flash')");
-            insert("insert into events1 values ('2', 1.5, 'stand')");
-            insert("insert into events1 values ('1', 1.6, 'stand')");
-            insert("insert into events1 values ('2', 1.6, 'stand')");
+            execute("create table events1 (contact symbol, groupid double, eventid string)");
+            execute("insert into events1 values ('1', 1.5, 'flash')");
+            execute("insert into events1 values ('2', 1.5, 'stand')");
+            execute("insert into events1 values ('1', 1.6, 'stand')");
+            execute("insert into events1 values ('2', 1.6, 'stand')");
 
-            ddl("create table events2 (contact symbol, groupid double, eventid string)");
-            insert("insert into events2 values ('1', 1.5, 'flash')");
-            insert("insert into events2 values ('2', 1.5, 'stand')");
+            execute("create table events2 (contact symbol, groupid double, eventid string)");
+            execute("insert into events2 values ('1', 1.5, 'flash')");
+            execute("insert into events2 values ('2', 1.5, 'stand')");
 
             assertQueryNoLeakCheck(
                     // Empty table expected
@@ -2116,7 +2116,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
         // we expect this column to be ignored by optimiser, and also
         // we expect optimiser to correctly select column "b" from Y as
         // a match against column "a" in the union
-        compile("create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
+        execute("create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))");
         engine.releaseAllWriters();
         assertQuery(
                 "u\ta\tc\n" +
@@ -2380,8 +2380,8 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     private static void testUnionAllWithNull(String expected, String function, boolean testUnion) throws Exception {
-        ddl("create table y as (select " + function + " c from long_sequence(5))");
-        ddl("create table x as (select " + function + " a from long_sequence(5))");
+        execute("create table y as (select " + function + " c from long_sequence(5))");
+        execute("create table x as (select " + function + " a from long_sequence(5))");
         engine.releaseAllWriters();
 
         assertQuery(
@@ -2410,7 +2410,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
-        compile(ddlY);
+        execute(ddlY);
         engine.releaseAllWriters();
         assertException(
                 "x union all y",
@@ -2442,7 +2442,7 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     private void testUnionAll(String expected, String sql, String ddlX, String ddlY) throws Exception {
-        compile(ddlY);
+        execute(ddlY);
         engine.releaseAllWriters();
         assertQuery(expected, sql, ddlX, null, false, true);
     }

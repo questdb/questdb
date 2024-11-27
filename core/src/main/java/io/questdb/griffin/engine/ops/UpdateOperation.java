@@ -50,7 +50,7 @@ public class UpdateOperation extends AbstractOperation {
     private volatile boolean requesterTimeout;
 
     public UpdateOperation(
-            TableToken tableToken,
+            @NotNull TableToken tableToken,
             int tableId,
             long tableVersion,
             int tableNamePosition
@@ -59,7 +59,7 @@ public class UpdateOperation extends AbstractOperation {
     }
 
     public UpdateOperation(
-            TableToken tableToken,
+            @NotNull TableToken tableToken,
             int tableId,
             long tableVersion,
             int tableNamePosition,

@@ -251,7 +251,8 @@ public final class ColumnType {
                 || (fromType == CHAR && toType == SHORT)
                 // Same with bytes and bools
                 || (fromType == BYTE && toType == BOOLEAN)
-                || (fromType == TIMESTAMP && toType == LONG);
+                || (fromType == TIMESTAMP && toType == LONG)
+                || (fromType == STRING && (toType >= BYTE && toType <= DOUBLE));
     }
 
     public static boolean isChar(int columnType) {

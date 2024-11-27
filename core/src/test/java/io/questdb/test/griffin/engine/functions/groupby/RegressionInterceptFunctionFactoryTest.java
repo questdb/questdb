@@ -39,7 +39,7 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegrInterceptNoValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int, y int)");
+            execute("create table tbl1(x int, y int)");
             assertSql(
                     "regr_intercept\nnull\n", "select regr_intercept(x, y) from tbl1"
             );
@@ -49,7 +49,7 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegrInterceptAllSameValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
+            execute("create table tbl1 as (select 17.2151921 x, 17.2151921 y from long_sequence(100))");
             assertSql(
                     "regr_intercept\nnull\n", "select regr_intercept(x, y) from tbl1"
             );
@@ -59,7 +59,7 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegrInterceptDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
+            execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
             assertSql(
                     "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
             );
@@ -69,9 +69,9 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegrInterceptWithNullValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1(x double, y double)");
-            insert("insert into 'tbl1' VALUES (null, null)");
-            insert("insert into 'tbl1' select x, x as y from long_sequence(100)");
+            execute("create table tbl1(x double, y double)");
+            execute("insert into 'tbl1' VALUES (null, null)");
+            execute("insert into 'tbl1' select x, x as y from long_sequence(100)");
             assertSql(
                     "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
             );
@@ -81,7 +81,7 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegrInterceptFloatValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as float) x, cast(x as float) y from long_sequence(100))");
+            execute("create table tbl1 as (select cast(x as float) x, cast(x as float) y from long_sequence(100))");
             assertSql(
                     "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
             );
@@ -91,7 +91,7 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegrInterceptIntValues() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as int) x, cast(x as int) y from long_sequence(100))");
+            execute("create table tbl1 as (select cast(x as int) x, cast(x as int) y from long_sequence(100))");
             assertSql(
                     "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
             );
@@ -108,8 +108,8 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegrInterceptOneValue() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int, y int)");
-            insert("insert into 'tbl1' VALUES (17.2151920, 17.2151920)");
+            execute("create table tbl1(x int, y int)");
+            execute("insert into 'tbl1' VALUES (17.2151920, 17.2151920)");
             assertSql(
                     "regr_intercept\nnull\n", "select regr_intercept(x, y) from tbl1"
             );
@@ -119,7 +119,7 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegrInterceptNoOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
+            execute("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
             assertSql(
                     "regr_intercept\nnull\n", "select regr_intercept(x, y) from tbl1"
             );
@@ -129,8 +129,8 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegrInterceptSomeNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
-            insert("insert into 'tbl1' VALUES (null, null)");
+            execute("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
+            execute("insert into 'tbl1' VALUES (null, null)");
             assertSql(
                     "regr_intercept\n0.0\n", "select regr_intercept(x, y) from tbl1"
             );
@@ -140,7 +140,7 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testRegrInterceptWithNonZeroIntercept() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tbl1 as (select x, 2 * x + 5 as y from long_sequence(100))");
+            execute("create table tbl1 as (select x, 2 * x + 5 as y from long_sequence(100))");
             assertSql(
                     "regr_intercept\n-2.5\n", "select regr_intercept(x, y) from tbl1"
             );

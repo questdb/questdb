@@ -75,7 +75,8 @@ public final class MemoryTag {
     public static final int NATIVE_OFFLOAD = NATIVE_O3 + 1;
     public static final int NATIVE_PARALLEL_IMPORT = NATIVE_OFFLOAD + 1;
     public static final int NATIVE_PGW_CONN = NATIVE_PARALLEL_IMPORT + 1;
-    public static final int NATIVE_RECORD_CHAIN = NATIVE_PGW_CONN + 1;
+    public static final int NATIVE_PGW_PIPELINE = NATIVE_PGW_CONN + 1;
+    public static final int NATIVE_RECORD_CHAIN = NATIVE_PGW_PIPELINE + 1;
     public static final int NATIVE_REPL = NATIVE_RECORD_CHAIN + 1;
     public static final int NATIVE_ROSTI = NATIVE_REPL + 1;
     public static final int NATIVE_SAMPLE_BY_LONG_LIST = NATIVE_ROSTI + 1;
@@ -114,6 +115,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_UNORDERED_MAP, "NATIVE_UNORDERED_MAP");
         tagNameMap.extendAndSet(NATIVE_HTTP_CONN, "NATIVE_HTTP_CONN");
         tagNameMap.extendAndSet(NATIVE_PGW_CONN, "NATIVE_PGW_CONN");
+        tagNameMap.extendAndSet(NATIVE_PGW_PIPELINE, "NATIVE_PGW_PIPELINE");
         tagNameMap.extendAndSet(MMAP_INDEX_READER, "MMAP_INDEX_READER");
         tagNameMap.extendAndSet(MMAP_INDEX_WRITER, "MMAP_INDEX_WRITER");
         tagNameMap.extendAndSet(MMAP_INDEX_SLIDER, "MMAP_INDEX_SLIDER");
