@@ -2115,7 +2115,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             ) {
                 queryRegistry.unregister(sqlId, executionContext);
             }
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             if (executionModel != null) {
                 freeTableNameFunctions(executionModel.getQueryModel());
             }
@@ -2123,14 +2123,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             queryRegistry.unregister(sqlId, executionContext);
 
             QueryProgress.logError(
-                    e,
+                    th,
                     sqlId,
                     sqlText,
                     executionContext,
                     beginNanos,
                     false
             );
-            throw e;
+            throw th;
         }
     }
 
