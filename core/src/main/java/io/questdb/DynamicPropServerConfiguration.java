@@ -105,7 +105,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
     private final HttpMinServerConfigurationImpl minHttpServerConfig;
     private final PGWireConfigurationImpl pgWireConfig;
     private final Properties properties;
-    private final PublicPassthroughConfigurationImpl publicPassthroughConfig;
+    private final PublicPassthroughConfigurationImpl publicPassThroughConfig;
     private final String root;
     private final AtomicReference<PropServerConfiguration> serverConfig;
     private final WorkerPoolConfigurationImpl walApplyPoolConfig;
@@ -154,7 +154,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         this.memoryConfig = new MemoryConfigurationImpl();
         this.metricsConfig = new MetricsConfigurationImpl();
         this.pgWireConfig = new PGWireConfigurationImpl();
-        this.publicPassthroughConfig = new PublicPassthroughConfigurationImpl();
+        this.publicPassThroughConfig = new PublicPassthroughConfigurationImpl();
         this.workerPoolConfig = new WorkerPoolConfigurationImpl();
         this.walApplyPoolConfig = new WorkerPoolConfigurationImpl();
         reloadNestedConfigurations(serverConfig);
@@ -266,7 +266,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                     oldProperties.setProperty(key, (String) entry.getValue());
                     changed = true;
                 } else {
-                    log.advisory().$("property ").$(entry.getKey()).$(" was modified in the config file but cannot be reloaded. ignoring new value").$();
+                    log.advisory().$("property ").$(entry.getKey()).$(" was modified in the config file but cannot be reloaded. Ignoring new value").$();
                 }
             }
         }
@@ -285,7 +285,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
                     oldPropsIter.remove();
                     changed = true;
                 } else {
-                    log.advisory().$("property ").$(key).$(" was removed from the config file but cannot be reloaded. ignoring").$();
+                    log.advisory().$("property ").$(key).$(" was removed from the config file but cannot be reloaded. Ignoring").$();
                 }
             }
         }
@@ -339,7 +339,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
 
     @Override
     public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
-        return publicPassthroughConfig;
+        return publicPassThroughConfig;
     }
 
     @Override
@@ -419,6 +419,9 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             return;
         }
 
+        final PropServerConfiguration oldConfig = serverConfig.get();
+        // Move factory provider to the new config instead of creating a new one.
+        newConfig.reinit(oldConfig.getFactoryProvider());
         serverConfig.set(newConfig);
         reloadNestedConfigurations(newConfig);
         version++;
@@ -433,7 +436,7 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
         memoryConfig.setDelegate(serverConfig.getMemoryConfiguration());
         metricsConfig.setDelegate(serverConfig.getMetricsConfiguration());
         pgWireConfig.setDelegate(serverConfig.getPGWireConfiguration());
-        publicPassthroughConfig.setDelegate(serverConfig.getPublicPassthroughConfiguration());
+        publicPassThroughConfig.setDelegate(serverConfig.getPublicPassthroughConfiguration());
         workerPoolConfig.setDelegate(serverConfig.getWorkerPoolConfiguration());
         walApplyPoolConfig.setDelegate(serverConfig.getWalApplyPoolConfiguration());
     }

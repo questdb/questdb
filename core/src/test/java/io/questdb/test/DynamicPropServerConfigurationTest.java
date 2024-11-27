@@ -27,12 +27,18 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.BootstrapConfiguration;
 import io.questdb.DefaultBootstrapConfiguration;
+import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.DynamicPropServerConfiguration;
 import io.questdb.FactoryProviderFactoryImpl;
+import io.questdb.HttpClientConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
+import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.test.cutlass.http.TestHttpClient;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -46,6 +52,8 @@ import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 
@@ -67,6 +75,82 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             Assert.fail(e.getMessage());
         }
         Assert.assertTrue(serverConf.exists());
+    }
+
+    @Test
+    public void testHttpConnectionLimitReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("http.net.bind.to=0.0.0.0:9001\n");
+                w.write("http.net.connection.limit=1\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                HttpClientConfiguration config = new DefaultHttpClientConfiguration() {
+                    @Override
+                    public int getTimeout() {
+                        return 1000;
+                    }
+                };
+                try (
+                        HttpClient httpClient1 = HttpClientFactory.newPlainTextInstance(config);
+                        TestHttpClient testHttpClient1 = new TestHttpClient(httpClient1)
+                ) {
+                    testHttpClient1.setKeepConnection(true);
+                    testHttpClient1.assertGet(
+                            "/exec",
+                            "{\"query\":\"select 1;\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                            "select 1;"
+                    );
+
+                    try (
+                            HttpClient httpClient2 = HttpClientFactory.newPlainTextInstance(config);
+                            TestHttpClient testHttpClient2 = new TestHttpClient(httpClient2)
+                    ) {
+                        testHttpClient2.assertGet(
+                                "/exec",
+                                "{\"query\":\"select 1;\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                                "select 1;"
+                        );
+                        Assert.fail();
+                    } catch (Exception ignore) {
+                    }
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("http.net.bind.to=0.0.0.0:9001\n");
+                    w.write("http.net.connection.limit=2\n");
+                }
+
+                latch.await();
+
+                // we should be able to open two connections now
+                try (
+                        HttpClient httpClient1 = HttpClientFactory.newPlainTextInstance(config);
+                        TestHttpClient testHttpClient1 = new TestHttpClient(httpClient1)
+                ) {
+                    testHttpClient1.setKeepConnection(true);
+                    testHttpClient1.assertGet(
+                            "/exec",
+                            "{\"query\":\"select 1;\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                            "select 1;"
+                    );
+
+                    try (
+                            HttpClient httpClient2 = HttpClientFactory.newPlainTextInstance(config);
+                            TestHttpClient testHttpClient2 = new TestHttpClient(httpClient2)
+                    ) {
+                        testHttpClient2.assertGet(
+                                "/exec",
+                                "{\"query\":\"select 1;\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                                "select 1;"
+                        );
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -106,8 +190,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     try {
                         try (Connection ignore = getConnection("admin", "quest")) {
                             Assert.fail();
-                        } catch (Exception e) {
-                            System.out.println(e);
                         }
                     } catch (Throwable ignore) {
                     }
@@ -346,6 +428,9 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     private BootstrapConfiguration getBootstrapConfig() {
+        Map<String, String> envMap = new HashMap<>();
+        envMap.put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "1");
+        envMap.put(PropertyKey.WAL_APPLY_WORKER_COUNT.getEnvVarName(), "1");
         return new DefaultBootstrapConfiguration() {
             @Override
             public ServerConfiguration getServerConfiguration(Bootstrap bootstrap) {
@@ -353,7 +438,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                     return new DynamicPropServerConfiguration(
                             bootstrap.getRootDirectory(),
                             bootstrap.loadProperties(),
-                            getEnv(),
+                            envMap,
                             bootstrap.getLog(),
                             bootstrap.getBuildInformation(),
                             FilesFacadeImpl.INSTANCE,

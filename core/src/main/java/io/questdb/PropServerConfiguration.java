@@ -124,7 +124,6 @@ import java.util.function.LongSupplier;
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 
 public class PropServerConfiguration implements ServerConfiguration {
-
     public static final String ACL_ENABLED = "acl.enabled";
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
@@ -1585,6 +1584,11 @@ public class PropServerConfiguration implements ServerConfiguration {
 
     public boolean isConfigReloadEnabled() {
         return configReloadEnabled;
+    }
+
+    // Used by dynamic configuration to avoid factory provider recreation.
+    public void reinit(FactoryProvider factoryProvider) {
+        this.factoryProvider = factoryProvider;
     }
 
     private int[] getAffinity(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int workerCount) throws ServerConfigurationException {
