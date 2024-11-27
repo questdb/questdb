@@ -46,6 +46,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private static final int TABLE_DROPPED = ILLEGAL_OPERATION - 1;
     public static final int METADATA_VALIDATION_RECOVERABLE = TABLE_DROPPED - 1;
     public static final int PARTITION_MANIPULATION_RECOVERABLE = METADATA_VALIDATION_RECOVERABLE - 1;
+    public static final int TABLE_DOES_NOT_EXIST = PARTITION_MANIPULATION_RECOVERABLE - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);
@@ -54,15 +55,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     private boolean authorizationError = false;
     private boolean cacheable;
     private boolean cancellation; // when query is explicitly cancelled by user
-    private boolean entityDisabled; // used when account is disabled and connection should be dropped
     private boolean interruption; // used when a query times out
     private int messagePosition;
     private boolean outOfMemory;
 
     public static CairoException authorization() {
-        CairoException e = nonCritical();
-        e.authorizationError = true;
-        return e;
+        return nonCritical().setAuthorizationError();
     }
 
     public static CairoException critical(int errno) {
@@ -101,7 +99,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     @SuppressWarnings("unused")
     public static CairoException entityIsDisabled(CharSequence entityName) {
-        return nonCritical().setEntityDisabled(true).put("entity is disabled [name=").put(entityName).put(']');
+        return nonCritical().put("entity is disabled [name=").put(entityName).put(']');
     }
 
     public static boolean errnoPathDoesNotExist(int errno) {
@@ -149,7 +147,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public static CairoException tableDoesNotExist(CharSequence tableName) {
-        return nonCritical().put("table does not exist [table=").put(tableName).put(']');
+        return critical(TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
     }
 
     public static CairoException tableDropped(TableToken tableToken) {
@@ -216,16 +214,16 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return errno != NON_CRITICAL && errno != PARTITION_MANIPULATION_RECOVERABLE && errno != METADATA_VALIDATION_RECOVERABLE;
     }
 
-    public boolean isEntityDisabled() {
-        return entityDisabled;
-    }
-
     public boolean isInterruption() {
         return interruption;
     }
 
     public boolean isOutOfMemory() {
         return outOfMemory;
+    }
+
+    public boolean isTableDoesNotExist() {
+        return errno == TABLE_DOES_NOT_EXIST;
     }
 
     public boolean isTableDropped() {
@@ -282,6 +280,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return this;
     }
 
+    public CairoException setAuthorizationError() {
+        this.authorizationError = true;
+        return this;
+    }
+
     public CairoException setCacheable(boolean cacheable) {
         this.cacheable = cacheable;
         return this;
@@ -289,11 +292,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public CairoException setCancellation(boolean cancellation) {
         this.cancellation = cancellation;
-        return this;
-    }
-
-    public CairoException setEntityDisabled(boolean disabled) {
-        this.entityDisabled = disabled;
         return this;
     }
 
@@ -331,7 +329,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         cacheable = false;
         interruption = false;
         authorizationError = false;
-        entityDisabled = false;
         messagePosition = 0;
         outOfMemory = false;
     }

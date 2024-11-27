@@ -24,7 +24,12 @@
 
 package io.questdb.cairo;
 
-import io.questdb.*;
+import io.questdb.BuildInformation;
+import io.questdb.ConfigPropertyKey;
+import io.questdb.ConfigPropertyValue;
+import io.questdb.FactoryProvider;
+import io.questdb.TelemetryConfiguration;
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -126,11 +131,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnCastModelPoolCapacity() {
-        return getDelegate().getColumnCastModelPoolCapacity();
-    }
-
-    @Override
     public int getColumnIndexerQueueCapacity() {
         return getDelegate().getColumnIndexerQueueCapacity();
     }
@@ -196,13 +196,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getCreateTableModelBatchSize() {
-        return getDelegate().getCreateTableModelBatchSize();
+    public int getCreateTableColumnModelPoolCapacity() {
+        return getDelegate().getCreateTableColumnModelPoolCapacity();
     }
 
     @Override
-    public int getCreateTableModelPoolCapacity() {
-        return getDelegate().getCreateTableModelPoolCapacity();
+    public long getCreateTableModelBatchSize() {
+        return getDelegate().getCreateTableModelBatchSize();
     }
 
     @Override
@@ -316,13 +316,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getGroupByPresizeMaxHeapSize() {
-        return getDelegate().getGroupByPresizeMaxHeapSize();
+    public long getGroupByPresizeMaxCapacity() {
+        return getDelegate().getGroupByPresizeMaxCapacity();
     }
 
     @Override
-    public long getGroupByPresizeMaxSize() {
-        return getDelegate().getGroupByPresizeMaxSize();
+    public long getGroupByPresizeMaxHeapSize() {
+        return getDelegate().getGroupByPresizeMaxHeapSize();
     }
 
     @Override
@@ -523,6 +523,36 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getParallelIndexThreshold() {
         return getDelegate().getParallelIndexThreshold();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionCodec() {
+        return getDelegate().getPartitionEncoderParquetCompressionCodec();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionLevel() {
+        return getDelegate().getPartitionEncoderParquetCompressionLevel();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetDataPageSize() {
+        return getDelegate().getPartitionEncoderParquetDataPageSize();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return getDelegate().getPartitionEncoderParquetRowGroupSize();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetVersion() {
+        return getDelegate().getPartitionEncoderParquetVersion();
+    }
+
+    @Override
+    public boolean getPartitionO3OverwriteControlEnabled() {
+        return getDelegate().getPartitionO3OverwriteControlEnabled();
     }
 
     @Override
@@ -1106,6 +1136,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
+    }
+
+    @Override
     public boolean isReadOnlyInstance() {
         return getDelegate().isReadOnlyInstance();
     }
@@ -1167,36 +1202,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return getDelegate().useFastAsOfJoin();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetVersion() {
-        return getDelegate().getPartitionEncoderParquetVersion();
-    }
-
-    @Override
-    public boolean isPartitionEncoderParquetStatisticsEnabled() {
-        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetCompressionCodec() {
-        return getDelegate().getPartitionEncoderParquetCompressionCodec();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetCompressionLevel() {
-        return getDelegate().getPartitionEncoderParquetCompressionLevel();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetRowGroupSize() {
-        return getDelegate().getPartitionEncoderParquetRowGroupSize();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetDataPageSize() {
-        return getDelegate().getPartitionEncoderParquetDataPageSize();
     }
 
     protected CairoConfiguration getDelegate() {

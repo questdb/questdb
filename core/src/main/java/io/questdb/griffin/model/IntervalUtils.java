@@ -454,7 +454,6 @@ public final class IntervalUtils {
                             int sec = Numbers.parseInt(seq, p, p += 2);
                             checkRange(sec, 0, 59);
                             if (p < lim && seq.charAt(p) == '.') {
-
                                 p++;
                                 // varlen milli and micros
                                 int micrLim = p + 6;

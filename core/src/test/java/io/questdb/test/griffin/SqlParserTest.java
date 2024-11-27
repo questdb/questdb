@@ -24,17 +24,16 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.Metrics;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlParser;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.WindowColumn;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
@@ -42,11 +41,9 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Ignore;
@@ -54,6 +51,7 @@ import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.getSystemTablesCount;
 
@@ -1931,7 +1929,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testCreateTableCastIndexDef() throws SqlException {
         assertCreateTable(
-                "create batch 1000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), index(c capacity 512), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache)",
+                "create batch 1000000 table x as (select-choose a, b, c from (select [a, b, c] from tab)), cast(a as DOUBLE:35), cast(c as SYMBOL:54 capacity 32 nocache index capacity 512)",
                 "create table x as (tab), cast(a as double), cast(c as symbol capacity 20 nocache), index(c capacity 300)",
                 modelOf("tab")
                         .col("a", ColumnType.INT)
@@ -2393,7 +2391,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testCreateTableInVolumeFail() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                ddl("create table tst0 (" +
+                execute("create table tst0 (" +
                         "a INT, " +
                         "b BYTE, " +
                         "c CHAR, " +
@@ -2502,7 +2500,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "TIMESTAMP(t) " +
                         "PARTITION BY YEAR",
                 60,
-                "indexes are supported only for SYMBOL columns: b"
+                "indexes are supported only for SYMBOL columns [columnName=b, columnType=BYTE]"
         );
     }
 
@@ -2578,7 +2576,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "timestamp(zyz) " +
                         "partition by YEAR",
                 112,
-                "Invalid column"
+                "invalid designated timestamp column [name=zyz]"
         );
     }
 
@@ -4939,7 +4937,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "CREATE TABLE ts_test ( close_date date ) timestamp(close_date);",
                 51,
-                "TIMESTAMP column expected [actual=DATE]"
+                "TIMESTAMP column expected [actual=DATE, columnName=close_date]"
         );
     }
 
@@ -6304,7 +6302,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testNonWindowFunctionInWindowContext() throws Exception {
         assertException(
-                "select max(price) over (partition by symbol) from trades",
+                "select ksum(price) over (partition by symbol) from trades",
                 "create table trades " +
                         "(" +
                         " price double," +
@@ -7958,7 +7956,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByFromToWithAlignToFirstObservation() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE tbl (ts TIMESTAMP, price DOUBLE)");
+            execute("CREATE TABLE tbl (ts TIMESTAMP, price DOUBLE)");
             assertException("select ts, avg(price) from tbl sample by 5m from '2018' align to first observation", 82, "incompatible");
         });
     }
@@ -8078,7 +8076,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleBySelectStar() throws Exception {
-        ddl("CREATE TABLE 'cpu' (\n" +
+        execute("CREATE TABLE 'cpu' (\n" +
                 "  hostname SYMBOL capacity 256 CACHE,\n" +
                 "  region SYMBOL capacity 256 CACHE,\n" +
                 "  datacenter SYMBOL capacity 256 CACHE,\n" +
@@ -8543,20 +8541,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectContainsDuplicateColumnAliases() throws Exception {
-        ddl(
+        execute(
                 "CREATE TABLE t1 (" +
                         "  ts TIMESTAMP, " +
                         "  x INT" +
                         ") TIMESTAMP(ts) PARTITION BY DAY"
         );
-        ddl(
+        execute(
                 "CREATE TABLE t2 (" +
                         "  ts TIMESTAMP, " +
                         "  x INT" +
                         ") TIMESTAMP(ts) PARTITION BY DAY"
         );
-        insert("INSERT INTO t1(ts, x) VALUES (1, 1)");
-        insert("INSERT INTO t2(ts, x) VALUES (1, 2)");
+        execute("INSERT INTO t1(ts, x) VALUES (1, 1)");
+        execute("INSERT INTO t2(ts, x) VALUES (1, 2)");
         engine.releaseInactive();
 
         assertSql("TS\tts1\tx\tts2\n" +
@@ -9376,53 +9374,41 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testTableNameCannotOpen() throws Exception {
-        final FilesFacade ff = new TestFilesFacadeImpl() {
+        TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
+
+        AtomicInteger failureCountDown = new AtomicInteger(tableModels.length + 1);
+
+        AbstractCairoTest.ff = new TestFilesFacadeImpl() {
             @Override
             public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
-                    return -1;
+                    if (failureCountDown.decrementAndGet() <= 0) {
+                        return -1;
+                    }
                 }
                 return super.openRO(name);
             }
         };
-
-        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-            @Override
-            public @NotNull FilesFacade getFilesFacade() {
-                return ff;
-            }
-
-            @Override
-            public long getSpinLockTimeout() {
-                return 1000;
-            }
-        };
-
+        AbstractCairoTest.spinLockTimeout = 50;
         assertMemoryLeak(() -> {
-            try (
-                    CairoEngine engine = new CairoEngine(configuration, Metrics.disabled());
-                    SqlCompiler compiler = engine.getSqlCompiler()
-            ) {
-                TableModel[] tableModels = new TableModel[]{modelOf("tab").col("x", ColumnType.INT)};
+            try {
                 try {
-                    try (SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, sqlExecutionContext.getWorkerCount(), sqlExecutionContext.getSharedWorkerCount())) {
-                        for (int i = 0, n = tableModels.length; i < n; i++) {
-                            TestUtils.create(tableModels[i], engine);
-                        }
-                        compiler.compile("select * from tab", ctx);
-                        Assert.fail("Exception expected");
-                    } catch (SqlException e) {
-                        Assert.assertEquals(14, e.getPosition());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                    for (int i = 0, n = tableModels.length; i < n; i++) {
+                        TestUtils.createTable(engine, tableModels[i]);
                     }
-                } finally {
-                    try (Path path = new Path()) {
-                        for (int i = 0, n = tableModels.length; i < n; i++) {
-                            TableModel tableModel = tableModels[i];
-                            TableToken tableToken = engine.verifyTableName(tableModel.getName());
-                            path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
-                            Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
-                        }
+                    engine.select("select * from tab", sqlExecutionContext);
+                    Assert.fail("Exception expected");
+                } catch (SqlException e) {
+                    Assert.assertEquals(14, e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                }
+            } finally {
+                try (Path path = new Path()) {
+                    for (int i = 0, n = tableModels.length; i < n; i++) {
+                        TableModel tableModel = tableModels[i];
+                        TableToken tableToken = engine.verifyTableName(tableModel.getName());
+                        path.of(tableModel.getConfiguration().getRoot()).concat(tableToken).slash$();
+                        Assert.assertTrue(configuration.getFilesFacade().rmdir(path));
                     }
                 }
             }
@@ -10171,7 +10157,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         for (String frameType : frameTypes) {
                             ExecutionModel model = compiler.testCompileModel(query.replace("#FRAME", frameType), sqlExecutionContext);
-                            Assert.assertEquals(model.getModelType(), ExecutionModel.QUERY);
+                            Assert.assertEquals(ExecutionModel.QUERY, model.getModelType());
                             sink.clear();
                             ((Sinkable) model).toSink(sink);
                             String expected = expectedTemplate.replace("#FRAME", frameType.trim())

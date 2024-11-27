@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -44,7 +45,7 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Force re-hydrates the CairoMetadata cache.
+ * Force re-hydrates the MetadataCache cache.
  * Either give:
  * A wildcard on its own: hydrate_table_metadata('*')
  * or  A set of table names:  hydrate_table_metadata('foo', 'bah')
@@ -105,46 +106,50 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
         }
 
         if (tableTokens.size() > 0) {
-            return new HydrateTableMetadataFunction(tableTokens, engine);
+            return new HydrateTableMetadataFunction(tableTokens, engine, position);
         } else {
             throw SqlException.$(position, "no valid table names provided");
         }
     }
 
     private static class HydrateTableMetadataFunction extends BooleanFunction {
+        private final int functionPosition;
         private final ObjList<TableToken> tableTokens;
         private CairoEngine engine;
 
-        public HydrateTableMetadataFunction(@NotNull ObjList<TableToken> tableTokens, @NotNull CairoEngine engine) {
+        public HydrateTableMetadataFunction(@NotNull ObjList<TableToken> tableTokens, @NotNull CairoEngine engine, int functionPosition) {
             this.tableTokens = tableTokens;
             this.engine = engine;
+            this.functionPosition = functionPosition;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                final TableToken tableToken = tableTokens.getQuick(i);
-                if (!tableToken.isSystem()) {
-                    try {
-                        engine.metadataCacheHydrateTable(tableTokens.getQuick(i), true, true);
-                    } catch (CairoException ex) {
-                        LOG.error().$("could not hydrate metadata: [table=").$(tableToken).I$();
-                        return false;
-                    }
-                }
-            }
             return true;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            executionContext.getSecurityContext().authorizeAdminAction();
+            executionContext.getSecurityContext().authorizeSystemAdmin();
             engine = executionContext.getCairoEngine();
             super.init(symbolTableSource, executionContext);
+            for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                final TableToken tableToken = tableTokens.getQuick(i);
+                if (!tableToken.isSystem()) {
+                    try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                        metadataRW.hydrateTable(tableTokens.getQuick(i));
+                    } catch (Throwable e) {
+                        if (e instanceof CairoException) {
+                            ((CairoException) e).position(functionPosition);
+                        }
+                        throw e;
+                    }
+                }
+            }
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
 

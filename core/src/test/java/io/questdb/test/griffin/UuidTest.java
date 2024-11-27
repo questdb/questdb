@@ -36,7 +36,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testBadConstantUuidWithExplicitCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
+            execute("create table x (u UUID)");
             assertExceptionNoLeakCheck(
                     "insert into x values (cast ('a0eebc11-110b-11f8-116d' as uuid))",
                     28,
@@ -48,7 +48,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testBadUuidWithImplicitCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
+            execute("create table x (u UUID)");
             assertExceptionNoLeakCheck(
                     "insert into x values ('a0eebc11-110b-11f8-116d')",
                     0,
@@ -60,10 +60,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testBindVariableInFilterInvalid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b uuid)");
-            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+            execute("create table x (b uuid)");
+            execute("insert into x values('11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values('33333333-3333-3333-3333-333333333333')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
@@ -77,10 +77,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testBindVariableInFilterInvalidNegated() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b uuid)");
-            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+            execute("create table x (b uuid)");
+            execute("insert into x values('11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values('33333333-3333-3333-3333-333333333333')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
@@ -97,8 +97,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testCastVarcharToUuid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i INT, u UUID)");
-            insert("insert into x values (0, cast(cast('11111111-1111-1111-1111-111111111111' as varchar) as uuid))");
+            execute("create table x (i INT, u UUID)");
+            execute("insert into x values (0, cast(cast('11111111-1111-1111-1111-111111111111' as varchar) as uuid))");
 
             assertSql(
                     "i\tu\n" +
@@ -120,10 +120,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testCastingNullUUIDtoString() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u uuid)");
-            insert("insert into x values (null)");
-            ddl("create table y (s string)");
-            ddl("insert into y select cast (u as string) from x");
+            execute("create table x (u uuid)");
+            execute("insert into x values (null)");
+            execute("create table y (s string)");
+            execute("insert into y select cast (u as string) from x");
             assertSql(
                     "column\n" +
                             "true\n",
@@ -146,12 +146,12 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // UUID is implicitly cast to String
             // and we can compare strings to symbols
-            ddl("create table x (u UUID, s SYMBOL)");
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111', 'whatever')");
-            insert("insert into x values (null, null)");
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111', null)");
-            insert("insert into x values (null, 'whatever')");
+            execute("create table x (u UUID, s SYMBOL)");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111', 'whatever')");
+            execute("insert into x values (null, null)");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111', null)");
+            execute("insert into x values (null, 'whatever')");
 
             assertSql(
                     "column\n" +
@@ -168,11 +168,11 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testConcatFunction() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u1 UUID, u2 UUID, u3 UUID)");
-            insert("insert into x values (cast('11111111-1111-1111-1111-111111111111' as uuid), '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')");
-            insert("insert into x values (cast('11111111-1111-1111-1111-111111111111' as uuid), null, null)");
-            insert("insert into x values (null, null, null)");
-            insert("insert into x values (cast('11111111-1111-1111-1111-111111111111' as uuid), null, '22222222-2222-2222-2222-222222222222')");
+            execute("create table x (u1 UUID, u2 UUID, u3 UUID)");
+            execute("insert into x values (cast('11111111-1111-1111-1111-111111111111' as uuid), '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')");
+            execute("insert into x values (cast('11111111-1111-1111-1111-111111111111' as uuid), null, null)");
+            execute("insert into x values (null, null, null)");
+            execute("insert into x values (cast('11111111-1111-1111-1111-111111111111' as uuid), null, '22222222-2222-2222-2222-222222222222')");
 
             assertSql(
                     "concat\n" +
@@ -205,10 +205,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testConstantInFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b uuid)");
-            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+            execute("create table x (b uuid)");
+            execute("insert into x values('11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values('33333333-3333-3333-3333-333333333333')");
             assertSql(
                     "b\n" +
                             "22222222-2222-2222-2222-222222222222\n",
@@ -220,19 +220,23 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testCopyVarcharToUuid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i INT, u VARCHAR)");
-            insert("insert into x values (0, cast('11111111-1111-1111-1111-111111111111' as varchar))");
-            insert("insert into x values (0, cast('22222222-2222-2222-2222-222222222222' as varchar))");
-            insert("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
-            insert("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
-            insert("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
+            execute("create table x (i INT, u VARCHAR)");
+            execute("insert into x values (0, cast('11111111-1111-1111-1111-111111111111' as varchar))");
+            execute("insert into x values (0, cast('22222222-2222-2222-2222-222222222222' as varchar))");
+            execute("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
+            execute("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
+            execute("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
 
-
+            String expected = "i\tcount_distinct\n" +
+                    "0\t2\n" +
+                    "1\t1\n";
             assertSql(
-                    "i\tcount_distinct\n" +
-                            "0\t2\n" +
-                            "1\t1\n",
+                    expected,
                     "select i, count_distinct(u) from x group by i order by i"
+            );
+            assertSql(
+                    expected,
+                    "select i, count(distinct u) from x group by i order by i"
             );
         });
     }
@@ -240,12 +244,12 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testCountAggregation() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i INT, u UUID)");
-            insert("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values (0, '22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
-            insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
-            insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+            execute("create table x (i INT, u UUID)");
+            execute("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values (0, '22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+            execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+            execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
 
             assertSql(
                     "i\tcount\n" +
@@ -259,18 +263,23 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testCountDistinctAggregation_keyed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i INT, u UUID)");
-            insert("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values (0, '22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
-            insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
-            insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+            execute("create table x (i INT, u UUID)");
+            execute("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values (0, '22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+            execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+            execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
 
+            String expected = "i\tcount_distinct\n" +
+                    "0\t2\n" +
+                    "1\t1\n";
             assertSql(
-                    "i\tcount_distinct\n" +
-                            "0\t2\n" +
-                            "1\t1\n",
+                    expected,
                     "select i, count_distinct(u) from x group by i order by i"
+            );
+            assertSql(
+                    expected,
+                    "select i, count(distinct u) from x group by i order by i"
             );
         });
     }
@@ -278,17 +287,22 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testCountDistinctAggregation_nonkeyed() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i INT, u UUID)");
-            insert("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values (0, '22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
-            insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
-            insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+            execute("create table x (i INT, u UUID)");
+            execute("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values (0, '22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+            execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
+            execute("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
 
+            String expected = "count_distinct\n" +
+                    "3\n";
             assertSql(
-                    "count_distinct\n" +
-                            "3\n",
+                    expected,
                     "select count_distinct(u) from x"
+            );
+            assertSql(
+                    expected,
+                    "select count(distinct u) from x"
             );
         });
     }
@@ -311,8 +325,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testEqVarBadStringToVarNullUuid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (s STRING, u UUID)");
-            insert("insert into x values ('not a uuid', null)");
+            execute("create table x (s STRING, u UUID)");
+            execute("insert into x values ('not a uuid', null)");
             assertSql(
                     "column\n" +
                             "false\n",
@@ -324,8 +338,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testEqVarStringToUuid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (s1 STRING, s2 STRING, s3 STRING, s4 STRING, s5 STRING)");
-            insert("insert into x values (null, null, '11111111-1111-1111-1111-111111111111', 'not a uuid', '11111111-1111-1111-1111-111111111111')");
+            execute("create table x (s1 STRING, s2 STRING, s3 STRING, s4 STRING, s5 STRING)");
+            execute("insert into x values (null, null, '11111111-1111-1111-1111-111111111111', 'not a uuid', '11111111-1111-1111-1111-111111111111')");
 
             assertSql(
                     "column\tcolumn1\tcolumn2\tcolumn3\tcolumn4\n" +
@@ -344,8 +358,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testEqualityComparisonConstantOnLeft() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
+            execute("create table x (u UUID)");
+            execute("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
             assertSql(
                     "u\n" +
                             "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
@@ -357,8 +371,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testEqualityComparisonExplicitCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
+            execute("create table x (u UUID)");
+            execute("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
             assertSql(
                     "u\n" +
                             "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
@@ -370,8 +384,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testEqualityComparisonImplicitCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
+            execute("create table x (u UUID)");
+            execute("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
             assertSql(
                     "u\n" +
                             "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
@@ -383,8 +397,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testExplicitCastWithEmptyStringConstant() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values (cast('' as uuid))");
+            execute("create table x (u UUID)");
+            execute("insert into x values (cast('' as uuid))");
             assertSql(
                     "u\n" +
                             "\n",
@@ -396,8 +410,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testExplicitCastWithNullStringConstant() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values (cast(null as string))");
+            execute("create table x (u UUID)");
+            execute("insert into x values (cast(null as string))");
             assertSql(
                     "u\n" +
                             "\n",
@@ -409,11 +423,11 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testGroupByUuid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i INT, u UUID)");
-            insert("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values (1, '11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values (2, '22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values (3, '22222222-2222-2222-2222-222222222222')");
+            execute("create table x (i INT, u UUID)");
+            execute("insert into x values (0, '11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values (1, '11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values (2, '22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values (3, '22222222-2222-2222-2222-222222222222')");
 
             assertSql(
                     "u\tsum\n" +
@@ -427,12 +441,12 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testIn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values ('22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values ('33333333-3333-3333-3333-333333333333')");
-            insert("insert into x values ('44444444-4444-4444-4444-444444444444')");
-            insert("insert into x values (null)");
+            execute("create table x (u UUID)");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values ('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values ('33333333-3333-3333-3333-333333333333')");
+            execute("insert into x values ('44444444-4444-4444-4444-444444444444')");
+            execute("insert into x values (null)");
 
             assertSql(
                     "u\n" +
@@ -463,8 +477,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testIn_unexpectedType() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("create table x (u UUID)");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
 
             assertException("select * from x where u in (42)", 28, "cannot compare UUID with type INT");
         });
@@ -473,10 +487,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b uuid)");
-            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+            execute("create table x (b uuid)");
+            execute("insert into x values('11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values('33333333-3333-3333-3333-333333333333')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "22222222-2222-2222-2222-222222222222");
@@ -491,10 +505,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInFilter2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b uuid)");
-            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+            execute("create table x (b uuid)");
+            execute("insert into x values('11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values('33333333-3333-3333-3333-333333333333')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "22222222-2222-2222-2222-222222222222");
@@ -510,11 +524,11 @@ public class UuidTest extends AbstractCairoTest {
     public void testInsertAddUuidColumnAndThenO3Insert() throws Exception {
         assertMemoryLeak(() -> {
             // testing O3 insert when uuid columnTop > 0
-            ddl("create table x (ts timestamp, i int) timestamp(ts) partition by MONTH");
-            insert("insert into x values ('2018-01-01', 1)");
-            insert("insert into x values ('2018-01-03', 1)");
-            ddl("alter table x add column u uuid");
-            insert("insert into x values ('2018-01-02', 1, '00000000-0000-0000-0000-000000000000')");
+            execute("create table x (ts timestamp, i int) timestamp(ts) partition by MONTH");
+            execute("insert into x values ('2018-01-01', 1)");
+            execute("insert into x values ('2018-01-03', 1)");
+            execute("alter table x add column u uuid");
+            execute("insert into x values ('2018-01-02', 1, '00000000-0000-0000-0000-000000000000')");
             assertSql(
                     "ts\ti\tu\n" +
                             "2018-01-01T00:00:00.000000Z\t1\t\n" +
@@ -528,8 +542,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testInsertExplicitNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values (null)");
+            execute("create table x (u UUID)");
+            execute("insert into x values (null)");
             assertSql(
                     "u\n" +
                             "\n",
@@ -541,7 +555,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testInsertFromFunctionReturningLong() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
+            execute("create table x (u UUID)");
             assertExceptionNoLeakCheck("insert into x values (rnd_long())", 22, "inconvertible types");
         });
     }
@@ -549,8 +563,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testInsertFromFunctionReturningString() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values (rnd_str('11111111-1111-1111-1111-111111111111'))");
+            execute("create table x (u UUID)");
+            execute("insert into x values (rnd_str('11111111-1111-1111-1111-111111111111'))");
             assertSql(
                     "u\n" +
                             "11111111-1111-1111-1111-111111111111\n",
@@ -562,8 +576,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testInsertNullByOmitting() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i INT, u UUID, i2 INT)");
-            insert("insert into x (i, i2) values (42, 0)");
+            execute("create table x (i INT, u UUID, i2 INT)");
+            execute("insert into x (i, i2) values (42, 0)");
             assertSql(
                     "i\tu\ti2\n" +
                             "42\t\t0\n",
@@ -575,10 +589,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testInsertNullUuidColumnIntoStringColumnImplicitCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u uuid)");
-            insert("insert into x values (null)");
-            ddl("create table y (s string)");
-            ddl("insert into y select u from x");
+            execute("create table x (u uuid)");
+            execute("insert into x values (null)");
+            execute("create table y (s string)");
+            execute("insert into y select u from x");
             assertSql(
                     "column\n" +
                             "true\n",
@@ -590,9 +604,9 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testInsertUuidColumnIntoIntColumnImplicitCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u uuid)");
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            ddl("create table y (i int)");
+            execute("create table x (u uuid)");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("create table y (i int)");
             assertExceptionNoLeakCheck("insert into y select u from x", 21, "inconvertible types");
         });
     }
@@ -600,10 +614,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testInsertUuidColumnIntoStringColumnExplicitCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u uuid)");
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            ddl("create table y (s string)");
-            ddl("insert into y select cast (u as string) from x");
+            execute("create table x (u uuid)");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("create table y (s string)");
+            execute("insert into y select cast (u as string) from x");
             assertSql(
                     "s\n" +
                             "11111111-1111-1111-1111-111111111111\n",
@@ -615,10 +629,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testInsertUuidColumnIntoStringColumnImplicitCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u uuid)");
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            ddl("create table y (s string)");
-            ddl("insert into y select u from x");
+            execute("create table x (u uuid)");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("create table y (s string)");
+            execute("insert into y select u from x");
             assertSql(
                     "s\n" +
                             "11111111-1111-1111-1111-111111111111\n",
@@ -630,8 +644,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testInsertWithExplicitCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
+            execute("create table x (u UUID)");
+            execute("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
             assertSql(
                     "u\n" +
                             "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
@@ -643,8 +657,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testInsertWithImplicitCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values ('a0eebc11-110b-11f8-116d-11b9bd380a11')");
+            execute("create table x (u UUID)");
+            execute("insert into x values ('a0eebc11-110b-11f8-116d-11b9bd380a11')");
             assertSql(
                     "u\n" +
                             "a0eebc11-110b-11f8-116d-11b9bd380a11\n",
@@ -656,10 +670,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testLatestOn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (ts timestamp, u uuid, i int) timestamp(ts) partition by DAY");
-            insert("insert into x values ('2020-01-01T00:00:00.000000Z', '00000000-0000-0000-0000-000000000001', 0)");
-            insert("insert into x values ('2020-01-02T00:01:00.000000Z', '00000000-0000-0000-0000-000000000001', 2)");
-            insert("insert into x values ('2020-01-02T00:01:00.000000Z', '00000000-0000-0000-0000-000000000002', 0)");
+            execute("create table x (ts timestamp, u uuid, i int) timestamp(ts) partition by DAY");
+            execute("insert into x values ('2020-01-01T00:00:00.000000Z', '00000000-0000-0000-0000-000000000001', 0)");
+            execute("insert into x values ('2020-01-02T00:01:00.000000Z', '00000000-0000-0000-0000-000000000001', 2)");
+            execute("insert into x values ('2020-01-02T00:01:00.000000Z', '00000000-0000-0000-0000-000000000002', 0)");
 
             assertSql(
                     "ts\tu\ti\n" +
@@ -673,8 +687,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testLongExplicitCastAsUuid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (l long)");
-            insert("insert into x values (42)");
+            execute("create table x (l long)");
+            execute("insert into x values (42)");
             assertExceptionNoLeakCheck("select cast(l as uuid) from x", 7, "there is no matching function `cast` with the argument types: (LONG, UUID)");
         });
     }
@@ -691,8 +705,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testLongsToUuid_fromTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (lo long, hi long)");
-            insert("insert into x values (2, 1)");
+            execute("create table x (lo long, hi long)");
+            execute("insert into x values (2, 1)");
             assertSql(
                     "uuid\n" +
                             "00000000-0000-0001-0000-000000000002\n",
@@ -713,8 +727,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testLongsToUuid_nullFromTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (lo long, hi long)");
-            insert("insert into x values (null, null)");
+            execute("create table x (lo long, hi long)");
+            execute("insert into x values (null, null)");
             assertSql(
                     "uuid\n" +
                             "\n",
@@ -726,10 +740,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testNamedBindVariableInFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b uuid)");
-            insert("insert into x values('11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values('22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values('33333333-3333-3333-3333-333333333333')");
+            execute("create table x (b uuid)");
+            execute("insert into x values('11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values('33333333-3333-3333-3333-333333333333')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("uuid", "22222222-2222-2222-2222-222222222222");
@@ -746,8 +760,8 @@ public class UuidTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             Uuid uuid = new Uuid();
             uuid.of("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11");
-            ddl("create table x (u UUID)");
-            insert("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
+            execute("create table x (u UUID)");
+            execute("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
             assertSql(
                     "u\n" +
                             "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
@@ -759,8 +773,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testNegatedEqualityComparisonImplicitCast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
+            execute("create table x (u UUID)");
+            execute("insert into x values (cast('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' as uuid))");
             assertSql(
                     "u\n" +
                             "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n",
@@ -772,9 +786,9 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedFirstAggregation() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xxx(u uuid)");
-            insert("insert into xxx values ('54710940-38c0-4d93-92db-43b7cad84228')");
-            insert("insert into xxx values ('')");
+            execute("create table xxx(u uuid)");
+            execute("insert into xxx values ('54710940-38c0-4d93-92db-43b7cad84228')");
+            execute("insert into xxx values ('')");
 
             assertSql(
                     "first\n" +
@@ -787,9 +801,9 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedLastAggregation() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table xxx(u uuid)");
-            insert("insert into xxx values ('54710940-38c0-4d93-92db-43b7cad84228')");
-            insert("insert into xxx values ('')"); // empty string is implicitly cast to null
+            execute("create table xxx(u uuid)");
+            execute("insert into xxx values ('54710940-38c0-4d93-92db-43b7cad84228')");
+            execute("insert into xxx values ('')"); // empty string is implicitly cast to null
 
             assertSql(
                     "last\n" +
@@ -802,9 +816,9 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testO3_differentPartition() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (ts timestamp, u UUID) timestamp(ts) partition by DAY");
-            insert("insert into x values (to_timestamp('2018-01', 'yyyy-MM'), 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
-            insert("insert into x values (to_timestamp('2010-01', 'yyyy-MM'), 'a0eebc11-110b-4242-116d-11b9bd380a11')");
+            execute("create table x (ts timestamp, u UUID) timestamp(ts) partition by DAY");
+            execute("insert into x values (to_timestamp('2018-01', 'yyyy-MM'), 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
+            execute("insert into x values (to_timestamp('2010-01', 'yyyy-MM'), 'a0eebc11-110b-4242-116d-11b9bd380a11')");
 
             assertSql(
                     "ts\tu\n" +
@@ -818,9 +832,9 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testO3_samePartition() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (ts timestamp, u UUID) timestamp(ts) partition by YEAR");
-            insert("insert into x values (to_timestamp('2018-06', 'yyyy-MM'), 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
-            insert("insert into x values (to_timestamp('2018-01', 'yyyy-MM'), 'a0eebc11-110b-4242-116d-11b9bd380a11')");
+            execute("create table x (ts timestamp, u UUID) timestamp(ts) partition by YEAR");
+            execute("insert into x values (to_timestamp('2018-06', 'yyyy-MM'), 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
+            execute("insert into x values (to_timestamp('2018-01', 'yyyy-MM'), 'a0eebc11-110b-4242-116d-11b9bd380a11')");
 
             assertSql(
                     "ts\tu\n" +
@@ -834,40 +848,40 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testOrderByUuid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i INT, u UUID)");
-            insert("insert into x values (2, '00000000-0000-0000-0000-000000000000')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-000000000001')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-000000000010')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-000000000100')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-000000001000')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-000000010000')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-000000100000')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-000001000000')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-000010000000')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-000100000000')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-001000000000')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-010000000000')");
-            insert("insert into x values (1, '00000000-0000-0000-0000-100000000000')");
-            insert("insert into x values (1, '00000000-0000-0000-0001-000000000000')");
-            insert("insert into x values (1, '00000000-0000-0000-0010-000000000000')");
-            insert("insert into x values (1, '00000000-0000-0000-0100-000000000000')");
-            insert("insert into x values (1, '00000000-0000-0000-1000-000000000000')");
-            insert("insert into x values (1, '00000000-0000-0001-0000-000000000000')");
-            insert("insert into x values (1, '00000000-0000-0010-0000-000000000000')");
-            insert("insert into x values (1, '00000000-0000-0100-0000-000000000000')");
-            insert("insert into x values (1, '00000000-0000-1000-0000-000000000000')");
-            insert("insert into x values (1, '00000000-0001-0000-0000-000000000000')");
-            insert("insert into x values (1, '00000000-0010-0000-0000-000000000000')");
-            insert("insert into x values (1, '00000000-0100-0000-0000-000000000000')");
-            insert("insert into x values (1, '00000000-1000-0000-0000-000000000000')");
-            insert("insert into x values (1, '00000001-0000-0000-0000-000000000000')");
-            insert("insert into x values (1, '00000010-0000-0000-0000-000000000000')");
-            insert("insert into x values (1, '00000100-0000-0000-0000-000000000000')");
-            insert("insert into x values (1, '00001000-0000-0000-0000-000000000000')");
-            insert("insert into x values (1, '00010000-0000-0000-0000-000000000000')");
-            insert("insert into x values (1, '00100000-0000-0000-0000-000000000000')");
-            insert("insert into x values (1, '01000000-0000-0000-0000-000000000000')");
-            insert("insert into x values (1, '10000000-0000-0000-0000-000000000000')");
+            execute("create table x (i INT, u UUID)");
+            execute("insert into x values (2, '00000000-0000-0000-0000-000000000000')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-000000000001')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-000000000010')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-000000000100')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-000000001000')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-000000010000')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-000000100000')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-000001000000')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-000010000000')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-000100000000')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-001000000000')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-010000000000')");
+            execute("insert into x values (1, '00000000-0000-0000-0000-100000000000')");
+            execute("insert into x values (1, '00000000-0000-0000-0001-000000000000')");
+            execute("insert into x values (1, '00000000-0000-0000-0010-000000000000')");
+            execute("insert into x values (1, '00000000-0000-0000-0100-000000000000')");
+            execute("insert into x values (1, '00000000-0000-0000-1000-000000000000')");
+            execute("insert into x values (1, '00000000-0000-0001-0000-000000000000')");
+            execute("insert into x values (1, '00000000-0000-0010-0000-000000000000')");
+            execute("insert into x values (1, '00000000-0000-0100-0000-000000000000')");
+            execute("insert into x values (1, '00000000-0000-1000-0000-000000000000')");
+            execute("insert into x values (1, '00000000-0001-0000-0000-000000000000')");
+            execute("insert into x values (1, '00000000-0010-0000-0000-000000000000')");
+            execute("insert into x values (1, '00000000-0100-0000-0000-000000000000')");
+            execute("insert into x values (1, '00000000-1000-0000-0000-000000000000')");
+            execute("insert into x values (1, '00000001-0000-0000-0000-000000000000')");
+            execute("insert into x values (1, '00000010-0000-0000-0000-000000000000')");
+            execute("insert into x values (1, '00000100-0000-0000-0000-000000000000')");
+            execute("insert into x values (1, '00001000-0000-0000-0000-000000000000')");
+            execute("insert into x values (1, '00010000-0000-0000-0000-000000000000')");
+            execute("insert into x values (1, '00100000-0000-0000-0000-000000000000')");
+            execute("insert into x values (1, '01000000-0000-0000-0000-000000000000')");
+            execute("insert into x values (1, '10000000-0000-0000-0000-000000000000')");
 
             assertSql(
                     "i\tu\n" +
@@ -960,11 +974,11 @@ public class UuidTest extends AbstractCairoTest {
     public void testRandomizedOrderBy() throws Exception {
         final int count = 1000;
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
+            execute("create table x (u UUID)");
             UUID[] uuids = new UUID[count];
             for (int i = 0; i < count; i++) {
                 UUID uuid = UUID.randomUUID();
-                insert("insert into x values ('" + uuid + "')");
+                execute("insert into x values ('" + uuid + "')");
                 uuids[i] = uuid;
             }
             Arrays.sort(uuids);
@@ -988,7 +1002,7 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testRndUuid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_uuid4() from long_sequence(10))");
+            execute("create table x as (select rnd_uuid4() from long_sequence(10))");
             assertSql(
                     "rnd_uuid4\n" +
                             "0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
@@ -1009,10 +1023,10 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testStrColumnInFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b uuid, a string)");
-            insert("insert into x values('11111111-1111-1111-1111-111111111111','foobar')");
-            insert("insert into x values('22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222')");
-            insert("insert into x values('33333333-3333-3333-3333-333333333333','barbaz')");
+            execute("create table x (b uuid, a string)");
+            execute("insert into x values('11111111-1111-1111-1111-111111111111','foobar')");
+            execute("insert into x values('22222222-2222-2222-2222-222222222222','22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values('33333333-3333-3333-3333-333333333333','barbaz')");
             assertSql(
                     "b\ta\n" +
                             "22222222-2222-2222-2222-222222222222\t22222222-2222-2222-2222-222222222222\n",
@@ -1024,8 +1038,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testStringOverloadFunction() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u uuid)");
-            insert("insert into x values ('22222222-2222-2222-2222-222222222222')");
+            execute("create table x (u uuid)");
+            execute("insert into x values ('22222222-2222-2222-2222-222222222222')");
             assertSql(
                     "length\n" +
                             "36\n",
@@ -1037,8 +1051,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testStringOverloadFunctionWithNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u uuid)");
-            insert("insert into x values (null)");
+            execute("create table x (u uuid)");
+            execute("insert into x values (null)");
             assertSql(
                     "length\n" +
                             "-1\n",
@@ -1050,9 +1064,9 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testTwoVarComparison() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u1 UUID, u2 UUID)");
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111')");
-            insert("insert into x values ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111')");
+            execute("create table x (u1 UUID, u2 UUID)");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111', '11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values ('33333333-3333-3333-3333-333333333333', '11111111-1111-1111-1111-111111111111')");
             assertSql(
                     "u1\tu2\n" +
                             "11111111-1111-1111-1111-111111111111\t11111111-1111-1111-1111-111111111111\n",
@@ -1073,11 +1087,11 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUnionAllArbitraryStringWithUuid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u string)");
-            ddl("create table y (u uuid)");
+            execute("create table x (u string)");
+            execute("create table y (u uuid)");
 
-            insert("insert into x values ('totally not a uuid')");
-            insert("insert into y values ('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values ('totally not a uuid')");
+            execute("insert into y values ('22222222-2222-2222-2222-222222222222')");
 
             assertSql(
                     "u\n" +
@@ -1091,11 +1105,11 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUnionAllDups() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            ddl("create table y (u UUID)");
+            execute("create table x (u UUID)");
+            execute("create table y (u UUID)");
 
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            insert("insert into y values ('11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("insert into y values ('11111111-1111-1111-1111-111111111111')");
 
             assertSql(
                     "u\n" +
@@ -1109,12 +1123,12 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUnionAllNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            ddl("create table y (u UUID)");
+            execute("create table x (u UUID)");
+            execute("create table y (u UUID)");
 
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            insert("insert into y values (null)");
-            insert("insert into y values (null)");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("insert into y values (null)");
+            execute("insert into y values (null)");
 
             assertSql(
                     "u\n" +
@@ -1129,11 +1143,11 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUnionAllSimple() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            ddl("create table y (u UUID)");
+            execute("create table x (u UUID)");
+            execute("create table y (u UUID)");
 
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            insert("insert into y values ('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("insert into y values ('22222222-2222-2222-2222-222222222222')");
 
             assertSql(
                     "u\n" +
@@ -1147,11 +1161,11 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUnionAllStringWithUuid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u string)");
-            ddl("create table y (u uuid)");
+            execute("create table x (u string)");
+            execute("create table y (u uuid)");
 
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            insert("insert into y values ('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("insert into y values ('22222222-2222-2222-2222-222222222222')");
 
             assertSql(
                     "u\n" +
@@ -1165,11 +1179,11 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUnionAllUuidWithArbitraryString() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u uuid)");
-            ddl("create table y (u string)");
+            execute("create table x (u uuid)");
+            execute("create table y (u string)");
 
-            insert("insert into x values ('22222222-2222-2222-2222-222222222222')");
-            insert("insert into y values ('totally not a uuid')");
+            execute("insert into x values ('22222222-2222-2222-2222-222222222222')");
+            execute("insert into y values ('totally not a uuid')");
 
             assertSql(
                     "u\n" +
@@ -1183,11 +1197,11 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUnionAllUuidWithString() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            ddl("create table y (u string)");
+            execute("create table x (u UUID)");
+            execute("create table y (u string)");
 
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            insert("insert into y values ('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("insert into y values ('22222222-2222-2222-2222-222222222222')");
 
             assertSql(
                     "u\n" +
@@ -1201,11 +1215,11 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUnionDups() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            ddl("create table y (u UUID)");
+            execute("create table x (u UUID)");
+            execute("create table y (u UUID)");
 
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            insert("insert into y values ('11111111-1111-1111-1111-111111111111')");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("insert into y values ('11111111-1111-1111-1111-111111111111')");
 
             assertSql(
                     "u\n" +
@@ -1218,12 +1232,12 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUnionNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            ddl("create table y (u UUID)");
+            execute("create table x (u UUID)");
+            execute("create table y (u UUID)");
 
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            insert("insert into y values (null)");
-            insert("insert into y values (null)");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("insert into y values (null)");
+            execute("insert into y values (null)");
 
             // only one null is returned - dups null are eliminated
             assertSql(
@@ -1238,11 +1252,11 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUnionSimple() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            ddl("create table y (u UUID)");
+            execute("create table x (u UUID)");
+            execute("create table y (u UUID)");
 
-            insert("insert into x values ('11111111-1111-1111-1111-111111111111')");
-            insert("insert into y values ('22222222-2222-2222-2222-222222222222')");
+            execute("insert into x values ('11111111-1111-1111-1111-111111111111')");
+            execute("insert into y values ('22222222-2222-2222-2222-222222222222')");
 
             assertSql(
                     "u\n" +
@@ -1256,8 +1270,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUpdateByUuid_nonPartitionedTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i INT, u UUID)");
-            insert("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
+            execute("create table x (i INT, u UUID)");
+            execute("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
             update("update x set i = 42 where u = 'a0eebc11-110b-11f8-116d-11b9bd380a11'");
             assertSql(
                     "i\tu\n" +
@@ -1270,8 +1284,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUpdateByUuid_partitionedTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (ts TIMESTAMP, i INT, u UUID) timestamp(ts) partition by DAY");
-            insert("insert into x values (now(), 0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
+            execute("create table x (ts TIMESTAMP, i INT, u UUID) timestamp(ts) partition by DAY");
+            execute("insert into x values (now(), 0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
             update("update x set i = 42 where u = 'a0eebc11-110b-11f8-116d-11b9bd380a11'");
             assertSql(
                     "i\tu\n" +
@@ -1284,8 +1298,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUpdateUuid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i INT, u UUID)");
-            insert("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
+            execute("create table x (i INT, u UUID)");
+            execute("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11')");
             update("update x set u = 'a0eebc11-4242-11f8-116d-11b9bd380a11' where i = 0");
             assertSql(
                     "i\tu\n" +
@@ -1298,8 +1312,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUpdateUuidWithVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (i INT, v VARCHAR, u UUID)");
-            insert("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11', null)");
+            execute("create table x (i INT, v VARCHAR, u UUID)");
+            execute("insert into x values (0, 'a0eebc11-110b-11f8-116d-11b9bd380a11', null)");
             update("update x set u = v where i = 0");
             assertSql(
                     "i\tv\tu\n" +
@@ -1312,8 +1326,8 @@ public class UuidTest extends AbstractCairoTest {
     @Test
     public void testUuidExplicitCastAsLong() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (u UUID)");
-            insert("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
+            execute("create table x (u UUID)");
+            execute("insert into x values ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11')");
             assertSql(
                     "cast\n" +
                             "null\n",

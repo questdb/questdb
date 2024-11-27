@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
@@ -255,8 +254,10 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
         }
     }
 
-    static void dropTable(SqlCompiler compiler, SqlExecutionContext context, TableToken tableToken) throws Exception {
-        compiler.compile("DROP TABLE '" + tableToken.getTableName() + '\'', context);
+    static void dropTable(SqlExecutionContext context, TableToken tableToken) throws Exception {
+        CairoEngine cairoEngine = context.getCairoEngine();
+        CharSequence dropSql = "DROP TABLE '" + tableToken.getTableName() + '\'';
+        cairoEngine.execute(dropSql, context);
     }
 
     static String[] extendArgsWith(String[] args, String... moreArgs) {

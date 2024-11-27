@@ -230,8 +230,8 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testLimitMinusOneAndPredicateAndColumnAlias() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t1 (ts timestamp, id symbol)");
-            insert("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
+            execute("create table t1 (ts timestamp, id symbol)");
+            execute("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
             assertQueryAndCache(
                     "ts\tid\n" +
                             "1970-01-01T00:00:00.000004Z\tabc\n",
@@ -257,7 +257,7 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testNegativeLimitEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table y (sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table y (sym symbol, ts timestamp) timestamp(ts) partition by day");
 
             assertQueryNoLeakCheck(
                     "sym\tts\n",
@@ -278,7 +278,7 @@ public class LimitTest extends AbstractCairoTest {
         final int N = 64 * 5;
 
         assertMemoryLeak(() -> {
-            ddl("create table y as (" +
+            execute("create table y as (" +
                     "select" +
                     " cast(x as int) i," +
                     " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
@@ -316,7 +316,7 @@ public class LimitTest extends AbstractCairoTest {
         final int N = 64 * 5;
 
         assertMemoryLeak(() -> {
-            ddl("create table y as (" +
+            execute("create table y as (" +
                     "select" +
                     " cast(x as int) i," +
                     " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
@@ -348,7 +348,7 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testNegativeLimitOnIndexedSymbolFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table y as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -359,9 +359,9 @@ public class LimitTest extends AbstractCairoTest {
                             "), index(sym) timestamp(timestamp) partition by month"
             );
 
-            insert("insert into y values (-3, 'googl', 1, to_timestamp('2001-01-01', 'yyyy-MM-dd'))");
-            insert("insert into y values (-2, 'googl', 2, to_timestamp('2002-01-01', 'yyyy-MM-dd'))");
-            insert("insert into y values (-1, 'googl', 3, to_timestamp('2003-01-01', 'yyyy-MM-dd'))");
+            execute("insert into y values (-3, 'googl', 1, to_timestamp('2001-01-01', 'yyyy-MM-dd'))");
+            execute("insert into y values (-2, 'googl', 2, to_timestamp('2002-01-01', 'yyyy-MM-dd'))");
+            execute("insert into y values (-1, 'googl', 3, to_timestamp('2003-01-01', 'yyyy-MM-dd'))");
 
             assertQueryNoLeakCheck(
                     "i\tsym\tprice\ttimestamp\n" +
@@ -397,7 +397,7 @@ public class LimitTest extends AbstractCairoTest {
                         "12\tmsft\t0.661\t2018-01-01T00:24:00.000000Z\ttrue\tO\t0.01396079545983997\t0.8136\t345\t2015-08-18T10:31:42.373Z\tVTJW\t5045825384817367685\t1970-01-01T03:03:20.000000Z\t23\t00000000 51 9d 5d 28 ac 02 2e fe 05 3b 94 5f ec d3 dc f8\n" +
                         "00000010 43\tJCTIZKYFLUHZ\n";
 
-                ddl(
+                execute(
                         "create table y as (" +
                                 "select" +
                                 " cast(x as int) i," +
@@ -437,12 +437,12 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testSelectLast10RecordsInReverseTsOrder() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE intervaltest (\n" +
+            execute("CREATE TABLE intervaltest (\n" +
                     "  id long,\n" +
                     "  ts TIMESTAMP\n" +
                     ") timestamp (ts) PARTITION BY DAY");
 
-            compile("insert into intervaltest \n" +
+            execute("insert into intervaltest \n" +
                     "select x, ('2023-04-06T00:00:00.000000Z'::timestamp::long + (x*1000))::timestamp\n" +
                     "from long_sequence(600000)");
 
@@ -640,7 +640,7 @@ public class LimitTest extends AbstractCairoTest {
                         "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
                         "6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n";
 
-                ddl(
+                execute(
                         "create table y as (" +
                                 "select" +
                                 " cast(x as int) i," +
@@ -694,7 +694,7 @@ public class LimitTest extends AbstractCairoTest {
                         "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
                         "6\tmsft\t0.297\t2018-01-01T00:12:00.000000Z\tfalse\tY\t0.2672120489216767\t0.1326\t215\t\t\t-8534688874718947140\t1970-01-01T01:23:20.000000Z\t34\t00000000 1c 0b 20 a2 86 89 37 11 2c 14\tUSZMZVQE\n";
 
-                ddl(
+                execute(
                         "create table y as (" +
                                 "select" +
                                 " cast(x as int) i," +
@@ -741,7 +741,7 @@ public class LimitTest extends AbstractCairoTest {
         final int maxLimit = configuration.getSqlMaxNegativeLimit();
 
         assertMemoryLeak(() -> {
-            ddl("create table y as (" +
+            execute("create table y as (" +
                     "select" +
                     " cast(x as int) i," +
                     " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
@@ -769,7 +769,7 @@ public class LimitTest extends AbstractCairoTest {
 
     private void testLimit(String expected1, String expected2, String query, boolean expectSize) throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table y as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -794,7 +794,7 @@ public class LimitTest extends AbstractCairoTest {
 
             assertQueryAndCache(expected1, query, "timestamp", true, expectSize);
 
-            insert(
+            execute(
                     "insert into y select * from " +
                             "(select" +
                             " cast(x + 30 as int) i," +
@@ -823,7 +823,7 @@ public class LimitTest extends AbstractCairoTest {
 
     private void testLimitMinusOne() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t1 (ts timestamp, id symbol)");
+            execute("create table t1 (ts timestamp, id symbol)");
 
             String inserts = "insert into t1 values (0L, 'abc')\n" +
                     "insert into t1 values (2L, 'a1')\n" +
@@ -832,7 +832,7 @@ public class LimitTest extends AbstractCairoTest {
                     "insert into t1 values (5L, 'a2')";
 
             for (String sql : inserts.split("\\r?\\n")) {
-                insert(sql);
+                execute(sql);
             }
 
             assertQueryAndCache(

@@ -25,7 +25,9 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -171,7 +173,9 @@ class WalEventWriter implements Closeable {
 
     private void appendIndex(long value) {
         Unsafe.getUnsafe().putLong(longBuffer, value);
-        ff.append(indexFd, longBuffer, Long.BYTES);
+        if (ff.append(indexFd, longBuffer, Long.BYTES) != Long.BYTES) {
+            throw CairoException.critical(ff.errno()).put("could not append WAL invent index value [value=").put(value).put(']');
+        }
     }
 
     private void init() {
@@ -294,8 +298,11 @@ class WalEventWriter implements Closeable {
     }
 
     void sync() {
-        eventMem.sync(false);
-        ff.fsync(indexFd);
+        int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            eventMem.sync(commitMode == CommitMode.ASYNC);
+            ff.fsync(indexFd);
+        }
     }
 
     int truncate() {

@@ -25,7 +25,17 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -34,22 +44,38 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.CreateTableModel;
-import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
+import io.questdb.griffin.engine.ops.DropTableOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.Overrides;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.jetbrains.annotations.NotNull;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Test;
 
 import java.io.File;
 import java.util.Arrays;
@@ -86,27 +112,37 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void tesFailOnNonBooleanJoinCondition() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table a ( ts timestamp, i int) timestamp(ts) ");
-            ddl("create table b ( ts timestamp, i int) timestamp(ts) ");
+            execute("create table a ( ts timestamp, i int) timestamp(ts) ");
+            execute("create table b ( ts timestamp, i int) timestamp(ts) ");
 
             String booleanError = "boolean expression expected";
 
-            assertExceptionNoLeakCheck("select * from a " +
-                    "join b on a.i - b.i", 30, booleanError);
+            assertExceptionNoLeakCheck(
+                    "select * from a " +
+                            "join b on a.i - b.i", 30, booleanError
+            );
 
-            assertExceptionNoLeakCheck("select * from a " +
-                    "left join b on a.i - b.i", 35, booleanError);
+            assertExceptionNoLeakCheck(
+                    "select * from a " +
+                            "left join b on a.i - b.i", 35, booleanError
+            );
 
-            assertExceptionNoLeakCheck("select * from a " +
-                    "join b on a.ts = b.ts and a.i - b.i", 46, booleanError);
+            assertExceptionNoLeakCheck(
+                    "select * from a " +
+                            "join b on a.ts = b.ts and a.i - b.i", 46, booleanError
+            );
 
-            assertExceptionNoLeakCheck("select * from a " +
-                    "left join b on a.ts = b.ts and a.i - b.i", 51, booleanError);
+            assertExceptionNoLeakCheck(
+                    "select * from a " +
+                            "left join b on a.ts = b.ts and a.i - b.i", 51, booleanError
+            );
 
             for (String join : Arrays.asList("ASOF  ", "LT    ", "SPLICE")) {
-                assertExceptionNoLeakCheck("select * " +
-                        "from a " +
-                        "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join), 37, "unsupported " + join.trim() + " join expression");
+                assertExceptionNoLeakCheck(
+                        "select * " +
+                                "from a " +
+                                "#JOIN# join b on a.i ^ a.i".replace("#JOIN#", join), 37, "unsupported " + join.trim() + " join expression"
+                );
             }
 
             String unexpectedError = "expression type mismatch, expected: BOOLEAN, actual: INT";
@@ -123,7 +159,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testACBadOffsetParsing() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trips (a double, b int, ts timestamp ) timestamp(ts)");
+            execute("create table trips (a double, b int, ts timestamp ) timestamp(ts)");
 
             String prefix = "select avg(a) over(partition by b order by ts ";
 
@@ -159,6 +195,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck(queryPrefix + " 10.2f preceding)  from trips", 52, "integer expression expected");
             }
         });
+    }
+
+    @Test
+    public void testAddColumnTypeInterval() throws Exception {
+        execute("create table x (a varchar)");
+        assertException(
+                "alter table x add column b interval",
+                27,
+                "non-persisted type: interval"
+        );
+    }
+
+    @Test
+    public void testAlterColumnTypeToInterval() throws Exception {
+        execute("create table x (a varchar)");
+        assertException(
+                "alter table x alter column a type interval",
+                34,
+                "non-persisted type: interval"
+        );
     }
 
     @Test
@@ -1291,7 +1347,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastLongInt() throws Exception {
-        assertCastLong("a\n" +
+        assertCastLong(
+                "a\n" +
                         "22\n" +
                         "11\n" +
                         "6\n" +
@@ -1318,7 +1375,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCastLongShort() throws Exception {
-        assertCastLong("a\n" +
+        assertCastLong(
+                "a\n" +
                         "22\n" +
                         "11\n" +
                         "6\n" +
@@ -1891,7 +1949,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         String query = "select * from y where j > :lim";
         assertMemoryLeak(() -> {
             try {
-                ddl(
+                execute(
                         "create table y as (" +
                                 "select" +
                                 " cast(x as int) i," +
@@ -1925,11 +1983,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testColumnNameWithDot() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck("create table x (" +
-                "t TIMESTAMP, " +
-                "`bool.flag` BOOLEAN) " +
-                "timestamp(t) " +
-                "partition by MONTH", 29, "new column name contains invalid characters"));
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck(
+                "create table x (" +
+                        "t TIMESTAMP, " +
+                        "`bool.flag` BOOLEAN) " +
+                        "timestamp(t) " +
+                        "partition by MONTH", 29, "new column name contains invalid characters"
+        ));
     }
 
     @Test
@@ -2132,7 +2192,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             SharedRandom.RANDOM.set(new Rnd());
 
-            ddl("create table x as (select rnd_str('d', 'cd', null) rnd_str, rnd_varchar('d', 'cd', null) rnd_varchar from long_sequence(5))");
+            execute("create table x as (select rnd_str('d', 'cd', null) rnd_str, rnd_varchar('d', 'cd', null) rnd_varchar from long_sequence(5))");
             assertSql(
                     "rnd_str\trnd_varchar\n" +
                             "d\td\n" +
@@ -2476,7 +2536,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         " rnd_byte(2,50) l," +
                         " rnd_bin(10, 20, 2) m" +
                         " from long_sequence(20)" +
-                        ")  timestamp(k) partition by DAY");
+                        ")  timestamp(k) partition by DAY"
+        );
     }
 
     @Test
@@ -2619,7 +2680,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "underlying cursor is extremely volatile");
+                TestUtils.assertContains(e.getFlyweightMessage(), "too many cached query plan cannot be used because table schema has changed");
             }
         });
     }
@@ -2636,7 +2697,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(##1000111000111000111000111000111000111000111000110000110100101)");
+                execute("insert into geohash values(##1000111000111000111000111000111000111000111000110000110100101)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2657,7 +2718,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(##sp052w92p1p82)");
+                execute("insert into geohash values(##sp052w92p1p82)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2679,7 +2740,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "10010110001\t01010110101\n";
 
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_geohash(11) a," +
                     " rnd_geohash(11) b" +
@@ -2727,7 +2788,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(#sp@in)");
+                execute("insert into geohash values(#sp@in)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2748,7 +2809,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(#sp)");
+                execute("insert into geohash values(#sp)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2769,7 +2830,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(#sp052w92p1p8889)");
+                execute("insert into geohash values(#sp052w92p1p8889)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -2789,7 +2850,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true,
                     true
             );
-            insert("insert into geohash values(#sp052w92p18)");
+            execute("insert into geohash values(#sp052w92p18)");
             assertSql(
                     "geohash\n" +
                             "sp052w\n",
@@ -2830,7 +2891,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "ksu\tbuy\n";
 
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
+            execute("create table x as (" +
                     " select" +
                     " rnd_geohash(15) a," +
                     " rnd_geohash(15) b" +
@@ -3008,18 +3069,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             };
             try {
                 configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
-                assertQuery("geohash\n", "select geohash from " + tableName, "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into " + tableName +
-                        " select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                        "q\n" +
-                        "q\n" +
-                        "u\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "u\n" +
-                        "q\n" +
-                        "u\n", true, true, false);
+                assertQuery(
+                        "geohash\n", "select geohash from " + tableName, "create table " + tableName + " (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into " + tableName +
+                                " select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                                "q\n" +
+                                "q\n" +
+                                "u\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "u\n" +
+                                "q\n" +
+                                "u\n", true, true, false
+                );
                 Assert.fail();
             } catch (SqlException e) {
                 if (Os.isWindows()) {
@@ -3046,18 +3109,20 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             try {
                 configuration.getVolumeDefinitions().of(volumeAlias + "->" + volumePath, path, root);
                 Assert.assertTrue(volume.delete());
-                assertQuery("geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into geohash " +
-                        "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
-                        "q\n" +
-                        "q\n" +
-                        "u\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "e\n" +
-                        "u\n" +
-                        "q\n" +
-                        "u\n", true, true, false);
+                assertQuery(
+                        "geohash\n", "select geohash from geohash", "create table geohash (geohash geohash(1c)) in volume '" + volumeAlias + "'", null, "insert into geohash " +
+                                "select cast(rnd_str('q','u','e') as char) from long_sequence(10)", "geohash\n" +
+                                "q\n" +
+                                "q\n" +
+                                "u\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "e\n" +
+                                "u\n" +
+                                "q\n" +
+                                "u\n", true, true, false
+                );
                 Assert.fail();
             } catch (SqlException | CairoException e) {
                 if (Os.isWindows()) {
@@ -3073,9 +3138,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testCreateAsSelectInvalidTimestamp() throws Exception {
-        assertMemoryLeak(() -> assertExceptionNoLeakCheck("create table y as (" +
-                "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
-                ")  timestamp(a) partition by DAY", 97, "TIMESTAMP column expected"));
+        assertMemoryLeak(() -> assertExceptionNoLeakCheck(
+                "create table y as (" +
+                        "select * from (select rnd_int(0, 30, 2) a from long_sequence(20))" +
+                        ")  timestamp(a) partition by DAY", 97, "TIMESTAMP column expected"
+        ));
     }
 
     @Test
@@ -3134,7 +3201,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(43, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column: b");
+                TestUtils.assertContains(e.getFlyweightMessage(), "CAST column doesn't exist [column=b]");
             }
         });
     }
@@ -3204,7 +3271,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyTableNoPartition() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3243,7 +3310,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyTableNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3281,7 +3348,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyTableSymbolCache() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3321,7 +3388,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyTableSymbolNoCache() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3361,7 +3428,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateEmptyTableWithIndex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3423,7 +3490,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testCreateTableUtf8() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table доходы(экспорт int)");
+            execute("create table доходы(экспорт int)");
 
             try (TableWriter writer = getWriter("доходы")) {
                 for (int i = 0; i < 20; i++) {
@@ -3434,7 +3501,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            ddl("create table миллионы as (select * from доходы)");
+            execute("create table миллионы as (select * from доходы)");
 
             final String expected = "экспорт\n" +
                     "0\n" +
@@ -3466,9 +3533,18 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableWithInterval() throws Exception {
+        assertException(
+                "create table x (a varchar, b interval)",
+                29,
+                "non-persisted type: interval"
+        );
+    }
+
+    @Test
     public void testCreateTableWithO3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "t TIMESTAMP, " +
@@ -3479,7 +3555,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             try (
                     TableWriter writer = getWriter("x");
-                    TableMetadata tableMetadata = engine.getLegacyMetadata(writer.getTableToken())
+                    TableMetadata tableMetadata = engine.getTableMetadata(writer.getTableToken())
             ) {
                 sink.clear();
                 tableMetadata.toJson(sink);
@@ -3491,6 +3567,52 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.assertEquals(250000, tableMetadata.getO3MaxLag());
             }
         });
+    }
+
+    @Test
+    public void testCursorFunctionCannotBeUsedAsColumn() throws Exception {
+        assertExceptionNoLeakCheck(
+                "select query_activity() from long_sequence(100L);",
+                7,
+                "cursor function cannot be used as a column [column=query_activity]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "select 1 from long_sequence(1)\n" +
+                        "UNION ALL\n" +
+                        "select query_activity() from long_sequence(100L);",
+                48,
+                "cursor function cannot be used as a column [column=query_activity]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1 as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select a, n from q;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1L as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select q.a from long_sequence(10) ls \n" +
+                        "inner join q on ls.x = q.n;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
+
+        assertExceptionNoLeakCheck(
+                "with q as (\n" +
+                        "  select query_activity() a, 1L as n from long_sequence(1)\n" +
+                        ")\n" +
+                        "select q.* from long_sequence(10) ls \n" +
+                        "inner join q on ls.x = q.n;",
+                21,
+                "cursor function cannot be used as a column [column=a]"
+        );
     }
 
     @Test
@@ -3520,7 +3642,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testDuplicateTableName() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (" +
                             "a INT, " +
                             "b BYTE, " +
@@ -3531,11 +3653,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             );
             engine.releaseAllWriters();
 
-            assertExceptionNoLeakCheck("create table x (" +
-                    "t TIMESTAMP, " +
-                    "y BOOLEAN) " +
-                    "timestamp(t) " +
-                    "partition by MONTH", 13, "table already exists");
+            assertExceptionNoLeakCheck(
+                    "create table x (" +
+                            "t TIMESTAMP, " +
+                            "y BOOLEAN) " +
+                            "timestamp(t) " +
+                            "partition by MONTH", 13, "table already exists"
+            );
         });
     }
 
@@ -3565,7 +3689,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             sink.put(" 1 from tab");
             query = sink.toString();
 
-            ddl("create table tab as (select 1::int x) ");
+            execute("create table tab as (select 1::int x) ");
             assertSql("column\n101\n", query);
         });
     }
@@ -3590,7 +3714,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testFailOnBadFunctionCallInOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test(time TIMESTAMP, symbol STRING);");
+            execute("create table test(time TIMESTAMP, symbol STRING);");
 
             assertExceptionNoLeakCheck("SELECT test.time AS ref0, test.symbol AS ref1 FROM test GROUP BY test.time, test.symbol ORDER BY SUM(1, -1)", 97, "there is no matching function `SUM` with the argument types: (INT, INT)");
         });
@@ -3599,7 +3723,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testFailOnEmptyColumnName() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab ( ts timestamp)");
+            execute("create table tab ( ts timestamp)");
 
             assertExceptionNoLeakCheck("SELECT * FROM tab WHERE SUM(\"\", \"\")", 32, "Invalid column: ");
             assertExceptionNoLeakCheck("SELECT * FROM tab WHERE SUM(\"\", \"ts\")", 28, "Invalid column: ");
@@ -3609,7 +3733,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testFailOnEmptyInClause() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab(event short);");
+            execute("create table tab(event short);");
 
             assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ) ", 54, "too few arguments for 'in' [found=1,expected=2]");
             assertExceptionNoLeakCheck("SELECT COUNT(*) FROM tab WHERE tab.event > (tab.event IN ())", 54, "too few arguments for 'in'");
@@ -3638,8 +3762,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testFunctionNotIn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab ( timestamp timestamp, col string, id symbol index) timestamp(timestamp);");
-            insert("insert into tab values (1, 'foo', 'A'), (2, 'bah', 'B'), (3, 'dee', 'C')");
+            execute("create table tab ( timestamp timestamp, col string, id symbol index) timestamp(timestamp);");
+            execute("insert into tab values (1, 'foo', 'A'), (2, 'bah', 'B'), (3, 'dee', 'C')");
 
             assertSql(
                     "timestamp\tcol\tid\n" +
@@ -3661,7 +3785,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralAsColName() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )");
+            execute("create table x as (select rnd_str('#1234', '#88484') as \"#0101a\" from long_sequence(5) )");
             assertSql(
                     "#0101a\n" +
                             "#1234\n" +
@@ -3674,7 +3798,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralAsColName2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_geohash(14) as \"#0101a\" from long_sequence(5) )");
+            execute("create table x as (select rnd_geohash(14) as \"#0101a\" from long_sequence(5) )");
             assertSql("#0101a\n", "select * from x where #1234 = \"#0101a\"");
         });
     }
@@ -3695,7 +3819,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralInvalid1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
+            execute("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
             try {
                 assertExceptionNoLeakCheck("select * from x where str = #1234 '"); // random char at the end
             } catch (Exception ex) {
@@ -3708,7 +3832,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGeoLiteralInvalid2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
+            execute("create table x as (select rnd_str('#1234', '#88484') as str from long_sequence(1000) )");
             try {
                 assertExceptionNoLeakCheck("select * from x where str = #1234'"); // random char at the end
             } catch (Exception ex) {
@@ -3733,8 +3857,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGroupByInt() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists test(id int)");
-            insert("insert into test(id) select rnd_int() from long_sequence(3)");
+            execute("create table if not exists test(id int)");
+            execute("insert into test(id) select rnd_int() from long_sequence(3)");
 
             assertSql(
                     "id\n" +
@@ -3752,8 +3876,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGroupByInt2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists test(ts timestamp)");
-            insert("insert into test select (x*3600000)::timestamp from long_sequence(2999)");
+            execute("create table if not exists test(ts timestamp)");
+            execute("insert into test select (x*3600000)::timestamp from long_sequence(2999)");
 
             assertSql(
                     "hour\n" +
@@ -3771,8 +3895,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGroupByLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists test(id uuid)");
-            insert("insert into test(id) select rnd_uuid4() from long_sequence(3)");
+            execute("create table if not exists test(id uuid)");
+            execute("insert into test(id) select rnd_uuid4() from long_sequence(3)");
 
             try (
                     RecordCursorFactory factory = select(
@@ -3796,8 +3920,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testGroupBySymbol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table if not exists test(id symbol)");
-            insert("insert into test(id) select rnd_symbol('A', 'B', 'C') from long_sequence(10)");
+            execute("create table if not exists test(id symbol)");
+            execute("insert into test(id) select rnd_symbol('A', 'B', 'C') from long_sequence(10)");
 
             assertSql(
                     "id\n" +
@@ -3820,24 +3944,32 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInShortByteIntLong() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE table abc (aa long, a int, b short, c byte)");
-            insert("insert into abc values(1, 1, 1, 1)");
-            assertSql("aa\ta\tb\tc\n" +
-                    "1\t1\t1\t1\n", "select * from abc where aa in (1, 2)");
-            assertSql("aa\ta\tb\tc\n" +
-                    "1\t1\t1\t1\n", "select * from abc where a in (1, 2)");
-            assertSql("aa\ta\tb\tc\n" +
-                    "1\t1\t1\t1\n", "select * from abc where b in (1, 2)");
-            assertSql("aa\ta\tb\tc\n" +
-                    "1\t1\t1\t1\n", "select * from abc where c in (1, 2)");
+            execute("CREATE table abc (aa long, a int, b short, c byte)");
+            execute("insert into abc values(1, 1, 1, 1)");
+            assertSql(
+                    "aa\ta\tb\tc\n" +
+                            "1\t1\t1\t1\n", "select * from abc where aa in (1, 2)"
+            );
+            assertSql(
+                    "aa\ta\tb\tc\n" +
+                            "1\t1\t1\t1\n", "select * from abc where a in (1, 2)"
+            );
+            assertSql(
+                    "aa\ta\tb\tc\n" +
+                            "1\t1\t1\t1\n", "select * from abc where b in (1, 2)"
+            );
+            assertSql(
+                    "aa\ta\tb\tc\n" +
+                            "1\t1\t1\t1\n", "select * from abc where c in (1, 2)"
+            );
         });
     }
 
     @Test
     public void testInnerJoinConditionPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
-            compile("insert into tab values (0, 0), (1, 1), (2,2)");
+            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("insert into tab values (0, 0), (1, 1), (2,2)");
 
             for (String join : new String[]{"", "LEFT", "LT", "ASOF",}) {
                 assertSql(
@@ -4373,7 +4505,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectDuplicateColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE tab (" +
                             "  ts TIMESTAMP, " +
                             "  x INT" +
@@ -4389,7 +4521,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectDuplicateColumnNonAscii() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE tabula (" +
                             "  ts TIMESTAMP, " +
                             "  龜 INT" +
@@ -4405,7 +4537,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectFewerSelectColumns() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
+            execute("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
             try {
                 assertExceptionNoLeakCheck("insert into y select cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
             } catch (SqlException e) {
@@ -4484,7 +4616,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testInsertAsSelectInconvertibleList4() throws Exception {
-        assertMemoryLeak(() -> testInsertAsSelectError("create table x (a DATE, b INT, n TIMESTAMP)",
+        assertMemoryLeak(() -> testInsertAsSelectError(
+                "create table x (a DATE, b INT, n TIMESTAMP)",
                 "insert into x (b,a)" +
                         "select" +
                         " rnd_int()," +
@@ -4593,10 +4726,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
                 ) {
 
-                    compiler.compile("create table x (a INT, b INT)", sqlExecutionContext);
-                    compiler.compile("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
+                    engine.execute("create table x (a INT, b INT)", sqlExecutionContext);
+                    engine.execute("create table y as (select rnd_int() int1, rnd_int() int2 from long_sequence(10))", sqlExecutionContext);
                     // we need to pass the engine here, so the global test context won't do
-                    compiler.compile("insert into x select * from y", sqlExecutionContext);
+                    engine.execute("insert into x select * from y", sqlExecutionContext);
 
                     TestUtils.assertSql(
                             compiler,
@@ -4668,9 +4801,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertFromStringToLong256() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t as (select rnd_long256 v from long_sequence(1000))", sqlExecutionContext);
-            ddl("create table l256(v long256)", sqlExecutionContext);
-            ddl("insert into l256 select * from t", sqlExecutionContext);
+            execute("create table t as (select rnd_long256 v from long_sequence(1000))", sqlExecutionContext);
+            execute("create table l256(v long256)", sqlExecutionContext);
+            execute("insert into l256 select * from t", sqlExecutionContext);
             if (configuration.getWalEnabledDefault()) {
                 drainWalQueue();
             }
@@ -4697,7 +4830,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(##11211)");
+                execute("insert into geohash values(##11211)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -4718,7 +4851,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true
             );
             try {
-                insert("insert into geohash values(##10001)");
+                execute("insert into geohash values(##10001)");
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(27, e.getPosition());
@@ -4861,11 +4994,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertNullSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
-            insert("INSERT INTO symbolic_index VALUES ('123456')");
-            insert("INSERT INTO symbolic_index VALUES ('1')");
-            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            ddl("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            execute("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            execute("INSERT INTO symbolic_index VALUES ('123456')");
+            execute("INSERT INTO symbolic_index VALUES ('1')");
+            execute("INSERT INTO symbolic_index VALUES ('')"); // not null
+            execute("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
             assertSql("s\n123456\n1\n\n", "symbolic_index_other");
             assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
@@ -4879,7 +5012,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertSql("s\n123456\n1\n", "symbolic_index_other WHERE '' != s");
             assertSql("s\n123456\n1\n\n", "symbolic_index_other WHERE NULL != s");
 
-            insert("INSERT INTO symbolic_index_other VALUES (NULL)"); // null
+            execute("INSERT INTO symbolic_index_other VALUES (NULL)"); // null
             assertSql("s\n123456\n1\n\n\n", "symbolic_index_other");
             assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
             assertSql("s\n\n", "symbolic_index_other WHERE s = NULL");
@@ -4897,11 +5030,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertNullSymbolWithIndex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
-            insert("INSERT INTO symbolic_index VALUES ('123456')");
-            insert("INSERT INTO symbolic_index VALUES ('1')");
-            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            execute("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            execute("INSERT INTO symbolic_index VALUES ('123456')");
+            execute("INSERT INTO symbolic_index VALUES ('1')");
+            execute("INSERT INTO symbolic_index VALUES ('')"); // not null
+            execute("INSERT INTO symbolic_index VALUES (NULL)"); // null
 
             assertSql("s\n123456\n1\n\n\n", "symbolic_index");
             assertSql("s\n\n", "symbolic_index WHERE s = ''");
@@ -4920,12 +5053,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertNullSymbolWithIndexFromAnotherTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
-            insert("INSERT INTO symbolic_index VALUES ('123456')");
-            insert("INSERT INTO symbolic_index VALUES ('1')");
-            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
-            ddl("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            execute("CREATE TABLE symbolic_index (s SYMBOL INDEX)", sqlExecutionContext);
+            execute("INSERT INTO symbolic_index VALUES ('123456')");
+            execute("INSERT INTO symbolic_index VALUES ('1')");
+            execute("INSERT INTO symbolic_index VALUES ('')"); // not null
+            execute("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            execute("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
             assertSql("s\n123456\n1\n\n\n", "symbolic_index_other");
             assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
@@ -4944,11 +5077,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertNullSymbolWithoutIndex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
-            insert("INSERT INTO symbolic_index VALUES ('123456')");
-            insert("INSERT INTO symbolic_index VALUES ('1')");
-            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            execute("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
+            execute("INSERT INTO symbolic_index VALUES ('123456')");
+            execute("INSERT INTO symbolic_index VALUES ('1')");
+            execute("INSERT INTO symbolic_index VALUES ('')"); // not null
+            execute("INSERT INTO symbolic_index VALUES (NULL)"); // null
 
             assertSql("s\n123456\n1\n\n\n", "symbolic_index");
             assertSql("s\n\n", "symbolic_index WHERE s = ''");
@@ -4967,12 +5100,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testInsertNullSymbolWithoutIndexFromAnotherTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
-            insert("INSERT INTO symbolic_index VALUES ('123456')");
-            insert("INSERT INTO symbolic_index VALUES ('1')");
-            insert("INSERT INTO symbolic_index VALUES ('')"); // not null
-            insert("INSERT INTO symbolic_index VALUES (NULL)"); // null
-            ddl("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
+            execute("CREATE TABLE symbolic_index (s SYMBOL)", sqlExecutionContext);
+            execute("INSERT INTO symbolic_index VALUES ('123456')");
+            execute("INSERT INTO symbolic_index VALUES ('1')");
+            execute("INSERT INTO symbolic_index VALUES ('')"); // not null
+            execute("INSERT INTO symbolic_index VALUES (NULL)"); // null
+            execute("CREATE TABLE symbolic_index_other AS (SELECT * FROM symbolic_index)", sqlExecutionContext);
 
             assertSql("s\n123456\n1\n\n\n", "symbolic_index_other");
             assertSql("s\n\n", "symbolic_index_other WHERE s = ''");
@@ -4997,22 +5130,22 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "\n";
 
         assertMemoryLeak(() -> {
-            ddl("create table xy (ts timestamp)");
+            execute("create table xy (ts timestamp)");
             // execute insert with nanos - we expect the nanos to be truncated
-            insert("insert into xy(ts) values ('2020-01-10T12:00:01.111143123Z')");
+            execute("insert into xy(ts) values ('2020-01-10T12:00:01.111143123Z')");
 
             // execute insert with micros
-            insert("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
+            execute("insert into xy(ts) values ('2020-01-10T15:00:01.000143Z')");
 
             // execute insert with millis
-            insert("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')");
+            execute("insert into xy(ts) values ('2020-01-10T18:00:01.800Z')");
 
             // insert null
-            insert("insert into xy(ts) values (null)");
+            execute("insert into xy(ts) values (null)");
 
             // test bad format
             try {
-                insert("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
+                execute("insert into xy(ts) values ('2020-01-10T18:00:01.800Zz')");
                 Assert.fail();
             } catch (ImplicitCastException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: `2020-01-10T18:00:01.800Zz` [STRING -> TIMESTAMP]");
@@ -5025,44 +5158,52 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testJoinWithDuplicateColumns() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE t1 (" +
                             "  ts TIMESTAMP, " +
                             "  x INT" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
-            ddl(
+            execute(
                     "CREATE TABLE t2 (" +
                             "  ts TIMESTAMP, " +
                             "  x INT" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
-            insert("INSERT INTO t1(ts, x) VALUES (1, 1)");
-            insert("INSERT INTO t2(ts, x) VALUES (1, 2)");
+            execute("INSERT INTO t1(ts, x) VALUES (1, 1)");
+            execute("INSERT INTO t2(ts, x) VALUES (1, 2)");
             engine.releaseInactive();
 
             // wildcard aliases are created after all other aliases
             // a duplicate column may be produced while optimiser does not have info on other aliases
             // if this occurs, the column is renamed once we have full alias info for all columns and this error is avoided
 
-            assertSql("TS\tts2\tts1\n" +
-                    "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;");
+            assertSql(
+                    "TS\tts2\tts1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.ts, t1.ts as ts1 from t1 asof join (select * from t2) t2;"
+            );
 
-            assertSql("TS\tts1\tts2\tx\tts3\tx1\n" +
-                    "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\n", "select t2.ts as \"TS\", t2.ts as \"ts1\", * from t1 asof join (select * from t2) t2;");
+            assertSql(
+                    "TS\tts1\tts2\tx\tts3\tx1\n" +
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\t2\n", "select t2.ts as \"TS\", t2.ts as \"ts1\", * from t1 asof join (select * from t2) t2;"
+            );
 
-            assertSql("TS\tts1\tx\tts2\n" +
-                    "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;");
+            assertSql(
+                    "TS\tts1\tx\tts2\n" +
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts \"ts1\" from t1 asof join (select * from t2) t2;"
+            );
 
-            assertSql("TS\tts1\tx\tts2\n" +
-                    "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;");
+            assertSql(
+                    "TS\tts1\tx\tts2\n" +
+                            "1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000001Z\t1\t1970-01-01T00:00:00.000001Z\n", "select t2.ts as \"TS\", t1.*, t2.ts ts1 from t1 asof join (select * from t2) t2;"
+            );
         });
     }
 
     @Test
     public void testLargeQueryDoesntHitIncreasedMaxRecursionLimit() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades (symbol symbol, timestamp timestamp) timestamp(timestamp)");
+            execute("create table trades (symbol symbol, timestamp timestamp) timestamp(timestamp)");
 
             assertSql(
                     "symbol\ttimestamp\tsymbol1\ttimestamp1\tsymbol11\ttimestamp11\tsymbol111\ttimestamp111\tsymbol1111\ttimestamp1111\tsymbol11111\ttimestamp11111\tsymbol111111\ttimestamp111111\tsymbol1111111\ttimestamp1111111\tsymbol11111111\ttimestamp11111111\tsymbol111111111\ttimestamp111111111\tsymbol1111111111\ttimestamp1111111111\tsymbol11111111111\ttimestamp11111111111\tsymbol111111111111\ttimestamp111111111111\tsymbol1111111111111\ttimestamp1111111111111\tsymbol11111111111111\ttimestamp11111111111111\tsymbol111111111111111\ttimestamp111111111111111\tsymbol1111111111111111\ttimestamp1111111111111111\tsymbol11111111111111111\ttimestamp11111111111111111\tsymbol111111111111111111\ttimestamp111111111111111111\tsymbol1111111111111111111\ttimestamp1111111111111111111\tsymbol11111111111111111111\ttimestamp11111111111111111111\tsymbol111111111111111111111\ttimestamp111111111111111111111\tsymbol1111111111111111111111\ttimestamp1111111111111111111111\tsymbol11111111111111111111111\ttimestamp11111111111111111111111\tsymbol111111111111111111111111\ttimestamp111111111111111111111111\tsymbol1111111111111111111111111\ttimestamp1111111111111111111111111\tsymbol11111111111111111111111111\ttimestamp11111111111111111111111111\tsymbol111111111111111111111111111\ttimestamp111111111111111111111111111\tsymbol1111111111111111111111111111\ttimestamp1111111111111111111111111111\tsymbol11111111111111111111111111111\ttimestamp11111111111111111111111111111\tsymbol111111111111111111111111111111\ttimestamp111111111111111111111111111111\tsymbol1111111111111111111111111111111\ttimestamp1111111111111111111111111111111\tsymbol11111111111111111111111111111111\ttimestamp11111111111111111111111111111111\tsymbol111111111111111111111111111111111\ttimestamp111111111111111111111111111111111\tsymbol1111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111\tsymbol11111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111\tsymbol111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111\tsymbol1111111111111111111111111111111111111111\ttimestamp1111111111111111111111111111111111111111\tsymbol11111111111111111111111111111111111111111\ttimestamp11111111111111111111111111111111111111111\tsymbol111111111111111111111111111111111111111111\ttimestamp111111111111111111111111111111111111111111\n",
@@ -5077,8 +5218,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinPostMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
-            compile("insert into tab values (0, 0), (1, 1)");
+            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("insert into tab values (0, 0), (1, 1)");
 
             String query = "SELECT count(1) FROM " +
                     "( SELECT * " +
@@ -5123,8 +5264,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinReorder() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tab ( created timestamp, value long ) timestamp(created) ");
-            insert("insert into tab values (0, 0), (1, 1), (2,2)");
+            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("insert into tab values (0, 0), (1, 1), (2,2)");
 
             String query1 = "SELECT T1.created FROM " +
                     "( SELECT * " +
@@ -5328,8 +5469,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testNonEqualityJoinCondition() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table tab ( created timestamp, value long ) timestamp(created) ");
-            compile("insert into tab values (0, 0), (1, 1)");
+            execute("create table tab ( created timestamp, value long ) timestamp(created) ");
+            execute("insert into tab values (0, 0), (1, 1)");
 
             assertQueryNoLeakCheck(
                     "count\n" +
@@ -5408,13 +5549,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testOrderGroupByTokensCanBeQuoted1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE trigonometry AS " +
-                    "(SELECT" +
-                    "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
-                    "     rnd_symbol('A', 'B', 'C') sym," +
-                    "     rnd_double() sine" +
-                    " FROM long_sequence(1000)" +
-                    ")", sqlExecutionContext);
+            execute(
+                    "CREATE TABLE trigonometry AS " +
+                            "(SELECT" +
+                            "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
+                            "     rnd_symbol('A', 'B', 'C') sym," +
+                            "     rnd_double() sine" +
+                            " FROM long_sequence(1000)" +
+                            ")", sqlExecutionContext
+            );
             assertQueryNoLeakCheck(
                     "sym\tavg_angle_rad\tSUM(sine)\n" +
                             "A\t-1.95703125\t168.46508050039918\n" +
@@ -5438,13 +5581,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testOrderGroupByTokensCanBeQuoted2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE trigonometry AS " +
-                    "(SELECT" +
-                    "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
-                    "     rnd_symbol('A', 'B', 'C') sym," +
-                    "     rnd_double() sine" +
-                    " FROM long_sequence(1000)" +
-                    ")", sqlExecutionContext);
+            execute(
+                    "CREATE TABLE trigonometry AS " +
+                            "(SELECT" +
+                            "     rnd_int(-180, 180, 1) * 1.0 angle_rad," +
+                            "     rnd_symbol('A', 'B', 'C') sym," +
+                            "     rnd_double() sine" +
+                            " FROM long_sequence(1000)" +
+                            ")", sqlExecutionContext
+            );
             assertQueryNoLeakCheck(
                     "sym\tavg_angle_rad\tSUM(sine)\n" +
                             "A\t-1.95703125\t168.46508050039918\n" +
@@ -5483,7 +5628,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 new Thread(() -> {
                     try {
                         barrier.await();
-                        ddl("create table x (a INT, b FLOAT)");
+                        execute("create table x (a INT, b FLOAT)");
                         index.set(0);
                         success.incrementAndGet();
                     } catch (Exception ignore) {
@@ -5498,7 +5643,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 new Thread(() -> {
                     try {
                         barrier.await();
-                        ddl("create table x (a STRING, b DOUBLE)");
+                        execute("create table x (a STRING, b DOUBLE)");
                         index.set(1);
                         success.incrementAndGet();
                     } catch (Exception ignore) {
@@ -5525,7 +5670,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                     }
                 }
-                engine.drop(path, tt);
+                engine.dropTable(path, tt);
             }
         });
     }
@@ -5533,10 +5678,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRebuildIndex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)");
+            execute("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)");
             engine.releaseAllReaders();
             engine.releaseAllWriters();
-            compile("reindex table rebuild_index column sym lock exclusive");
+            execute("reindex table rebuild_index column sym lock exclusive");
             assertSql(
                     "sym\tx\n" +
                             "1\t1\n" +
@@ -5551,13 +5696,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRebuildIndexInPartition() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table rebuild_index as (" +
+            execute("create table rebuild_index as (" +
                     "select rnd_symbol('1', '2', '33', '44') sym, x, timestamp_sequence(0, 12*60*60*1000000L) ts " +
                     "from long_sequence(15)" +
                     "), index(sym) timestamp(ts)");
             engine.releaseAllReaders();
             engine.releaseAllWriters();
-            compile("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
+            execute("reindex table rebuild_index column sym partition '1970-01-02' lock exclusive");
             assertSql(
                     "sym\tx\tts\n" +
                             "1\t1\t1970-01-01T00:00:00.000000Z\n" +
@@ -5572,12 +5717,12 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRebuildIndexWritersLock() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)");
+            execute("create table rebuild_index as (select rnd_symbol('1', '2', '33', '44') sym, x from long_sequence(15)), index(sym)");
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
             try (TableWriter ignore = getWriter("rebuild_index")) {
-                compile("reindex table rebuild_index column sym lock exclusive");
+                execute("reindex table rebuild_index column sym lock exclusive");
                 Assert.fail();
             } catch (CairoException ex) {
                 TestUtils.assertContains(ex.getFlyweightMessage(), "cannot lock table");
@@ -5588,7 +5733,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testReindexSyntaxCheckSemicolon() throws Exception {
         assertMemoryLeak(() -> {
-            compile(
+            execute(
                     "create table xxx as (" +
                             "select " +
                             "rnd_symbol('A', 'B', 'C') as sym1," +
@@ -5600,7 +5745,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             engine.releaseAllReaders();
             engine.releaseAllWriters();
-            compile("REINDEX TABLE \"xxx\" Lock exclusive;");
+            execute("REINDEX TABLE \"xxx\" Lock exclusive;");
         });
     }
 
@@ -5662,7 +5807,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRemoveColumnShiftTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x1 (a int, b double, t timestamp) timestamp(t)");
+            execute("create table x1 (a int, b double, t timestamp) timestamp(t)");
 
             try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
@@ -5682,7 +5827,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRemoveTimestampAndReplace() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x1 (a int, b double, t timestamp) timestamp(t)");
+            execute("create table x1 (a int, b double, t timestamp) timestamp(t)");
 
             try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
@@ -5704,7 +5849,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRemoveTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x1 (a int, b double, t timestamp) timestamp(t)");
+            execute("create table x1 (a int, b double, t timestamp) timestamp(t)");
 
             try (TableReader reader = getReader("x1")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
@@ -5724,8 +5869,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testRenameTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table table_old_name (a int, b double, t timestamp) timestamp(t)");
-            ddl("rename table table_old_name to table_new_name");
+            execute("create table table_old_name (a int, b double, t timestamp) timestamp(t)");
+            execute("rename table table_old_name to table_new_name");
             try (TableReader reader = getReader("table_new_name")) {
                 Assert.assertEquals(2, reader.getMetadata().getTimestampIndex());
                 try (TableWriter writer = getWriter("table_new_name")) {
@@ -5766,24 +5911,24 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testSelectConcurrentDdl() throws Exception {
-        // On Windows CI this test can fail with Metadata read timeout with small timeout.
-        Overrides overrides = node1.getConfigurationOverrides();
-        overrides.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 30000);
         assertMemoryLeak(() -> {
-            ddl("create table x (a int, b int, c int)");
+            execute("create table x (a int, b int, c int)");
 
+            // On Windows CI this test can fail with Metadata read timeout with small timeout.
+            spinLockTimeout = 30_000;
             final AtomicBoolean ddlError = new AtomicBoolean(false);
             final CyclicBarrier barrier = new CyclicBarrier(2);
             new Thread(() -> {
                 try {
                     while (barrier.getNumberWaiting() == 0) {
-                        ddl("alter table x add column d int");
-                        ddl("alter table x drop column d");
+                        execute("alter table x add column d int");
+                        execute("alter table x drop column d");
                     }
                 } catch (Exception e) {
                     ddlError.set(true);
                     e.printStackTrace();
                 } finally {
+                    Path.clearThreadLocals();
                     TestUtils.await(barrier);
                 }
             }).start();
@@ -5839,7 +5984,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testSelectDoubleInListWithBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select 1D c union all select null::double )");
+            execute("create table x as (select 1D c union all select null::double )");
 
             bindVariableService.clear();
             bindVariableService.setStr("val", "1");
@@ -6001,7 +6146,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testSelectLongInListWithBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select 1L c union all select null::long )");
+            execute("create table x as (select 1L c union all select null::long )");
 
             bindVariableService.clear();
             bindVariableService.setStr("val", "1");
@@ -6196,8 +6341,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     " long_sequence(5)" +
                     ") timestamp(k)";
 
-            ddl(xx);
-            ddl(yy);
+            execute(xx);
+            execute(yy);
 
             final String expected = "a\tb\tc\n" +
                     "IBM\tIBM\tIBM_IBM\n" +
@@ -6253,8 +6398,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     @Test
     public void testUnionAllWithFirstSubQueryUsingDistinct() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table ict ( event int );");
-            insert("insert into ict select x::int from long_sequence(1000)");
+            execute("create table ict ( event int );");
+            execute("insert into ict select x::int from long_sequence(1000)");
 
             assertWithReorder(
                     "avg\n" +
@@ -6295,50 +6440,54 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompilerWrapper compiler = new SqlCompilerWrapper(engine)) {
                 try {
-                    compiler.compile("alter altar", sqlExecutionContext);
+                    execute(compiler, "alter altar", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.unknownAlterStatementCalled);
                 }
 
                 try {
-                    compiler.compile("show something", sqlExecutionContext);
+                    select(compiler, "show something", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.parseShowSqlCalled);
                 }
 
+                execute(compiler, "create table ka(a int)", sqlExecutionContext);
                 try {
-                    compiler.compile("drop table ka boom zoom", sqlExecutionContext);
+                    execute(compiler, "drop table ka boom zoom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(compiler.unknownDropTableSuffixCalled);
+                    Assert.assertTrue(compiler.compileDropTableExtCalled);
+                    compiler.compileDropTableExtCalled = false;
                 }
 
                 try {
-                    compiler.compile("drop something", sqlExecutionContext);
+                    execute(compiler, "drop fridge blue toenail", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(compiler.unknownDropStatementCalled);
+                    Assert.assertTrue(compiler.compileDropOtherCalled);
+                    compiler.compileDropOtherCalled = false;
                 }
 
                 try {
-                    compiler.compile("drop table hopp", sqlExecutionContext);
+                    execute(compiler, "drop something", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(compiler.dropTableCalled);
+                    Assert.assertTrue(compiler.compileDropOtherCalled);
+                    compiler.compileDropOtherCalled = false;
                 }
 
-                compiler.dropTableCalled = false;
                 try {
-                    compiler.compile("drop table if exists hopp", sqlExecutionContext);
-                } catch (Exception e) {
+                    // when table doesn't exist "dropTableCalled" should not be triggered
+                    execute(compiler, "drop table hopp");
                     Assert.fail();
+                } catch (Exception e) {
+                    Assert.assertFalse(compiler.dropTableCalled);
                 }
-                Assert.assertTrue(compiler.dropTableCalled);
 
                 try {
-                    compiler.compile("create table tab (i int)", sqlExecutionContext);
+                    execute(compiler, "create table tab (i int)", sqlExecutionContext);
                     compiler.compile("alter table tab drop column i boom zoom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
@@ -6346,7 +6495,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
 
                 try {
-                    compiler.compile("create table tab2 (i int)", sqlExecutionContext);
+                    execute(compiler, "create table tab2 (i int)", sqlExecutionContext);
                     compiler.compile("alter table tab add column i2 int zoom boom", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
@@ -6354,7 +6503,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
 
                 try {
-                    compiler.compile("create table tab3 (i int) foobar", sqlExecutionContext);
+                    execute(compiler, "create table tab3 (i int) foobar", sqlExecutionContext);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(compiler.createTableSuffixCalled);
@@ -6365,7 +6514,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCast(String expectedData, String expectedMeta, String ddl) throws Exception {
         assertMemoryLeak(() -> {
-            ddl(ddl);
+            execute(ddl);
             try (TableReader reader = getReader("y")) {
                 sink.clear();
                 reader.getMetadata().toJson(sink);
@@ -6548,7 +6697,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     private void assertCreateTableAsSelect(CharSequence expectedMetadata, CharSequence sql, Fiddler fiddler) throws Exception {
         // create source table
-        ddl("create table X (a int, b int, t timestamp) timestamp(t)");
+        execute("create table X (a int, b int, t timestamp) timestamp(t)");
         engine.releaseAllWriters();
 
         try (CairoEngine engine = new CairoEngine(configuration) {
@@ -6562,7 +6711,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                compiler.compile(sql, sqlExecutionContext);
+                execute(compiler, sql, sqlExecutionContext);
                 Assert.assertTrue(fiddler.isHappy());
                 try (TableReader reader = engine.getReader("Y")) {
                     sink.clear();
@@ -6583,9 +6732,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         assertMemoryLeak(
                 ff,
                 () -> {
-                    ddl("create table x (a INT, b INT)");
+                    execute("create table x (a INT, b INT)");
                     try {
-                        insert("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
+                        execute("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
                         Assert.fail();
                     } catch (CairoException ignore) {
                     }
@@ -6596,7 +6745,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                         Assert.assertEquals(0, w.size());
                     }
 
-                    insert("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
+                    execute("insert into x select rnd_int() int1, rnd_int() int2 from long_sequence(1000000)");
                     try (TableWriter w = getWriter("x")) {
                         Assert.assertEquals(1000000, w.size());
                     }
@@ -6614,7 +6763,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void selectDoubleInListWithBindVariable() throws Exception {
-        assertQuery("c\n1.0\n",
+        assertQuery(
+                "c\n1.0\n",
                 "select * from x where c in (:val)",
                 null, true, false
         );
@@ -6623,7 +6773,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     private void selectLongInListWithBindVariable() throws Exception {
-        assertQuery("c\n1\n",
+        assertQuery(
+                "c\n1\n",
                 "select * from x where c in (:val)",
                 null, true, false
         );
@@ -6641,14 +6792,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     true,
                     true
             );
-            insert(String.format("insert into geohash values(%s)", geoHash));
+            execute(String.format("insert into geohash values(%s)", geoHash));
             assertSql(expected, "geohash");
         });
     }
 
     private void testInsertAsSelect(CharSequence expectedData, CharSequence ddl, CharSequence insert, CharSequence select) throws Exception {
-        ddl(ddl);
-        insert(insert);
+        execute(ddl);
+        execute(insert);
         assertSql(expectedData, select);
     }
 
@@ -6659,7 +6810,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             CharSequence errorMessage
     ) throws Exception {
         if (ddl != null) {
-            ddl(ddl);
+            execute(ddl);
         }
         assertExceptionNoLeakCheck(insert, errorPosition, errorMessage);
     }
@@ -6670,7 +6821,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             CharSequence errorMessage
     ) throws Exception {
         if (ddl != null) {
-            ddl(ddl);
+            execute(ddl);
         }
         try {
             assertExceptionNoLeakCheck(insert);
@@ -6692,22 +6843,27 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     static class SqlCompilerWrapper extends SqlCompilerImpl {
         boolean addColumnSuffixCalled;
+        boolean compileDropOtherCalled;
+        boolean compileDropTableExtCalled;
         boolean createTableSuffixCalled;
         boolean dropTableCalled;
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
         boolean unknownDropColumnSuffixCalled;
-        boolean unknownDropStatementCalled;
-        boolean unknownDropTableSuffixCalled;
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
         }
 
         @Override
-        public ExecutionModel createTableSuffix(GenericLexer lexer, SecurityContext securityContext, CreateTableModel model, CharSequence tok) throws SqlException {
+        public CreateTableOperationBuilder parseCreateTableExt(
+                GenericLexer lexer,
+                SecurityContext securityContext,
+                CreateTableOperationBuilder builder,
+                CharSequence tok
+        ) throws SqlException {
             createTableSuffixCalled = true;
-            return super.createTableSuffix(lexer, securityContext, model, tok);
+            return super.parseCreateTableExt(lexer, securityContext, builder, tok);
         }
 
         @Override
@@ -6717,39 +6873,43 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void addColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
+        protected void addColumnSuffix(
+                SecurityContext securityContext,
+                CharSequence tok,
+                TableToken tableToken,
+                AlterOperationBuilder alterOperationBuilder
+        ) throws SqlException {
             addColumnSuffixCalled = true;
-            super.addColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
+            super.addColumnSuffix(securityContext, tok, tableToken, alterOperationBuilder);
         }
 
         @Override
-        protected boolean dropTable(SqlExecutionContext executionContext, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
-            dropTableCalled = true;
-            return super.dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
-        }
-
-        @Override
-        protected void unknownAlterStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+        protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
             unknownAlterStatementCalled = true;
-            super.unknownAlterStatement(executionContext, tok);
+            super.compileAlterExt(executionContext, tok);
+        }
+
+        @Override
+        protected void compileDropOther(@NotNull SqlExecutionContext executionContext, @NotNull CharSequence tok, int position) throws SqlException {
+            compileDropOtherCalled = true;
+            super.compileDropOther(executionContext, tok, position);
+        }
+
+        @Override
+        protected void compileDropTableExt(
+                @NotNull SqlExecutionContext executionContext,
+                @NotNull DropTableOperationBuilder opBuilder,
+                @NotNull CharSequence tok,
+                int position
+        ) throws SqlException {
+            compileDropTableExtCalled = true;
+            super.compileDropTableExt(executionContext, opBuilder, tok, position);
         }
 
         @Override
         protected void unknownDropColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
             unknownDropColumnSuffixCalled = true;
             super.unknownDropColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
-        }
-
-        @Override
-        protected void unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
-            unknownDropStatementCalled = true;
-            super.unknownDropStatement(executionContext, tok);
-        }
-
-        @Override
-        protected void unknownDropTableSuffix(SqlExecutionContext executionContext, CharSequence tok, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
-            unknownDropTableSuffixCalled = true;
-            super.unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
         }
     }
 }

@@ -26,11 +26,22 @@ package io.questdb.cutlass.http.processors;
 
 import io.questdb.Metrics;
 import io.questdb.TelemetryOrigin;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.HttpChunkedResponse;
+import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpException;
+import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.LocalValue;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -38,8 +49,18 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.network.QueryPausedException;
+import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.Interval;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
@@ -270,9 +291,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         }
     }
 
-    private static void putStringOrNull(HttpChunkedResponse r, CharSequence cs) {
+    private static void putStringOrNull(HttpChunkedResponse response, CharSequence cs) {
         if (cs != null) {
-            r.putQuote().escapeJsonStr(cs).putQuote();
+            response.putQuote().escapeCsvStr(cs).putQuote();
         }
     }
 
@@ -283,9 +304,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         Numbers.appendUuid(lo, hi, response);
     }
 
-    private static void putVarcharOrNull(HttpChunkedResponse r, Utf8Sequence us) {
+    private static void putVarcharOrNull(HttpChunkedResponse response, Utf8Sequence us) {
         if (us != null) {
-            r.putQuote().escapeJsonStr(us).putQuote();
+            response.putQuote().escapeCsvStr(us).putQuote();
         }
     }
 
@@ -339,7 +360,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                                 if (state.columnIndex > 0) {
                                     response.putAscii(state.delimiter);
                                 }
-                                response.putQuote().escapeJsonStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
+                                response.putQuote().escapeCsvStr(state.metadata.getColumnName(state.columnIndex)).putQuote();
                                 state.columnIndex++;
                                 response.bookmark();
                             }
@@ -414,10 +435,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 if (response.resetToBookmark()) {
                     response.sendChunk(false);
                 } else {
-                    // what we have here is out unit of data, column value or query
-                    // is larger that response content buffer
-                    // all we can do in this scenario is to log appropriately
-                    // and disconnect socket
+                    // out unit of data, column value or query is larger than response content buffer
                     info(state).$("Response buffer is too small, state=").$(state.queryState).$();
                     throw PeerDisconnectedException.INSTANCE;
                 }

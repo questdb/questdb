@@ -66,7 +66,7 @@ public class GeoIntColumn extends GeoIntFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

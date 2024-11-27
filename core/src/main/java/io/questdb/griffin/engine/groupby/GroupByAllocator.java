@@ -28,7 +28,8 @@ import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * Specialized allocator used in GROUP BY functions.
+ * Specialized allocator used in GROUP BY functions. The allocator is closed
+ * after query execution.
  * <p>
  * Note: implementations are not necessarily thread-safe.
  */

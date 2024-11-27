@@ -31,20 +31,36 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.http.*;
-import io.questdb.cutlass.http.processors.*;
+import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
+import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.http.HttpRequestProcessorFactory;
+import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.processors.HealthCheckProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessor;
+import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
+import io.questdb.cutlass.http.processors.StaticContentProcessor;
+import io.questdb.cutlass.http.processors.TableStatusCheckProcessor;
+import io.questdb.cutlass.http.processors.TextImportProcessor;
+import io.questdb.cutlass.http.processors.TextQueryProcessor;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.PlainSocketFactory;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.NanosecondClockImpl;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.mp.TestWorkerPool;
@@ -164,7 +180,8 @@ public class HttpQueryTestBuilder {
             }
             try (
                     CairoEngine engine = new CairoEngine(cairoConfiguration, metrics);
-                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE)
+                    HttpServer httpServer = new HttpServer(httpConfiguration, metrics, workerPool, PlainSocketFactory.INSTANCE);
+                    SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)
             ) {
                 TelemetryJob telemetryJob = null;
                 if (telemetry) {
@@ -287,7 +304,7 @@ public class HttpQueryTestBuilder {
                 workerPool.start(LOG);
 
                 try {
-                    code.run(engine);
+                    code.run(engine, sqlExecutionContext);
                 } finally {
                     workerPool.halt();
 
@@ -391,7 +408,7 @@ public class HttpQueryTestBuilder {
 
     @FunctionalInterface
     public interface HttpClientCode {
-        void run(CairoEngine engine) throws InterruptedException, SqlException, BrokenBarrierException;
+        void run(CairoEngine engine, SqlExecutionContext sqlExecutionContext) throws InterruptedException, SqlException, BrokenBarrierException;
     }
 
     @FunctionalInterface

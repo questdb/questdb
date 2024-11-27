@@ -25,13 +25,17 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.ShardedMapCursor;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
@@ -39,8 +43,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
@@ -49,6 +51,7 @@ import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.std.DirectLongLongHeap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -58,7 +61,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
-    private final GroupByAllocator allocator;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final AtomicBooleanCircuitBreaker mergeCircuitBreaker; // used to signal cancellation to merge shard workers
     private final SOUnboundedCountDownLatch mergeDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
@@ -76,14 +78,11 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     private MapRecordCursor mapCursor;
 
     public AsyncGroupByRecordCursor(
-            CairoConfiguration configuration,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             MessageBus messageBus
     ) {
-        this.allocator = GroupByAllocatorFactory.createThreadSafeAllocator(configuration);
         this.groupByFunctions = groupByFunctions;
-        GroupByUtils.setAllocator(groupByFunctions, allocator);
         this.recordFunctions = recordFunctions;
         this.messageBus = messageBus;
         recordA = new VirtualRecord(recordFunctions);
@@ -104,7 +103,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(allocator);
             Misc.clearObjList(groupByFunctions);
             mapCursor = Misc.free(mapCursor);
 
@@ -143,6 +141,14 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             buildMap();
         }
         return mapCursor.hasNext();
+    }
+
+    @Override
+    public void longTopK(DirectLongLongHeap heap, int columnIndex) {
+        if (!isDataMapBuilt) {
+            buildMap();
+        }
+        mapCursor.longTopK(heap, recordFunctions.getQuick(columnIndex));
     }
 
     @Override
@@ -286,9 +292,9 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     }
                 }
             }
-        } catch (Throwable e) {
+        } catch (Throwable th) {
             mergeCircuitBreaker.cancel();
-            throw e;
+            throw th;
         } finally {
             // All done? Great, start consuming the queue we just published.
             // How do we get to the end? If we consume our own queue there is chance we will be consuming
@@ -304,9 +310,13 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     long cursor = subSeq.next();
                     if (cursor > -1) {
                         GroupByMergeShardTask task = queue.get(cursor);
-                        GroupByMergeShardJob.run(-1, task, subSeq, cursor);
+                        GroupByMergeShardJob.run(-1, task, subSeq, cursor, atom);
                         reclaimed++;
+                    } else {
+                        Os.pause();
                     }
+                } else {
+                    Os.pause();
                 }
                 mergedCount = mergeDoneLatch.getCount();
             }
@@ -315,6 +325,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         if (mergeCircuitBreaker.checkIfTripped()) {
             throwTimeoutException();
         }
+
+        atom.finalizeShardStats();
 
         LOG.debug().$("merge shards done [total=").$(total)
                 .$(", ownCount=").$(ownCount)
@@ -334,7 +346,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     void of(PageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
-        atom.setAllocator(allocator);
         if (!isOpen) {
             isOpen = true;
             atom.reopen();

@@ -31,6 +31,19 @@ import org.junit.Test;
 public class CreateTableAsSelectTest extends AbstractCairoTest {
 
     @Test
+    public void testCreateAsSelectAndLikeIsInvalid() throws Exception {
+        assertMemoryLeak(() -> {
+            createSrcTable();
+
+            assertException(
+                    "create table dest as (select * from src) like src",
+                    41,
+                    "unexpected token [like]"
+            );
+        });
+    }
+
+    @Test
     public void testCreateNonPartitionedTableAsSelectTimestampDescOrder() throws Exception {
         assertMemoryLeak(() -> {
             createSrcTable();
@@ -107,7 +120,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSrcTable();
 
-            ddl("create table dest as (select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;");
+            execute("create table dest as (select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;");
 
             String expected = "ts\tv\n" +
                     "1970-01-01T00:00:00.000000Z\t0\n" +
@@ -141,7 +154,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
             sql += " table dest as ";
 
             sql += "(select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;";
-            ddl(sql);
+            execute(sql);
 
             String expected = "ts\tv\n" +
                     "1970-01-01T00:00:00.000000Z\t0\n" +
@@ -166,7 +179,7 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
 
 
             sql += "(select * from src where v % 2 = 0 " + orderByClause + ") timestamp(ts) partition by day;";
-            ddl(sql);
+            execute(sql);
 
             String expected = "ts\tv\n" +
                     "1970-01-01T00:00:00.000000Z\t0\n" +
@@ -184,11 +197,11 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     }
 
     private void createSrcTable() throws SqlException {
-        ddl("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
-        insert("insert into src values (0, 0);");
-        insert("insert into src values (10000, 1);");
-        insert("insert into src values (20000, 2);");
-        insert("insert into src values (30000, 3);");
-        insert("insert into src values (40000, 4);");
+        execute("create table src (ts timestamp, v long) timestamp(ts) partition by day;");
+        execute("insert into src values (0, 0);");
+        execute("insert into src values (10000, 1);");
+        execute("insert into src values (20000, 2);");
+        execute("insert into src values (30000, 3);");
+        execute("insert into src values (40000, 4);");
     }
 }

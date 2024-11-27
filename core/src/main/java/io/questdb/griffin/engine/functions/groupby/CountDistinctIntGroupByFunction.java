@@ -44,9 +44,8 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
 
     public CountDistinctIntGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        // We use zero as the default value to speed up zeroing on rehash.
-        setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, 0);
-        setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, 0);
+        setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
+        setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, Numbers.INT_NULL);
     }
 
     @Override
@@ -60,8 +59,6 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
         int val = arg.getInt(record);
         if (val != Numbers.INT_NULL) {
             mapValue.putLong(valueIndex, 1);
-            // Remap zero since it's used as the no entry key.
-            val = (val == 0) ? Numbers.INT_NULL : val;
             setA.of(0).add(val);
             mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
@@ -75,8 +72,6 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
         int val = arg.getInt(record);
         if (val != Numbers.INT_NULL) {
             long ptr = mapValue.getLong(valueIndex + 1);
-            // Remap zero since it's used as the no entry key.
-            val = (val == 0) ? Numbers.INT_NULL : val;
             final long index = setA.of(ptr).keyIndex(val);
             if (index >= 0) {
                 setA.addAt(index, val);
@@ -124,7 +119,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 
@@ -167,7 +162,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
 
     @Override
     public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(valueIndex, 0);
         mapValue.putLong(valueIndex + 1, 0);
     }
 

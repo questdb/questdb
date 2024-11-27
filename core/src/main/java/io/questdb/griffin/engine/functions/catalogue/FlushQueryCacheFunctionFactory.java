@@ -85,12 +85,12 @@ public class FlushQueryCacheFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            executionContext.getSecurityContext().authorizeAdminAction();
+            executionContext.getSecurityContext().authorizeSystemAdmin();
             super.init(symbolTableSource, executionContext);
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
 

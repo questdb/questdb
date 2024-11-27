@@ -109,6 +109,7 @@ public class HttpServer implements Closeable {
             final int index = i;
 
             pool.assign(i, new Job() {
+
                 private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
                 private final IORequestProcessor<HttpConnectionContext> processor =
                         (operation, context, dispatcher) -> handleClientOperation(context, operation, selector, rescheduleContext, dispatcher);

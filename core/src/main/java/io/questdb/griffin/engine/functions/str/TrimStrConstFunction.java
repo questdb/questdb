@@ -60,7 +60,7 @@ public class TrimStrConstFunction extends StrFunction implements UnaryFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

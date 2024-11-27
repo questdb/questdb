@@ -92,7 +92,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
                 try (AbstractLineProtoUdpReceiver receiver = createLineProtoReceiver(engine)) {
                     if (columnType != ColumnType.UNDEFINED) {
                         TableModel model = new TableModel(configuration, tableName, PartitionBy.NONE);
-                        TestUtils.create(model.col(targetColumnName, columnType).timestamp(), engine);
+                        TestUtils.createTable(engine, model.col(targetColumnName, columnType).timestamp());
                     }
                     receiver.start();
                     try (AbstractLineSender sender = createLineProtoSender()) {

@@ -63,6 +63,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private final long multipartIdleSpinCount;
     private final MultipartParserState multipartParserState = new MultipartParserState();
     private final NetworkFacade nf;
+    private final boolean preAllocateBuffers;
     private final int recvBufferSize;
     private final RejectProcessor rejectProcessor;
     private final HttpResponseSink responseSink;
@@ -124,6 +125,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.responseSink = new HttpResponseSink(contextConfiguration);
         this.recvBufferSize = contextConfiguration.getRecvBufferSize();
+        this.preAllocateBuffers = configuration.preAllocateBuffers();
+        if (preAllocateBuffers) {
+            recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.responseSink.open();
+        }
         this.multipartIdleSpinCount = contextConfiguration.getMultipartIdleSpinCount();
         this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
         // This is default behaviour until the security context is overridden with correct principal.
@@ -144,7 +150,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             LOG.error().$("reused context with retry pending").$();
         }
         this.pendingRetry = false;
-        this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+        if (!preAllocateBuffers) {
+            this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
+            this.responseSink.close();
+        }
         this.localValueMap.disconnect();
     }
 
@@ -246,6 +255,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     public long getTotalBytesSent() {
         return totalBytesSent;
+    }
+
+    public long getTotalReceived() {
+        return totalReceived;
     }
 
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
@@ -356,7 +369,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     public HttpResponseSink.SimpleResponseImpl simpleResponse() {
-        return responseSink.getSimple();
+        return responseSink.simpleResponse();
     }
 
     public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, PeerIsSlowToWriteException, ServerDisconnectException {

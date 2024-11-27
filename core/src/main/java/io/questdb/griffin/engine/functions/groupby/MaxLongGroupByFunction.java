@@ -90,8 +90,8 @@ public class MaxLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return UnaryFunction.super.isReadThreadSafe();
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override

@@ -81,11 +81,11 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default boolean isReadThreadSafe() {
-        return getFunc0().isReadThreadSafe()
-                && getFunc1().isReadThreadSafe()
-                && getFunc2().isReadThreadSafe()
-                && getFunc3().isReadThreadSafe();
+    default boolean isThreadSafe() {
+        return getFunc0().isThreadSafe()
+                && getFunc1().isThreadSafe()
+                && getFunc2().isThreadSafe()
+                && getFunc3().isThreadSafe();
     }
 
     @Override

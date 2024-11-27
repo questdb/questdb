@@ -77,18 +77,18 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testChangeDoubleToFloat() throws Exception {
         assertMemoryLeak(() -> {
             assumeWal();
-            ddl("create table x (ts timestamp, col double) timestamp(ts) partition by day wal", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:01.000000Z', 0.1)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:02.000000Z', 3.1)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:02.000000Z', -9223372036854775808.0)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:02.000000Z', -3.4e38)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:02.000000Z', 3.4e38)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:02.000000Z', 1.80e300)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:02.000000Z', -1.80e300)", sqlExecutionContext);
+            execute("create table x (ts timestamp, col double) timestamp(ts) partition by day wal", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:01.000000Z', 0.1)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:02.000000Z', 3.1)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:02.000000Z', -9223372036854775808.0)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:02.000000Z', -3.4e38)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:02.000000Z', 3.4e38)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:02.000000Z', 1.80e300)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:02.000000Z', -1.80e300)", sqlExecutionContext);
             drainWalQueue();
 
-            ddl("alter table x alter column col type float", sqlExecutionContext);
+            execute("alter table x alter column col type float", sqlExecutionContext);
             drainWalQueue();
 
             assertSql("ts\tcol\n" +
@@ -102,7 +102,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                             "2024-05-14T16:00:02.000000Z\tnull\n",
                     "x");
 
-            ddl("alter table x alter column col type int", sqlExecutionContext);
+            execute("alter table x alter column col type int", sqlExecutionContext);
             drainWalQueue();
 
             assertSql("ts\tcol\n" +
@@ -121,16 +121,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testChangeFloatToDouble() throws Exception {
         assumeWal();
         assertMemoryLeak(() -> {
-            ddl("create table x (ts timestamp, col float) timestamp(ts) partition by day wal", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:01.000000Z', 0.1)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:02.000000Z', 3.1)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:02.000000Z', -9223372036854775808.0)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:02.000000Z', -3.4e38)", sqlExecutionContext);
-            insert("insert into x values('2024-05-14T16:00:02.000000Z', 3.4e38)", sqlExecutionContext);
+            execute("create table x (ts timestamp, col float) timestamp(ts) partition by day wal", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:01.000000Z', 0.1)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:02.000000Z', 3.1)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:02.000000Z', -9223372036854775808.0)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:02.000000Z', -3.4e38)", sqlExecutionContext);
+            execute("insert into x values('2024-05-14T16:00:02.000000Z', 3.4e38)", sqlExecutionContext);
             drainWalQueue();
 
-            ddl("alter table x alter column col type double", sqlExecutionContext);
+            execute("alter table x alter column col type double", sqlExecutionContext);
             drainWalQueue();
 
             assertSql("ts\tcol\n" +
@@ -141,7 +141,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "2024-05-14T16:00:02.000000Z\t-3.3999999521443642E38\n" +
                     "2024-05-14T16:00:02.000000Z\t3.3999999521443642E38\n", "x");
 
-            ddl("alter table x alter column col type int", sqlExecutionContext);
+            execute("alter table x alter column col type int", sqlExecutionContext);
             drainWalQueue();
 
             assertSql("ts\tcol\n" +
@@ -160,8 +160,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             createX();
             drainWalQueue();
 
-            ddl("create table y as (select ik from x)", sqlExecutionContext);
-            ddl("alter table x alter column ik type varchar", sqlExecutionContext);
+            execute("create table y as (select ik from x)", sqlExecutionContext);
+            execute("alter table x alter column ik type varchar", sqlExecutionContext);
             drainWalQueue();
 
             assertSqlCursorsConvertedStrings(
@@ -169,12 +169,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select ik from x"
             );
 
-            insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
+            execute("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
 
             assertSql("ik\nabc\n", "select ik from x limit -1");
 
-            insert("insert into y(ik) values('abc')", sqlExecutionContext);
+            execute("insert into y(ik) values('abc')", sqlExecutionContext);
             assertSqlCursorsConvertedStrings(
                     "select 'abc' as ik",
                     "select ik from x where ik = 'abc'"
@@ -189,13 +189,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             createX();
             drainWalQueue();
             engine.releaseInactive();
-            ddl("alter table x alter column ik type varchar", sqlExecutionContext);
-            ddl("alter table x alter column ik type string", sqlExecutionContext);
-            ddl("alter table x alter column ik type symbol index", sqlExecutionContext);
-            ddl("alter table x alter column ik type string", sqlExecutionContext);
+            execute("alter table x alter column ik type varchar", sqlExecutionContext);
+            execute("alter table x alter column ik type string", sqlExecutionContext);
+            execute("alter table x alter column ik type symbol index", sqlExecutionContext);
+            execute("alter table x alter column ik type string", sqlExecutionContext);
             drainWalQueue();
 
-            insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
+            execute("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
 
             assertSql("ik\nabc\n", "select ik from x limit -1");
@@ -213,8 +213,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             createX();
             drainWalQueue();
 
-            ddl("create table y as (select c from x)", sqlExecutionContext);
-            ddl("alter table x alter column c type symbol index", sqlExecutionContext);
+            execute("create table y as (select c from x)", sqlExecutionContext);
+            execute("alter table x alter column c type symbol index", sqlExecutionContext);
             drainWalQueue();
 
             assertSqlCursorsConvertedStrings(
@@ -222,11 +222,11 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select c from x"
             );
 
-            insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
+            execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
             assertSql("c\nabc\n", "select c from x limit -1");
 
-            insert("insert into y(c) values('abc')", sqlExecutionContext);
+            execute("insert into y(c) values('abc')", sqlExecutionContext);
             assertSqlCursorsConvertedStrings(
                     "select c from y where c = 'abc'",
                     "select c from x where c = 'abc'"
@@ -240,8 +240,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
             drainWalQueue();
-            ddl("create table y as (select c from x)", sqlExecutionContext);
-            ddl("alter table x alter column c type symbol", sqlExecutionContext);
+            execute("create table y as (select c from x)", sqlExecutionContext);
+            execute("alter table x alter column c type symbol", sqlExecutionContext);
             drainWalQueue();
 
             assertSqlCursorsConvertedStrings(
@@ -249,12 +249,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select c from x"
             );
 
-            insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
+            execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
             assertSql("c\nabc\n", "select c from x limit -1");
 
-            ddl("create table z as (select c from x)", sqlExecutionContext);
-            ddl("alter table x alter column c type string", sqlExecutionContext);
+            execute("create table z as (select c from x)", sqlExecutionContext);
+            execute("alter table x alter column c type string", sqlExecutionContext);
 
             assertSqlCursorsConvertedStrings(
                     "select c from z",
@@ -269,8 +269,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
             drainWalQueue();
-            ddl("create table y as (select c from x)", sqlExecutionContext);
-            ddl("alter table x alter column c type varchar", sqlExecutionContext);
+            execute("create table y as (select c from x)", sqlExecutionContext);
+            execute("alter table x alter column c type varchar", sqlExecutionContext);
             drainWalQueue();
 
             assertSqlCursorsConvertedStrings(
@@ -278,12 +278,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select c from y"
             );
 
-            insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
+            execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
             assertSql("c\nabc\n", "select c from x limit -1");
 
-            ddl("create table z as (select c from x)", sqlExecutionContext);
-            ddl("alter table x alter column c type string", sqlExecutionContext);
+            execute("create table z as (select c from x)", sqlExecutionContext);
+            execute("alter table x alter column c type string", sqlExecutionContext);
 
             assertSqlCursorsConvertedStrings(
                     "select c from z",
@@ -298,10 +298,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             createX();
             drainWalQueue();
             engine.releaseInactive();
-            ddl("alter table x alter column ik type varchar", sqlExecutionContext);
+            execute("alter table x alter column ik type varchar", sqlExecutionContext);
             drainWalQueue();
 
-            insert("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
+            execute("insert into x(ik, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
 
             assertSql("ik\nabc\n", "select ik from x limit -1");
@@ -312,8 +312,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testChangeTypePreservesColumnOrder() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            ddl("create table y as (select * from x)", sqlExecutionContext);
-            ddl("alter table x alter column c type symbol", sqlExecutionContext);
+            execute("create table y as (select * from x)", sqlExecutionContext);
+            execute("alter table x alter column c type symbol", sqlExecutionContext);
 
             assertSqlCursorsConvertedStrings(
                     "select * from y limit 10",
@@ -325,7 +325,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testChangeTypePreservesInsertColDefaultOrder() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " rnd_str(5,5,2) c," +
@@ -335,23 +335,23 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             );
 
             drainWalQueue();
-            ddl("alter table x alter column c type varchar", sqlExecutionContext);
+            execute("alter table x alter column c type varchar", sqlExecutionContext);
             drainWalQueue();
 
-            insert("insert into x values('abc', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
+            execute("insert into x values('abc', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
             drainWalQueue();
 
             assertSql("c\nabc\n", "select c from x limit -1");
 
-            ddl("alter table x alter column c type string", sqlExecutionContext);
+            execute("alter table x alter column c type string", sqlExecutionContext);
             drainWalQueue();
             engine.releaseInactive();
 
-            insert("insert into x values('def', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
+            execute("insert into x values('def', '2024-06-20T17:18:27.752076Z')", sqlExecutionContext);
             drainWalQueue();
             assertSql("c\ndef\n", "select c from x limit -1");
 
-            ddl("insert into x select * from x");
+            execute("insert into x select * from x");
             drainWalQueue();
 
             assertSql("c\ttimestamp\n" +
@@ -368,7 +368,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testChangeVarcharStringSymbol() throws Exception {
         assertMemoryLeak(() -> {
             createX();
-            ddl("create table y as (select v from x)", sqlExecutionContext);
+            execute("create table y as (select v from x)", sqlExecutionContext);
 
             Rnd rnd = new Rnd();
             int currentType = ColumnType.VARCHAR;
@@ -390,7 +390,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 }
                 String type = ColumnType.nameOf(typeId);
                 currentType = typeId;
-                ddl("alter table x alter column v type " + type, sqlExecutionContext);
+                execute("alter table x alter column v type " + type, sqlExecutionContext);
 
                 assertSqlCursorsConvertedStrings(
                         "select v from y",
@@ -405,8 +405,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
             drainWalQueue();
-            ddl("create table y as (select v from x)", sqlExecutionContext);
-            ddl("alter table x alter column v type symbol", sqlExecutionContext);
+            execute("create table y as (select v from x)", sqlExecutionContext);
+            execute("alter table x alter column v type symbol", sqlExecutionContext);
 
             drainWalQueue();
             assertSqlCursorsConvertedStrings(
@@ -414,23 +414,23 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select v from y"
             );
 
-            insert("insert into x(v, timestamp) values('abc', now())", sqlExecutionContext);
+            execute("insert into x(v, timestamp) values('abc', now())", sqlExecutionContext);
             drainWalQueue();
             assertSql("v\nabc\n", "select v from x limit -1");
 
-            ddl("create table z as (select v from x)", sqlExecutionContext);
-            ddl("alter table x alter column v type varchar", sqlExecutionContext);
+            execute("create table z as (select v from x)", sqlExecutionContext);
+            execute("alter table x alter column v type varchar", sqlExecutionContext);
 
             assertSqlCursorsConvertedStrings(
                     "select v from z",
                     "select v from x"
             );
 
-            ddl("alter table x add column sym_top symbol", sqlExecutionContext);
-            ddl("alter table z add column sym_top symbol", sqlExecutionContext);
-            insert("insert into x(sym_top, timestamp) select rnd_symbol('a', 'b', 'c', null), timestamp_sequence(now(), 1) from long_sequence(123)", sqlExecutionContext);
+            execute("alter table x add column sym_top symbol", sqlExecutionContext);
+            execute("alter table z add column sym_top symbol", sqlExecutionContext);
+            execute("insert into x(sym_top, timestamp) select rnd_symbol('a', 'b', 'c', null), timestamp_sequence(now(), 1) from long_sequence(123)", sqlExecutionContext);
             drainWalQueue();
-            insert("insert into z(sym_top) select sym_top from x limit -123", sqlExecutionContext);
+            execute("insert into z(sym_top) select sym_top from x limit -123", sqlExecutionContext);
             drainWalQueue();
 
             assertSqlCursorsConvertedStrings(
@@ -438,8 +438,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select sym_top from x"
             );
 
-            ddl("alter table x alter column sym_top type varchar", sqlExecutionContext);
-            ddl("alter table z alter column sym_top type varchar", sqlExecutionContext);
+            execute("alter table x alter column sym_top type varchar", sqlExecutionContext);
+            execute("alter table z alter column sym_top type varchar", sqlExecutionContext);
             drainWalQueue();
 
             assertSqlCursorsConvertedStrings(
@@ -467,21 +467,21 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
 
-            ddl("alter table x dedup enable upsert keys(timestamp, d)");
+            execute("alter table x dedup enable upsert keys(timestamp, d)");
             drainWalQueue();
             checkDedupSet("d", true);
 
-            ddl("alter table x alter column d type float");
+            execute("alter table x alter column d type float");
             drainWalQueue();
             checkDedupSet("d", true);
 
             engine.releaseInactive();
             checkDedupSet("d", true);
 
-            insert("insert into x(d, timestamp) values(1.0, '2044-02-24')", sqlExecutionContext);
-            insert("insert into x(d, timestamp) values(1.0, '2044-02-25')", sqlExecutionContext);
-            insert("insert into x(d, timestamp) values(1.0, '2044-02-25')", sqlExecutionContext);
-            insert("insert into x(d, timestamp) values(1.2, '2044-02-25')", sqlExecutionContext);
+            execute("insert into x(d, timestamp) values(1.0, '2044-02-24')", sqlExecutionContext);
+            execute("insert into x(d, timestamp) values(1.0, '2044-02-25')", sqlExecutionContext);
+            execute("insert into x(d, timestamp) values(1.0, '2044-02-25')", sqlExecutionContext);
+            execute("insert into x(d, timestamp) values(1.2, '2044-02-25')", sqlExecutionContext);
 
             drainWalQueue();
 
@@ -525,7 +525,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             fail.set("c.d.1");
             try {
-                ddl("alter table x alter column c type varchar", sqlExecutionContext);
+                execute("alter table x alter column c type varchar", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
@@ -533,7 +533,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             fail.set("c.i.1");
             try {
-                ddl("alter table x alter column c type varchar", sqlExecutionContext);
+                execute("alter table x alter column c type varchar", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
@@ -541,7 +541,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             fail.set("c.d");
             try {
-                ddl("alter table x alter column c type varchar", sqlExecutionContext);
+                execute("alter table x alter column c type varchar", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only");
@@ -549,16 +549,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             fail.set("c.i");
             try {
-                ddl("alter table x alter column c type varchar", sqlExecutionContext);
+                execute("alter table x alter column c type varchar", sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only");
             }
 
             fail.set(null);
-            ddl("alter table x alter column c type varchar", sqlExecutionContext);
+            execute("alter table x alter column c type varchar", sqlExecutionContext);
 
-            insert("insert into x(c, timestamp) values('asdfadf', now())", sqlExecutionContext);
+            execute("insert into x(c, timestamp) values('asdfadf', now())", sqlExecutionContext);
             assertSql("c\nasdfadf\n", "select c from x limit -1");
         });
     }
@@ -590,12 +590,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "column conversion failed, see logs for details");
             }
 
-            insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
+            execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
             assertSql("c\nabc\n", "select c from x limit -1");
 
             engine.releaseInactive();
 
-            insert("insert into x(c, timestamp) values('def', now())", sqlExecutionContext);
+            execute("insert into x(c, timestamp) values('def', now())", sqlExecutionContext);
             assertSql("c\ndef\n", "select c from x limit -1");
         });
     }
@@ -606,18 +606,19 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createX();
 
-            ddl("alter table x dedup enable upsert keys(timestamp, ik)");
+            execute("alter table x dedup enable upsert keys(timestamp, ik)");
+            drainWalQueue();
+            checkDedupSet("ik", true);
+            checkDedupSet("f", false);
+
+            execute("alter table x alter column ik type varchar");
             drainWalQueue();
             checkDedupSet("ik", true);
 
-            ddl("alter table x alter column ik type varchar");
-            drainWalQueue();
-            checkDedupSet("ik", true);
-
-            insert("insert into x(ik, d, timestamp) values('abc', 2, '2044-02-24')", sqlExecutionContext);
-            insert("insert into x(ik, d, timestamp) values('abc', 3, '2044-02-24')", sqlExecutionContext);
-            insert("insert into x(ik, d, timestamp) values('abc', 4, '2044-02-25')", sqlExecutionContext);
-            insert("insert into x(ik, d, timestamp) values('def', 5, '2044-02-25')", sqlExecutionContext);
+            execute("insert into x(ik, d, timestamp) values('abc', 2, '2044-02-24')", sqlExecutionContext);
+            execute("insert into x(ik, d, timestamp) values('abc', 3, '2044-02-24')", sqlExecutionContext);
+            execute("insert into x(ik, d, timestamp) values('abc', 4, '2044-02-25')", sqlExecutionContext);
+            execute("insert into x(ik, d, timestamp) values('def', 5, '2044-02-25')", sqlExecutionContext);
 
             drainWalQueue();
 
@@ -642,7 +643,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "cannot change column type, column does not exists");
             }
 
-            insert("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
+            execute("insert into x(c, timestamp) values('abc', now())", sqlExecutionContext);
             assertSql("c\nabc\n", "select c from x limit -1");
         });
     }
@@ -661,10 +662,10 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             createX();
             drainWalQueue();
 
-            ddl("create table y ( converted long, casted int, original long );", sqlExecutionContext);
-            insert("insert into y (converted, casted, original) values (9999999999999, 9999999999999::int, 9999999999999)", sqlExecutionContext);
+            execute("create table y ( converted long, casted int, original long );", sqlExecutionContext);
+            execute("insert into y (converted, casted, original) values (9999999999999, 9999999999999::int, 9999999999999)", sqlExecutionContext);
             drainWalQueue();
-            ddl("alter table y alter column converted type int", sqlExecutionContext);
+            execute("alter table y alter column converted type int", sqlExecutionContext);
             drainWalQueue();
 
             assertQuery("converted\tcasted\toriginal\n" +
@@ -684,7 +685,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             String longMaxValue = Long.toString(Long.MAX_VALUE);
             final String[] maxVals = {"127", Short.toString(Short.MAX_VALUE), Integer.toString(Integer.MAX_VALUE), longMaxValue, Float.MAX_VALUE + "f", Double.toString(Double.MAX_VALUE), longMaxValue, "true", longMaxValue};
 
-            drop("drop table if exists y", sqlExecutionContext);
+            execute("drop table if exists y", sqlExecutionContext);
 
             for (int i = 0, n = types.length; i < n; i++) {
                 for (int j = 0, m = types.length; j < m; j++) {
@@ -698,12 +699,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
                     LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion").$();
 
-                    ddl("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
-                    insert("insert into y (converted, casted, original) values (null, cast(cast(null as " + srcType + ") as " + dstType + "), null)", sqlExecutionContext);
-                    insert("insert into y (converted, casted, original) values (" + minVals[i] + ", cast(cast(" + minVals[i] + " as " + srcType + ") as " + dstType + "), " + minVals[i] + ")", sqlExecutionContext);
-                    insert("insert into y (converted, casted, original) values (" + maxVals[i] + ", cast(cast(" + maxVals[i] + " as " + srcType + ") as " + dstType + "), " + maxVals[i] + ")", sqlExecutionContext);
+                    execute("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
+                    execute("insert into y (converted, casted, original) values (null, cast(cast(null as " + srcType + ") as " + dstType + "), null)", sqlExecutionContext);
+                    execute("insert into y (converted, casted, original) values (" + minVals[i] + ", cast(cast(" + minVals[i] + " as " + srcType + ") as " + dstType + "), " + minVals[i] + ")", sqlExecutionContext);
+                    execute("insert into y (converted, casted, original) values (" + maxVals[i] + ", cast(cast(" + maxVals[i] + " as " + srcType + ") as " + dstType + "), " + maxVals[i] + ")", sqlExecutionContext);
 
-                    ddl("alter table y alter column converted type " + dstType, sqlExecutionContext);
+                    execute("alter table y alter column converted type " + dstType, sqlExecutionContext);
 
                     try {
                         assertSql(
@@ -727,7 +728,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                                     "original\t" + srcType + "\n",
                             "select \"column\", type from table_columns('y')"
                     );
-                    drop("drop table y", sqlExecutionContext);
+                    execute("drop table y", sqlExecutionContext);
                     drainWalQueue();
                 }
 
@@ -762,15 +763,15 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testIntOverflowConversions() throws SqlException {
         //assumeWal();
-        ddl("create table x (a long, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? " WAL" : " BYPASS WAL"));
-        insert("insert into x(a, timestamp) values(-7178801693176412875L, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
+        execute("create table x (a long, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? " WAL" : " BYPASS WAL"));
+        execute("insert into x(a, timestamp) values(-7178801693176412875L, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
         drainWalQueue();
 
-        ddl("alter table x alter column a type double", sqlExecutionContext);
+        execute("alter table x alter column a type double", sqlExecutionContext);
         drainWalQueue();
         assertSql("a\n-7.1788016931764132E18\n", "select a from x");
 
-        ddl("alter table x alter column a type int", sqlExecutionContext);
+        execute("alter table x alter column a type int", sqlExecutionContext);
         drainWalQueue();
         assertSql("cast\ta\n" +
                 "null\tnull\n", "select cast(-7.1788016931764132E18 as int), a from x");
@@ -779,7 +780,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testNewTypeInvalid() throws Exception {
         assumeNonWal();
-        assertFailure("alter table x alter column c type abracadabra", 34, "invalid type");
+        assertFailure("alter table x alter column c type abracadabra", 34, "unsupported column type: abracadabra");
     }
 
     @Test
@@ -793,7 +794,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assumeNonWal();
         assertMemoryLeak(() -> {
             // Create table with many partitions
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " to_timestamp('2018-01', 'yyyy-MM') + x * 72000000 timestamp," +
@@ -811,19 +812,19 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             Assert.assertTrue(initialSize > 5E6 && initialSize < 15E6);
 
             // Test the size isn't ballooned after the conversion, it's no more than 25% larger than the initial size
-            ddl("alter table x alter column c type varchar", sqlExecutionContext);
+            execute("alter table x alter column c type varchar", sqlExecutionContext);
             assertSql("column\ntrue\n", "select sum(diskSize) < " + (initialSize * 1.25) + " from table_partitions('x')");
 
             // Test the size back to the original
-            ddl("alter table x alter column c type string", sqlExecutionContext);
+            execute("alter table x alter column c type string", sqlExecutionContext);
             assertSql("sum\n" + initialSize + "\n", "select sum(diskSize) from table_partitions('x')");
 
             // Test the size isn't ballooned after the conversion, it's no more than 50% larger than the initial size
-            ddl("alter table x alter column x type string", sqlExecutionContext);
+            execute("alter table x alter column x type string", sqlExecutionContext);
             assertSql("column\ntrue\n", "select sum(diskSize) < " + (initialSize * 1.5) + " from table_partitions('x')");
 
             // Test the size back to the original
-            ddl("alter table x alter column x type int", sqlExecutionContext);
+            execute("alter table x alter column x type int", sqlExecutionContext);
             assertSql("sum\n" + initialSize + "\n", "select sum(diskSize) from table_partitions('x')");
         });
     }
@@ -863,8 +864,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     public void testWalConversionFromVarToFixedDoesNotLeaveAuxFiles() throws Exception {
         assumeWal();
         assertMemoryLeak(() -> {
-            ddl("create table x (s string, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR WAL;");
-            ddl("alter table x alter column s type int;");
+            execute("create table x (s string, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR WAL;");
+            execute("alter table x alter column s type int;");
 
             TableToken xTbl = engine.verifyTableName("x");
 
@@ -874,7 +875,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             path = Path.getThreadLocal(engine.getConfiguration().getRoot()).concat(xTbl).concat("wal1").concat("0").concat("s.i");
             Assert.assertFalse(Files.exists(path.$()));
 
-            insert("insert into x(s, timestamp) values(1, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
+            execute("insert into x(s, timestamp) values(1, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
             drainWalQueue();
 
             assertSql("s\n1\n", "select s from x limit -1");
@@ -912,7 +913,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     private static void testConvertFixedToVar(String varTypeName) throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " rnd_uuid4() guid," +
@@ -932,9 +933,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         ")"
         );
         // add nulls last line
-        insert("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
+        execute("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
 
-        ddl("create table y as (" +
+        execute("create table y as (" +
                 "select cast(cast(guid as string) as " + varTypeName + ") as guid," +
                 " cast(cast(rint as string) as " + varTypeName + ") as rint," +
                 " cast(cast(ip as string) as " + varTypeName + ") as ip," +
@@ -950,18 +951,18 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 " timestamp from x) " +
                 "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
 
-        ddl("alter table x alter column guid type " + varTypeName, sqlExecutionContext);
-        ddl("alter table x alter column rint type " + varTypeName, sqlExecutionContext);
-        ddl("alter table x alter column ip type " + varTypeName, sqlExecutionContext);
-        ddl("alter table x alter column i64 type " + varTypeName, sqlExecutionContext);
-        ddl("alter table x alter column i16 type " + varTypeName, sqlExecutionContext);
-        ddl("alter table x alter column i8 type " + varTypeName, sqlExecutionContext);
-        ddl("alter table x alter column f64 type " + varTypeName, sqlExecutionContext);
-        ddl("alter table x alter column f32 type " + varTypeName, sqlExecutionContext);
-        ddl("alter table x alter column ch type " + varTypeName, sqlExecutionContext);
-        ddl("alter table x alter column ts type " + varTypeName, sqlExecutionContext);
-        ddl("alter table x alter column dt type " + varTypeName, sqlExecutionContext);
-        ddl("alter table x alter column b type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column guid type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column rint type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column ip type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column i64 type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column i16 type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column i8 type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column f64 type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column f32 type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column ch type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column ts type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column dt type " + varTypeName, sqlExecutionContext);
+        execute("alter table x alter column b type " + varTypeName, sqlExecutionContext);
 
         assertSqlCursorsConvertedStrings(
                 "select * from x",
@@ -970,7 +971,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     private static void testConvertVarToFixed(String varType) throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " rnd_uuid4() guid," +
@@ -990,9 +991,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                         ")"
         );
         // add nulls last line
-        insert("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
+        execute("insert into x(timestamp) values('2018-01-03T23:23')", sqlExecutionContext);
 
-        ddl("create table y as (" +
+        execute("create table y as (" +
                 "select cast(guid as " + varType + ") as guid," +
                 " cast(cast(rint as string) as " + varType + ") as rint," +
                 " cast(cast(ip as string) as " + varType + ") as ip," +
@@ -1009,22 +1010,22 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                 "timestamp (timestamp) partition by DAY;", sqlExecutionContext);
 
         // Insert garbage data
-        insert("insert into y(guid, rint, ip, i64, i8, i16, f64, f32, ch, ts, dt, timestamp) values('abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', '2018-01-03T23:23:10')", sqlExecutionContext);
+        execute("insert into y(guid, rint, ip, i64, i8, i16, f64, f32, ch, ts, dt, timestamp) values('abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', 'abc', '2018-01-03T23:23:10')", sqlExecutionContext);
         // Expect nulls
-        insert("insert into x(timestamp) values('2018-01-03T23:23:10')", sqlExecutionContext);
+        execute("insert into x(timestamp) values('2018-01-03T23:23:10')", sqlExecutionContext);
 
-        ddl("alter table y alter column guid type uuid", sqlExecutionContext);
-        ddl("alter table y alter column rint type int", sqlExecutionContext);
-        ddl("alter table y alter column ip type ipv4", sqlExecutionContext);
-        ddl("alter table y alter column i64 type long", sqlExecutionContext);
-        ddl("alter table y alter column i16 type short", sqlExecutionContext);
-        ddl("alter table y alter column i8 type byte", sqlExecutionContext);
-        ddl("alter table y alter column f64 type double", sqlExecutionContext);
-        ddl("alter table y alter column f32 type float", sqlExecutionContext);
-        ddl("alter table y alter column ch type char", sqlExecutionContext);
-        ddl("alter table y alter column b type boolean", sqlExecutionContext);
-        ddl("alter table y alter column ts type timestamp", sqlExecutionContext);
-        ddl("alter table y alter column dt type date", sqlExecutionContext);
+        execute("alter table y alter column guid type uuid", sqlExecutionContext);
+        execute("alter table y alter column rint type int", sqlExecutionContext);
+        execute("alter table y alter column ip type ipv4", sqlExecutionContext);
+        execute("alter table y alter column i64 type long", sqlExecutionContext);
+        execute("alter table y alter column i16 type short", sqlExecutionContext);
+        execute("alter table y alter column i8 type byte", sqlExecutionContext);
+        execute("alter table y alter column f64 type double", sqlExecutionContext);
+        execute("alter table y alter column f32 type float", sqlExecutionContext);
+        execute("alter table y alter column ch type char", sqlExecutionContext);
+        execute("alter table y alter column b type boolean", sqlExecutionContext);
+        execute("alter table y alter column ts type timestamp", sqlExecutionContext);
+        execute("alter table y alter column dt type date", sqlExecutionContext);
 
         assertSqlCursorsConvertedStrings(
                 "select * from x",
@@ -1036,7 +1037,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try {
                 createX();
-                ddl(sql, sqlExecutionContext);
+                execute(sql, sqlExecutionContext);
                 Assert.fail();
             } catch (SqlException e) {
                 Assert.assertEquals(position, e.getPosition());
@@ -1061,7 +1062,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     private void createX() throws SqlException {
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         " case WHEN x % 10 = 0 THEN NULL WHEN x % 10 = 1 THEN 0 ELSE cast(x as int) END i," +
@@ -1107,9 +1108,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
                     LOG.info().$("checking `" + srcType + "` to `" + dstType + "` conversion").$();
 
-                    ddl("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
-                    insert("insert into y select " + srcColName + " as converted, cast(" + srcColName + " as " + dstType + ") as casted, " + srcColName + " as original from x", sqlExecutionContext);
-                    ddl("alter table y alter column converted type " + dstType, sqlExecutionContext);
+                    execute("create table y ( converted " + srcType + ", casted " + dstType + ", original " + srcType + ")", sqlExecutionContext);
+                    execute("insert into y select " + srcColName + " as converted, cast(" + srcColName + " as " + dstType + ") as casted, " + srcColName + " as original from x", sqlExecutionContext);
+                    execute("alter table y alter column converted type " + dstType, sqlExecutionContext);
 
                     try {
                         assertSql(
@@ -1133,7 +1134,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                                     "original\t" + srcType + "\n",
                             "select \"column\", type from table_columns('y')"
                     );
-                    drop("drop table y", sqlExecutionContext);
+                    execute("drop table y", sqlExecutionContext);
                     drainWalQueue();
 
                 }
@@ -1144,7 +1145,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     private void testWalRollUncommittedConversion(int columnType, String columnCreateSql, String convertToTypeSql) throws SqlException, NumericException {
         assumeWal();
-        ddl(
+        execute(
                 "create table x as (" +
                         "select" +
                         columnCreateSql +
@@ -1167,7 +1168,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     break;
             }
             row.append();
-            ddl("alter table x alter column c type " + convertToTypeSql, sqlExecutionContext);
+            execute("alter table x alter column c type " + convertToTypeSql, sqlExecutionContext);
 
             walWriter.commit();
         }

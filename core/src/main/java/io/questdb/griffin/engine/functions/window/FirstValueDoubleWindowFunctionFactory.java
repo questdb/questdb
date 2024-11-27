@@ -24,7 +24,12 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -35,17 +40,20 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.WindowColumn;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 // Returns value evaluated at the row that is the first row of the window frame.
-public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
+public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     private static final ArrayColumnTypes FIRST_VALUE_COLUMN_TYPES;
 
@@ -58,11 +66,6 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public boolean isWindow() {
-        return true;
-    }
-
-    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -70,53 +73,8 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        if (windowContext.isEmpty()) {
-            throw SqlException.emptyWindowContext(position);
-        }
-
-        long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getRowsHi();
-
-        if (!windowContext.isDefaultFrame()) {
-            if (rowsLo > 0) {
-                throw SqlException.$(windowContext.getRowsLoKindPos(), "frame start supports UNBOUNDED PRECEDING, _number_ PRECEDING and CURRENT ROW only");
-            }
-            if (rowsHi > 0) {
-                if (rowsHi != Long.MAX_VALUE) {
-                    throw SqlException.$(windowContext.getRowsHiKindPos(), "frame end supports _number_ PRECEDING and CURRENT ROW only");
-                } else if (rowsLo != Long.MIN_VALUE) {
-                    throw SqlException.$(windowContext.getRowsHiKindPos(), "frame end supports UNBOUNDED FOLLOWING only when frame start is UNBOUNDED PRECEDING");
-                }
-            }
-        }
-
-        int exclusionKind = windowContext.getExclusionKind();
-        int exclusionKindPos = windowContext.getExclusionKindPos();
-        if (exclusionKind != WindowColumn.EXCLUDE_NO_OTHERS
-                && exclusionKind != WindowColumn.EXCLUDE_CURRENT_ROW) {
-            throw SqlException.$(exclusionKindPos, "only EXCLUDE NO OTHERS and EXCLUDE CURRENT ROW exclusion modes are supported");
-        }
-
-        if (exclusionKind == WindowColumn.EXCLUDE_CURRENT_ROW) {
-            // assumes frame doesn't use 'following'
-            if (rowsHi == Long.MAX_VALUE) {
-                throw SqlException.$(exclusionKindPos, "EXCLUDE CURRENT ROW not supported with UNBOUNDED FOLLOWING frame boundary");
-            }
-
-            if (rowsHi == 0) {
-                rowsHi = -1;
-            }
-            if (rowsHi < rowsLo) {
-                throw SqlException.$(exclusionKindPos, "end of window is higher than start of window due to exclusion mode");
-            }
-        }
-
+        checkWindowParameter(position, sqlExecutionContext);
         int framingMode = windowContext.getFramingMode();
-        if (framingMode == WindowColumn.FRAMING_GROUPS) {
-            throw SqlException.$(position, "function not implemented for given window parameters");
-        }
-
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
@@ -125,7 +83,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
             if (framingMode == WindowColumn.FRAMING_RANGE) {
                 // moving average over whole partition (no order by, default frame) or (order by, unbounded preceding to unbounded following)
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             FIRST_VALUE_COLUMN_TYPES
@@ -139,7 +97,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             FIRST_VALUE_COLUMN_TYPES
@@ -167,7 +125,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
                     columnTypes.add(ColumnType.LONG);   // native buffer capacity
                     columnTypes.add(ColumnType.LONG);   // index of first buffered element
 
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             columnTypes
@@ -192,7 +150,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
             } else if (framingMode == WindowColumn.FRAMING_ROWS) {
                 //between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             FIRST_VALUE_COLUMN_TYPES
@@ -209,7 +167,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
                     return new FirstValueOverCurrentRowFunction(args.get(0));
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             FIRST_VALUE_COLUMN_TYPES
@@ -229,7 +187,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
                     columnTypes.add(ColumnType.LONG);// start offset of native array
                     columnTypes.add(ColumnType.LONG);// count of values in buffer
 
-                    Map map = MapFactory.createOrderedMap(
+                    Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
                             columnTypes
@@ -406,6 +364,7 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
         private final int timestampIndex;
 
         private double firstValue;
+        private final RingBufferDesc memoryDesc = new RingBufferDesc();
 
         public FirstValueOverPartitionRangeFrameFunction(
                 Map map,
@@ -508,40 +467,11 @@ public class FirstValueDoubleWindowFunctionFactory implements FunctionFactory {
 
                 // add new element
                 if (size == capacity) { //buffer full
-                    capacity <<= 1;
-
-                    long oldAddress = memory.getPageAddress(0) + startOffset;
-                    long newAddress = -1;
-
-                    // try to find matching block in free list
-                    for (int i = 0, n = freeList.size(); i < n; i += 2) {
-                        if (freeList.getQuick(i) == capacity) {
-                            newAddress = memory.getPageAddress(0) + freeList.getQuick(i + 1);
-                            // replace block info with ours
-                            freeList.setQuick(i, size);
-                            freeList.setQuick(i + 1, startOffset);
-                            break;
-                        }
-                    }
-
-                    if (newAddress == -1) {
-                        newAddress = memory.appendAddressFor(capacity * RECORD_SIZE);
-                        // call above can end up resizing and thus changing memory start address
-                        oldAddress = memory.getPageAddress(0) + startOffset;
-                        freeList.add(size, startOffset);
-                    }
-
-                    if (firstIdx == 0) {
-                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
-                    } else {
-                        //we can't simply copy because that'd leave a gap in the middle
-                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
-                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
-                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, ((firstIdx + size) % size) * RECORD_SIZE);
-                        firstIdx = 0;
-                    }
-
-                    startOffset = newAddress - memory.getPageAddress(0);
+                    memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                    expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
+                    capacity = memoryDesc.capacity;
+                    startOffset = memoryDesc.startOffset;
+                    firstIdx = memoryDesc.firstIdx;
                 }
 
                 // add element to buffer

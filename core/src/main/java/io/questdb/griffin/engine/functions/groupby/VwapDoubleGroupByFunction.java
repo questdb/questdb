@@ -118,8 +118,8 @@ public class VwapDoubleGroupByFunction extends DoubleFunction implements GroupBy
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return BinaryFunction.super.isReadThreadSafe();
+    public boolean isThreadSafe() {
+        return BinaryFunction.super.isThreadSafe();
     }
 
     @Override

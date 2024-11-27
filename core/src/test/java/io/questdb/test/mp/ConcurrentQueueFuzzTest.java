@@ -117,8 +117,9 @@ public class ConcurrentQueueFuzzTest {
                 try {
                     barrier.await();
                     IntHolderQueue holder = new IntHolderQueue();
+                    boolean found = queue.tryDequeue(holder);
                     do {
-                        if (queue.tryDequeue(holder)) {
+                        if (found) {
                             if (received[holder.value]) {
                                 errors.add(holder.value);
                             }
@@ -130,8 +131,9 @@ public class ConcurrentQueueFuzzTest {
                                     Os.sleep(pause);
                                 }
                             }
+                            found = queue.tryDequeue(holder);
                         } else {
-                            if (allPublished.get()) {
+                            if (allPublished.get() && !(found = queue.tryDequeue(holder))) {
                                 break;
                             }
                             Os.pause();

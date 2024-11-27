@@ -277,7 +277,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 // data map will contain rounded timestamp value as last key column
                 keyTypes.add(ColumnType.TIMESTAMP);
                 dataMap = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
-                allocator = GroupByAllocatorFactory.createThreadUnsafeAllocator(configuration);
+                allocator = GroupByAllocatorFactory.createAllocator(configuration);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
 
                 this.timezoneNameFunc = timezoneNameFunc;

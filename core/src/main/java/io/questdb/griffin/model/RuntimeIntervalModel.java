@@ -264,12 +264,15 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
 
     private long getTimestamp(Function dynamicFunction) {
         if (ColumnType.isString(dynamicFunction.getType())) {
-            CharSequence value = dynamicFunction.getStrA(null);
-            try {
-                return IntervalUtils.parseFloorPartialTimestamp(value);
-            } catch (NumericException e) {
-                return Numbers.LONG_NULL;
+            final CharSequence value = dynamicFunction.getStrA(null);
+            if (value != null) {
+                try {
+                    return IntervalUtils.parseFloorPartialTimestamp(value);
+                } catch (NumericException e) {
+                    return Numbers.LONG_NULL;
+                }
             }
+            return Numbers.LONG_NULL;
         }
         return dynamicFunction.getTimestamp(null);
     }

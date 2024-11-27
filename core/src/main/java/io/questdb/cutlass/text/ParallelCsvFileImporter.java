@@ -25,18 +25,50 @@
 package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MapWriter;
+import io.questdb.cairo.MetadataCacheWriter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.types.*;
+import io.questdb.cutlass.text.types.BadDateAdapter;
+import io.questdb.cutlass.text.types.BadTimestampAdapter;
+import io.questdb.cutlass.text.types.OtherToTimestampAdapter;
+import io.questdb.cutlass.text.types.TimestampAdapter;
+import io.questdb.cutlass.text.types.TimestampCompatibleAdapter;
+import io.questdb.cutlass.text.types.TypeAdapter;
+import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.Job;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf16Sink;
@@ -705,7 +737,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
         closeWriter();
         if (targetTableStatus == TableUtils.TABLE_DOES_NOT_EXIST && targetTableCreated) {
-            cairoEngine.drop(tmpPath, tableToken);
+            cairoEngine.dropTable(tmpPath, tableToken);
         }
         if (tableToken != null) {
             cairoEngine.unlockTableName(tableToken);
@@ -808,7 +840,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             ObjList<CharSequence> names,
             ObjList<TypeAdapter> types,
             TypeManager typeManager,
-            SecurityContext securityContext) throws TextException {
+            SecurityContext securityContext
+    ) throws TextException {
         final TableWriter writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
         final RecordMetadata metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
 
@@ -966,15 +999,17 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                             throw TextException.$("could not create partition directory [path='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
                         }
 
-                        ff.iterateDir(srcPath.$(), (long name, int type) -> {
-                            if (type == Files.DT_FILE) {
-                                srcPath.trimTo(srcPlen).concat(partitionName).concat(name);
-                                dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name);
-                                if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
-                                    throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                        ff.iterateDir(
+                                srcPath.$(), (long name, int type) -> {
+                                    if (type == Files.DT_FILE) {
+                                        srcPath.trimTo(srcPlen).concat(partitionName).concat(name);
+                                        dstPath.trimTo(dstPlen).concat(partitionName).put(configuration.getAttachPartitionSuffix()).concat(name);
+                                        if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
+                                            throw TextException.$("could not copy partition file [to='").put(dstPath).put("', errno=").put(ff.errno()).put(']');
+                                        }
+                                    }
                                 }
-                            }
-                        });
+                        );
                         srcPath.parent();
                     } else if (res != Files.FILES_RENAME_OK) {
                         throw CairoException.critical(ff.errno()).put("could not copy partition file [to=").put(dstPath).put(']');
@@ -1056,11 +1091,15 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     private void phasePartitionImport() throws TextImportException {
         if (partitions.size() == 0) {
             if (linesIndexed > 0) {
-                throw TextImportException.instance(CopyTask.PHASE_PARTITION_IMPORT,
-                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k).");
+                throw TextImportException.instance(
+                        CopyTask.PHASE_PARTITION_IMPORT,
+                        "All rows were skipped. Possible reasons: timestamp format mismatch or rows exceed maximum line length (65k)."
+                );
             } else {
-                throw TextImportException.instance(CopyTask.PHASE_PARTITION_IMPORT,
-                        "No rows in input file to import.");
+                throw TextImportException.instance(
+                        CopyTask.PHASE_PARTITION_IMPORT,
+                        "No rows in input file to import."
+                );
             }
         }
 
@@ -1360,11 +1399,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
     }
 
-    void prepareTable(ObjList<CharSequence> names,
-                      ObjList<TypeAdapter> types,
-                      Path path,
-                      TypeManager typeManager,
-                      SecurityContext securityContext)
+    void prepareTable(
+            ObjList<CharSequence> names,
+            ObjList<TypeAdapter> types,
+            Path path,
+            TypeManager typeManager,
+            SecurityContext securityContext
+    )
             throws TextException {
         if (types.size() == 0) {
             throw CairoException.nonCritical().put("cannot determine text structure");
@@ -1417,7 +1458,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
                     writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
-                    cairoEngine.metadataCacheHydrateTable(tableToken, true, true);
+
+                    try (MetadataCacheWriter metadataRW = cairoEngine.getMetadataCache().writeLock()) {
+                        metadataRW.hydrateTable(tableToken);
+                    }
+
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                     partitionBy = writer.getPartitionBy();
                     break;
@@ -1572,6 +1617,12 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         }
 
         @Override
+        public long getMetadataVersion() {
+            // new table only
+            return 0;
+        }
+
+        @Override
         public long getO3MaxLag() {
             return configuration.getO3MaxLag();
         }
@@ -1623,11 +1674,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public boolean isIndexed(int columnIndex) {
             return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
         }
 
         @Override

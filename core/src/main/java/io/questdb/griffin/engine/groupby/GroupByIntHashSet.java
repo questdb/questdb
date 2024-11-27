@@ -33,7 +33,7 @@ import io.questdb.std.Vect;
 /**
  * Specialized flyweight hash set used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
  * <p>
- * Uses provided {@link GroupByAllocatorImpl} to allocate the underlying buffer. Grows the buffer when needed.
+ * Uses provided {@link GroupByAllocator} to allocate the underlying buffer. Grows the buffer when needed.
  * <p>
  * Buffer layout is the following:
  * <pre>
@@ -45,7 +45,7 @@ import io.questdb.std.Vect;
  */
 public class GroupByIntHashSet {
     private static final long HEADER_SIZE = 3 * Integer.BYTES;
-    private static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 2;
     private static final long SIZE_LIMIT_OFFSET = 2 * Integer.BYTES;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private final int initialCapacity;
@@ -111,20 +111,6 @@ public class GroupByIntHashSet {
     }
 
     public void merge(GroupByIntHashSet srcSet) {
-        final int size = size();
-        // Math.max is here for overflow protection.
-        final int newSize = Math.max(size + srcSet.size(), size);
-        final int sizeLimit = sizeLimit();
-        if (sizeLimit < newSize) {
-            int newSizeLimit = sizeLimit;
-            int newCapacity = capacity();
-            while (newSizeLimit < newSize) {
-                newSizeLimit *= 2;
-                newCapacity *= 2;
-            }
-            rehash(newCapacity, newSizeLimit);
-        }
-
         for (long p = srcSet.ptr + HEADER_SIZE, lim = srcSet.ptr + HEADER_SIZE + 4L * srcSet.capacity(); p < lim; p += 4L) {
             int val = Unsafe.getUnsafe().getInt(p);
             if (val != noKeyValue) {
@@ -172,6 +158,7 @@ public class GroupByIntHashSet {
     }
 
     private long probe(int key, long index) {
+        final long index0 = index;
         do {
             index = (index + 1) & mask;
             int k = keyAt(index);
@@ -181,12 +168,14 @@ public class GroupByIntHashSet {
             if (key == k) {
                 return -index - 1;
             }
-        } while (true);
+        } while (index != index0);
+
+        throw CairoException.critical(0).put("corrupt int hash set");
     }
 
     private void rehash(int newCapacity, int newSizeLimit) {
         if (newCapacity < 0) {
-            throw CairoException.nonCritical().put("set capacity overflow");
+            throw CairoException.nonCritical().put("int hash set capacity overflow");
         }
 
         final int oldSize = size();

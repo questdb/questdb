@@ -117,6 +117,11 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
     }
 
     @Override
+    public boolean isThreadSafe() {
+        return false;
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong256(valueIndex, Long256Impl.NULL_LONG256);
         mapValue.putLong(valueIndex + 1, 0);

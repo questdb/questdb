@@ -29,15 +29,19 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import org.junit.Assert;
+
+import static io.questdb.std.datetime.microtime.Timestamps.DAY_MICROS;
 
 public class FuzzTransactionGenerator {
     private static final int MAX_COLUMNS = 200;
 
     public static ObjList<FuzzTransaction> generateSet(
             long initialRowCount,
-            TableMetadata sequencerMetadata,
+            TableRecordMetadata sequencerMetadata,
             TableMetadata tableMetadata,
             Rnd rnd,
             long minTimestamp,
@@ -53,8 +57,9 @@ public class FuzzTransactionGenerator {
             double probabilityOfRemovingColumn,
             double probabilityOfRenamingColumn,
             double probabilityOfColumnTypeChange,
-            double probabilityOfDataInsert,
             double probabilityOfTruncate,
+            double probabilityOfDropPartition,
+            double probabilityOfDataInsert,
             double probabilityOfSameTimestamp,
             int maxStrLenForStrColumns,
             String[] symbols,
@@ -67,12 +72,21 @@ public class FuzzTransactionGenerator {
 
         long lastTimestamp = minTimestamp;
 
-        double sumOfProbabilities = probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRemovingColumn + probabilityOfDataInsert + probabilityOfTruncate + probabilityOfColumnTypeChange;
+        double sumOfProbabilities = probabilityOfAddingNewColumn
+                + probabilityOfRemovingColumn
+                + probabilityOfRenamingColumn
+                + probabilityOfColumnTypeChange
+                + probabilityOfTruncate
+                + probabilityOfDropPartition
+                + probabilityOfDataInsert;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
         probabilityOfColumnTypeChange = probabilityOfColumnTypeChange / sumOfProbabilities;
         probabilityOfTruncate = probabilityOfTruncate / sumOfProbabilities;
+        probabilityOfDropPartition = probabilityOfDropPartition / sumOfProbabilities;
+        // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
+//        probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
 
         // To prevent long loops of cancelling rows, limit max probability of cancelling rows
         probabilityOfCancelRow = Math.min(probabilityOfCancelRow, 0.3);
@@ -81,48 +95,73 @@ public class FuzzTransactionGenerator {
         transactionCount = Math.max(Math.min(transactionCount, 1_500_000 / rowCount), 3);
 
         // Decide if drop will be generated
-        boolean generateDrop = rnd.nextDouble() < tableDropProbability;
-        int dropIteration = generateDrop ? rnd.nextInt(transactionCount) : -1;
-        if (generateDrop) {
+        boolean generateTableDrop = rnd.nextDouble() < tableDropProbability;
+        int tableDropIteration = generateTableDrop ? rnd.nextInt(transactionCount) : -1;
+        if (generateTableDrop) {
             transactionCount++;
         }
-        long estimatedToalRows = rowCount + initialRowCount;
+        long estimatedTotalRows = rowCount + initialRowCount;
 
         for (int i = 0; i < transactionCount; i++) {
-            if (i == dropIteration) {
+            if (i == tableDropIteration) {
                 generateTableDropCreate(transactionList, metaVersion, waitBarrierVersion++);
                 metaVersion = 0;
                 continue;
             }
 
-            double transactionType = rnd.nextDouble();
-            if (transactionType < probabilityOfRemovingColumn) {
-                // generate column remove
+            final double rndDouble = rnd.nextDouble();
+            double aggregateProbability = 0;
+            boolean wantSomething = false;
+
+            aggregateProbability += probabilityOfAddingNewColumn;
+            boolean wantToAddNewColumn = rndDouble < aggregateProbability;
+            wantSomething |= wantToAddNewColumn;
+
+            aggregateProbability += probabilityOfRemovingColumn;
+            boolean wantToRemoveColumn = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToRemoveColumn;
+
+            aggregateProbability += probabilityOfRenamingColumn;
+            boolean wantToRenameColumn = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToRenameColumn;
+
+            aggregateProbability += probabilityOfColumnTypeChange;
+            boolean wantToChangeColumnType = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToChangeColumnType;
+
+            aggregateProbability += probabilityOfTruncate;
+            boolean wantToTruncateTable = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToTruncateTable;
+
+            aggregateProbability += probabilityOfDropPartition;
+            boolean wantToDropPartition = !wantSomething && rndDouble < aggregateProbability;
+
+            Assert.assertNotNull(meta);
+
+            if (wantToRemoveColumn) {
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {
-                    // Sometimes there can be nothing to remove
+                    // Sometimes there is nothing to remove
                     metaVersion++;
                     waitBarrierVersion++;
                     meta = newTableMetadata;
                 }
-            } else if (transactionType < probabilityOfRemovingColumn + probabilityOfRenamingColumn) {
-                // generate column rename
+            } else if (wantToRenameColumn) {
                 RecordMetadata newTableMetadata = generateRenameColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
                 if (newTableMetadata != null) {
-                    // Sometimes there can be nothing to rename
+                    // Sometimes there is nothing to rename
                     metaVersion++;
                     waitBarrierVersion++;
                     meta = newTableMetadata;
                 }
-            } else if (transactionType < probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate) {
-                // generate truncate table
+            } else if (wantToTruncateTable) {
                 generateTruncateTable(transactionList, metaVersion, waitBarrierVersion++);
-            } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
-                // generate column add
+            } else if (wantToDropPartition) {
+                generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+            } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
-            } else if (transactionType < probabilityOfAddingNewColumn + probabilityOfRemovingColumn + probabilityOfRenamingColumn + probabilityOfTruncate + probabilityOfColumnTypeChange && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
-                // generate column change type
-                meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedToalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
+            } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
+                meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else {
                 // generate row set
                 int blockRows = rowCount / (transactionCount - i);
@@ -193,7 +232,7 @@ public class FuzzTransactionGenerator {
         to.setTimestampIndex(from.getTimestampIndex());
     }
 
-    private static GenericRecordMetadata deepMetadataCopyOf(TableMetadata sequencerMetadata, TableMetadata tableMetadata) {
+    private static GenericRecordMetadata deepMetadataCopyOf(TableRecordMetadata sequencerMetadata, TableMetadata tableMetadata) {
         if (sequencerMetadata != null && tableMetadata != null) {
             GenericRecordMetadata metadata = new GenericRecordMetadata();
             for (int i = 0, n = sequencerMetadata.getColumnCount(); i < n; i++) {
@@ -216,11 +255,25 @@ public class FuzzTransactionGenerator {
         return null;
     }
 
+    private static void generateDropPartition(
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
+            long lastTimestamp, Rnd rnd
+    ) {
+        long cutoffTimestamp = lastTimestamp;
+        if (rnd.nextInt(100) <= 20) {
+            cutoffTimestamp -= DAY_MICROS;
+        }
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new FuzzDropPartitionOperation(cutoffTimestamp));
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.structureVersion = metadataVersion;
+        transaction.waitAllDone = true;
+        transactionList.add(transaction);
+    }
+
     private static int generateNewColumnType(Rnd rnd) {
         int columnType = FuzzInsertOperation.SUPPORTED_COLUMN_TYPES[rnd.nextInt(FuzzInsertOperation.SUPPORTED_COLUMN_TYPES.length)];
         switch (columnType) {
-            default:
-                return columnType;
             case ColumnType.GEOBYTE:
                 return ColumnType.getGeoHashTypeWithBits(5);
             case ColumnType.GEOSHORT:
@@ -229,6 +282,8 @@ public class FuzzTransactionGenerator {
                 return ColumnType.getGeoHashTypeWithBits(25);
             case ColumnType.GEOLONG:
                 return ColumnType.getGeoHashTypeWithBits(35);
+            default:
+                return columnType;
         }
     }
 
@@ -284,7 +339,7 @@ public class FuzzTransactionGenerator {
         transactionList.add(transaction);
         transaction.structureVersion = metadataVersion;
         transaction.waitBarrierVersion = waitBarrierVersion;
-        transaction.forceWait();
+        transaction.waitAllDone = true;
     }
 
     private static int getNonDeletedColumnCount(RecordMetadata tableMetadata) {

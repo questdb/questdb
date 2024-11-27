@@ -40,9 +40,7 @@ import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LinuxMMLineUdpReceiver;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.*;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
@@ -190,9 +188,8 @@ public class Services {
         }
 
         // The pool is:
-        // - DEDICATED when PropertyKey.HTTP_WORKER_COUNT is > 0
-        // - DEDICATED (1 worker) when ^ ^ is not set and host has > 16 cpus
-        // - SHARED otherwise
+        // - SHARED if PropertyKey.HTTP_MIN_WORKER_COUNT (http.min.worker.count) <= 0
+        // - DEDICATED (1 worker) otherwise
         final WorkerPool workerPool = workerPoolManager.getInstance(
                 configuration,
                 metrics,
@@ -240,7 +237,7 @@ public class Services {
     }
 
     @Nullable
-    public PGWireServer createPGWireServer(
+    public IPGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPoolManager workerPoolManager,
@@ -259,9 +256,9 @@ public class Services {
                 Requester.PG_WIRE_SERVER
         );
 
-        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+        CircuitBreakerRegistry registry = configuration.getDumpNetworkTraffic() ? HexTestsCircuitBreakRegistry.INSTANCE : new DefaultCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
-        return new PGWireServer(
+        return IPGWireServer.newInstance(
                 configuration,
                 cairoEngine,
                 workerPool,

@@ -205,7 +205,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 
@@ -490,7 +490,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 

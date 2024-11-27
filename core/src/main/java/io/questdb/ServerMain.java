@@ -37,10 +37,15 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.*;
+import io.questdb.cutlass.http.DefaultHttpAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpAuthenticatorFactory;
+import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.HttpServerConfiguration;
+import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
+import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
@@ -71,7 +76,7 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
-    protected PGWireServer pgWireServer;
+    protected IPGWireServer pgWireServer;
     private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private boolean initialized;
@@ -323,11 +328,7 @@ public class ServerMain implements Closeable {
                 try {
                     sharedPool.assign(engine.getEngineMaintenanceJob());
 
-                    WorkerPoolUtils.setupQueryJobs(
-                            sharedPool,
-                            engine,
-                            config.getCairoConfiguration().getCircuitBreakerConfiguration()
-                    );
+                    WorkerPoolUtils.setupQueryJobs(sharedPool, engine);
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPool, engine);
@@ -430,8 +431,8 @@ public class ServerMain implements Closeable {
         }
 
         // metadata hydration
-        Thread hydrateMetadataThread = new Thread(engine::metadataCacheAsyncHydrator);
-        hydrateMetadataThread.start();
+        Thread hydrateCairoMetadataThread = new Thread(engine.getMetadataCache()::onStartupAsyncHydrator);
+        hydrateCairoMetadataThread.start();
 
         System.gc(); // GC 1
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();

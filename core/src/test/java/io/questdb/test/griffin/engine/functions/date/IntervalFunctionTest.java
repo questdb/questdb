@@ -39,6 +39,32 @@ import org.junit.Test;
 public class IntervalFunctionTest extends AbstractCairoTest {
 
     @Test
+    public void testInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "interval\n" +
+                            "('2000-01-01T01:00:00.000Z', '2000-01-02T01:00:00.000Z')\n",
+                    "select interval('2000-01-01T01:00:00.000Z', '2000-01-02T01:00:00.000Z')"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("lo", "2000-01-03T01:00:00.000Z");
+            bindVariableService.setStr("hi", "2000-01-04T01:00:00.000Z");
+            assertSql(
+                    "interval\n" +
+                            "('2000-01-03T01:00:00.000Z', '2000-01-04T01:00:00.000Z')\n",
+                    "select interval(:lo, :hi)"
+            );
+
+            assertSql(
+                    "interval\n" +
+                            "('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.010Z')\n",
+                    "select interval(x,x+10000) from long_sequence(1)"
+            );
+        });
+    }
+
+    @Test
     public void testIntervalStartEnd() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(
@@ -57,7 +83,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testIntrinsics1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE x (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("CREATE TABLE x (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL;");
             // should have interval scans despite use of function
             // due to optimisation step to convert it to a constant
             long today = today(sqlExecutionContext.getNow());
@@ -121,7 +147,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     public void testIntrinsics2() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(Timestamps.DAY_MICROS);
-            ddl("CREATE TABLE x as (select x::timestamp ts from long_sequence(10)) timestamp(ts) PARTITION BY DAY WAL;");
+            execute("CREATE TABLE x as (select x::timestamp ts from long_sequence(10)) timestamp(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
 
             assertSql(
@@ -194,7 +220,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testIntrinsicsNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (k int, ts timestamp);");
+            execute("create table x (k int, ts timestamp);");
             assertPlanNoLeakCheck(
                     "select * from x where ts in today() or ts in tomorrow() or ts in yesterday();",
                     "Async Filter workers: 1\n" +
@@ -235,7 +261,7 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     public void testNonConstantTimezone() throws Exception {
         setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-08T01:00:00.000000Z
         assertMemoryLeak(() -> {
-            ddl("create table x as (select 'Europe/Sofia' tz from long_sequence(1))");
+            execute("create table x as (select 'Europe/Sofia' tz from long_sequence(1))");
 
             assertSql(
                     "yesterday\ttoday\ttomorrow\n" +
@@ -494,8 +520,5 @@ public class IntervalFunctionTest extends AbstractCairoTest {
         sink.put("\",\"");
         sink.putISODate(hi);
         sink.put("\")]\n");
-    }
-
-    private void buildMultipleInPlan(StringSink sink, long tomorrow, long l) {
     }
 }

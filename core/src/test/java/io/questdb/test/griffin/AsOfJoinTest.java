@@ -41,7 +41,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "CREATE TABLE fx_rate (" +
                             "    ts TIMESTAMP, " +
                             "    code SYMBOL CAPACITY 128 NOCACHE, " +
@@ -49,9 +49,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             ") timestamp(ts)",
                     sqlExecutionContext
             );
-            insert("INSERT INTO fx_rate values ('2022-10-05T04:00:00.000000Z', '1001', 10);");
+            execute("INSERT INTO fx_rate values ('2022-10-05T04:00:00.000000Z', '1001', 10);");
 
-            ddl(
+            execute(
                     "CREATE TABLE trades (" +
                             "    ts TIMESTAMP, " +
                             "    price INT, " +
@@ -61,9 +61,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             ") timestamp(ts);",
                     sqlExecutionContext
             );
-            insert("INSERT INTO trades values ('2022-10-05T08:15:00.000000Z', 100, 500, 0, '1001');");
-            insert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 1, '1001');");
-            insert("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 2, '1001');");
+            execute("INSERT INTO trades values ('2022-10-05T08:15:00.000000Z', 100, 500, 0, '1001');");
+            execute("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 1, '1001');");
+            execute("INSERT INTO trades values ('2022-10-05T08:16:00.000000Z', 100, 500, 2, '1001');");
 
             String query =
                     "SELECT\n" +
@@ -84,9 +84,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinCombinedWithInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
-            ddl("create table t2 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
-            ddl("create table t3 (id long, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
+            execute("create table t2 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
+            execute("create table t3 (id long, ts timestamp) timestamp(ts) partition by day;");
 
             final String query = "SELECT *\n" +
                     "FROM (\n" +
@@ -106,7 +106,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinDynamicTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table positions2 as (" +
                             "select x, cast(x * 1000000L as TIMESTAMP) time from long_sequence(10)" +
                             ") timestamp(time)");
@@ -240,7 +240,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 "(select a.seq hi, b.seq lo from test a lt join test b) where lo != null",
                 "create table test(seq long, ts timestamp) timestamp(ts)",
                 null,
-                "insert into test select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(30)) where rnd<0.9999)",
+                "insert into test select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(30)) where rnd<0.9999",
                 expected,
                 false
         );
@@ -271,16 +271,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testAsOfJoinNoAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS
-            ddl("create table asks(ask int, ts timestamp) timestamp(ts) partition by none");
-            insert("insert into asks values(100, 0)");
-            insert("insert into asks values(101, 2);");
-            insert("insert into asks values(102, 4);");
+            execute("create table asks(ask int, ts timestamp) timestamp(ts) partition by none");
+            execute("insert into asks values(100, 0)");
+            execute("insert into asks values(101, 2);");
+            execute("insert into asks values(102, 4);");
 
             // BIDS
-            ddl("create table bids(bid int, ts timestamp) timestamp(ts) partition by none");
-            insert("insert into bids values(101, 1);");
-            insert("insert into bids values(102, 3);");
-            insert("insert into bids values(103, 5);");
+            execute("create table bids(bid int, ts timestamp) timestamp(ts) partition by none");
+            execute("insert into bids values(101, 1);");
+            execute("insert into bids values(102, 3);");
+            execute("insert into bids values(103, 5);");
 
             String query =
                     "SELECT \n" +
@@ -305,8 +305,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinOnEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
-            ddl("create table t2 (id long, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
+            execute("create table t2 (id long, ts timestamp) timestamp(ts) partition by day;");
 
             final String query = "SELECT * FROM t1 \n" +
                     "ASOF JOIN t2 ON id;";
@@ -348,18 +348,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testInterleaved1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:17:00.000000Z', 1, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:21:00.000000Z', 2, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:21:00.000000Z', 2, 'b');");
-            insert("INSERT INTO t1 values ('2022-10-10T01:01:00.000000Z', 3, 'a');");
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:17:00.000000Z', 1, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:21:00.000000Z', 2, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:21:00.000000Z', 2, 'b');");
+            execute("INSERT INTO t1 values ('2022-10-10T01:01:00.000000Z', 3, 'a');");
 
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t2 values ('2022-10-05T08:18:00.000000Z', 4, 'a');");
-            insert("INSERT INTO t2 values ('2022-10-05T08:19:00.000000Z', 5, 'a');");
-            insert("INSERT INTO t2 values ('2023-10-05T09:00:00.000000Z', 6, 'a');");
-            insert("INSERT INTO t2 values ('2023-10-06T01:00:00.000000Z', 7, 'a');");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t2 values ('2022-10-05T08:18:00.000000Z', 4, 'a');");
+            execute("INSERT INTO t2 values ('2022-10-05T08:19:00.000000Z', 5, 'a');");
+            execute("INSERT INTO t2 values ('2023-10-05T09:00:00.000000Z', 6, 'a');");
+            execute("INSERT INTO t2 values ('2023-10-06T01:00:00.000000Z', 7, 'a');");
 
             assertResultSetsMatch("t1", "t2");
         });
@@ -368,27 +368,27 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testInterleaved2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t1 values ('2000-02-07T22:00:00.000000Z', 1, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-08T06:00:00.000000Z', 2, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-08T19:00:00.000000Z', 3, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-08T19:00:00.000000Z', 3, 'b');");
-            insert("INSERT INTO t1 values ('2000-02-09T16:00:00.000000Z', 4, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-09T16:00:00.000000Z', 5, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-10T06:00:00.000000Z', 6, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-10T06:00:00.000000Z', 6, 'b');");
-            insert("INSERT INTO t1 values ('2000-02-10T19:00:00.000000Z', 7, 'a');");
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t1 values ('2000-02-07T22:00:00.000000Z', 1, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-08T06:00:00.000000Z', 2, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-08T19:00:00.000000Z', 3, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-08T19:00:00.000000Z', 3, 'b');");
+            execute("INSERT INTO t1 values ('2000-02-09T16:00:00.000000Z', 4, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-09T16:00:00.000000Z', 5, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-10T06:00:00.000000Z', 6, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-10T06:00:00.000000Z', 6, 'b');");
+            execute("INSERT INTO t1 values ('2000-02-10T19:00:00.000000Z', 7, 'a');");
 
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t1 values ('2000-02-07T14:00:00.000000Z', 8, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 9, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 10, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 10, 'c');");
-            insert("INSERT INTO t1 values ('2000-02-08T21:00:00.000000Z', 11, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-09T15:00:00.000000Z', 12, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-09T20:00:00.000000Z', 13, 'a');");
-            insert("INSERT INTO t1 values ('2000-02-09T20:00:00.000000Z', 13, 'c');");
-            insert("INSERT INTO t1 values ('2000-02-10T16:00:00.000000Z', 14, 'a');");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t1 values ('2000-02-07T14:00:00.000000Z', 8, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 9, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 10, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 10, 'c');");
+            execute("INSERT INTO t1 values ('2000-02-08T21:00:00.000000Z', 11, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-09T15:00:00.000000Z', 12, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-09T20:00:00.000000Z', 13, 'a');");
+            execute("INSERT INTO t1 values ('2000-02-09T20:00:00.000000Z', 13, 'c');");
+            execute("INSERT INTO t1 values ('2000-02-10T16:00:00.000000Z', 14, 'a');");
 
             assertResultSetsMatch("t1", "t2");
         });
@@ -399,11 +399,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                compile("CREATE TABLE 'tests' (\n" +
+                execute("CREATE TABLE 'tests' (\n" +
                         "  Ticker SYMBOL capacity 256 CACHE,\n" +
                         "  ts timestamp\n" +
                         ") timestamp (ts) PARTITION BY MONTH");
-                insert("INSERT INTO tests VALUES " +
+                execute("INSERT INTO tests VALUES " +
                         "('AAPL', '2000')," +
                         "('AAPL', '2001')," +
                         "('AAPL', '2002')," +
@@ -440,10 +440,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testJoinOnSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE x (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            ddl("CREATE TABLE y (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE y (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
-            insert(
+            execute(
                     "INSERT INTO x VALUES " +
                             "('1', '2000-01-01T00:00:00.000000Z')," +
                             "('3', '2000-01-01T00:00:01.000000Z')," +
@@ -451,7 +451,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             "('2', '2000-01-01T00:00:03.000000Z')," +
                             "('4', '2000-01-01T00:00:04.000000Z')"
             );
-            insert(
+            execute(
                     "INSERT INTO y VALUES " +
                             "('2', '2000-01-01T00:00:00.000000Z')," +
                             "('4', '2000-01-01T00:00:01.000000Z')," +
@@ -499,21 +499,21 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testLtJoin2TablesKeyed() throws Exception {
         assertMemoryLeak(() -> {
             //tabY
-            ddl("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)");
-            insert("insert into tabY values ('A', 1, 10000)");
-            insert("insert into tabY values ('A', 2, 20000)");
-            insert("insert into tabY values ('A', 3, 30000)");
-            insert("insert into tabY values ('B', 1, 30000)");
-            insert("insert into tabY values ('B', 2, 40000)");
-            insert("insert into tabY values ('B', 3, 50000)");
+            execute("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)");
+            execute("insert into tabY values ('A', 1, 10000)");
+            execute("insert into tabY values ('A', 2, 20000)");
+            execute("insert into tabY values ('A', 3, 30000)");
+            execute("insert into tabY values ('B', 1, 30000)");
+            execute("insert into tabY values ('B', 2, 40000)");
+            execute("insert into tabY values ('B', 3, 50000)");
             //tabZ
-            ddl("create table tabZ (tag symbol, x long, ts timestamp) timestamp(ts)");
-            insert("insert into tabZ values ('B', 1, 10000)");
-            insert("insert into tabZ values ('B', 2, 20000)");
-            insert("insert into tabZ values ('B', 3, 30000)");
-            insert("insert into tabZ values ('A', 3, 30000)");
-            insert("insert into tabZ values ('A', 6, 40000)");
-            insert("insert into tabZ values ('A', 7, 50000)");
+            execute("create table tabZ (tag symbol, x long, ts timestamp) timestamp(ts)");
+            execute("insert into tabZ values ('B', 1, 10000)");
+            execute("insert into tabZ values ('B', 2, 20000)");
+            execute("insert into tabZ values ('B', 3, 30000)");
+            execute("insert into tabZ values ('A', 3, 30000)");
+            execute("insert into tabZ values ('A', 6, 40000)");
+            execute("insert into tabZ values ('A', 7, 50000)");
             //check tables
             String ex = "tag\tx\tts\n" +
                     "A\t1\t1970-01-01T00:00:00.010000Z\n" +
@@ -547,15 +547,15 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinForEqTimestamps() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tank(ts timestamp, SequenceNumber int) timestamp(ts)");
-            insert("insert into tank values('2021-07-26T02:36:02.566000Z',1)");
-            insert("insert into tank values('2021-07-26T02:36:03.094000Z',2)");
-            insert("insert into tank values('2021-07-26T02:36:03.097000Z',3)");
-            insert("insert into tank values('2021-07-26T02:36:03.097000Z',4)");
-            insert("insert into tank values('2021-07-26T02:36:03.097000Z',5)");
-            insert("insert into tank values('2021-07-26T02:36:03.097000Z',6)");
-            insert("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
-            insert("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
+            execute("create table tank(ts timestamp, SequenceNumber int) timestamp(ts)");
+            execute("insert into tank values('2021-07-26T02:36:02.566000Z',1)");
+            execute("insert into tank values('2021-07-26T02:36:03.094000Z',2)");
+            execute("insert into tank values('2021-07-26T02:36:03.097000Z',3)");
+            execute("insert into tank values('2021-07-26T02:36:03.097000Z',4)");
+            execute("insert into tank values('2021-07-26T02:36:03.097000Z',5)");
+            execute("insert into tank values('2021-07-26T02:36:03.097000Z',6)");
+            execute("insert into tank values('2021-07-26T02:36:03.098000Z',7)");
+            execute("insert into tank values('2021-07-26T02:36:03.098000Z',8)");
 
             String expected = "ts\tSequenceNumber\tSequenceNumber1\tcolumn\n" +
                     "2021-07-26T02:36:02.566000Z\t1\tnull\tnull\n" +
@@ -610,7 +610,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "9\tgoogl\t67.786\t0.198\t2018-01-01T01:48:00.000000Z\t2018-01-01T01:00:00.000000Z\n" +
                     "10\tgoogl\t38.54\t0.198\t2018-01-01T02:00:00.000000Z\t2018-01-01T01:00:00.000000Z\n";
 
-            ddl(
+            execute(
                     "create table x as (" +
                             "select" +
                             " cast(x as int) i," +
@@ -621,7 +621,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             ") timestamp (timestamp)"
             );
 
-            ddl(
+            execute(
                     "create table y as (" +
                             "select cast(x as int) i," +
                             " rnd_symbol('msft','ibm', 'googl') sym2," +
@@ -633,7 +633,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
             assertQueryAndCacheFullFat(expected, query, "timestamp", false, true);
 
-            insert(
+            execute(
                     "insert into x select * from (" +
                             "select" +
                             " cast(x + 10 as int) i," +
@@ -644,7 +644,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             ") timestamp(timestamp)"
             );
 
-            insert(
+            execute(
                     "insert into y select * from (" +
                             "select" +
                             " cast(x + 30 as int) i," +
@@ -724,16 +724,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testLtJoinNoAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS
-            ddl("create table asks(ask int, ts timestamp) timestamp(ts) partition by none");
-            insert("insert into asks values(100, 0)");
-            insert("insert into asks values(101, 3);");
-            insert("insert into asks values(102, 4);");
+            execute("create table asks(ask int, ts timestamp) timestamp(ts) partition by none");
+            execute("insert into asks values(100, 0)");
+            execute("insert into asks values(101, 3);");
+            execute("insert into asks values(102, 4);");
 
             // BIDS
-            ddl("create table bids(bid int, ts timestamp) timestamp(ts) partition by none");
-            insert("insert into bids values(101, 0);");
-            insert("insert into bids values(102, 3);");
-            insert("insert into bids values(103, 5);");
+            execute("create table bids(bid int, ts timestamp) timestamp(ts) partition by none");
+            execute("insert into bids values(101, 0);");
+            execute("insert into bids values(102, 3);");
+            execute("insert into bids values(103, 5);");
 
             String query =
                     "SELECT \n" +
@@ -794,10 +794,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testLtJoinNonKeyed() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compile("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
-                compile("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
 
-                insert("INSERT INTO bids VALUES " +
+                execute("INSERT INTO bids VALUES " +
                         "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
                         "('AAPL', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
                         "('AAPL', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
@@ -811,7 +811,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "('MSFT', 'LSE', '2001-01-01T00:00:00.000000Z', 11, 'GOOD')"
                 );
 
-                insert("INSERT INTO asks VALUES " +
+                execute("INSERT INTO asks VALUES " +
                         "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
                         "('AAPL', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
                         "('AAPL', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
@@ -850,10 +850,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 compiler.setFullFatJoins(true);
                 // stock and exchange are composite keys
                 // rating is also a symbol, but not used in a join key
-                compile("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
-                compile("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("CREATE TABLE bids (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("CREATE TABLE asks (stock SYMBOL, exchange SYMBOL, ts TIMESTAMP, i INT, rating SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
 
-                insert("INSERT INTO bids VALUES " +
+                execute("INSERT INTO bids VALUES " +
                         "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
                         "('AAPL', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 2, 'GOOD')," +
                         "('AAPL', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 3, 'SCAM')," +
@@ -867,7 +867,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "('MSFT', 'LSE', '2001-01-01T00:00:00.000000Z', 11, 'GOOD')"
                 );
 
-                insert("INSERT INTO asks VALUES " +
+                execute("INSERT INTO asks VALUES " +
                         "('AAPL', 'NASDAQ', '2000-01-01T00:00:00.000000Z', 1, 'GOOD')," +
                         "('AAPL', 'NASDAQ', '2001-01-01T00:00:00.000000Z', 2, 'EXCELLENT')," +
                         "('AAPL', 'NASDAQ', '2002-01-01T00:00:00.000000Z', 3, 'EXCELLENT')," +
@@ -902,8 +902,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinOnEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
-            ddl("create table t2 (id long, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table t1 as (select x as id, cast(x as timestamp) ts from long_sequence(5)) timestamp(ts) partition by day;");
+            execute("create table t2 (id long, ts timestamp) timestamp(ts) partition by day;");
 
             final String query = "SELECT * FROM t1 \n" +
                     "LT JOIN t2 ON id;";
@@ -950,10 +950,10 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 compiler.setFullFatJoins(true);
 
                 // create a master table - without a symbol column
-                compile("create table taba as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 10000000000000L) as ts from long_sequence(5)) timestamp(ts)");
+                execute("create table taba as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 10000000000000L) as ts from long_sequence(5)) timestamp(ts)");
 
                 // create a slave table - with a symbol column, with timestamps 1 microsecond before master timestamps
-                compile("create table tabb as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss') - 1, 10000000000000L) as ts, rnd_symbol('A', 'B', 'C') as sym from long_sequence(5)) timestamp(ts)");
+                execute("create table tabb as (select timestamp_sequence(to_timestamp('2019-10-17T00:00:00', 'yyyy-MM-ddTHH:mm:ss') - 1, 10000000000000L) as ts, rnd_symbol('A', 'B', 'C') as sym from long_sequence(5)) timestamp(ts)");
 
                 // use a CTE to amend the master table with a synthetic symbol column
                 String query = "with s as (\n" +
@@ -984,16 +984,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testLtJoinOnSymbolsDifferentIDs() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table x (s symbol, xi int, xts timestamp) timestamp(xts)");
-            compile("create table y (s symbol, yi int, yts timestamp) timestamp(yts)");
-            insert("insert into x values ('a', 0, '2000')");
-            insert("insert into x values ('b', 1, '2001')");
-            insert("insert into x values ('c', 2, '2001')");
+            execute("create table x (s symbol, xi int, xts timestamp) timestamp(xts)");
+            execute("create table y (s symbol, yi int, yts timestamp) timestamp(yts)");
+            execute("insert into x values ('a', 0, '2000')");
+            execute("insert into x values ('b', 1, '2001')");
+            execute("insert into x values ('c', 2, '2001')");
 
-            insert("insert into y values ('c', 0, '1990')");
-            insert("insert into y values ('d', 1, '1991')");
-            insert("insert into y values ('a', 2, '1992')");
-            insert("insert into y values ('a', 3, '1993')");
+            execute("insert into y values ('c', 0, '1990')");
+            execute("insert into y values ('d', 1, '1991')");
+            execute("insert into y values ('a', 2, '1992')");
+            execute("insert into y values ('a', 3, '1993')");
 
             String query = "select * from x LT JOIN y on (s)";
             String expected = "s\txi\txts\ts1\tyi\tyts\n" +
@@ -1009,13 +1009,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testLtJoinOneTableKeyed() throws Exception {
         assertMemoryLeak(() -> {
             // tabY
-            ddl("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)");
-            insert("insert into tabY values ('A', 1, 10000)");
-            insert("insert into tabY values ('A', 2, 20000)");
-            insert("insert into tabY values ('A', 3, 30000)");
-            insert("insert into tabY values ('B', 1, 30000)");
-            insert("insert into tabY values ('B', 2, 40000)");
-            insert("insert into tabY values ('B', 3, 50000)");
+            execute("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)");
+            execute("insert into tabY values ('A', 1, 10000)");
+            execute("insert into tabY values ('A', 2, 20000)");
+            execute("insert into tabY values ('A', 3, 30000)");
+            execute("insert into tabY values ('B', 1, 30000)");
+            execute("insert into tabY values ('B', 2, 40000)");
+            execute("insert into tabY values ('B', 3, 50000)");
             // check tables
             String ex = "tag\tx\tts\n" +
                     "A\t1\t1970-01-01T00:00:00.010000Z\n" +
@@ -1042,13 +1042,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testLtJoinOneTableKeyedV2() throws Exception {
         assertMemoryLeak(() -> {
             // tabY
-            ddl("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)");
-            insert("insert into tabY values ('A', 1, 10000)");
-            insert("insert into tabY values ('A', 2, 20000)");
-            insert("insert into tabY values ('A', 3, 30000)");
-            insert("insert into tabY values ('B', 1, 40000)");
-            insert("insert into tabY values ('B', 2, 50000)");
-            insert("insert into tabY values ('B', 3, 60000)");
+            execute("create table tabY (tag symbol, x long, ts timestamp) timestamp(ts)");
+            execute("insert into tabY values ('A', 1, 10000)");
+            execute("insert into tabY values ('A', 2, 20000)");
+            execute("insert into tabY values ('A', 3, 30000)");
+            execute("insert into tabY values ('B', 1, 40000)");
+            execute("insert into tabY values ('B', 2, 50000)");
+            execute("insert into tabY values ('B', 3, 60000)");
             // check tables
             String ex = "tag\tx\tts\n" +
                     "A\t1\t1970-01-01T00:00:00.010000Z\n" +
@@ -1075,7 +1075,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testLtJoinSequenceGap() throws Exception {
         assertMemoryLeak(() -> {
             // create table
-            ddl("create table tab as " +
+            execute("create table tab as " +
                     "(" +
                     "select " +
                     "rnd_symbol('AA', 'BB') tag," +
@@ -1085,8 +1085,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     " long_sequence(20)" +
                     ") timestamp(ts) partition by DAY");
             // insert
-            insert("insert into tab values ('CC', 24, 210000)");
-            insert("insert into tab values ('CC', 25, 220000)");
+            execute("insert into tab values ('CC', 24, 210000)");
+            execute("insert into tab values ('CC', 25, 220000)");
             String ex = "tag\tx\tts\n" +
                     "AA\t1\t1970-01-01T00:00:00.000000Z\n" +
                     "AA\t2\t1970-01-01T00:00:00.010000Z\n" +
@@ -1127,7 +1127,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     public void testLtJoinSequenceGapOnKey() throws Exception {
         assertMemoryLeak(() -> {
             // create table
-            ddl("create table tab as " +
+            execute("create table tab as " +
                     "(" +
                     "select " +
                     "rnd_symbol('AA', 'BB') tag," +
@@ -1137,8 +1137,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     " long_sequence(20)" +
                     ") timestamp(ts) partition by DAY");
             // insert
-            insert("insert into tab values ('CC', 24, 210000)");
-            insert("insert into tab values ('CC', 25, 220000)");
+            execute("insert into tab values ('CC', 24, 210000)");
+            execute("insert into tab values ('CC', 25, 220000)");
             String ex = "tag\tx\tts\n" +
                     "AA\t1\t1970-01-01T00:00:00.000000Z\n" +
                     "AA\t2\t1970-01-01T00:00:00.010000Z\n" +
@@ -1183,11 +1183,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                compile("CREATE TABLE 'tests' (\n" +
+                execute("CREATE TABLE 'tests' (\n" +
                         "  Ticker SYMBOL capacity 256 CACHE,\n" +
                         "  ts timestamp\n" +
                         ") timestamp (ts) PARTITION BY MONTH");
-                insert("insert into tests VALUES " +
+                execute("insert into tests VALUES " +
                         "('AAPL', '2000')," +
                         "('AAPL', '2001')," +
                         "('AAPL', '2002')," +
@@ -1195,7 +1195,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "('AAPL', '2004')," +
                         "('AAPL', '2005')"
                 );
-                insert("insert into tests VALUES " +
+                execute("insert into tests VALUES " +
                         "('QSTDB', '2003')," +
                         "('QSTDB', '2004')," +
                         "('QSTDB', '2005')," +
@@ -1240,11 +1240,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                compile("CREATE TABLE 'tests' (\n" +
+                execute("CREATE TABLE 'tests' (\n" +
                         "  Ticker SYMBOL capacity 256 CACHE,\n" +
                         "  ts timestamp\n" +
                         ") timestamp (ts) PARTITION BY MONTH");
-                insert("insert into tests VALUES " +
+                execute("insert into tests VALUES " +
                         "('AAPL', '2000')," +
                         "('AAPL', '2001')," +
                         "('AAPL', '2002')," +
@@ -1252,7 +1252,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "('AAPL', '2004')," +
                         "('AAPL', '2005')"
                 );
-                insert("insert into tests VALUES " +
+                execute("insert into tests VALUES " +
                         "('QSTDB', '2003')," +
                         "('QSTDB', '2004')," +
                         "('QSTDB', '2005')," +
@@ -1297,13 +1297,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                compile("CREATE TABLE 'tests' (\n" +
+                execute("CREATE TABLE 'tests' (\n" +
                         "  UnusedTag SYMBOL,\n" + // just filler to make the joining a bit more interesting
                         "  Ticker SYMBOL capacity 256 CACHE,\n" +
                         "  ts timestamp,\n" +
                         "  price int\n" +
                         ") timestamp (ts) PARTITION BY MONTH");
-                insert("insert into tests VALUES " +
+                execute("insert into tests VALUES " +
                         "('Whatever', 'AAPL', '2000', 0)," +
                         "('Whatever', 'AAPL', '2001', 1)," +
                         "('Whatever', 'AAPL', '2002', 2)," +
@@ -1311,7 +1311,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         "('Whatever', 'AAPL', '2004', 4)," +
                         "('Whatever', 'AAPL', '2005', 5)"
                 );
-                insert("insert into tests VALUES " +
+                execute("insert into tests VALUES " +
                         "('Whatever', 'QSTDB', '2003', 6)," +
                         "('Whatever', 'QSTDB', '2004', 7)," +
                         "('Whatever', 'QSTDB', '2005', 8)," +
@@ -1356,15 +1356,15 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testRightHandAfter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:17:00.000000Z', 2, 'b');");
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:17:00.000000Z', 2, 'b');");
 
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t2 values ('2023-10-05T04:00:00.000000Z', 3, 'a');");
-            insert("INSERT INTO t2 values ('2023-10-05T04:00:00.000000Z', 3, 'b');");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t2 values ('2023-10-05T04:00:00.000000Z', 3, 'a');");
+            execute("INSERT INTO t2 values ('2023-10-05T04:00:00.000000Z', 3, 'b');");
 
             assertResultSetsMatch("t1", "t2");
         });
@@ -1373,17 +1373,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testRightHandBefore() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:16:30.000000Z', 1, 'b');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'a');");
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:16:30.000000Z', 1, 'b');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'a');");
 
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t2 values ('2021-10-01T00:00:00.000000Z', 3, 'a');");
-            insert("INSERT INTO t2 values ('2021-10-03T01:00:00.000000Z', 4, 'a');");
-            insert("INSERT INTO t2 values ('2021-10-03T01:00:00.000000Z', 4, 'b');");
-            insert("INSERT INTO t2 values ('2021-10-05T04:00:00.000000Z', 5, 'a');");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t2 values ('2021-10-01T00:00:00.000000Z', 3, 'a');");
+            execute("INSERT INTO t2 values ('2021-10-03T01:00:00.000000Z', 4, 'a');");
+            execute("INSERT INTO t2 values ('2021-10-03T01:00:00.000000Z', 4, 'b');");
+            execute("INSERT INTO t2 values ('2021-10-05T04:00:00.000000Z', 5, 'a');");
 
             assertResultSetsMatch("t1", "t2");
         });
@@ -1392,15 +1392,15 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testRightHandDuplicate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 1, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 2, 'a');");
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 1, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 2, 'a');");
 
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
-            insert("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 1, 'a');");
-            insert("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 2, 'a');");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            execute("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 1, 'a');");
+            execute("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 2, 'a');");
 
             assertResultSetsMatch("t1", "t2");
         });
@@ -1409,13 +1409,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testRightHandEmpty() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'a');");
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'a');");
 
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t2 values ('2023-10-05T04:00:00.000000Z', 3, 'a');");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t2 values ('2023-10-05T04:00:00.000000Z', 3, 'a');");
 
             assertResultSetsMatch("t1", "t2");
         });
@@ -1424,14 +1424,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testRightHandPartitionBoundary() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t1 values ('2022-10-05T00:00:00.000000Z', 0, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T00:00:00.000000Z', 0, 'b');");
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t1 values ('2022-10-05T00:00:00.000000Z', 0, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T00:00:00.000000Z', 0, 'b');");
 
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t2 values ('2022-10-04T23:59:59.999999Z', 1, 'a');");
-            insert("INSERT INTO t2 values ('2022-10-04T23:59:59.999999Z', 1, 'b');");
-            insert("INSERT INTO t2 values ('2022-10-05T00:00:00.000000Z', 2, 'a');");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t2 values ('2022-10-04T23:59:59.999999Z', 1, 'a');");
+            execute("INSERT INTO t2 values ('2022-10-04T23:59:59.999999Z', 1, 'b');");
+            execute("INSERT INTO t2 values ('2022-10-05T00:00:00.000000Z', 2, 'a');");
 
             assertResultSetsMatch("t1", "t2");
         });
@@ -1440,17 +1440,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testRightHandSame() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
-            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'b');");
-            insert("INSERT INTO t1 values ('2022-10-07T08:16:00.000000Z', 2, 'a');");
+            execute("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            execute("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'b');");
+            execute("INSERT INTO t1 values ('2022-10-07T08:16:00.000000Z', 2, 'a');");
 
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
-            insert("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 0, 'c');");
-            insert("INSERT INTO t2 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
-            insert("INSERT INTO t2 values ('2022-10-07T08:16:00.000000Z', 2, 'a');");
+            execute("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            execute("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 0, 'c');");
+            execute("INSERT INTO t2 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            execute("INSERT INTO t2 values ('2022-10-07T08:16:00.000000Z', 2, 'a');");
 
             assertResultSetsMatch("t1", "t2");
         });
@@ -1459,16 +1459,16 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testSelfJoin() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE t (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            insert("INSERT INTO t values ('2022-10-05T00:00:00.000000Z', 0, 'a');");
-            insert("INSERT INTO t values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
-            insert("INSERT INTO t values ('2022-10-05T08:16:00.000000Z', 3, 'a');");
-            insert("INSERT INTO t values ('2022-10-05T23:59:59.999999Z', 4, 'a');");
-            insert("INSERT INTO t values ('2022-10-05T23:59:59.999999Z', 4, 'b');");
-            insert("INSERT INTO t values ('2022-10-06T00:00:00.000000Z', 5, 'a');");
-            insert("INSERT INTO t values ('2022-10-06T00:01:00.000000Z', 6, 'a');");
-            insert("INSERT INTO t values ('2022-10-06T00:01:00.000000Z', 6, 'c');");
-            insert("INSERT INTO t values ('2022-10-06T00:02:00.000000Z', 7, 'a');");
+            execute("CREATE TABLE t (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            execute("INSERT INTO t values ('2022-10-05T00:00:00.000000Z', 0, 'a');");
+            execute("INSERT INTO t values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            execute("INSERT INTO t values ('2022-10-05T08:16:00.000000Z', 3, 'a');");
+            execute("INSERT INTO t values ('2022-10-05T23:59:59.999999Z', 4, 'a');");
+            execute("INSERT INTO t values ('2022-10-05T23:59:59.999999Z', 4, 'b');");
+            execute("INSERT INTO t values ('2022-10-06T00:00:00.000000Z', 5, 'a');");
+            execute("INSERT INTO t values ('2022-10-06T00:01:00.000000Z', 6, 'a');");
+            execute("INSERT INTO t values ('2022-10-06T00:01:00.000000Z', 6, 'c');");
+            execute("INSERT INTO t values ('2022-10-06T00:02:00.000000Z', 7, 'a');");
 
             assertResultSetsMatch("t as t1", "t as t2");
         });
@@ -1477,9 +1477,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testSelfJoinOnSymbolKey1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
 
-            insert(
+            execute(
                     "INSERT INTO trades VALUES " +
                             "('BTC-USD', '2000-01-01T00:00:00.000000Z', 1)," +
                             "('BTC-USD', '2001-01-01T00:00:01.000000Z', 2)," +
@@ -1527,9 +1527,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testSelfJoinOnSymbolKey2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
 
-            insert(
+            execute(
                     "INSERT INTO trades VALUES " +
                             "('BTC-USD', '2000-01-01T00:00:00.000000Z', 1)," +
                             "('BTC-USD', '2001-01-01T00:00:01.000000Z', 2)," +
@@ -1580,9 +1580,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testSelfJoinOnSymbolKey3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE trades (pair SYMBOL, side SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (pair SYMBOL, side SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
 
-            insert(
+            execute(
                     "INSERT INTO trades VALUES " +
                             "('BTC-USD', 'sell', '2000-01-01T00:00:00.000000Z', 1)," +
                             "('BTC-USD', 'buy', '2001-01-01T00:00:01.000000Z', 2)," +
@@ -1630,9 +1630,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testSelfJoinOnSymbolKey4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE x (sym1 SYMBOL, sym2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (sym1 SYMBOL, sym2 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
-            insert(
+            execute(
                     "INSERT INTO x VALUES " +
                             "('1', '2', '2000-01-01T00:00:00.000000Z')," +
                             "('3', '4', '2000-01-01T00:00:01.000000Z')," +
@@ -1679,9 +1679,9 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testSelfJoinOnSymbolKey5() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
 
-            insert(
+            execute(
                     "INSERT INTO trades VALUES " +
                             "('BTC-USD', '2000-01-01T00:00:00.000000Z', 1)," +
                             "('BTC-USD', '2001-01-01T00:00:01.000000Z', 2)," +
@@ -1748,13 +1748,13 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                compile("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
-                compile("create table tab_b (sym_b symbol, ts_b timestamp, s_B string) timestamp(ts_b) partition by DAY");
+                execute("create table tab_a (sym_a symbol, ts_a timestamp, s_a string) timestamp(ts_a) partition by DAY");
+                execute("create table tab_b (sym_b symbol, ts_b timestamp, s_B string) timestamp(ts_b) partition by DAY");
 
-                insert("insert into tab_a values " +
+                execute("insert into tab_a values " +
                         "('ABC', '2022-01-01T00:00:00.000000Z', 'foo')"
                 );
-                insert("insert into tab_b values " +
+                execute("insert into tab_b values " +
                         "('DCE', '2021-01-01T00:00:00.000000Z', 'bar')," + // first INSERT a row with DCE to make sure symbol table for tab_b differs from tab_a
                         "('ABC', '2021-01-01T00:00:00.000000Z', 'bar')"
                 );

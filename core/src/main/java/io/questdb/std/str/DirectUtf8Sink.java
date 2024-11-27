@@ -149,6 +149,10 @@ public class DirectUtf8Sink implements MutableUtf8Sink, BorrowableUtf8Sink, Dire
         sink.reserve(minCapacity);
     }
 
+    public void resetCapacity() {
+        sink.resetCapacity();
+    }
+
     @Override
     public int size() {
         return sink.size();

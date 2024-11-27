@@ -2,6 +2,13 @@
 
 This is a short guide to outline steps involved making QuestDB release.
 
+## Edit release notes
+
+First step is to create a draft release with the intended release version number and release notes. Git tag should not
+be created but the correct tag (the intended release number) should be chosen in the draft with the option
+to create the tag on release publish. When crafting new release note, please take previous release notes as style
+guidelines. Releases should not look too dissimilar.
+
 ## Create a new branch from `master`
 
 ```bash
@@ -64,16 +71,14 @@ Then build `latest`. This should be instant. Note tag name on the end of the com
 docker buildx build --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:latest --build-arg tag_name=7.1.1 .
 ```
 
-## Edit release notes
+### Build QuestDB binaries
 
 [Github Binaries Release](https://dev.azure.com/questdb/questdb/_build?definitionId=33) Azure pipeline will
-automatically run on release tag. This pipeline will create a draft Github release with the binaries attached.
-Check the job run status and when completed go to the latest draft release
-in https://github.com/questdb/questdb/releases
-and edit the release notes. When crafting new release note, please take previous release notes as style
-guidelines. Releases should not look too dissimilar.
+automatically run on release tag. This pipeline will upload the binaries to the existing Github release draft.
+It will also mark the release draft as non-draft and latest.
 
-### Manual way to build QuestDB binaries
+Check the job run status and when completed go to the latest release
+in https://github.com/questdb/questdb/releases to check that everything is in order.
 
 In case of [Github Binaries Release](https://dev.azure.com/questdb/questdb/_build?definitionId=33) job failure, the
 binaries can be compiled using maven on Windows and Linux

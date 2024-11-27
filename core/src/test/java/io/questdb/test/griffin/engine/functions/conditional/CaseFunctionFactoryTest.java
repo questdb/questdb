@@ -361,7 +361,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testByteToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -761,7 +761,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -886,7 +886,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFloatToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -908,6 +908,53 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                 106,
                 "inconvertible types: DOUBLE -> VARCHAR [from=DOUBLE, to=VARCHAR]"
         );
+    }
+
+    @Test
+    public void testIPv4ToVarcharCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tanc as (" +
+                            "select rnd_int() % 1000 x," +
+                            " rnd_varchar() a," +
+                            " rnd_varchar() b," +
+                            " rnd_varchar() c" +
+                            " from long_sequence(20)" +
+                            ")"
+            );
+
+            assertSql(
+                    "x\tcase\n" +
+                            "-920\t\n" +
+                            "363\t127.0.0.1\n" +
+                            "367\t127.0.0.1\n" +
+                            "895\t127.0.0.1\n" +
+                            "-6\t\n" +
+                            "-440\t\n" +
+                            "905\t127.0.0.1\n" +
+                            "-212\t\n" +
+                            "569\t127.0.0.1\n" +
+                            "204\t127.0.0.1\n" +
+                            "-845\t\n" +
+                            "768\t127.0.0.1\n" +
+                            "343\t127.0.0.1\n" +
+                            "797\t127.0.0.1\n" +
+                            "34\t127.0.0.1\n" +
+                            "-365\t\n" +
+                            "895\t127.0.0.1\n" +
+                            "416\t127.0.0.1\n" +
+                            "-765\t\n" +
+                            "754\t127.0.0.1\n",
+                    "select \n" +
+                            "    x,\n" +
+                            "    case\n" +
+                            "        when x < 0 then a\n" +
+                            "        when x > 100 and x < 200 then b\n" +
+                            "        else '127.0.0.1'::ipv4" +
+                            "    end \n" +
+                            "from tanc"
+            );
+        });
     }
 
     @Test
@@ -1069,7 +1116,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntToStringCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_str() a," +
@@ -1094,7 +1141,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntToStringCastOnBranch() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_str() a," +
@@ -1118,7 +1165,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -1144,7 +1191,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testIntToVarcharCastOnBranch() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -1168,38 +1215,12 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIpv4ToVarcharCast() throws Exception {
-        ddl(
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_varchar() a," +
-                        " rnd_varchar() b," +
-                        " rnd_varchar() c" +
-                        " from long_sequence(20)" +
-                        ")"
-        );
-
-        assertException(
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else '127.0.0.1'::ipv4" +
-                        "    end \n" +
-                        "from tanc",
-                114,
-                "inconvertible types: IPv4 -> VARCHAR [from=IPv4, to=VARCHAR]"
-        );
-    }
-
-    @Test
     public void testKeyedFunctionVarArgumentNumeric() throws Exception {
         assertMemoryLeak(() -> {
             String[] types = {"INT", "LONG", "SHORT", "STRING", "TIMESTAMP", "BOOLEAN"};
 
             for (String type : types) {
-                ddl("create table tt as (" +
+                execute("create table tt as (" +
                         "select cast(x as TIMESTAMP) as ts, cast(x as " + type + ") as x from long_sequence(10)" +
                         ") timestamp(ts)");
 
@@ -1210,7 +1231,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         "from tt"
                 );
 
-                drop("drop table tt");
+                execute("drop table tt");
             }
         });
     }
@@ -1395,7 +1416,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testLongToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -1531,7 +1552,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testShortToVarcharCast() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_varchar() a," +
@@ -1794,28 +1815,34 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testUuidToVarcharCast() throws Exception {
-        ddl(
-                "create table tanc as (" +
-                        "select rnd_int() % 1000 x," +
-                        " rnd_varchar() a," +
-                        " rnd_varchar() b," +
-                        " rnd_varchar() c" +
-                        " from long_sequence(5)" +
-                        ")"
-        );
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table tanc as (" +
+                            "select rnd_int() % 1000 x," +
+                            " rnd_varchar() a," +
+                            " rnd_varchar() b," +
+                            " rnd_varchar() c" +
+                            " from long_sequence(5)" +
+                            ")"
+            );
 
-        assertException(
-                "select \n" +
-                        "    x,\n" +
-                        "    case\n" +
-                        "        when x < 0 then a\n" +
-                        "        when x > 100 and x < 200 then b\n" +
-                        "        else 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid" +
-                        "    end \n" +
-                        "from tanc",
-                141,
-                "inconvertible types: UUID -> VARCHAR [from=UUID, to=VARCHAR]"
-        );
+            assertSql(
+                    "x\tcase\n" +
+                            "-920\t\n" +
+                            "363\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n" +
+                            "367\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n" +
+                            "895\ta0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\n" +
+                            "-6\t\n",
+                    "select \n" +
+                            "    x,\n" +
+                            "    case\n" +
+                            "        when x < 0 then a\n" +
+                            "        when x > 100 and x < 200 then b\n" +
+                            "        else 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid" +
+                            "    end \n" +
+                            "from tanc"
+            );
+        });
     }
 
     @Test

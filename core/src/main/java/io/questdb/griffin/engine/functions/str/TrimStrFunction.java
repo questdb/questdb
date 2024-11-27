@@ -92,7 +92,7 @@ public class TrimStrFunction extends StrFunction implements UnaryFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 }

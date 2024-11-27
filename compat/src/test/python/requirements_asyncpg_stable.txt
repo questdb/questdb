@@ -1,0 +1,6 @@
+async-timeout==4.0.3
+asyncpg==0.29.0
+DateTime==5.5
+pytz==2024.2
+PyYAML==6.0.2
+zope.interface==7.0.3

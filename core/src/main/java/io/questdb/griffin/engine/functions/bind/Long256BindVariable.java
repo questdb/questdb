@@ -62,7 +62,7 @@ class Long256BindVariable extends Long256Function implements ScalarFunction, Mut
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

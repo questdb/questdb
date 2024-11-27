@@ -60,9 +60,9 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testAlterTableIPv4NullCol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (col1 ipv4)");
-            insert("insert into test values ('0.0.0.1')");
-            ddl("alter table test add col2 ipv4");
+            execute("create table test (col1 ipv4)");
+            execute("insert into test values ('0.0.0.1')");
+            execute("alter table test add col2 ipv4");
 
             assertSql(
                     "col1\tcol2\n" +
@@ -75,14 +75,14 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testBindVariableInEqFilterInvalid() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "foobar");
-            assertException("x where b = :ip", 0, "invalid ipv4 format: foobar");
+            assertException("x where b = :ip", 0, "invalid IPv4 format: foobar");
         });
     }
 
@@ -530,10 +530,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testConstantInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
             assertSql(
                     "b\n" +
                             "192.168.0.1\n",
@@ -545,7 +545,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testContainsIPv4FunctionFactoryError() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (ip ipv4)");
+            execute("create table t (ip ipv4)");
             assertExceptionNoLeakCheck("select * from t where ip << '1.1.1.1/35'", 28, "invalid argument: 1.1.1.1/35");
             assertExceptionNoLeakCheck("select * from t where ip << '1.1.1.1/-1'", 28, "invalid argument: 1.1.1.1/-1");
             assertExceptionNoLeakCheck("select * from t where ip << '1.1.1.1/A'", 28, "invalid argument: 1.1.1.1/A");
@@ -604,17 +604,17 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectCastStrToIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x::string col from long_sequence(0))");
-            insert("insert into x values('0.0.0.1')");
-            insert("insert into x values('0.0.0.2')");
-            insert("insert into x values('0.0.0.3')");
-            insert("insert into x values('0.0.0.4')");
-            insert("insert into x values('0.0.0.5')");
-            insert("insert into x values('0.0.0.6')");
-            insert("insert into x values('0.0.0.7')");
-            insert("insert into x values('0.0.0.8')");
-            insert("insert into x values('0.0.0.9')");
-            insert("insert into x values('0.0.0.10')");
+            execute("create table x as (select x::string col from long_sequence(0))");
+            execute("insert into x values('0.0.0.1')");
+            execute("insert into x values('0.0.0.2')");
+            execute("insert into x values('0.0.0.3')");
+            execute("insert into x values('0.0.0.4')");
+            execute("insert into x values('0.0.0.5')");
+            execute("insert into x values('0.0.0.6')");
+            execute("insert into x values('0.0.0.7')");
+            execute("insert into x values('0.0.0.8')");
+            execute("insert into x values('0.0.0.9')");
+            execute("insert into x values('0.0.0.10')");
 
             engine.releaseInactive();
 
@@ -642,17 +642,17 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectCastVarcharToIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x::varchar col from long_sequence(0))");
-            insert("insert into x values('0.0.0.1')");
-            insert("insert into x values('0.0.0.2')");
-            insert("insert into x values('0.0.0.3')");
-            insert("insert into x values('0.0.0.4')");
-            insert("insert into x values('0.0.0.5')");
-            insert("insert into x values('0.0.0.6')");
-            insert("insert into x values('0.0.0.7')");
-            insert("insert into x values('0.0.0.8')");
-            insert("insert into x values('0.0.0.9')");
-            insert("insert into x values('0.0.0.10')");
+            execute("create table x as (select x::varchar col from long_sequence(0))");
+            execute("insert into x values('0.0.0.1')");
+            execute("insert into x values('0.0.0.2')");
+            execute("insert into x values('0.0.0.3')");
+            execute("insert into x values('0.0.0.4')");
+            execute("insert into x values('0.0.0.5')");
+            execute("insert into x values('0.0.0.6')");
+            execute("insert into x values('0.0.0.7')");
+            execute("insert into x values('0.0.0.8')");
+            execute("insert into x values('0.0.0.9')");
+            execute("insert into x values('0.0.0.10')");
 
             engine.releaseInactive();
 
@@ -770,7 +770,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testFirstIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))");
+            execute("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))");
             assertSql(
                     "first\n" +
                             "10.5.96.238\n",
@@ -782,8 +782,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testFullJoinIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))");
-            ddl("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))");
+            execute("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))");
+            execute("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))");
             assertSql(
                     "select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.ip",
                     "count\tip\tip2\tcount2\n" +
@@ -827,8 +827,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testFullJoinIPv4Fails() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))");
-            ddl("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))");
+            execute("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(100))");
+            execute("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(100))");
             engine.releaseInactive();
             String query = "select a.count, a.ip, b.ip2, b.count2 from '*!*test' a join '*!*test2' b on b.ip2 = a.count";
 
@@ -852,11 +852,11 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testGreaterThanEqIPv4BadStr() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "false\n",
-                "select ipv4 '34.11.45.3' >= ipv4 'apple'"
-        ));
+        assertException(
+                "select ipv4 '34.11.45.3' >= ipv4 'apple'",
+                33,
+                "invalid IPv4 constant"
+        );
     }
 
     @Test
@@ -898,7 +898,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testGroupByIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))");
+            execute("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))");
             assertSql(
                     "count\tip\n" +
                             "6\t\n" +
@@ -924,7 +924,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testGroupByIPv42() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))");
+            execute("create table test as (select rnd_ipv4('10.5/16', 2) ip, 1 count from long_sequence(20))");
             assertSql(
                     "sum\tip\n" +
                             "6\t\n" +
@@ -950,7 +950,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testGroupByIPv43() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('10.5.6/30', 2) ip, 1 count from long_sequence(20))");
+            execute("create table test as (select rnd_ipv4('10.5.6/30', 2) ip, 1 count from long_sequence(20))");
             assertSql(
                     "sum\tip\n" +
                             "6\t\n" +
@@ -1003,105 +1003,16 @@ public class IPv4Test extends AbstractCairoTest {
                         "\n" +
                         "\n" +
                         "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
-                        "\n" +
                         "\n",
-                "select ip & ipv4 'apple' from test",
+                "select ip & cast(s as ipv4) from test",
                 "create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(1,20,0)::ipv4 ip," +
                         "    rnd_int(0,1000,0) bytes," +
+                        "    'apple' s," +
                         "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
+                        "  from long_sequence(10)" +
                         ") ",
                 null,
                 true,
@@ -1111,11 +1022,11 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4BitwiseAndFailsConst() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "\n",
-                "select ipv4 '1.1.1.1' & ipv4 '0.0.1'"
-        ));
+        assertException(
+                "select ipv4 '1.1.1.1' & ipv4 '0.0.1'",
+                29,
+                "invalid IPv4 constant"
+        );
     }
 
     @Test
@@ -1363,20 +1274,20 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4BitwiseFails() throws Exception {
+        assertException(
+                "select ~ ipv4 'apple'",
+                14,
+                "invalid IPv4 constant"
+        );
+    }
+
+    @Test
     public void testIPv4BitwiseNotConst() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "column\n" +
                         "254.254.254.254\n",
                 "select ~ ipv4 '1.1.1.1'"
-        ));
-    }
-
-    @Test
-    public void testIPv4BitwiseNotFails() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "\n",
-                "select ~ ipv4 'apple'"
         ));
     }
 
@@ -1755,13 +1666,13 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsEqSubnet() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (col ipv4)");
-            insert("insert into test values('12.67.45.3')");
-            insert("insert into test values('160.5.22.8')");
-            insert("insert into test values('240.110.88.22')");
-            insert("insert into test values('1.6.2.0')");
-            insert("insert into test values('255.255.255.255')");
-            insert("insert into test values('0.0.0.0')");
+            execute("create table test (col ipv4)");
+            execute("insert into test values('12.67.45.3')");
+            execute("insert into test values('160.5.22.8')");
+            execute("insert into test values('240.110.88.22')");
+            execute("insert into test values('1.6.2.0')");
+            execute("insert into test values('255.255.255.255')");
+            execute("insert into test values('0.0.0.0')");
 
             assertSql("col\n", "select * from test where col <<= '12.67.50.2/20'");
             assertSql(
@@ -1802,7 +1713,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsEqSubnetAndMask() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(0,1000,0)::ipv4 ip from long_sequence(100))");
+            execute("create table test as (select rnd_int(0,1000,0)::ipv4 ip from long_sequence(100))");
 
             assertSql(
                     "ip\n" +
@@ -1826,9 +1737,10 @@ public class IPv4Test extends AbstractCairoTest {
                             "0.0.0.218\n" +
                             "0.0.0.34\n" +
                             "0.0.0.90\n" +
-                            "\n" +
-                            "0.0.0.161\n" +
-                            "0.0.0.188\n" +
+                            "0.0.0.114\n" +
+                            "0.0.0.23\n" +
+                            "0.0.0.150\n" +
+                            "0.0.0.147\n" +
                             "\n" +
                             "0.0.0.29\n" +
                             "0.0.0.159\n",
@@ -1840,7 +1752,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsEqSubnetColumnInput() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
             assertSql(
                     "ip\tsubnet\n" +
                             "0.0.0.2\t0.0.0.1/24\n" +
@@ -2046,10 +1958,12 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsEqSubnetNoMask() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))");
+            execute("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))");
 
             assertSql(
                     "ip\n" +
+                            "0.0.0.4\n" +
+                            "0.0.0.4\n" +
                             "0.0.0.4\n" +
                             "0.0.0.4\n" +
                             "0.0.0.4\n" +
@@ -2072,13 +1986,13 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsEqSubnetVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (col ipv4)");
-            insert("insert into test values('12.67.45.3')");
-            insert("insert into test values('160.5.22.8')");
-            insert("insert into test values('240.110.88.22')");
-            insert("insert into test values('1.6.2.0')");
-            insert("insert into test values('255.255.255.255')");
-            insert("insert into test values('0.0.0.0')");
+            execute("create table test (col ipv4)");
+            execute("insert into test values('12.67.45.3')");
+            execute("insert into test values('160.5.22.8')");
+            execute("insert into test values('240.110.88.22')");
+            execute("insert into test values('1.6.2.0')");
+            execute("insert into test values('255.255.255.255')");
+            execute("insert into test values('0.0.0.0')");
 
             assertSql("col\n", "select * from test where col <<= '12.67.50.2/20'::varchar");
             assertSql(
@@ -2119,7 +2033,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsEqSubnetVarcharColumnInput() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
             assertSql(
                     "ip\tsubnet\n" +
                             "0.0.0.2\t0.0.0.1/24\n" +
@@ -2138,7 +2052,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsSubnet() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
             assertSql("ip\n", "select * from test where ip << '0.0.0.1'");
         });
     }
@@ -2146,7 +2060,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsSubnet2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
             assertSql("ip\n", "select * from test where ip << '0.0.0.1/32'");
         });
     }
@@ -2154,7 +2068,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsSubnet3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
             assertSql(
                     "ip\n" +
                             "0.0.0.2\n" +
@@ -2175,7 +2089,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsSubnet4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
             assertSql(
                     "ip\tsubnet\n" +
                             "0.0.0.2\t0.0.0.1/24\n" +
@@ -2191,7 +2105,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsVarcharSubnet1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
             assertSql(
                     "ip\n" +
                             "0.0.0.2\n" +
@@ -2212,7 +2126,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4ContainsVarcharSubnet2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
             assertSql(
                     "ip\tsubnet\n" +
                             "0.0.0.2\t0.0.0.1/24\n" +
@@ -2227,9 +2141,10 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testIPv4CountDistinct() throws Exception {
+        String expected = "count_distinct\n" +
+                "20\n";
         assertQuery(
-                "count_distinct\n" +
-                        "20\n",
+                expected,
                 "select count_distinct(ip) from test",
                 "create table test as " +
                         "(" +
@@ -2243,6 +2158,7 @@ public class IPv4Test extends AbstractCairoTest {
                 false,
                 true
         );
+        assertSql(expected, "select count(distinct ip) from test");
     }
 
     @Test
@@ -2272,10 +2188,13 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4EqArgsSwapped() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))");
+            execute("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))");
 
             assertSql(
                     "ip\n" +
+                            "0.0.0.1\n" +
+                            "0.0.0.1\n" +
+                            "0.0.0.1\n" +
                             "0.0.0.1\n",
                     "select * from test where ipv4 '0.0.0.1' = ip"
             );
@@ -2285,29 +2204,26 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4EqNegated() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))");
+            execute("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))");
 
             assertSql(
                     "ip\n" +
+                            "0.0.0.5\n" +
+                            "0.0.0.2\n" +
+                            "\n" +
+                            "0.0.0.4\n" +
+                            "0.0.0.5\n" +
+                            "0.0.0.4\n" +
+                            "0.0.0.4\n" +
+                            "0.0.0.4\n" +
                             "\n" +
                             "0.0.0.5\n" +
                             "0.0.0.4\n" +
-                            "\n" +
+                            "0.0.0.2\n" +
+                            "0.0.0.2\n" +
                             "0.0.0.4\n" +
-                            "0.0.0.5\n" +
-                            "0.0.0.4\n" +
-                            "\n" +
-                            "0.0.0.5\n" +
-                            "\n" +
                             "0.0.0.3\n" +
-                            "0.0.0.2\n" +
-                            "\n" +
-                            "0.0.0.5\n" +
-                            "0.0.0.4\n" +
-                            "0.0.0.2\n" +
-                            "0.0.0.2\n" +
-                            "\n" +
-                            "\n",
+                            "0.0.0.5\n",
                     "select * from test where ip != ipv4 '0.0.0.1'"
             );
         });
@@ -2316,29 +2232,26 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4EqNegated2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))");
+            execute("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(20))");
 
             assertSql(
                     "ip\n" +
+                            "0.0.0.5\n" +
+                            "0.0.0.2\n" +
+                            "\n" +
+                            "0.0.0.4\n" +
+                            "0.0.0.5\n" +
+                            "0.0.0.4\n" +
+                            "0.0.0.4\n" +
+                            "0.0.0.4\n" +
                             "\n" +
                             "0.0.0.5\n" +
                             "0.0.0.4\n" +
-                            "\n" +
+                            "0.0.0.2\n" +
+                            "0.0.0.2\n" +
                             "0.0.0.4\n" +
-                            "0.0.0.5\n" +
-                            "0.0.0.4\n" +
-                            "\n" +
-                            "0.0.0.5\n" +
-                            "\n" +
                             "0.0.0.3\n" +
-                            "0.0.0.2\n" +
-                            "\n" +
-                            "0.0.0.5\n" +
-                            "0.0.0.4\n" +
-                            "0.0.0.2\n" +
-                            "0.0.0.2\n" +
-                            "\n" +
-                            "\n",
+                            "0.0.0.5\n",
                     "select * from test where ipv4 '0.0.0.1' != ip"
             );
         });
@@ -2347,29 +2260,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4EqNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))");
+            execute("create table test as (select rnd_int(0,5,0)::ipv4 ip from long_sequence(100))");
 
             assertSql(
                     "ip\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
-                            "\n" +
                             "\n" +
                             "\n" +
                             "\n" +
@@ -2394,19 +2288,19 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4Except() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (col1 ipv4)");
-            ddl("create table y (col2 ipv4)");
-            insert("insert into x values('0.0.0.1')");
-            insert("insert into x values('0.0.0.2')");
-            insert("insert into x values('0.0.0.3')");
-            insert("insert into x values('0.0.0.4')");
-            insert("insert into x values('0.0.0.5')");
-            insert("insert into x values('0.0.0.6')");
-            insert("insert into y values('0.0.0.1')");
-            insert("insert into y values('0.0.0.2')");
-            insert("insert into y values('0.0.0.3')");
-            insert("insert into y values('0.0.0.4')");
-            insert("insert into y values('0.0.0.5')");
+            execute("create table x (col1 ipv4)");
+            execute("create table y (col2 ipv4)");
+            execute("insert into x values('0.0.0.1')");
+            execute("insert into x values('0.0.0.2')");
+            execute("insert into x values('0.0.0.3')");
+            execute("insert into x values('0.0.0.4')");
+            execute("insert into x values('0.0.0.5')");
+            execute("insert into x values('0.0.0.6')");
+            execute("insert into y values('0.0.0.1')");
+            execute("insert into y values('0.0.0.2')");
+            execute("insert into y values('0.0.0.3')");
+            execute("insert into y values('0.0.0.4')");
+            execute("insert into y values('0.0.0.5')");
 
             assertSql(
                     "col1\n" +
@@ -2443,16 +2337,16 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4Intersect() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (col1 ipv4)");
-            ddl("create table y (col2 ipv4)");
-            insert("insert into x values('0.0.0.1')");
-            insert("insert into x values('0.0.0.2')");
-            insert("insert into x values('0.0.0.3')");
-            insert("insert into x values('0.0.0.4')");
-            insert("insert into x values('0.0.0.5')");
-            insert("insert into x values('0.0.0.6')");
-            insert("insert into y values('0.0.0.1')");
-            insert("insert into y values('0.0.0.2')");
+            execute("create table x (col1 ipv4)");
+            execute("create table y (col2 ipv4)");
+            execute("insert into x values('0.0.0.1')");
+            execute("insert into x values('0.0.0.2')");
+            execute("insert into x values('0.0.0.3')");
+            execute("insert into x values('0.0.0.4')");
+            execute("insert into x values('0.0.0.5')");
+            execute("insert into x values('0.0.0.6')");
+            execute("insert into y values('0.0.0.1')");
+            execute("insert into y values('0.0.0.2')");
 
             assertSql(
                     "col1\n" +
@@ -2466,12 +2360,12 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4IsOrderedAsc() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ip ipv4, bytes int)");
-            insert("insert into test values ('0.0.0.1', 1)");
-            insert("insert into test values ('0.0.0.2', 1)");
-            insert("insert into test values ('0.0.0.3', 1)");
-            insert("insert into test values ('0.0.0.4', 1)");
-            insert("insert into test values ('0.0.0.5', 1)");
+            execute("create table test (ip ipv4, bytes int)");
+            execute("insert into test values ('0.0.0.1', 1)");
+            execute("insert into test values ('0.0.0.2', 1)");
+            execute("insert into test values ('0.0.0.3', 1)");
+            execute("insert into test values ('0.0.0.4', 1)");
+            execute("insert into test values ('0.0.0.5', 1)");
 
             assertSql(
                     "isOrdered\n" +
@@ -2504,12 +2398,12 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4IsOrderedNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ip ipv4, bytes int)");
-            insert("insert into test values ('0.0.0.0', 1)");
-            insert("insert into test values ('0.0.0.0', 1)");
-            insert("insert into test values ('0.0.0.0', 1)");
-            insert("insert into test values ('0.0.0.0', 1)");
-            insert("insert into test values ('0.0.0.0', 1)");
+            execute("create table test (ip ipv4, bytes int)");
+            execute("insert into test values ('0.0.0.0', 1)");
+            execute("insert into test values ('0.0.0.0', 1)");
+            execute("insert into test values ('0.0.0.0', 1)");
+            execute("insert into test values ('0.0.0.0', 1)");
+            execute("insert into test values ('0.0.0.0', 1)");
 
             assertSql(
                     "isOrdered\n" +
@@ -2522,12 +2416,12 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4IsOrderedSame() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (ip ipv4, bytes int)");
-            insert("insert into test values ('0.0.0.12', 1)");
-            insert("insert into test values ('0.0.0.12', 1)");
-            insert("insert into test values ('0.0.0.12', 1)");
-            insert("insert into test values ('0.0.0.12', 1)");
-            insert("insert into test values ('0.0.0.12', 1)");
+            execute("create table test (ip ipv4, bytes int)");
+            execute("insert into test values ('0.0.0.12', 1)");
+            execute("insert into test values ('0.0.0.12', 1)");
+            execute("insert into test values ('0.0.0.12', 1)");
+            execute("insert into test values ('0.0.0.12', 1)");
+            execute("insert into test values ('0.0.0.12', 1)");
 
             assertSql(
                     "isOrdered\n" +
@@ -2974,13 +2868,13 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsEqSubnet() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (col ipv4)");
-            insert("insert into test values('12.67.45.3')");
-            insert("insert into test values('160.5.22.8')");
-            insert("insert into test values('240.110.88.22')");
-            insert("insert into test values('1.6.2.0')");
-            insert("insert into test values('255.255.255.255')");
-            insert("insert into test values('0.0.0.0')");
+            execute("create table test (col ipv4)");
+            execute("insert into test values('12.67.45.3')");
+            execute("insert into test values('160.5.22.8')");
+            execute("insert into test values('240.110.88.22')");
+            execute("insert into test values('1.6.2.0')");
+            execute("insert into test values('255.255.255.255')");
+            execute("insert into test values('0.0.0.0')");
 
             assertSql("col\n", "select * from test where '12.67.50.2/20' >>= col");
             assertSql(
@@ -3021,7 +2915,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsEqSubnetAndMask() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(0,2000,0)::ipv4 ip from long_sequence(100))");
+            execute("create table test as (select rnd_int(0,2000,0)::ipv4 ip from long_sequence(100))");
 
             assertSql(
                     "ip\n" +
@@ -3045,7 +2939,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsEqSubnetColumnInput() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
             assertSql(
                     "ip\tsubnet\n" +
                             "0.0.0.2\t0.0.0.1/24\n" +
@@ -3251,14 +3145,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsEqSubnetNoMask() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(0,5,2)::ipv4 ip from long_sequence(100))");
+            execute("create table test as (select rnd_int(0,5,2)::ipv4 ip from long_sequence(20))");
 
             assertSql(
                     "ip\n" +
-                            "0.0.0.4\n" +
-                            "0.0.0.4\n" +
-                            "0.0.0.4\n" +
-                            "0.0.0.4\n" +
                             "0.0.0.4\n" +
                             "0.0.0.4\n" +
                             "0.0.0.4\n",
@@ -3270,13 +3160,13 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsEqSubnetVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (col ipv4)");
-            insert("insert into test values('12.67.45.3')");
-            insert("insert into test values('160.5.22.8')");
-            insert("insert into test values('240.110.88.22')");
-            insert("insert into test values('1.6.2.0')");
-            insert("insert into test values('255.255.255.255')");
-            insert("insert into test values('0.0.0.0')");
+            execute("create table test (col ipv4)");
+            execute("insert into test values('12.67.45.3')");
+            execute("insert into test values('160.5.22.8')");
+            execute("insert into test values('240.110.88.22')");
+            execute("insert into test values('1.6.2.0')");
+            execute("insert into test values('255.255.255.255')");
+            execute("insert into test values('0.0.0.0')");
 
             assertSql("col\n", "select * from test where '12.67.50.2/20'::varchar >>= col");
             assertSql(
@@ -3317,7 +3207,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsEqSubnetVarcharColumnInput() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
             assertSql(
                     "ip\tsubnet\n" +
                             "0.0.0.2\t0.0.0.1/24\n" +
@@ -3336,7 +3226,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsSubnet() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
             assertSql("ip\n", "select * from test where '0.0.0.1' >> ip");
         });
     }
@@ -3344,7 +3234,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsSubnet2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(100))");
             assertSql("ip\n", "select * from test where '0.0.0.1/32' >> ip");
         });
     }
@@ -3352,7 +3242,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsSubnet3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
             assertSql(
                     "ip\n" +
                             "0.0.0.2\n" +
@@ -3373,7 +3263,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsSubnet4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_str(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
             assertSql(
                     "ip\tsubnet\n" +
                             "0.0.0.2\t0.0.0.1/24\n" +
@@ -3389,7 +3279,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsVarcharSubnet1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip from long_sequence(10))");
             assertSql(
                     "ip\n" +
                             "0.0.0.2\n" +
@@ -3410,7 +3300,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4NegContainsVarcharSubnet2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
+            execute("create table test as (select rnd_int(1,2,0)::ipv4 ip, rnd_varchar(null,'0.0.0.1','0.0.0.1/24','0.0.0.1/32') subnet from long_sequence(20))");
             assertSql(
                     "ip\tsubnet\n" +
                             "0.0.0.2\t0.0.0.1/24\n" +
@@ -3426,8 +3316,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4Null() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (col ipv4)");
-            insert("insert into test values(null)");
+            execute("create table test (col ipv4)");
+            execute("insert into test values(null)");
             assertSql(
                     "col\n" +
                             "\n",
@@ -4272,18 +4162,18 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4StringUnionFails() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (col1 ipv4)");
-            ddl("create table y (col2 string)");
-            insert("insert into x values('0.0.0.1')");
-            insert("insert into x values('0.0.0.2')");
-            insert("insert into x values('0.0.0.3')");
-            insert("insert into x values('0.0.0.4')");
-            insert("insert into x values('0.0.0.5')");
-            insert("insert into y values('0.0.0.1')");
-            insert("insert into y values('0.0.0.2')");
-            insert("insert into y values('0.0.0.3')");
-            insert("insert into y values('0.0.0.4')");
-            insert("insert into y values('0.0.0.5')");
+            execute("create table x (col1 ipv4)");
+            execute("create table y (col2 string)");
+            execute("insert into x values('0.0.0.1')");
+            execute("insert into x values('0.0.0.2')");
+            execute("insert into x values('0.0.0.3')");
+            execute("insert into x values('0.0.0.4')");
+            execute("insert into x values('0.0.0.5')");
+            execute("insert into y values('0.0.0.1')");
+            execute("insert into y values('0.0.0.2')");
+            execute("insert into y values('0.0.0.3')");
+            execute("insert into y values('0.0.0.4')");
+            execute("insert into y values('0.0.0.5')");
 
             engine.releaseInactive();
 
@@ -4294,18 +4184,18 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4Union() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (col1 ipv4)");
-            ddl("create table y (col2 ipv4)");
-            insert("insert into x values('0.0.0.1')");
-            insert("insert into x values('0.0.0.2')");
-            insert("insert into x values('0.0.0.3')");
-            insert("insert into x values('0.0.0.4')");
-            insert("insert into x values('0.0.0.5')");
-            insert("insert into y values('0.0.0.1')");
-            insert("insert into y values('0.0.0.2')");
-            insert("insert into y values('0.0.0.3')");
-            insert("insert into y values('0.0.0.4')");
-            insert("insert into y values('0.0.0.5')");
+            execute("create table x (col1 ipv4)");
+            execute("create table y (col2 ipv4)");
+            execute("insert into x values('0.0.0.1')");
+            execute("insert into x values('0.0.0.2')");
+            execute("insert into x values('0.0.0.3')");
+            execute("insert into x values('0.0.0.4')");
+            execute("insert into x values('0.0.0.5')");
+            execute("insert into y values('0.0.0.1')");
+            execute("insert into y values('0.0.0.2')");
+            execute("insert into y values('0.0.0.3')");
+            execute("insert into y values('0.0.0.4')");
+            execute("insert into y values('0.0.0.5')");
 
             assertSql(
                     "col1\n" +
@@ -4322,18 +4212,18 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIPv4UnionAll() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (col1 ipv4)");
-            ddl("create table y (col2 ipv4)");
-            insert("insert into x values('0.0.0.1')");
-            insert("insert into x values('0.0.0.2')");
-            insert("insert into x values('0.0.0.3')");
-            insert("insert into x values('0.0.0.4')");
-            insert("insert into x values('0.0.0.5')");
-            insert("insert into y values('0.0.0.1')");
-            insert("insert into y values('0.0.0.2')");
-            insert("insert into y values('0.0.0.3')");
-            insert("insert into y values('0.0.0.4')");
-            insert("insert into y values('0.0.0.5')");
+            execute("create table x (col1 ipv4)");
+            execute("create table y (col2 ipv4)");
+            execute("insert into x values('0.0.0.1')");
+            execute("insert into x values('0.0.0.2')");
+            execute("insert into x values('0.0.0.3')");
+            execute("insert into x values('0.0.0.4')");
+            execute("insert into x values('0.0.0.5')");
+            execute("insert into y values('0.0.0.1')");
+            execute("insert into y values('0.0.0.2')");
+            execute("insert into y values('0.0.0.3')");
+            execute("insert into y values('0.0.0.4')");
+            execute("insert into y values('0.0.0.5')");
 
             assertSql(
                     "col1\n" +
@@ -4670,24 +4560,24 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testImplicitCastStrIPv4BadStr() throws Exception {
-        assertException("select 'dhukdsvhiu' < ipv4 '1.1.1.1'", 0, "invalid ipv4 format: dhukdsvhiu");
+        assertException("select 'dhukdsvhiu' < ipv4 '1.1.1.1'", 0, "invalid IPv4 format: dhukdsvhiu");
     }
 
     @Test
     public void testImplicitCastStrToIpv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b string)");
-            insert("insert into x values('0.0.0.1')");
-            insert("insert into x values('0.0.0.2')");
-            insert("insert into x values('0.0.0.3')");
-            insert("insert into x values('0.0.0.4')");
-            insert("insert into x values('0.0.0.5')");
-            insert("insert into x values('0.0.0.6')");
-            insert("insert into x values('0.0.0.7')");
-            insert("insert into x values('0.0.0.8')");
-            insert("insert into x values('0.0.0.9')");
-            insert("insert into x values('0.0.0.10')");
-            ddl("create table y (a ipv4)");
+            execute("create table x (b string)");
+            execute("insert into x values('0.0.0.1')");
+            execute("insert into x values('0.0.0.2')");
+            execute("insert into x values('0.0.0.3')");
+            execute("insert into x values('0.0.0.4')");
+            execute("insert into x values('0.0.0.5')");
+            execute("insert into x values('0.0.0.6')");
+            execute("insert into x values('0.0.0.7')");
+            execute("insert into x values('0.0.0.8')");
+            execute("insert into x values('0.0.0.9')");
+            execute("insert into x values('0.0.0.10')");
+            execute("create table y (a ipv4)");
 
             engine.releaseInactive();
 
@@ -4745,10 +4635,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInContainsEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
@@ -4763,8 +4653,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInContainsEqFilterInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
@@ -4775,11 +4665,11 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInContainsEqFilterNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4, a int)");
-            insert("insert into x values('127.0.0.1', 0)");
-            insert("insert into x values('192.168.0.1', 1)");
-            insert("insert into x values('255.255.255.255', 2)");
-            insert("insert into x values(null, 3)");
+            execute("create table x (b ipv4, a int)");
+            execute("insert into x values('127.0.0.1', 0)");
+            execute("insert into x values('192.168.0.1', 1)");
+            execute("insert into x values('255.255.255.255', 2)");
+            execute("insert into x values(null, 3)");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, null);
@@ -4793,10 +4683,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInContainsFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
@@ -4811,8 +4701,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInContainsFilterInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
@@ -4823,11 +4713,11 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInContainsFilterNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4, a int)");
-            insert("insert into x values('127.0.0.1', 0)");
-            insert("insert into x values('192.168.0.1', 1)");
-            insert("insert into x values('255.255.255.255', 2)");
-            insert("insert into x values(null, 3)");
+            execute("create table x (b ipv4, a int)");
+            execute("insert into x values('127.0.0.1', 0)");
+            execute("insert into x values('192.168.0.1', 1)");
+            execute("insert into x values('255.255.255.255', 2)");
+            execute("insert into x values(null, 3)");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, null);
@@ -4841,10 +4731,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "192.168.0.1");
@@ -4859,10 +4749,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInLtFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "192.168.0.1");
@@ -4877,10 +4767,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInLtFilter2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "192.168.0.1");
@@ -4895,10 +4785,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInNegContainsEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
@@ -4913,8 +4803,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInNegContainsEqFilterInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
@@ -4925,11 +4815,11 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInNegContainsEqFilterNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4, a int)");
-            insert("insert into x values('127.0.0.1', 0)");
-            insert("insert into x values('192.168.0.1', 1)");
-            insert("insert into x values('255.255.255.255', 2)");
-            insert("insert into x values(null, 3)");
+            execute("create table x (b ipv4, a int)");
+            execute("insert into x values('127.0.0.1', 0)");
+            execute("insert into x values('192.168.0.1', 1)");
+            execute("insert into x values('255.255.255.255', 2)");
+            execute("insert into x values(null, 3)");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, null);
@@ -4943,10 +4833,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInNegContainsFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "255.255.255.255/31");
@@ -4961,8 +4851,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInNegContainsFilterInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, "foobar");
@@ -4973,11 +4863,11 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testIndexedBindVariableInNegContainsFilterNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4, a int)");
-            insert("insert into x values('127.0.0.1', 0)");
-            insert("insert into x values('192.168.0.1', 1)");
-            insert("insert into x values('255.255.255.255', 2)");
-            insert("insert into x values(null, 3)");
+            execute("create table x (b ipv4, a int)");
+            execute("insert into x values('127.0.0.1', 0)");
+            execute("insert into x values('192.168.0.1', 1)");
+            execute("insert into x values('255.255.255.255', 2)");
+            execute("insert into x values(null, 3)");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr(0, null);
@@ -4991,8 +4881,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testInnerJoinIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('1.1.1.1/32', 0) ip, 1 count from long_sequence(5))");
-            ddl("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))");
+            execute("create table test as (select rnd_ipv4('1.1.1.1/32', 0) ip, 1 count from long_sequence(5))");
+            execute("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))");
             assertSql(
                     "count\tcount2\n" +
                             "1\t2\n" +
@@ -5322,15 +5212,15 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testInvalidConstantInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            assertExceptionNoLeakCheck("x where b = 'foobar'", 0, "invalid ipv4 format: foobar");
+            execute("create table x (b ipv4)");
+            assertExceptionNoLeakCheck("x where b = 'foobar'", 0, "invalid IPv4 format: foobar");
         });
     }
 
     @Test
     public void testLastIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('10.5/16', 2) ip, rnd_symbol('ab', '$a', 'ac') sym from long_sequence(20))");
+            execute("create table test as (select rnd_ipv4('10.5/16', 2) ip, rnd_symbol('ab', '$a', 'ac') sym from long_sequence(20))");
             assertSql(
                     "sym\tlast\n" +
                             "$a\t10.5.237.229\n" +
@@ -5368,8 +5258,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testLeftJoinIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('1.1.1.1/16', 0) ip, 1 count from long_sequence(5))");
-            ddl("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))");
+            execute("create table test as (select rnd_ipv4('1.1.1.1/16', 0) ip, 1 count from long_sequence(5))");
+            execute("create table test2 as (select rnd_ipv4('1.1.1.1/32', 0) ip2, 2 count2 from long_sequence(5))");
             assertSql(
                     "ip\tip2\tcount\tcount2\n" +
                             "1.1.96.238\t\t1\tnull\n" +
@@ -5385,8 +5275,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testLeftJoinIPv42() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(50))");
-            ddl("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(50))");
+            execute("create table test as (select rnd_ipv4('12.5.9/24', 0) ip, 1 count from long_sequence(50))");
+            execute("create table test2 as (select rnd_ipv4('12.5.9/24', 0) ip2, 2 count2 from long_sequence(50))");
             assertSql(
                     "ip\tip2\tcount\tcount2\n" +
                             "12.5.9.238\t\t1\tnull\n" +
@@ -5469,7 +5359,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testLimitIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))");
+            execute("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))");
             assertSql(
                     "ip\tcount\n" +
                             "10.5.96.238\t1\n" +
@@ -5485,7 +5375,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testLimitIPv42() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))");
+            execute("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))");
             assertSql(
                     "ip\tcount\n" +
                             "10.5.170.235\t1\n" +
@@ -5501,7 +5391,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testLimitIPv43() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))");
+            execute("create table test as (select rnd_ipv4('10.5/16', 0) ip, 1 count from long_sequence(20))");
             assertSql(
                     "ip\tcount\n" +
                             "10.5.89.171\t1\n" +
@@ -5520,8 +5410,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testMaxIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
-            insert("insert into test values ('255.255.255.255', 1)");
+            execute("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
+            execute("insert into test values ('255.255.255.255', 1)");
             assertSql(
                     "max\n" +
                             "255.255.255.255\n",
@@ -5533,8 +5423,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testMinIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
-            insert("insert into test values ('0.0.0.1', 1)");
+            execute("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
+            execute("insert into test values ('0.0.0.1', 1)");
             assertSql(
                     "min\n" +
                             "0.0.0.1\n",
@@ -5546,8 +5436,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testMinIPv4Null() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
-            insert("insert into test values ('0.0.0.0', 1)");
+            execute("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
+            execute("insert into test values ('0.0.0.0', 1)");
             assertSql(
                     "min\n" +
                             "4.98.173.21\n",
@@ -5559,10 +5449,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNamedBindVariableInContainsEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
@@ -5577,10 +5467,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNamedBindVariableInContainsFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
@@ -5595,10 +5485,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNamedBindVariableInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "192.168.0.1");
@@ -5613,10 +5503,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNamedBindVariableInLtFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "192.168.0.1");
@@ -5631,10 +5521,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNamedBindVariableInLtFilter2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "192.168.0.1");
@@ -5649,10 +5539,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNamedBindVariableInNegContainsEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
@@ -5667,10 +5557,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNamedBindVariableInNegContainsFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('127.0.0.1')");
-            insert("insert into x values('192.168.0.1')");
-            insert("insert into x values('255.255.255.255')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('127.0.0.1')");
+            execute("insert into x values('192.168.0.1')");
+            execute("insert into x values('255.255.255.255')");
 
             sqlExecutionContext.getBindVariableService().clear();
             sqlExecutionContext.getBindVariableService().setStr("ip", "255.255.255.255/31");
@@ -5685,7 +5575,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNegContainsIPv4FunctionFactoryError() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table t (ip ipv4)");
+            execute("create table t (ip ipv4)");
             assertExceptionNoLeakCheck("select * from t where '1.1.1.1/35' >> ip", 22, "invalid argument: 1.1.1.1/35");
             assertExceptionNoLeakCheck("select * from t where '1.1.1.1/-1' >> ip", 22, "invalid argument: 1.1.1.1/-1");
             assertExceptionNoLeakCheck("select * from t where '1.1.1.1/A' >> ip ", 22, "invalid argument: 1.1.1.1/A");
@@ -5696,8 +5586,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNetmask() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tipv4 (ip ipv4)");
-            insert("insert into tipv4 values ('255.255.255.254')");
+            execute("create table tipv4 (ip ipv4)");
+            execute("insert into tipv4 values ('255.255.255.254')");
             assertSql("ip\n" +
                     "255.255.255.254\n", "select * from tipv4 where '255.255.255.255/31' >>= ip");
             assertSql("ip\n", "select * from tipv4 where '255.255.255.255/32' >>= ip");
@@ -5724,10 +5614,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNetmaskColumnInput() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (msk string)");
-            insert("insert into test values ('255.255.255.255/30')");
-            insert("insert into test values ('255.255.255.255/31')");
-            insert("insert into test values ('255.255.255.255/32')");
+            execute("create table test (msk string)");
+            execute("insert into test values ('255.255.255.255/30')");
+            execute("insert into test values ('255.255.255.255/31')");
+            execute("insert into test values ('255.255.255.255/32')");
 
             assertSql(
                     "netmask\n" +
@@ -5742,8 +5632,8 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNetmaskVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table tipv4 (ip ipv4)");
-            insert("insert into tipv4 values ('255.255.255.254')");
+            execute("create table tipv4 (ip ipv4)");
+            execute("insert into tipv4 values ('255.255.255.254')");
             assertSql("ip\n" +
                     "255.255.255.254\n", "select * from tipv4 where '255.255.255.255/31'::varchar >>= ip");
             assertSql("ip\n", "select * from tipv4 where '255.255.255.255/32'::varchar >>= ip");
@@ -5770,10 +5660,10 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNetmaskVarcharColumnInput() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (msk varchar)");
-            insert("insert into test values ('255.255.255.255/30')");
-            insert("insert into test values ('255.255.255.255/31')");
-            insert("insert into test values ('255.255.255.255/32')");
+            execute("create table test (msk varchar)");
+            execute("insert into test values ('255.255.255.255/30')");
+            execute("insert into test values ('255.255.255.255/31')");
+            execute("insert into test values ('255.255.255.255/32')");
 
             assertSql(
                     "netmask\n" +
@@ -5788,9 +5678,9 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4)");
-            insert("insert into x values('128.0.0.0')");
-            insert("insert into x values('0.0.0.0')");
+            execute("create table x (b ipv4)");
+            execute("insert into x values('128.0.0.0')");
+            execute("insert into x values('0.0.0.0')");
 
             assertSql(
                     "b\n" +
@@ -6126,7 +6016,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testStrColumnInEqFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4, a string)");
+            execute("create table x (b ipv4, a string)");
             assertExceptionNoLeakCheck("x where b = a", 12, "STRING constant expected");
         });
     }
@@ -6134,7 +6024,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testStrColumnInLtFilter() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4, a string)");
+            execute("create table x (b ipv4, a string)");
             assertExceptionNoLeakCheck("x where b < a", 12, "STRING constant expected");
         });
     }
@@ -6142,7 +6032,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testStrColumnInLtFilter2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (b ipv4, a string)");
+            execute("create table x (b ipv4, a string)");
             assertExceptionNoLeakCheck("x where b > a", 12, "STRING constant expected");
         });
     }
@@ -6176,17 +6066,17 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testStrIPv4CastOverflow() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "cast\n" +
-                        "\n",
-                "select ipv4 '256.5.5.5'"
-        ));
+        assertException(
+                "select ipv4 '256.5.5.5'",
+                12,
+                "invalid IPv4 constant"
+        );
     }
 
     @Test
     public void testTruncateIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
+            execute("create table test as (select rnd_ipv4() ip, 1 count from long_sequence(20))");
             assertSql(
                     "ip\tcount\n" +
                             "187.139.150.80\t1\n" +
@@ -6211,7 +6101,7 @@ public class IPv4Test extends AbstractCairoTest {
                             "20.62.93.114\t1\n",
                     "test"
             );
-            ddl("truncate table test");
+            execute("truncate table test");
             assertSql("ip\tcount\n", "test");
         });
     }
@@ -6219,13 +6109,13 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testUpdateTableIPv4ToString() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (col1 ipv4)");
-            insert("insert into test values('0.0.0.1')");
-            insert("insert into test values('0.0.0.2')");
-            insert("insert into test values('0.0.0.3')");
-            insert("insert into test values('0.0.0.4')");
-            insert("insert into test values('0.0.0.5')");
-            ddl("alter table test add col2 string");
+            execute("create table test (col1 ipv4)");
+            execute("insert into test values('0.0.0.1')");
+            execute("insert into test values('0.0.0.2')");
+            execute("insert into test values('0.0.0.3')");
+            execute("insert into test values('0.0.0.4')");
+            execute("insert into test values('0.0.0.5')");
+            execute("alter table test add col2 string");
             update("update test set col2 = col1");
             TestUtils.assertSql(
                     engine,
@@ -6245,14 +6135,14 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testUpdateTableIPv4ToStringWal() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (" +
+            execute("create table test as (" +
                     "select " +
                     " rnd_ipv4 col1, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            ddl("alter table test add column col2 string");
+            execute("alter table test add column col2 string");
             update("update test set col2 = col1");
 
             drainWalQueue();
@@ -6272,13 +6162,13 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testUpdateTableStringToIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (col1 string)");
-            insert("insert into test values('0.0.0.1')");
-            insert("insert into test values('0.0.0.2')");
-            insert("insert into test values('0.0.0.3')");
-            insert("insert into test values('0.0.0.4')");
-            insert("insert into test values('0.0.0.5')");
-            ddl("alter table test add col2 ipv4");
+            execute("create table test (col1 string)");
+            execute("insert into test values('0.0.0.1')");
+            execute("insert into test values('0.0.0.2')");
+            execute("insert into test values('0.0.0.3')");
+            execute("insert into test values('0.0.0.4')");
+            execute("insert into test values('0.0.0.5')");
+            execute("alter table test add col2 ipv4");
             update("update test set col2 = col1");
             TestUtils.assertSql(
                     engine,
@@ -6298,14 +6188,14 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testUpdateTableStringToIPv4Wal() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (" +
+            execute("create table test as (" +
                     "select " +
                     " rnd_ipv4::string col1, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
                     " from long_sequence(5)" +
                     ") timestamp(ts) partition by DAY WAL");
 
-            ddl("alter table test add column col2 ipv4");
+            execute("alter table test add column col2 ipv4");
             update("update test set col2 = col1");
 
             drainWalQueue();
@@ -6325,7 +6215,7 @@ public class IPv4Test extends AbstractCairoTest {
     @Test
     public void testWalIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test as (" +
+            execute("create table test as (" +
                     "select " +
                     " rnd_ipv4 col1, " +
                     " timestamp_sequence('2022-02-24', 1000000L) ts " +
@@ -6392,128 +6282,23 @@ public class IPv4Test extends AbstractCairoTest {
                 "ip1\tip2\n" +
                         "0.0.0.1\t0.0.0.1\n" +
                         "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "\t\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "\t\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "\t\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "\t\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "\t\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "\t\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "\t\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.3\t0.0.0.3\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "\t\n" +
-                        "\t\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "\t\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
-                        "0.0.0.8\t0.0.0.8\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "\t\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "\t\n" +
-                        "0.0.0.5\t0.0.0.5\n" +
-                        "\t\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
-                        "\t\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.2\t0.0.0.2\n" +
-                        "0.0.0.1\t0.0.0.1\n" +
-                        "0.0.0.7\t0.0.0.7\n" +
                         "0.0.0.5\t0.0.0.5\n" +
                         "0.0.0.3\t0.0.0.3\n" +
                         "0.0.0.1\t0.0.0.1\n" +
-                        "\t\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.9\t0.0.0.9\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
                         "0.0.0.1\t0.0.0.1\n" +
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "\t\n" +
                         "0.0.0.5\t0.0.0.5\n" +
-                        "0.0.0.4\t0.0.0.4\n" +
-                        "0.0.0.6\t0.0.0.6\n" +
-                        "0.0.0.8\t0.0.0.8\n",
+                        "0.0.0.7\t0.0.0.7\n" +
+                        "\t\n",
                 "select * from test where ip1 = ip2",
                 "create table test as " +
                         "(" +
                         "  select" +
                         "    rnd_int(0,9,0)::ipv4 ip1," +
                         "    rnd_int(0,9,0)::ipv4 ip2" +
-                        "  from long_sequence(1000)" +
+                        "  from long_sequence(100)" +
                         ")",
                 null,
                 true,
@@ -6523,20 +6308,23 @@ public class IPv4Test extends AbstractCairoTest {
 
     @Test
     public void testWhereInvalidIPv4() throws Exception {
-        assertQuery(
-                "ip\tbytes\tk\n",
-                "select * from test where ip = ipv4 'hello'",
-                "create table test as " +
-                        "(" +
-                        "  select" +
-                        "    rnd_int(1,5,0)::ipv4 ip," +
-                        "    rnd_int(0,1000,0) bytes," +
-                        "    timestamp_sequence(0,100000000) k" +
-                        "  from long_sequence(100)" +
-                        ") timestamp(k)",
-                "k",
-                true,
-                false
-        );
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table test as " +
+                            "(" +
+                            "  select" +
+                            "    rnd_int(1,5,0)::ipv4 ip," +
+                            "    rnd_int(0,1000,0) bytes," +
+                            "    timestamp_sequence(0,100000000) k" +
+                            "  from long_sequence(100)" +
+                            ") timestamp(k)"
+            );
+
+            assertExceptionNoLeakCheck(
+                    "select * from test where ip = 'apple'",
+                    0,
+                    "invalid IPv4 format"
+            );
+        });
     }
 }

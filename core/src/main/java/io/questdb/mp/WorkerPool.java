@@ -47,6 +47,7 @@ public class WorkerPool implements Closeable {
     private final Metrics metrics;
     private final long napThreshold;
     private final String poolName;
+    private final int priority;
     private final AtomicBoolean running = new AtomicBoolean();
     private final long sleepMs;
     private final long sleepThreshold;
@@ -79,6 +80,7 @@ public class WorkerPool implements Closeable {
         this.sleepThreshold = configuration.getSleepThreshold();
         this.sleepMs = configuration.getSleepTimeout();
         this.metrics = metrics;
+        this.priority = configuration.workerPoolPriority();
 
         assert this.workerAffinity.length == workerCount;
 
@@ -189,6 +191,7 @@ public class WorkerPool implements Closeable {
                         metrics,
                         log
                 );
+                worker.setPriority(priority);
                 worker.setDaemon(daemons);
                 workers.add(worker);
                 worker.start();
@@ -206,12 +209,9 @@ public class WorkerPool implements Closeable {
         long max = workerMetrics.getMaxElapsedMicros();
         for (int i = 0, n = workers.size(); i < n; i++) {
             long elapsed = now - workers.getQuick(i).getJobStartMicros();
-            if (elapsed > 0L) {
-                if (elapsed < min) {
-                    min = elapsed;
-                } else if (elapsed > max) {
-                    max = elapsed;
-                }
+            if (elapsed > 0) {
+                min = Math.min(min, elapsed);
+                max = Math.max(max, elapsed);
             }
         }
         workerMetrics.update(min, max);

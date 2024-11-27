@@ -24,38 +24,267 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractPartitionFrameCursorFactory;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnFilter;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.FullBwdPartitionFrameCursorFactory;
+import io.questdb.cairo.FullFwdPartitionFrameCursorFactory;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IntervalBwdPartitionFrameCursorFactory;
+import io.questdb.cairo.IntervalFwdPartitionFrameCursorFactory;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.SingleSymbolFilter;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.engine.*;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
+import io.questdb.griffin.engine.ExplainPlanFactory;
+import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
+import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.cast.*;
-import io.questdb.griffin.engine.functions.columns.*;
-import io.questdb.griffin.engine.functions.constants.*;
-import io.questdb.griffin.engine.groupby.*;
+import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastByteToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDateToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDateToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDoubleToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastDoubleToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastFloatToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastFloatToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastGeoHashToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLong256ToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLong256ToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastLongToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastShortToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastShortToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastSymbolToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastSymbolToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastTimestampToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastTimestampToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastVarcharToGeoHashFunctionFactory;
+import io.questdb.griffin.engine.functions.columns.BinColumn;
+import io.questdb.griffin.engine.functions.columns.BooleanColumn;
+import io.questdb.griffin.engine.functions.columns.ByteColumn;
+import io.questdb.griffin.engine.functions.columns.CharColumn;
+import io.questdb.griffin.engine.functions.columns.DateColumn;
+import io.questdb.griffin.engine.functions.columns.DoubleColumn;
+import io.questdb.griffin.engine.functions.columns.FloatColumn;
+import io.questdb.griffin.engine.functions.columns.GeoByteColumn;
+import io.questdb.griffin.engine.functions.columns.GeoIntColumn;
+import io.questdb.griffin.engine.functions.columns.GeoLongColumn;
+import io.questdb.griffin.engine.functions.columns.GeoShortColumn;
+import io.questdb.griffin.engine.functions.columns.IPv4Column;
+import io.questdb.griffin.engine.functions.columns.IntColumn;
+import io.questdb.griffin.engine.functions.columns.IntervalColumn;
+import io.questdb.griffin.engine.functions.columns.Long256Column;
+import io.questdb.griffin.engine.functions.columns.LongColumn;
+import io.questdb.griffin.engine.functions.columns.ShortColumn;
+import io.questdb.griffin.engine.functions.columns.StrColumn;
+import io.questdb.griffin.engine.functions.columns.SymbolColumn;
+import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.griffin.engine.functions.columns.UuidColumn;
+import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
+import io.questdb.griffin.engine.functions.constants.StrConstant;
+import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.DistinctIntKeyRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.DistinctSymbolRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.FillRangeRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillNullNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillPrevNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillValueNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.groupby.vect.AvgDoubleVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.AvgIntVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.AvgLongVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.AvgShortVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.CountDoubleVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.CountIntVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.CountLongVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.GroupByNotKeyedVectorRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.vect.*;
-import io.questdb.griffin.engine.join.*;
-import io.questdb.griffin.engine.orderby.*;
-import io.questdb.griffin.engine.table.*;
-import io.questdb.griffin.engine.union.*;
+import io.questdb.griffin.engine.groupby.vect.KSumDoubleVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MaxDateVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MaxDoubleVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MaxIntVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MaxLongVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MaxShortVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MaxTimestampVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MinDateVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MinDoubleVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MinIntVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MinLongVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MinShortVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.MinTimestampVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.NSumDoubleVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.SumDoubleVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.SumIntVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.SumLong256VectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.SumLongVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.SumShortVectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
+import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
+import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinNoKeyRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashOuterJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashOuterJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.JoinRecordMetadata;
+import io.questdb.griffin.engine.join.LtJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.join.LtJoinNoKeyFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.LtJoinNoKeyRecordCursorFactory;
+import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.NullRecordFactory;
+import io.questdb.griffin.engine.join.RecordAsAFieldRecordCursorFactory;
+import io.questdb.griffin.engine.join.SpliceJoinLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.LongSortedLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.BwdPageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
+import io.questdb.griffin.engine.table.DeferredSymbolIndexRowCursorFactory;
+import io.questdb.griffin.engine.table.FilterOnExcludedValuesRecordCursorFactory;
+import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
+import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
+import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.FwdPageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.LatestByAllFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByAllSymbolsFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByDeferredListValuesFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByLightRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestBySubQueryRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByValueDeferredFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByValueDeferredIndexedFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByValueDeferredIndexedRowCursorFactory;
+import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
+import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
+import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
+import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
+import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
+import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
+import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
+import io.questdb.griffin.engine.union.IntersectRecordCursorFactory;
+import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
+import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
+import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
-import io.questdb.griffin.model.*;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.model.ExplainModel;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.griffin.model.WindowColumn;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.jit.CompiledFilterIRSerializer;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.BitSet;
+import io.questdb.std.BufferWindowCharSequence;
+import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongList;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjObjHashMap;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -136,6 +365,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final CairoEngine engine;
     private final EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
     private final ObjectPool<ExpressionNode> expressionNodePool;
+    private final boolean fastAsOfJoins;
     private final FunctionParser functionParser;
     private final IntList groupByFunctionPositions = new IntList();
     private final ObjObjHashMap<IntList, ObjList<WindowFunction>> groupedWindow = new ObjObjHashMap<>();
@@ -169,7 +399,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeStringAsVarcharB = new BitSet();
     private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
-    private boolean fastAsOfJoins = true;
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -410,8 +639,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         IntList direction = model.getOrderByDirectionAdvice();
         if (index >= direction.size()) {
             return ORDER_DIRECTION_ASCENDING;
+        } else {
+            return direction.get(index);
         }
-        return model.getOrderByDirectionAdvice().getQuick(index);
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -583,7 +813,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @Nullable ExpressionNode filterExpr,
             RecordMetadata metadata
     ) throws SqlException {
-        if (filter != null && !filter.isReadThreadSafe()) {
+        if (filter != null && !filter.isThreadSafe()) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
             for (int i = 0; i < workerCount; i++) {
@@ -606,7 +836,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         boolean threadSafe = true;
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            if (!groupByFunctions.getQuick(i).isReadThreadSafe()) {
+            if (!groupByFunctions.getQuick(i).isThreadSafe()) {
                 threadSafe = false;
                 break;
             }
@@ -639,7 +869,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         boolean threadSafe = true;
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-            if (!keyFunctions.getQuick(i).isReadThreadSafe()) {
+            if (!keyFunctions.getQuick(i).isThreadSafe()) {
                 threadSafe = false;
                 break;
             }
@@ -772,8 +1002,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     metadata.add(slaveAlias, m);
                     listColumnFilterB.add(i + 1);
                     columnIndex.add(i);
-                    valueTypes.add(m.getType());
-                    slaveTypes.add(m.getType());
+                    valueTypes.add(m.getColumnType());
+                    slaveTypes.add(m.getColumnType());
                 }
             }
 
@@ -782,7 +1012,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int index = listColumnFilterA.getColumnIndexFactored(i);
                 final TableColumnMetadata m = slaveMetadata.getColumnMetadata(index);
                 metadata.add(slaveAlias, m);
-                slaveTypes.add(m.getType());
+                slaveTypes.add(m.getColumnType());
                 columnIndex.add(index);
             }
 
@@ -1784,12 +2014,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
 
+            int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(fillStride.token, fillStride.position);
+            long samplingInterval = TimestampSamplerFactory.parseInterval(fillStride.token, samplingIntervalEnd, fillStride.position);
+            assert samplingInterval > 0;
+            assert samplingIntervalEnd < fillStride.token.length();
+            char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
+            TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(samplingInterval, samplingIntervalUnit, fillStride.position);
+
             return new FillRangeRecordCursorFactory(
                     groupByFactory.getMetadata(),
                     groupByFactory,
                     fillFromFunc,
                     fillToFunc,
-                    fillStride.token,
+                    samplingInterval,
+                    samplingIntervalUnit,
+                    timestampSampler,
                     fillValues,
                     timestampIndex
             );
@@ -2849,6 +3088,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
                         model.setLimitImplemented(true);
                         int baseCursorTimestampIndex = preSortedByTs ? timestampIndex : -1;
+                        if (
+                                !preSortedByTs
+                                        && loFunc.isConstant()
+                                        && hiFunc == null
+                                        && listColumnFilterA.size() == 1
+                                        && recordCursorFactory.recordCursorSupportsLongTopK()
+                        ) {
+                            final long lo = loFunc.getLong(null);
+                            final int index = listColumnFilterA.getQuick(0);
+                            final int columnIndex = (index > 0 ? index : -index) - 1;
+                            if (lo > 0 && lo <= Integer.MAX_VALUE && metadata.getColumnType(columnIndex) == ColumnType.LONG) {
+                                return new LongTopKRecordCursorFactory(
+                                        orderedMetadata,
+                                        recordCursorFactory,
+                                        columnIndex,
+                                        (int) lo,
+                                        index > 0
+                                );
+                            }
+                        }
                         return new LimitedSizeSortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
@@ -3047,46 +3306,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 final int columnCount = metadata.getColumnCount();
                 final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
-                try {
-                    GroupByUtils.prepareGroupByFunctions(
-                            model,
-                            metadata,
-                            functionParser,
-                            executionContext,
-                            groupByFunctions,
-                            groupByFunctionPositions,
-                            null,
-                            null,
-                            valueTypes
-                    );
-                } catch (Throwable e) {
-                    Misc.freeObjList(groupByFunctions);
-                    throw e;
-                }
-
                 final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
                 final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-                try {
-                    GroupByUtils.prepareGroupByRecordFunctions(
-                            sqlNodeStack,
-                            model,
-                            metadata,
-                            listColumnFilterA,
-                            groupByFunctions,
-                            groupByFunctionPositions,
-                            null,
-                            recordFunctions,
-                            recordFunctionPositions,
-                            groupByMetadata,
-                            keyTypes,
-                            valueTypes.getColumnCount(),
-                            false,
-                            timestampIndex
-                    );
-                } catch (Throwable e) {
-                    Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
-                    throw e;
-                }
+                GroupByUtils.assembleGroupByFunctions(
+                        functionParser,
+                        sqlNodeStack,
+                        model,
+                        executionContext,
+                        metadata,
+                        timestampIndex,
+                        false,
+                        groupByFunctions,
+                        groupByFunctionPositions,
+                        recordFunctions,
+                        recordFunctionPositions,
+                        groupByMetadata,
+                        null,
+                        null,
+                        valueTypes,
+                        keyTypes,
+                        listColumnFilterA
+                );
 
                 return new SampleByInterpolateRecordCursorFactory(
                         asm,
@@ -3114,46 +3354,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final int columnCount = model.getColumns().size();
             final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
-            try {
-                GroupByUtils.prepareGroupByFunctions(
-                        model,
-                        metadata,
-                        functionParser,
-                        executionContext,
-                        groupByFunctions,
-                        groupByFunctionPositions,
-                        null,
-                        null,
-                        valueTypes
-                );
-            } catch (Throwable e) {
-                Misc.freeObjList(groupByFunctions);
-                throw e;
-            }
-
             final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
             final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-            try {
-                GroupByUtils.prepareGroupByRecordFunctions(
-                        sqlNodeStack,
-                        model,
-                        metadata,
-                        listColumnFilterA,
-                        groupByFunctions,
-                        groupByFunctionPositions,
-                        null,
-                        recordFunctions,
-                        recordFunctionPositions,
-                        groupByMetadata,
-                        keyTypes,
-                        valueTypes.getColumnCount(),
-                        false,
-                        timestampIndex
-                );
-            } catch (Throwable e) {
-                Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
-                throw e;
-            }
+            GroupByUtils.assembleGroupByFunctions(
+                    functionParser,
+                    sqlNodeStack,
+                    model,
+                    executionContext,
+                    metadata,
+                    timestampIndex,
+                    false,
+                    groupByFunctions,
+                    groupByFunctionPositions,
+                    recordFunctions,
+                    recordFunctionPositions,
+                    groupByMetadata,
+                    null,
+                    null,
+                    valueTypes,
+                    keyTypes,
+                    listColumnFilterA
+            );
 
             boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
             boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model, metadata);
@@ -3535,25 +3756,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            int dot = Chars.indexOf(colMetadata.getName(), '.');
+            int dot = Chars.indexOf(colMetadata.getColumnName(), '.');
             if (dot > -1) {//remove inner table alias
                 selectMetadata.add(
                         new TableColumnMetadata(
-                                Chars.toString(colMetadata.getName(), dot + 1, colMetadata.getName().length()),
-                                colMetadata.getType(),
-                                colMetadata.isIndexed(),
+                                Chars.toString(colMetadata.getColumnName(), dot + 1, colMetadata.getColumnName().length()),
+                                colMetadata.getColumnType(),
+                                colMetadata.isSymbolIndexFlag(),
                                 colMetadata.getIndexValueBlockCapacity(),
                                 colMetadata.isSymbolTableStatic(),
                                 metadata
                         )
                 );
             } else {
-                if (selectMetadata.getColumnIndexQuiet(colMetadata.getName()) < 0) {
+                if (selectMetadata.getColumnIndexQuiet(colMetadata.getColumnName()) < 0) {
                     selectMetadata.add(colMetadata);
                 } else {
                     // avoid clashing with other columns using timestamp column name as alias
                     StringSink sink = Misc.getThreadLocalSink();
-                    sink.put(colMetadata.getName());
+                    sink.put(colMetadata.getColumnName());
                     int len = sink.length();
                     int sequence = 0;
 
@@ -3565,8 +3786,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     selectMetadata.add(
                             new TableColumnMetadata(
                                     sink.toString(),
-                                    colMetadata.getType(),
-                                    colMetadata.isIndexed(),
+                                    colMetadata.getColumnType(),
+                                    colMetadata.isSymbolIndexFlag(),
                                     colMetadata.getIndexValueBlockCapacity(),
                                     colMetadata.isSymbolTableStatic(),
                                     metadata
@@ -3766,7 +3987,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata metadata = factory.getMetadata();
 
-            final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
+            boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
             // Inspect model for possibility of vector aggregate intrinsics.
             if (enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, hourIndex)) {
                 // Create metadata from everything we've gathered.
@@ -3899,47 +4120,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<GroupByFunction> groupByFunctions = new ObjList<>(columnCount);
             final ObjList<Function> keyFunctions = new ObjList<>(columnCount);
             final ObjList<ExpressionNode> keyFunctionNodes = new ObjList<>(columnCount);
-            try {
-                GroupByUtils.prepareGroupByFunctions(
-                        model,
-                        metadata,
-                        functionParser,
-                        executionContext,
-                        groupByFunctions,
-                        groupByFunctionPositions,
-                        keyFunctions,
-                        keyFunctionNodes,
-                        valueTypes
-                );
-            } catch (Throwable e) {
-                Misc.freeObjList(groupByFunctions);
-                Misc.freeObjList(keyFunctions);
-                throw e;
-            }
-
             final ObjList<Function> recordFunctions = new ObjList<>(columnCount);
             final GenericRecordMetadata groupByMetadata = new GenericRecordMetadata();
-            try {
-                GroupByUtils.prepareGroupByRecordFunctions(
-                        sqlNodeStack,
-                        model,
-                        metadata,
-                        listColumnFilterA,
-                        groupByFunctions,
-                        groupByFunctionPositions,
-                        keyFunctions,
-                        recordFunctions,
-                        recordFunctionPositions,
-                        groupByMetadata,
-                        keyTypes,
-                        valueTypes.getColumnCount(),
-                        true,
-                        timestampIndex
-                );
-            } catch (Throwable e) {
-                Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
-                Misc.freeObjList(keyFunctions);
-                throw e;
+
+            GroupByUtils.assembleGroupByFunctions(
+                    functionParser,
+                    sqlNodeStack,
+                    model,
+                    executionContext,
+                    metadata,
+                    timestampIndex,
+                    true,
+                    groupByFunctions,
+                    groupByFunctionPositions,
+                    recordFunctions,
+                    recordFunctionPositions,
+                    groupByMetadata,
+                    keyFunctions,
+                    keyFunctionNodes,
+                    valueTypes,
+                    keyTypes,
+                    listColumnFilterA
+            );
+
+            // Check if we have a non-keyed query with all early exit aggregate functions (e.g. count_distinct(symbol))
+            // and no filter. In such a case, use single-threaded factories instead of the multithreaded ones.
+            if (
+                    enableParallelGroupBy
+                            && keyTypes.getColumnCount() == 0
+                            && GroupByUtils.isEarlyExitSupported(groupByFunctions)
+                            && factory.getFilter() == null
+            ) {
+                enableParallelGroupBy = false;
             }
 
             if (
@@ -4129,6 +4341,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata,
                         executionContext
                 );
+
                 int targetColumnType = -1;
                 if (model.isUpdate()) {
                     // Check the type of the column to be updated
@@ -4147,6 +4360,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 int columnType = function.getType();
+                if (columnType == ColumnType.CURSOR) {
+                    throw SqlException.$(node.position, "cursor function cannot be used as a column [column=").put(column.getAlias()).put(']');
+                }
+
                 if (targetColumnType != -1 && targetColumnType != columnType) {
                     // This is an update and the target column does not match with column the update is trying to perform
                     if (ColumnType.isBuiltInWideningCast(function.getType(), targetColumnType)) {
@@ -4404,8 +4621,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else { // keep alias
                         factoryMetadata.add(i, new TableColumnMetadata(
                                         Chars.toString(qc.getAlias()),
-                                        m.getType(),
-                                        m.isIndexed(),
+                                        m.getColumnType(),
+                                        m.isSymbolIndexFlag(),
                                         m.getIndexValueBlockCapacity(),
                                         m.isSymbolTableStatic(),
                                         baseMetadata
@@ -4445,15 +4662,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     } else { // keep alias
                         factoryMetadata.add(i, new TableColumnMetadata(
                                         Chars.toString(qc.getAlias()),
-                                        m.getType(),
-                                        m.isIndexed(),
+                                        m.getColumnType(),
+                                        m.isSymbolIndexFlag(),
                                         m.getIndexValueBlockCapacity(),
                                         m.isSymbolTableStatic(),
                                         baseMetadata
                                 )
                         );
                     }
-                    chainTypes.add(i, m.getType());
+                    chainTypes.add(i, m.getColumnType());
                     listColumnFilterA.extendAndSet(i, i + 1);
                     listColumnFilterB.extendAndSet(i, columnIndex);
                     intHashSet.add(columnIndex);
@@ -4477,7 +4694,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (intHashSet.excludes(i)) {
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(i);
                     chainMetadata.add(addAt, m);
-                    chainTypes.add(addAt, m.getType());
+                    chainTypes.add(addAt, m.getColumnType());
                     listColumnFilterA.extendAndSet(addAt, addAt + 1);
                     listColumnFilterB.extendAndSet(addAt, i);
                     columnIndexes.extendAndSet(addAt, i);
@@ -4629,7 +4846,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0, n = deferredWindowMetadata.size(); i < n; i++) {
                 TableColumnMetadata m = deferredWindowMetadata.getQuick(i);
                 if (m != null) {
-                    chainTypes.add(i, m.getType());
+                    chainTypes.add(i, m.getColumnType());
                     factoryMetadata.add(i, m);
                 }
             }
@@ -4841,10 +5058,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         final ObjList<ExpressionNode> latestBy = model.getLatestBy();
 
-        final GenericLexer.FloatingSequence tab = (GenericLexer.FloatingSequence) model.getTableName();
+        final BufferWindowCharSequence tab = (BufferWindowCharSequence) model.getTableName();
         final boolean supportsRandomAccess;
         if (Chars.startsWith(tab, NO_ROWID_MARKER)) {
-            tab.setLo(tab.getLo() + NO_ROWID_MARKER.length());
+            tab.shiftLo(NO_ROWID_MARKER.length());
             supportsRandomAccess = false;
         } else {
             supportsRandomAccess = true;
@@ -4854,7 +5071,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
             // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
             // to allow the client to succeed even if WAL apply does not run.
-            try (TableMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
+            try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken, model.getMetadataVersion())) {
                 // it is not enough to rely on execution context to be different for WAL APPLY;
                 // in WAL APPLY we also must supply reader, outside of WAL APPLY reader is null
                 return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, null, metadata);
@@ -4918,7 +5135,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadata.isColumnIndexed(columnIndex),
                             metadata.getIndexValueBlockCapacity(columnIndex),
                             metadata.isSymbolTableStatic(columnIndex),
-                            metadata.getMetadata(columnIndex)
+                            metadata.getMetadata(columnIndex),
+                            -1,
+                            false,
+                            0,
+                            metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
+                            metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
+
                     ));
 
                     if (columnIndex == readerTimestampIndex) {
@@ -4989,7 +5212,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         model.setWhereClause(withinExtracted);
 
+        // Either this: `ORDER BY timestamp DESC`
+        // Or this: `ORDER BY timestamp DESC, side DESC LIMIT 3`
+        // In the latter case, we would like to generate a partially sorted cursor in `generateOrderBy`
+        // So we need to return a bwd scan here first.
         boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
+
+        boolean shouldGenerateBackwardsScan = orderDescendingByDesignatedTimestampOnly
+                || isOrderByStartingWithDescDesignatedTimestampAndLimited(model);
+
         if (withinExtracted != null) {
             CharSequence preferredKeyColumn = null;
             if (latestByColumnCount == 1) {
@@ -5063,7 +5294,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final boolean intervalHitsOnlyOnePartition;
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
-                if (orderDescendingByDesignatedTimestampOnly) {
+                if (shouldGenerateBackwardsScan) {
                     dfcFactory = new IntervalBwdPartitionFrameCursorFactory(
                             tableToken,
                             model.getMetadataVersion(),
@@ -5082,7 +5313,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
-                if (orderDescendingByDesignatedTimestampOnly) {
+                if (shouldGenerateBackwardsScan) {
                     dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 } else {
                     dfcFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
@@ -5372,10 +5603,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             RowCursorFactory rowFactory;
-            if (orderDescendingByDesignatedTimestampOnly) {
+            if (shouldGenerateBackwardsScan) {
                 rowFactory = new BwdPageFrameRowCursorFactory();
             } else {
-                rowFactory = new PageFrameFwdRowCursorFactory();
+                rowFactory = new FwdPageFrameRowCursorFactory();
             }
 
             model.setWhereClause(intrinsicModel.filter);
@@ -5401,12 +5632,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             AbstractPartitionFrameCursorFactory cursorFactory;
             RowCursorFactory rowCursorFactory;
 
-            if (orderDescendingByDesignatedTimestampOnly) {
+            if (shouldGenerateBackwardsScan) {
                 cursorFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdPageFrameRowCursorFactory();
             } else {
                 cursorFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
-                rowCursorFactory = new PageFrameFwdRowCursorFactory();
+                rowCursorFactory = new FwdPageFrameRowCursorFactory();
             }
 
             return new PageFrameRecordCursorFactory(
@@ -5414,7 +5645,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     myMeta,
                     cursorFactory,
                     rowCursorFactory,
-                    orderDescendingByDesignatedTimestampOnly || isOrderByDesignatedTimestampOnly(model),
+                    orderDescendingByDesignatedTimestampOnly,
                     null,
                     true,
                     columnIndexes,
@@ -5669,8 +5900,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private boolean isOrderByDesignatedTimestampOnly(QueryModel model) {
-        return model.getOrderByAdvice().size() == 1 && model.getTimestamp() != null &&
-                Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token, model.getTimestamp().token);
+        return model.getOrderByAdvice().size() == 1
+                && model.getTimestamp() != null
+                && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token,
+                model.getTimestamp().token);
+    }
+
+    private boolean isOrderByStartingWithDescDesignatedTimestampAndLimited(QueryModel model) {
+        return model.getOrderByAdvice().size() > 1
+                && model.getTimestamp() != null
+                && Chars.equalsIgnoreCase(model.getOrderByAdvice().getQuick(0).token,
+                model.getTimestamp().token)
+                && model.getLimitLo() != null && !Chars.equals(model.getLimitLo().token, '-');
     }
 
     private boolean isOrderDescendingByDesignatedTimestampOnly(QueryModel model) {

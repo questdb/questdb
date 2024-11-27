@@ -1,0 +1,64 @@
+# name: test/sql/aggregate/aggregates/test_regression.test
+# description: Test Regression Functions
+# group: [aggregates]
+
+
+
+query I
+select regr_slope(NULL,NULL)
+----
+NULL
+
+query I
+select regr_slope(1,1)
+----
+NULL
+
+statement ok
+create  table aggr(k int, v double, v2 double);
+
+statement ok
+insert into aggr values(1, 10, null), (2, 10, 11), (2, 20, 22), (2, 25, null), (2, 30, 35);
+
+query II
+select k, regr_slope(v, v2) from aggr group by k ORDER BY k;
+----
+1	NULL
+2	0.831409
+
+
+query I
+select regr_slope(v, v2) from aggr ;
+----
+0.831409
+
+
+statement error
+select regr_intercept()
+----
+db error: ERROR: function `regr_intercept` requires arguments: regr_intercept(DOUBLE, DOUBLE)
+
+
+query I
+select regr_intercept(NULL,NULL)
+----
+NULL
+
+
+query I
+select regr_intercept(1,1)
+----
+NULL
+
+
+statement error
+select regr_intercept(*)
+----
+db error: ERROR: too few arguments for '*' [found=0,expected=2]
+
+
+query II
+select k, regr_intercept(v, v2) r from aggr group by k ORDER BY k, r;
+----
+1 NULL
+2 1.154734

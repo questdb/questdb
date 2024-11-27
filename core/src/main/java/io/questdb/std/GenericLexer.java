@@ -293,8 +293,8 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return last = flyweightSequence;
     }
 
-    public void of(CharSequence cs) {
-        of(cs, 0, cs == null ? 0 : cs.length());
+    public void of(CharSequence content) {
+        of(content, 0, content == null ? 0 : content.length());
     }
 
     public void of(CharSequence cs, int lo, int hi) {
@@ -461,7 +461,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
-    public class FloatingSequence extends AbstractCharSequence implements Mutable {
+    public class FloatingSequence extends AbstractCharSequence implements Mutable, BufferWindowCharSequence {
         int hi;
         int lo;
 
@@ -502,6 +502,13 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             that.hi = lo + end;
             assert that.lo <= that.hi;
             return that;
+        }
+
+        @Override
+        public void shiftLo(int positiveOffset) {
+            assert positiveOffset > -1;
+            this.lo += positiveOffset;
+            assert lo < hi;
         }
     }
 

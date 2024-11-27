@@ -24,7 +24,13 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.BinaryAlterSerializer;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IDGenerator;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -65,8 +71,12 @@ public class TableSequencerImpl implements TableSequencer {
     private TableToken tableToken;
 
     TableSequencerImpl(
-            TableSequencerAPI pool, CairoEngine engine, TableToken tableToken,
-            SeqTxnTracker txnTracker, int tableId, @Nullable TableStructure tableStruct
+            TableSequencerAPI pool,
+            CairoEngine engine,
+            TableToken tableToken,
+            SeqTxnTracker txnTracker,
+            int tableId,
+            @Nullable TableStructure tableStruct
     ) {
         this.pool = pool;
         this.engine = engine;
@@ -84,11 +94,7 @@ public class TableSequencerImpl implements TableSequencer {
             metadata = new SequencerMetadata(ff);
             metadataSvc = new SequencerMetadataService(metadata, tableToken);
             walIdGenerator = new IDGenerator(configuration, WAL_INDEX_FILE_NAME);
-            tableTransactionLog = new TableTransactionLog(
-                    ff,
-                    configuration.getMkDirMode(),
-                    configuration.getDefaultSeqPartTxnCount()
-            );
+            tableTransactionLog = new TableTransactionLog(configuration);
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
                 schemaLock.writeLock().lock();
@@ -173,10 +179,11 @@ public class TableSequencerImpl implements TableSequencer {
     public void dropTable() {
         checkDropped();
         final long timestamp = microClock.getTicks();
-        final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID,
-                0, 0, timestamp, 0, 0, 0);
+        final long txn = tableTransactionLog.addEntry(
+                getStructureVersion(), WalUtils.DROP_TABLE_WAL_ID,
+                0, 0, timestamp, 0, 0, 0
+        );
         metadata.dropTable();
-        engine.metadataCacheRemoveTable(tableToken);
         notifyTxnCommitted(Long.MAX_VALUE);
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
     }
@@ -233,7 +240,9 @@ public class TableSequencerImpl implements TableSequencer {
                     metadata.getIndexValueBlockCapacity(i),
                     metadata.isSymbolTableStatic(i),
                     i,
-                    metadata.isDedupKey(i)
+                    metadata.isDedupKey(i),
+                    metadata.getColumnMetadata(i).isSymbolCacheFlag(),
+                    metadata.getColumnMetadata(i).getSymbolCapacity()
             );
             if (columnType > -1) {
                 reorderNeeded |= lastOrder > columnOrder;
@@ -291,6 +300,10 @@ public class TableSequencerImpl implements TableSequencer {
         return tableTransactionLog.lastTxn();
     }
 
+    public boolean metadataMatches(long structureVersion) {
+        return metadata.getMetadataVersion() == structureVersion;
+    }
+
     @Override
     public long nextStructureTxn(long expectedStructureVersion, TableMetadataChange change) {
         // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
@@ -318,7 +331,7 @@ public class TableSequencerImpl implements TableSequencer {
                             .put(", newVersion: ").put(metadata.getMetadataVersion())
                             .put(']');
                 }
-                metadata.syncToDisk();
+                metadata.sync();
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
@@ -474,8 +487,15 @@ public class TableSequencerImpl implements TableSequencer {
             long txnRowCount
     ) {
         return tableTransactionLog.addEntry(
-                getStructureVersion(), walId, segmentId, segmentTxn, timestamp,
-                txnMinTimestamp, txnMaxTimestamp, txnRowCount);
+                getStructureVersion(),
+                walId,
+                segmentId,
+                segmentTxn,
+                timestamp,
+                txnMinTimestamp,
+                txnMaxTimestamp,
+                txnRowCount
+        );
     }
 
     private void notifyTxnCommitted(long txn) {

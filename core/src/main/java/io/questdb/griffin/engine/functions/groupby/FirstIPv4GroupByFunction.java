@@ -92,8 +92,8 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return UnaryFunction.super.isReadThreadSafe();
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override

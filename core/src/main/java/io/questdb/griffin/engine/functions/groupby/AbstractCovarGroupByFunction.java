@@ -44,46 +44,46 @@ import org.jetbrains.annotations.NotNull;
  * @see <a href="https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Online">Welford's algorithm</a>
  */
 public abstract class AbstractCovarGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
-    protected final Function xFunction;
-    protected final Function yFunction;
+    protected final Function xFunc;
+    protected final Function yFunc;
     protected int valueIndex;
 
     protected AbstractCovarGroupByFunction(@NotNull Function arg0, @NotNull Function arg1) {
-        this.xFunction = arg0;
-        this.yFunction = arg1;
+        this.yFunc = arg0;
+        this.xFunc = arg1;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final double x = xFunction.getDouble(record);
-        final double y = yFunction.getDouble(record);
+        final double y = yFunc.getDouble(record);
+        final double x = xFunc.getDouble(record);
         mapValue.putDouble(valueIndex, 0);
         mapValue.putDouble(valueIndex + 1, 0);
         mapValue.putDouble(valueIndex + 2, 0);
         mapValue.putLong(valueIndex + 3, 0);
 
-        if (Numbers.isFinite(x) && Numbers.isFinite(y)) {
-            aggregate(mapValue, x, y);
+        if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
+            aggregate(mapValue, y, x);
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final double x = xFunction.getDouble(record);
-        final double y = yFunction.getDouble(record);
-        if (Numbers.isFinite(x) && Numbers.isFinite(y)) {
-            aggregate(mapValue, x, y);
+        final double y = yFunc.getDouble(record);
+        final double x = xFunc.getDouble(record);
+        if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
+            aggregate(mapValue, y, x);
         }
     }
 
     @Override
     public Function getLeft() {
-        return xFunction;
+        return yFunc;
     }
 
     @Override
     public Function getRight() {
-        return yFunction;
+        return xFunc;
     }
 
     @Override
@@ -129,19 +129,19 @@ public abstract class AbstractCovarGroupByFunction extends DoubleFunction implem
         return false;
     }
 
-    protected void aggregate(MapValue mapValue, double x, double y) {
-        double meanX = mapValue.getDouble(valueIndex);
-        double meanY = mapValue.getDouble(valueIndex + 1);
+    protected void aggregate(MapValue mapValue, double y, double x) {
+        double meanY = mapValue.getDouble(valueIndex);
+        double meanX = mapValue.getDouble(valueIndex + 1);
         double sumXY = mapValue.getDouble(valueIndex + 2);
         long count = mapValue.getLong(valueIndex + 3) + 1;
 
-        double oldMeanX = meanX;
-        meanX += (x - meanX) / count;
+        double oldMeanY = meanY;
         meanY += (y - meanY) / count;
-        sumXY += (x - oldMeanX) * (y - meanY);
+        meanX += (x - meanX) / count;
+        sumXY += (y - oldMeanY) * (x - meanX);
 
-        mapValue.putDouble(valueIndex, meanX);
-        mapValue.putDouble(valueIndex + 1, meanY);
+        mapValue.putDouble(valueIndex, meanY);
+        mapValue.putDouble(valueIndex + 1, meanX);
         mapValue.putDouble(valueIndex + 2, sumXY);
         mapValue.addLong(valueIndex + 3, 1L);
     }

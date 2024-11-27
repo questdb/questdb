@@ -97,30 +97,10 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                 filesFacade.remove(path.$());
             }
 
-            refreshTablesInBaseEngine();
-
-            // table is still shown since the cache is not updated
-            assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                            "2\ttable2\tts2\tNONE\t1000\t300000000\n" +
-                            "1\ttable1\tts1\tDAY\t1000\t300000000\n",
-                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
-            );
-
-            engine.metadataCacheClear();
-
-            // cache can rehydrate table 2 during call, but not 1
-            assertSql("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" + "2\ttable2\tts2\tNONE\t1000\t300000000\n",
-                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()");
-
-            // trying to rehydrate all tables
-            engine.metadataCacheHydrateAllTables();
-
-            // still can't rehydrate table 1
-            assertSql(
-                    "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                            "2\ttable2\tts2\tNONE\t1000\t300000000\n",
-                    "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
+            assertException(
+                    "select hydrate_table_metadata('*')",
+                    7,
+                    "could not open, file does not exist"
             );
         });
     }

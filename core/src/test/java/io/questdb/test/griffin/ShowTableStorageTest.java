@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -36,11 +35,11 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForMultipleTablesPartitionByHour() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
-            ddl("create table trades_2(timestamp TIMESTAMP, " +
+            execute("create table trades_2(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
-            insert(
+            execute(
                     "INSERT INTO trades_1\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -48,7 +47,7 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
             );
-            insert(
+            execute(
                     "INSERT INTO trades_2\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -72,11 +71,11 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForMultipleTablesWithNoPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
-            ddl("create table trades_2(timestamp TIMESTAMP, " +
+            execute("create table trades_2(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
-            insert(
+            execute(
                     "INSERT INTO trades_1\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -84,7 +83,7 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
             );
-            insert(
+            execute(
                     "INSERT INTO trades_2\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -108,9 +107,9 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForSingleTablePartitionByHour() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
-            insert(
+            execute(
                     "INSERT INTO trades_1\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -132,9 +131,9 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForSingleTableWithNoPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table trades_1(timestamp TIMESTAMP, " +
+            execute("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
-            insert(
+            execute(
                     "INSERT INTO trades_1\n" +
                             "VALUES\n" +
                             "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
@@ -152,12 +151,32 @@ public class ShowTableStorageTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testFetchNonExistingColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table trades_1(timestamp TIMESTAMP, " +
+                    "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
+            execute(
+                    "INSERT INTO trades_1\n" +
+                            "VALUES\n" +
+                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
+                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
+                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
+                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);\n"
+            );
+            drainWalQueue();
+            engine.releaseAllWriters();
+            assertException(
+                    "select *, size_pretty(hello) from table_storage()",
+                    22,
+                    "Invalid column: hello"
+            );
+        });
+    }
+
     private long getDirSize(@NotNull CharSequence tableName) {
-        Path path = new Path();
-        TableToken token = sqlExecutionContext.getTableToken(tableName);
-        TableUtils.setPathTable(path, configuration, token);
-        final long size = Files.getDirSize(path);
-        path.close();
-        return size;
+        final TableToken token = sqlExecutionContext.getTableToken(tableName);
+        return Files.getDirSize(
+                Path.getThreadLocal(configuration.getRoot()).concat(token.getDirName()));
     }
 }

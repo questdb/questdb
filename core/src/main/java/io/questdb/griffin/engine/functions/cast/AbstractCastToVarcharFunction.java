@@ -42,7 +42,7 @@ public abstract class AbstractCastToVarcharFunction extends VarcharFunction impl
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 
