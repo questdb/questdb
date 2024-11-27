@@ -92,7 +92,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
+            executionContext.getSecurityContext().authorizeSystemAdmin();
         }
 
         @Override
@@ -135,7 +135,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
+            executionContext.getSecurityContext().authorizeSystemAdmin();
         }
 
         @Override
@@ -160,7 +160,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
+            executionContext.getSecurityContext().authorizeSystemAdmin();
         }
 
         @Override
@@ -181,7 +181,7 @@ public class SimulateCrashFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            executionContext.getSecurityContext().authorizeAdminAction();
+            executionContext.getSecurityContext().authorizeSystemAdmin();
         }
 
         @Override

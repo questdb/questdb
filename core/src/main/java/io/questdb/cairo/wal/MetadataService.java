@@ -50,19 +50,61 @@ public interface MetadataService {
      * Pending transaction will be committed before function attempts to add column. Even when function is unsuccessful it may
      * still have committed transaction.
      *
-     * @param name                    of column either ASCII or UTF8 encoded.
+     * @param columnName              of column either ASCII or UTF8 encoded.
      * @param symbolCapacity          when column type is SYMBOL this parameter specifies approximate capacity for symbol map.
      *                                It should be equal to number of unique symbol values stored in the table and getting this
      *                                value badly wrong will cause performance degradation. Must be power of 2
      * @param symbolCacheFlag         when set to true, symbol values will be cached on Java heap.
-     * @param type                    {@link ColumnType}
+     * @param columnType              {@link ColumnType}
      * @param isIndexed               configures column to be indexed or not
      * @param indexValueBlockCapacity approximation of number of rows for single index key, must be power of 2
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
+     * @param isDedupKey              when set to true, column will be used as deduplication key
      */
     void addColumn(
-            CharSequence name,
-            int type,
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            boolean isDedupKey,
+            SecurityContext securityContext
+    );
+
+    default void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            boolean isDedupKey
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                isSequential,
+                isDedupKey,
+                null
+        );
+    }
+
+    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
+
+    AttachDetachStatus attachPartition(long partitionTimestamp);
+
+    void changeCacheFlag(int columnIndex, boolean isCacheOn);
+
+    void changeColumnType(
+            CharSequence columnName,
+            int newType,
             int symbolCapacity,
             boolean symbolCacheFlag,
             boolean isIndexed,
@@ -71,23 +113,7 @@ public interface MetadataService {
             SecurityContext securityContext
     );
 
-    default void addColumn(
-            CharSequence name,
-            int type,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isSequential
-    ) {
-        addColumn(name, type, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, null);
-    }
-
-    void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize);
-
-    AttachDetachStatus attachPartition(long partitionTimestamp);
-
-    void changeCacheFlag(int columnIndex, boolean isCacheOn);
+    boolean convertPartition(long partitionTimestamp);
 
     void changeColumnType(
             CharSequence columnName,
@@ -114,8 +140,6 @@ public interface MetadataService {
 
     int getMetaMaxUncommittedRows();
 
-    long getMetaO3MaxLag();
-
     TableRecordMetadata getMetadata();
 
     int getPartitionBy();
@@ -123,6 +147,8 @@ public interface MetadataService {
     TableToken getTableToken();
 
     UpdateOperator getUpdateOperator();
+
+    void forceRemovePartitions(LongList partitionTimestamps);
 
     void removeColumn(@NotNull CharSequence columnName);
 

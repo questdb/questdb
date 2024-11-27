@@ -32,7 +32,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testBetween() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "  select" +
@@ -69,7 +69,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testEqualTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "  select" +
@@ -184,7 +184,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testGreaterTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "  select" +
@@ -278,7 +278,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testInInterval() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "  select" +
@@ -441,7 +441,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testIntervalBwdNoLeak() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "  select" +
@@ -462,7 +462,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testIntervalFwdNoLeak() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "  select" +
@@ -483,7 +483,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
     @Test
     public void testLessTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as " +
                             "(" +
                             "  select" +

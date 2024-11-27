@@ -711,7 +711,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
             // this is no-arg function, match right away
             if (argCount == 0 && sigArgCount == 0) {
-                return checkAndCreateFunction(factory, args, argPositions, node, configuration);
+                if (factory.isWindow() == isWindowContext || n == 1) {
+                    return checkAndCreateFunction(factory, args, argPositions, node, configuration);
+                }
+                continue;
             }
 
             // otherwise, is number of arguments the same?
@@ -811,15 +814,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     continue;
                 }
 
-                if (factory.isWindow()) {
-                    // prefer window functions in window context, otherwise non-window functions
-                    if (isWindowContext) {
-                        // choose window-ed avg(D) over group by implementation that matches arg type better
-                        match = MATCH_EXACT_MATCH;
-                        sigArgTypeScore -= 10;
-                    } else {
-                        sigArgTypeScore += 10;
-                    }
+                if (isWindowContext != factory.isWindow()) {
+                    match = MATCH_FUZZY_MATCH;
+                } else if (factory.isWindow()) { // make windowFunction high priority when isWindowContext
+                    sigArgTypeScore -= 20;
                 }
 
                 if (match == MATCH_EXACT_MATCH || match >= bestMatch) {

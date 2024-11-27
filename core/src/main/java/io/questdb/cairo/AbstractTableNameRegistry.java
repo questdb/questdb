@@ -93,7 +93,16 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
     }
 
     @Override
-    public boolean isTableDropped(CharSequence tableDir) {
+    public boolean isTableDropped(TableToken tableToken) {
+        if (tableToken.isWal()) {
+            return isWalTableDropped(tableToken.getDirName());
+        }
+        TableToken currentTableToken = tableNameToTableTokenMap.get(tableToken.getTableName());
+        return currentTableToken == LOCKED_DROP_TOKEN;
+    }
+
+    @Override
+    public boolean isWalTableDropped(CharSequence tableDir) {
         ReverseTableMapItem rmi = dirNameToTableTokenMap.get(tableDir);
         return rmi != null && rmi.isDropped();
     }
@@ -103,7 +112,7 @@ public abstract class AbstractTableNameRegistry implements TableNameRegistry {
         for (Map.Entry<CharSequence, TableToken> e : tableNameToTableTokenMap.entrySet()) {
             TableToken tableNameTableToken = e.getValue();
 
-            if (tableNameTableToken == LOCKED_TOKEN) {
+            if (TableNameRegistry.isLocked(tableNameTableToken)) {
                 continue;
             }
 

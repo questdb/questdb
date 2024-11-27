@@ -31,7 +31,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCompareTimestampWithNull() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
+            execute("create table x as (" +
                     "select rnd_varchar() a, rnd_long(30000, 80000000, 1)::timestamp ts from long_sequence(100)" +
                     ")");
 
@@ -81,7 +81,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCompareTimestampWithString() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
+            execute("create table x as (" +
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 
@@ -96,7 +96,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCompareTimestampWithTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
+            execute("create table x as (" +
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 
@@ -111,7 +111,7 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCompareTimestampWithVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (" +
+            execute("create table x as (" +
                     "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(100000)" +
                     ") timestamp(ts) partition by day");
 

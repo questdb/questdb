@@ -82,11 +82,6 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default long getMetaO3MaxLag() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     default int getPartitionBy() {
         throw new UnsupportedOperationException();
     }
@@ -94,6 +89,10 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default UpdateOperator getUpdateOperator() {
         throw new UnsupportedOperationException();
+    }
+
+    default void forceRemovePartitions(LongList partitionTimestamps) {
+        throw CairoException.critical(0).put("recover partitions does not update sequencer metadata");
     }
 
     @Override

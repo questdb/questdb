@@ -25,9 +25,22 @@
 package io.questdb.griffin.engine.groupby.vect;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
 import io.questdb.griffin.PlanSink;
@@ -40,7 +53,17 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Worker;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Rosti;
+import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
@@ -52,6 +75,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
     private final static int ROSTI_MINIMIZED_SIZE = 16; // 16 is the minimum size usable on arm
+
     private final RecordCursorFactory base;
     private final RostiRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();

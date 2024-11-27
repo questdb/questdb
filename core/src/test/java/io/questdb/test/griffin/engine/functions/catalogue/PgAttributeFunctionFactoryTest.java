@@ -32,8 +32,8 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCachedWindowQueryOrderedByColumnNotOnSelectList() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table y (a int, b int)");
-            insert("insert into y select x/4, x from long_sequence(10)");
+            execute("create table y (a int, b int)");
+            execute("insert into y select x/4, x from long_sequence(10)");
             engine.releaseAllWriters();
 
             String query = "select b.a, row_number() OVER (PARTITION BY b.a ORDER BY b.b desc) as b " +
@@ -210,7 +210,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testKafkaQuery3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
+            execute("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
             engine.releaseAllWriters();
 
             assertQueryNoLeakCheck(
@@ -273,7 +273,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testKafkaQuery31() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
+            execute("create table y (a int, b short, c byte, d long, e char, f string, g boolean, h long256, i float, j double, k date, l timestamp)");
             engine.releaseAllWriters();
 
             assertQueryNoLeakCheck(

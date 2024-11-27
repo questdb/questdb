@@ -196,8 +196,7 @@ public final class TableUtils {
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
     static final int META_FLAG_BIT_INDEXED = 1;
-    static final int META_FLAG_BIT_SEQUENTIAL = 1 << 1;
-    static final int META_FLAG_BIT_SYMBOL_CACHE = META_FLAG_BIT_SEQUENTIAL << 1;
+    static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
     static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
@@ -237,24 +236,35 @@ public final class TableUtils {
         return (int) (checkSum ^ (checkSum >>> 32));
     }
 
-    public static int changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
+    public static int changeColumnTypeInMetadata(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            LowerCaseCharSequenceIntHashMap columnNameIndexMap,
+            ObjList<TableColumnMetadata> columnMetadata
+    ) {
         int existingIndex = columnNameIndexMap.get(columnName);
         if (existingIndex < 0) {
             throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
         }
-        String columnNameStr = columnMetadata.getQuick(existingIndex).getName();
+        String columnNameStr = columnMetadata.getQuick(existingIndex).getColumnName();
         int columnIndex = columnMetadata.size();
         columnMetadata.add(
                 new TableColumnMetadata(
                         columnNameStr,
-                        newType,
-                        false,
-                        0,
+                        columnType,
+                        isIndexed,
+                        indexValueBlockCapacity,
                         false,
                         null,
                         columnIndex,
                         false,
-                        existingIndex + 1 // replacing column index by convention can be 0 if not in use
+                        existingIndex + 1, // replacing column index by convention can be 0 if not in use
+                        symbolCacheFlag,
+                        symbolCapacity
                 )
         );
         columnMetadata.getQuick(existingIndex).markDeleted();
@@ -334,28 +344,6 @@ public final class TableUtils {
             throw SqlException.$(tableNameExpr.position, "function must return CURSOR");
         }
         return function;
-    }
-
-    public static void createTable(
-            CairoConfiguration configuration,
-            MemoryMARW memory,
-            Path path,
-            TableStructure structure,
-            int tableId,
-            CharSequence dirName
-    ) {
-        createTable(configuration, memory, path, structure, ColumnType.VERSION, tableId, dirName);
-    }
-
-    public static void createTable(
-            CairoConfiguration configuration,
-            TableStructure structure,
-            int tableId,
-            CharSequence dirName
-    ) {
-        try (Path path = new Path(); MemoryMARW mem = Vm.getMARWInstance()) {
-            createTable(configuration, mem, path, structure, ColumnType.VERSION, tableId, dirName);
-        }
     }
 
     public static void createTable(
@@ -590,6 +578,21 @@ public final class TableUtils {
         return dFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
+    public static boolean equalColumnNamesAndTypes(RecordMetadata metadataA, RecordMetadata metadataB) {
+        if (metadataA.getColumnCount() != metadataB.getColumnCount()) {
+            return false;
+        }
+        for (int i = 0, n = metadataA.getColumnCount(); i < n; i++) {
+            if (metadataA.getColumnType(i) != metadataB.getColumnType(i)) {
+                return false;
+            }
+            if (!Chars.equals(metadataA.getColumnName(i), metadataB.getColumnName(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static long estimateAvgRecordSize(RecordMetadata metadata) {
         long recSize = 0;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -794,7 +797,13 @@ public final class TableUtils {
         return timestampIndex;
     }
 
-    public static void handleMetadataLoadException(CharSequence tableName, long deadline, CairoException ex, MillisecondClock millisecondClock, long spinLockTimeout) {
+    public static void handleMetadataLoadException(
+            CharSequence tableName,
+            long deadline,
+            CairoException ex,
+            MillisecondClock millisecondClock,
+            long spinLockTimeout
+    ) {
         // This is temporary solution until we can get multiple version of metadata not overwriting each other
         if (ex.errnoReadPathDoesNotExist()) {
             if (millisecondClock.getTicks() < deadline) {
@@ -803,8 +812,7 @@ public final class TableUtils {
                         .$(", error=").utf8(ex.getFlyweightMessage()).I$();
                 Os.pause();
             } else {
-                LOG.error().$("metadata read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
-                throw CairoException.critical(ex.getErrno()).put("Metadata read timeout. Last error: ").put(ex.getFlyweightMessage());
+                throw CairoException.critical(ex.getErrno()).put("Metadata read timeout [src=writer, timeout=").put(spinLockTimeout).put("ms, err=").put(ex.getFlyweightMessage()).put(']');
             }
         } else {
             throw ex;
@@ -1000,7 +1008,7 @@ public final class TableUtils {
         long alignedExtraLen = offset - alignedOffset;
         long mapAddr = rw ?
                 mapRWNoAlloc(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag) :
-                mapRO(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag);
+                TableUtils.mapRO(ff, fd, size + alignedExtraLen, alignedOffset, memoryTag);
         ff.madvise(mapAddr, size + alignedExtraLen, rw ? Files.POSIX_MADV_RANDOM : Files.POSIX_MADV_SEQUENTIAL);
         return mapAddr + alignedExtraLen;
     }
@@ -1012,7 +1020,16 @@ public final class TableUtils {
     }
 
     public static long mapRO(FilesFacade ff, long fd, long size, int memoryTag) {
-        return mapRO(ff, fd, size, 0, memoryTag);
+        return TableUtils.mapRO(ff, fd, size, 0, memoryTag);
+    }
+
+    public static long mapRO(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
+        final long fd = openRO(ff, path, log);
+        try {
+            return mapRO(ff, fd, size, memoryTag);
+        } finally {
+            ff.close(fd);
+        }
     }
 
     /**
@@ -1042,15 +1059,6 @@ public final class TableUtils {
                     .put(']');
         }
         return address;
-    }
-
-    public static long mapRO(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
-        final long fd = openRO(ff, path, log);
-        try {
-            return mapRO(ff, fd, size, memoryTag);
-        } finally {
-            ff.close(fd);
-        }
     }
 
     public static long mapRW(FilesFacade ff, long fd, long size, int memoryTag) {
@@ -1369,7 +1377,7 @@ public final class TableUtils {
             throw CairoException.critical(0).put("Column not found: ").put(columnName);
         }
         final String newNameStr = newName.toString();
-        columnMetadata.getQuick(columnIndex).setName(newNameStr);
+        columnMetadata.getQuick(columnIndex).rename(newNameStr);
 
         columnNameIndexMap.removeEntry(columnName);
         columnNameIndexMap.put(newNameStr, columnIndex);
@@ -1469,8 +1477,7 @@ public final class TableUtils {
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
             if (clock.getTicks() > deadline) {
-                LOG.error().$("tx read timeout [timeout=").$(spinLockTimeout).utf8("ms]").$();
-                throw CairoException.critical(0).put("Transaction read timeout");
+                throw CairoException.critical(0).put("Transaction read timeout [src=writer, timeout=").put(spinLockTimeout).put("ms]");
             }
 
             LOG.debug().$("loaded __dirty__ txn, version ").$(txReader.getVersion()).$();
@@ -1705,8 +1712,8 @@ public final class TableUtils {
         }
     }
 
-    public static void validateSymbolCapacityCached(boolean cache, int symbolCapacity, int cacheKeywordPosition) throws SqlException {
-        if (cache && symbolCapacity > MAX_SYMBOL_CAPACITY_CACHED) {
+    public static void validateSymbolCapacityCached(boolean isCached, int symbolCapacity, int cacheKeywordPosition) throws SqlException {
+        if (isCached && symbolCapacity > MAX_SYMBOL_CAPACITY_CACHED) {
             throw SqlException.$(cacheKeywordPosition, "max cached symbol capacity is ").put(MAX_SYMBOL_CAPACITY_CACHED);
         }
     }
@@ -1745,7 +1752,8 @@ public final class TableUtils {
         mem.putInt(tableStruct.getPartitionBy());
         int timestampIndex = tableStruct.getTimestampIndex();
         assert timestampIndex == -1 ||
-                (timestampIndex >= 0 && timestampIndex < count && tableStruct.getColumnType(timestampIndex) == ColumnType.TIMESTAMP);
+                (timestampIndex >= 0 && timestampIndex < count && tableStruct.getColumnType(timestampIndex) == ColumnType.TIMESTAMP)
+                : String.format("timestampIndex %d count %d columnType %d", timestampIndex, count, tableStruct.getColumnType(timestampIndex));
         mem.putInt(timestampIndex);
         mem.putInt(tableVersion);
         mem.putInt(tableId);
@@ -1762,10 +1770,6 @@ public final class TableUtils {
             long flags = 0;
             if (tableStruct.isIndexed(i)) {
                 flags |= META_FLAG_BIT_INDEXED;
-            }
-
-            if (tableStruct.isSequential(i)) {
-                flags |= META_FLAG_BIT_SEQUENTIAL;
             }
 
             if (tableStruct.getSymbolCacheFlag(i)) {
@@ -1886,10 +1890,6 @@ public final class TableUtils {
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_INDEXED) != 0;
-    }
-
-    static boolean isSequential(MemoryR metaMem, int columnIndex) {
-        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SEQUENTIAL) != 0;
     }
 
     static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {

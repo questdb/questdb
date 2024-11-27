@@ -131,11 +131,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getColumnCastModelPoolCapacity() {
-        return getDelegate().getColumnCastModelPoolCapacity();
-    }
-
-    @Override
     public int getColumnIndexerQueueCapacity() {
         return getDelegate().getColumnIndexerQueueCapacity();
     }
@@ -201,13 +196,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getCreateTableModelBatchSize() {
-        return getDelegate().getCreateTableModelBatchSize();
+    public int getCreateTableColumnModelPoolCapacity() {
+        return getDelegate().getCreateTableColumnModelPoolCapacity();
     }
 
     @Override
-    public int getCreateTableModelPoolCapacity() {
-        return getDelegate().getCreateTableModelPoolCapacity();
+    public long getCreateTableModelBatchSize() {
+        return getDelegate().getCreateTableModelBatchSize();
     }
 
     @Override
@@ -321,13 +316,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public long getGroupByPresizeMaxHeapSize() {
-        return getDelegate().getGroupByPresizeMaxHeapSize();
+    public long getGroupByPresizeMaxCapacity() {
+        return getDelegate().getGroupByPresizeMaxCapacity();
     }
 
     @Override
-    public long getGroupByPresizeMaxCapacity() {
-        return getDelegate().getGroupByPresizeMaxCapacity();
+    public long getGroupByPresizeMaxHeapSize() {
+        return getDelegate().getGroupByPresizeMaxHeapSize();
     }
 
     @Override
@@ -553,6 +548,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getPartitionEncoderParquetVersion() {
         return getDelegate().getPartitionEncoderParquetVersion();
+    }
+
+    @Override
+    public boolean getPartitionO3OverwriteControlEnabled() {
+        return getDelegate().getPartitionO3OverwriteControlEnabled();
     }
 
     @Override
@@ -1143,11 +1143,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isPartitionEncoderParquetStatisticsEnabled() {
         return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
-    }
-
-    @Override
-    public boolean isPartitionO3OverwriteControlEnabled() {
-        return getDelegate().isPartitionO3OverwriteControlEnabled();
     }
 
     @Override

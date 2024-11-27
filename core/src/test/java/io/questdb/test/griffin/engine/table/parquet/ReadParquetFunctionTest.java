@@ -56,7 +56,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     public void testCursor() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 10;
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " case when x % 2 = 0 then cast(x as int) end id," +
                     " case when x % 2 = 0 then rnd_int() end as a_long," +
                     " case when x % 2 = 0 then rnd_str(4,4,4,2) end as a_str," +
@@ -80,7 +80,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     " timestamp_sequence('2015', " + (Timestamps.AVG_YEAR_MICROS / 4) + ") as a_ts," +
                     " from long_sequence(" + rows + ")) timestamp (a_ts) partition by YEAR");
 
-            ddl("alter table x convert partition to parquet where a_ts > 0");
+            execute("alter table x convert partition to parquet where a_ts > 0");
 
             engine.releaseInactive();
             try (Path path = new Path()) {
@@ -109,7 +109,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     public void testData() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 1000_000;
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " case when x % 2 = 0 then cast(x as int) end id," +
                     " case when x % 2 = 0 then rnd_int() end as a_long," +
                     " case when x % 2 = 0 then rnd_str(4,4,4,2) end as a_str," +
@@ -155,7 +155,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     public void testFileDeleted() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 10;
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " case when x % 2 = 0 then cast(x as int) end id," +
                     " rnd_timestamp('2015','2016',2) as a_ts," +
                     " from long_sequence(" + rows + "))");
@@ -258,7 +258,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     public void testMetadata() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 1;
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
                     " rnd_byte() a_byte," +

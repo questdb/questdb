@@ -24,9 +24,22 @@
 
 package io.questdb.cairo.map;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectBinarySequence;
+import io.questdb.std.Hash;
+import io.questdb.std.IntList;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.DirectUtf8String;
@@ -56,6 +69,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     private final long[] valueOffsets;
     private final long valueSize;
     private long keyAddress;
+    private int keySize = -1;
     private int lastKeyIndex = -1;
     private int lastKeyOffset = -1;
     private long limit;
@@ -197,7 +211,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
     @Override
-    public OrderedMapRecord clone() {
+    public OrderedMapVarSizeRecord clone() {
         final DirectString[] csA;
         final DirectString[] csB;
         final DirectUtf8String[] usA;
@@ -394,12 +408,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
 
     @Override
     public void getLong256(int columnIndex, CharSink<?> sink) {
-        long address = addressOfColumn(columnIndex);
-        final long a = Unsafe.getUnsafe().getLong(address);
-        final long b = Unsafe.getUnsafe().getLong(address + Long.BYTES);
-        final long c = Unsafe.getUnsafe().getLong(address + Long.BYTES * 2);
-        final long d = Unsafe.getUnsafe().getLong(address + Long.BYTES * 3);
-        Numbers.appendLong256(a, b, c, d, sink);
+        Numbers.appendLong256FromUnsafe(addressOfColumn(columnIndex), sink);
     }
 
     @Override
@@ -476,11 +485,15 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         return Hash.hashMem64(startAddress + Integer.BYTES, keySize);
     }
 
+    public int keySize() {
+        return keySize;
+    }
+
     @Override
     public void of(long address) {
         this.startAddress = address;
         this.keyAddress = address + Integer.BYTES;
-        int keySize = Unsafe.getUnsafe().getInt(address);
+        this.keySize = Unsafe.getUnsafe().getInt(address);
         this.valueAddress = address + Integer.BYTES + keySize;
         this.lastKeyIndex = -1;
         this.lastKeyOffset = -1;

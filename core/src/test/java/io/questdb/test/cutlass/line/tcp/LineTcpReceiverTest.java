@@ -256,7 +256,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             // Pre-create a partitioned table, so we can wait until it's created.
             TableModel m = new TableModel(configuration, tablePartitioned, PartitionBy.DAY);
             m.timestamp("ts").wal();
-            TestUtils.create(m, engine);
+            TestUtils.createTable(engine, m);
 
             // Send non-partitioned table rows before the partitioned table ones.
             final String lineData = tableNonPartitioned + " windspeed=2.0 631150000000000000\n" +
@@ -1034,7 +1034,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTableTableIdChangedOnRecreate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table weather as (" +
                             "select x as windspeed," +
                             "x*2 as timetocycle, " +
@@ -1050,7 +1050,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             "2\t4\t1970-01-01T00:00:00.000002Z\n", sink);
                 }
 
-                drop("drop table weather");
+                execute("drop table weather");
 
                 runInContext((receiver) -> {
                     String lineData =
@@ -1077,7 +1077,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1108,7 +1108,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Duplicate() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1136,7 +1136,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4MultiCol() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "coll ipv4, " +
                     "ts timestamp " +
@@ -1168,7 +1168,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4NoMagicNumbers() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1197,7 +1197,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Null() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1228,7 +1228,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     @Test
     public void testTcpIPv4Null2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table test (" +
+            execute("create table test (" +
                     "col ipv4, " +
                     "ts timestamp " +
                     ") timestamp(ts) partition by day");
@@ -1357,7 +1357,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         if (walEnabled) {
             m.wal();
         }
-        TestUtils.create(m, engine);
+        TestUtils.createTable(engine, m);
 
         engine.releaseInactive();
         runInContext((receiver) -> {
@@ -1410,7 +1410,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 m.wal();
             }
-            TestUtils.create(m, engine);
+            TestUtils.createTable(engine, m);
 
             sendLinger(lineData, "table_a");
 
@@ -1537,7 +1537,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             if (walEnabled) {
                 m.wal();
             }
-            TestUtils.create(m, engine);
+            TestUtils.createTable(engine, m);
 
             send(lineData, "messages");
             String expected = "ts\tid\tauthor\tguild\tchannel\tflags\n" +
@@ -1812,7 +1812,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void dropWeatherTable() {
-        engine.drop(path, engine.verifyTableName("weather"));
+        engine.dropTable(path, engine.verifyTableName("weather"));
     }
 
     private void mayDrainWalQueue() {

@@ -59,7 +59,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')"
             );
 
-            ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0");
+            execute("alter table " + tableName + " convert partition to parquet where timestamp > 0");
 
             assertPartitionExists(tableName, "2024-06-10.8");
             assertPartitionExists(tableName, "2024-06-11.7");
@@ -82,13 +82,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "insert into " + tableName + " values(6, 'edf', '2024-06-12T00:00:02.000000Z')"
             );
 
-            ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0");
+            execute("alter table " + tableName + " convert partition to parquet where timestamp > 0");
 
             assertPartitionExists(tableName, "2024-06-10.8");
             assertPartitionExists(tableName, "2024-06-11.7");
             assertPartitionExists(tableName, "2024-06-12.6");
 
-            ddl("alter table " + tableName + " convert partition to native where timestamp > 0");
+            execute("alter table " + tableName + " convert partition to native where timestamp > 0");
             assertPartitionDoesNotExist(tableName, "2024-06-10.12");
             assertPartitionDoesNotExist(tableName, "2024-06-11.11");
             assertPartitionDoesNotExist(tableName, "2024-06-12.10");
@@ -108,7 +108,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     public void testConvertLastPartition() throws Exception {
         final long rows = 10;
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            ddl(
+            execute(
                     "create table x as (select" +
                             " x id," +
                             " rnd_boolean() a_boolean," +
@@ -117,11 +117,11 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
             );
 
-            ddl("alter table x convert partition to parquet list '2024-06'");
+            execute("alter table x convert partition to parquet list '2024-06'");
             assertPartitionDoesNotExist("x", "2024-06.1");
 
-            insert("insert into x(designated_ts) values('1970-01')");
-            ddl("alter table x convert partition to parquet list '1970-01'");
+            execute("insert into x(designated_ts) values('1970-01')");
+            execute("alter table x convert partition to parquet list '1970-01'");
             assertPartitionExists("x", "1970-01.2");
         });
     }
@@ -140,7 +140,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')"
             );
 
-            ddl("alter table " + tableName + " convert partition to parquet list '2024-06-10', '2024-06-11', '2024-06-12'");
+            execute("alter table " + tableName + " convert partition to parquet list '2024-06-10', '2024-06-11', '2024-06-12'");
 
             assertPartitionExists(tableName, "2024-06-10.6");
             assertPartitionExists(tableName, "2024-06-11.7");
@@ -152,15 +152,15 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     @Test
     public void testConvertListZeroSizeVarcharData() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            ddl(
+            execute(
                     "create table x as (select" +
                             " case when x % 2 = 0 then rnd_varchar(1, 40, 1) end as a_varchar," +
                             " to_timestamp('2024-07', 'yyyy-MM') as a_ts," +
                             " from long_sequence(1)) timestamp (a_ts) partition by MONTH"
             );
 
-            insert("insert into x(a_varchar, a_ts) values('', '2024-08')");
-            ddl("alter table x convert partition to parquet where a_ts > 0");
+            execute("insert into x(a_varchar, a_ts) values('', '2024-08')");
+            execute("alter table x convert partition to parquet where a_ts > 0");
             assertPartitionExists("x", "2024-07.2");
         });
     }
@@ -169,7 +169,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     public void testConvertPartitionAllTypes() throws Exception {
         final long rows = 1000;
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            ddl(
+            execute(
                     "create table x as (select" +
                             " x id," +
                             " rnd_boolean() a_boolean," +
@@ -200,7 +200,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             assertException("alter table x convert partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
 
-            ddl("alter table x convert partition to parquet list '1970-01', '1970-02'");
+            execute("alter table x convert partition to parquet list '1970-01', '1970-02'");
             assertPartitionExists("x", "1970-01.1");
             assertPartitionExists("x", "1970-02.2");
             assertPartitionDoesNotExist("x", "1970-03.3");
@@ -212,7 +212,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         final long rows = 10;
         final String tableName = "x";
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            ddl(
+            execute(
                     "create table " + tableName + " as (select" +
                             " x id," +
                             " rnd_symbol('a','b','c') a_symbol," +
@@ -231,7 +231,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                 ff.close(fd);
             }
             try {
-                ddl("alter table " + tableName + " convert partition to parquet list '1970-01'");
+                execute("alter table " + tableName + " convert partition to parquet list '1970-01'");
                 Assert.fail();
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), " SymbolMap is too short");
@@ -247,7 +247,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         // test multiple row groups
         overrides.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 101);
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            ddl(
+            execute(
                     "create table x as (select" +
                             " x id," +
                             " rnd_boolean() a_boolean," +
@@ -276,13 +276,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                             " from long_sequence(" + rows + ")), index(a_symbol) timestamp(designated_ts) partition by month"
             );
 
-            ddl("create table y as (select * from x)", sqlExecutionContext);
+            execute("create table y as (select * from x)", sqlExecutionContext);
 
             assertException("alter table x convert partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
 
-            ddl("alter table x convert partition to parquet list '1970-01'");
+            execute("alter table x convert partition to parquet list '1970-01'");
             assertPartitionExists("x", "1970-01.1");
-            ddl("alter table x convert partition to native list '1970-01'");
+            execute("alter table x convert partition to native list '1970-01'");
             assertPartitionDoesNotExist("x", "1970-01.1");
 
             assertSqlCursors("select * from x", "select * from y");
@@ -294,7 +294,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         final long rows = 10;
         final String tableName = "x";
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            ddl(
+            execute(
                     "create table " + tableName + " as (select" +
                             " x id," +
                             " rnd_symbol('a','b','c') a_symbol," +
@@ -310,7 +310,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                 ff.remove(path.$());
             }
             try {
-                ddl("alter table " + tableName + " convert partition to parquet list '1970-01'");
+                execute("alter table " + tableName + " convert partition to parquet list '1970-01'");
                 Assert.fail();
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), "SymbolMap does not exist");
@@ -333,10 +333,10 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     "insert into " + tableName + " values(6, '2024-06-12T00:00:02.000000Z')"
             );
 
-            ddl("alter table " + tableName + " add column a int");
-            insert("insert into " + tableName + " values(7, '2024-06-10T00:00:00.000000Z', 1)");
+            execute("alter table " + tableName + " add column a int");
+            execute("insert into " + tableName + " values(7, '2024-06-10T00:00:00.000000Z', 1)");
 
-            ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0 and timestamp < '2024-06-15'");
+            execute("alter table " + tableName + " convert partition to parquet where timestamp > 0 and timestamp < '2024-06-15'");
 
             assertPartitionExists(tableName, "2024-06-10.10");
             assertPartitionExists(tableName, "2024-06-11.9");
@@ -349,19 +349,19 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     @Test
     public void testConvertSecondCallIgnored() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            ddl(
+            execute(
                     "create table x as (select" +
                             " x a_long," +
                             " to_timestamp('2024-07', 'yyyy-MM') as a_ts," +
                             " from long_sequence(10)) timestamp (a_ts) partition by MONTH"
             );
 
-            insert("insert into x(a_long, a_ts) values('42', '2024-08')");
-            ddl("alter table x convert partition to parquet where a_ts > 0");
+            execute("insert into x(a_long, a_ts) values('42', '2024-08')");
+            execute("alter table x convert partition to parquet where a_ts > 0");
             assertPartitionExists("x", "2024-07.2");
 
             // Second call should be ignored
-            ddl("alter table x convert partition to parquet where a_ts > 0");
+            execute("alter table x convert partition to parquet where a_ts > 0");
             assertPartitionExists("x", "2024-07.2");
         });
     }
@@ -391,7 +391,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     true
             );
 
-            ddl("alter table " + tableName + " convert partition to parquet where timestamp = to_timestamp('2024-06-12', 'yyyy-MM-dd')");
+            execute("alter table " + tableName + " convert partition to parquet where timestamp = to_timestamp('2024-06-12', 'yyyy-MM-dd')");
 
             assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\tminTimestamp\tmaxTimestamp\n"
                             + "0\t2024-06-10\tfalse\tfalse\t-1\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n"
@@ -411,25 +411,22 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     private void assertPartitionDoesNotExist(String tableName, String partition) {
-        assertPartitionExists0(tableName, true, partition);
+        assertPartitionOnDisk0(tableName, false, partition);
     }
 
     private void assertPartitionExists(String tableName, String partition) {
-        assertPartitionExists0(tableName, false, partition);
+        assertPartitionOnDisk0(tableName, true, partition);
     }
 
-    private void assertPartitionExists0(String tableName, boolean rev, String partition) {
+    private void assertPartitionOnDisk0(String tableName, boolean exists, String partition) {
         Path path = Path.getThreadLocal(configuration.getRoot());
-        path.concat(engine.getTableTokenIfExists(tableName).getDirName());
-        int tablePathLen = path.size();
-
-        path.trimTo(tablePathLen);
+        path.concat(engine.verifyTableName(tableName));
         path.concat(partition).concat(PARQUET_PARTITION_NAME);
 
-        if (rev) {
-            Assert.assertFalse(ff.exists(path.$()));
-        } else {
+        if (exists) {
             Assert.assertTrue(ff.exists(path.$()));
+        } else {
+            Assert.assertFalse(ff.exists(path.$()));
         }
     }
 
@@ -437,7 +434,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp();
         AbstractCairoTest.create(model);
         for (int i = 0, n = inserts.length; i < n; i++) {
-            insert(inserts[i]);
+            execute(inserts[i]);
         }
     }
 
@@ -445,7 +442,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).col("str", ColumnType.STRING).timestamp();
         AbstractCairoTest.create(model);
         for (int i = 0, n = inserts.length; i < n; i++) {
-            insert(inserts[i]);
+            execute(inserts[i]);
         }
     }
 }

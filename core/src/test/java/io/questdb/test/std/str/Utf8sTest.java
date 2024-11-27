@@ -27,8 +27,26 @@ package io.questdb.test.std.str;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.BitSet;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.GcUtf8String;
+import io.questdb.std.str.MutableUtf8Sink;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -121,6 +139,53 @@ public class Utf8sTest {
         Assert.assertTrue(copyToSinkWithTextUtil(query, text, true));
 
         Assert.assertEquals(text.replace("\"\"", "\""), query.toString());
+    }
+
+    @Test
+    public void testEncodeUtf16WithLimit() {
+        Utf8StringSink sink = new Utf8StringSink();
+        // one byte
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "foobar", 0));
+        TestUtils.assertEquals("", sink);
+
+        sink.clear();
+        Assert.assertTrue(Utf8s.encodeUtf16WithLimit(sink, "foobar", 42));
+        TestUtils.assertEquals("foobar", sink);
+
+        sink.clear();
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "foobar", 3));
+        TestUtils.assertEquals("foo", sink);
+
+        // two bytes
+        sink.clear();
+        Assert.assertTrue(Utf8s.encodeUtf16WithLimit(sink, "фубар", 10));
+        TestUtils.assertEquals("фубар", sink);
+
+        sink.clear();
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "фубар", 4));
+        TestUtils.assertEquals("фу", sink);
+
+        sink.clear();
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "фубар", 3));
+        TestUtils.assertEquals("ф", sink);
+
+        // three bytes
+        sink.clear();
+        Assert.assertTrue(Utf8s.encodeUtf16WithLimit(sink, "∆", 3));
+        TestUtils.assertEquals("∆", sink);
+
+        sink.clear();
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "∆", 2));
+        TestUtils.assertEquals("", sink);
+
+        // four bytes
+        sink.clear();
+        Assert.assertTrue(Utf8s.encodeUtf16WithLimit(sink, "\uD83D\uDE00", 4));
+        TestUtils.assertEquals("\uD83D\uDE00", sink);
+
+        sink.clear();
+        Assert.assertFalse(Utf8s.encodeUtf16WithLimit(sink, "\uD83D\uDE00", 3));
+        TestUtils.assertEquals("", sink);
     }
 
     @Test
@@ -434,13 +499,13 @@ public class Utf8sTest {
             LongList expectedOffsets = new LongList(n);
             for (int i = 0; i < n; i++) {
                 utf8Sink.clear();
-                utf8Sink.repeat("a", len);
+                utf8Sink.repeat('a', len);
                 VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
                 expectedOffsets.add(dataMem.getAppendOffset());
             }
 
             utf8Sink.clear();
-            utf8Sink.repeat("a", len);
+            utf8Sink.repeat('a', len);
             String expectedStr = utf8Sink.toString();
             for (int i = 0; i < n; i++) {
                 Utf8Sequence varchar = VarcharTypeDriver.getSplitValue(auxMem, dataMem, i, 1);

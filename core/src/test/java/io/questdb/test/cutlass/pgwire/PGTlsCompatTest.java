@@ -26,8 +26,8 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.NetworkFacade;
@@ -38,15 +38,27 @@ import io.questdb.test.mp.TestWorkerPool;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.util.Collection;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
-
+@RunWith(Parameterized.class)
 public class PGTlsCompatTest extends BasePGTest {
+
+    public PGTlsCompatTest(LegacyMode legacyMode) {
+        super(legacyMode);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return legacyModeParams();
+    }
 
     @Test
     public void testTlsSessionGetsCreatedWhenSocketSupportsTls() throws Exception {
@@ -67,7 +79,7 @@ public class PGTlsCompatTest extends BasePGTest {
             };
 
             final WorkerPool workerPool = new TestWorkerPool(1, metrics);
-            try (final PGWireServer server = createPGWireServer(conf, engine, workerPool)) {
+            try (final IPGWireServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
 
                 workerPool.start(LOG);
@@ -108,7 +120,7 @@ public class PGTlsCompatTest extends BasePGTest {
             };
 
             final WorkerPool workerPool = new TestWorkerPool(1, metrics);
-            try (final PGWireServer server = createPGWireServer(conf, engine, workerPool)) {
+            try (final IPGWireServer server = createPGWireServer(conf, engine, workerPool)) {
                 Assert.assertNotNull(server);
 
                 workerPool.start(LOG);

@@ -104,6 +104,8 @@ steps:
         -Dsurefire.failIfNoSpecifiedTests=false
          $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
+    env:
+      QDB_TEST_WINDOWS_SYMLINKS: "1"
     timeoutInMinutes: 55
     condition: |
       and(
@@ -127,6 +129,8 @@ steps:
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
       codeCoverageClassFilter: "$(COVERAGE_DIFF)"
+    env:
+      QDB_TEST_WINDOWS_SYMLINKS: "1"
     timeoutInMinutes: 55
     condition: |
       and(

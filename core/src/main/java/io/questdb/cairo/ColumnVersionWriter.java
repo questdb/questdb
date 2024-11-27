@@ -133,6 +133,56 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
     }
 
+    public void replaceInitialPartitionRecords(long lastPartitionTimestamp, long transientRowCount) {
+        // Remove all default partitions that point beyond the last partition
+        // Replace them as if the column was added to the last partition
+        for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
+            long partitionTimestamp = cachedColumnVersionList.getQuick(i);
+            long initialPartitionTimestamp = cachedColumnVersionList.get(i + TIMESTAMP_ADDED_PARTITION_OFFSET);
+            int columnIndex = (int) cachedColumnVersionList.get(i + COLUMN_INDEX_OFFSET);
+            long columnNameTxn = cachedColumnVersionList.getQuick(i + COLUMN_NAME_TXN_OFFSET);
+
+            if (partitionTimestamp == COL_TOP_DEFAULT_PARTITION) {
+                if (initialPartitionTimestamp > lastPartitionTimestamp) {
+                    // There is an initial partition record that point beyond the last partition.
+                    // This can happen as a resul of partition drop.
+                    // Move the initial partition record to the last partition, as if column was added there.
+                    cachedColumnVersionList.set(i + TIMESTAMP_ADDED_PARTITION_OFFSET, lastPartitionTimestamp);
+                    // Because column we not really added there, put the column top to the value
+                    // of the last partition row count (e.g. transientRowCount)
+                    // Add the column top if there is no explicit record for this column, if there is one
+                    // keep the existing value.
+                    int recordIndex = getRecordIndex(lastPartitionTimestamp, columnIndex);
+                    if (recordIndex < 0) {
+                        upsert(lastPartitionTimestamp, columnIndex, columnNameTxn, transientRowCount);
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    public void squashPartition(long targetPartitionTimestamp, long sourcePartitionTimestamp) {
+        removePartition(sourcePartitionTimestamp);
+        // Remove all default partitions that point to the targetPartitionTimestamp
+        for (int i = 0, n = cachedColumnVersionList.size(); i < n; i += BLOCK_SIZE) {
+            long partitionTimestamp = cachedColumnVersionList.getQuick(i);
+            long defaultPartitionTimestamp = cachedColumnVersionList.get(i + TIMESTAMP_ADDED_PARTITION_OFFSET);
+            int columnIndex = (int) cachedColumnVersionList.get(i + COLUMN_INDEX_OFFSET);
+            long columnNameTxn = cachedColumnVersionList.getQuick(i + COLUMN_NAME_TXN_OFFSET);
+
+            if (partitionTimestamp == COL_TOP_DEFAULT_PARTITION) {
+                if (defaultPartitionTimestamp == sourcePartitionTimestamp) {
+                    // replace with target block
+                    cachedColumnVersionList.set(i + TIMESTAMP_ADDED_PARTITION_OFFSET, targetPartitionTimestamp);
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
     public void truncate() {
         if (cachedColumnVersionList.size() > 0) {
 

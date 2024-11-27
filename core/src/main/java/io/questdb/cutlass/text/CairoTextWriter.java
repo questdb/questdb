@@ -24,15 +24,38 @@
 
 package io.questdb.cutlass.text;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cutlass.text.types.*;
+import io.questdb.cutlass.text.types.BadDateAdapter;
+import io.questdb.cutlass.text.types.BadTimestampAdapter;
+import io.questdb.cutlass.text.types.OtherToTimestampAdapter;
+import io.questdb.cutlass.text.types.TimestampAdapter;
+import io.questdb.cutlass.text.types.TimestampCompatibleAdapter;
+import io.questdb.cutlass.text.types.TypeAdapter;
+import io.questdb.cutlass.text.types.TypeManager;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Path;
@@ -376,7 +399,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                 tableToken = engine.getTableTokenIfExists(tableName);
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
-                    engine.drop(path, tableToken);
+                    engine.dropTable(path, tableToken);
                     tableToken = createTable(names, detectedTypes, securityContext, path);
                     tableReCreated = true;
                     writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
@@ -457,6 +480,12 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
+        public long getMetadataVersion() {
+            // new table only
+            return 0;
+        }
+
+        @Override
         public long getO3MaxLag() {
             return o3MaxLag > -1 && PartitionBy.isPartitioned(partitionBy) ? o3MaxLag : configuration.getO3MaxLag();
         }
@@ -494,11 +523,6 @@ public class CairoTextWriter implements Closeable, Mutable {
         @Override
         public boolean isIndexed(int columnIndex) {
             return types.getQuick(columnIndex).isIndexed();
-        }
-
-        @Override
-        public boolean isSequential(int columnIndex) {
-            return false;
         }
 
         @Override

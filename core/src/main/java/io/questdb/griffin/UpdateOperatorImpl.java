@@ -90,8 +90,8 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             final RecordCursorFactory factory = op.getFactory();
 
             purgingOperator.clear();
-
             if (tableWriter.inTransaction()) {
+                assert !tableWriter.getTableToken().isWal();
                 LOG.info().$("committing current transaction before UPDATE execution [table=").$(tableToken).$(" instance=").$(op.getCorrelationId()).I$();
                 tableWriter.commit();
             }

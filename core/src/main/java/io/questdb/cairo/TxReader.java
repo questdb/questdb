@@ -37,7 +37,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
@@ -262,12 +264,24 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.size() / LONGS_PER_TX_ATTACHED_PARTITION;
     }
 
+    public long getPartitionFloor(long timestamp) {
+        return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
+    }
+
     public int getPartitionIndex(long ts) {
         int index = findAttachedPartitionRawIndexByLoTimestamp(getPartitionTimestampByTimestamp(ts));
         if (index > -1) {
             return index / LONGS_PER_TX_ATTACHED_PARTITION;
         }
         return -1;
+    }
+
+    public int getPartitionInsertionIndex(long partitionTimestamp) {
+        int index = findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+        if (index > -1) {
+            return index / LONGS_PER_TX_ATTACHED_PARTITION;
+        }
+        return (-index - 1) / LONGS_PER_TX_ATTACHED_PARTITION;
     }
 
     public long getPartitionNameTxn(int i) {
@@ -412,6 +426,63 @@ public class TxReader implements Closeable, Mutable {
         return this;
     }
 
+    @Override
+    public String toString() {
+        // Used for debugging, don't use Misc.getThreadLocalSink() to not mess with other debugging values
+        StringSink sink = new StringSink();
+        sink.put("{");
+        sink.put("txn: ").put(txn);
+        sink.put(", attachedPartitions: [");
+        for (int i = 0; i < attachedPartitions.size(); i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            long timestamp = getPartitionTimestampByIndex(i / LONGS_PER_TX_ATTACHED_PARTITION);
+            long rowCount = attachedPartitions.getQuick(i + PARTITION_MASKED_SIZE_OFFSET) & PARTITION_SIZE_MASK;
+
+            if (i / LONGS_PER_TX_ATTACHED_PARTITION == getPartitionIndex(maxTimestamp)) {
+                rowCount = transientRowCount;
+            }
+
+            long nameTxn = getPartitionNameTxnByRawIndex(i);
+            long parquetSize = getPartitionParquetFileSizeByRawIndex(i);
+
+            if (i > 0) {
+                sink.put(",");
+            }
+            sink.put("\n{ts: '");
+            TimestampFormatUtils.appendDateTime(sink, timestamp);
+            sink.put("', rowCount: ").put(rowCount);
+            sink.put(", nameTxn: ").put(nameTxn);
+            if (isPartitionParquet(i / LONGS_PER_TX_ATTACHED_PARTITION)) {
+                sink.put(", parquetSize: ").put(parquetSize);
+            }
+            if (isPartitionReadOnlyByRawIndex(i)) {
+                sink.put(", readOnly=true");
+            }
+            sink.put("}");
+        }
+        sink.put("\n], transientRowCount: ").put(transientRowCount);
+        sink.put(", fixedRowCount: ").put(fixedRowCount);
+        sink.put(", minTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, minTimestamp);
+        sink.put("', maxTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, maxTimestamp);
+        sink.put("', dataVersion: ").put(dataVersion);
+        sink.put(", structureVersion: ").put(structureVersion);
+        sink.put(", partitionTableVersion: ").put(partitionTableVersion);
+        sink.put(", columnVersion: ").put(columnVersion);
+        sink.put(", truncateVersion: ").put(truncateVersion);
+        sink.put(", seqTxn: ").put(seqTxn);
+        sink.put(", symbolColumnCount: ").put(symbolColumnCount);
+        sink.put(", lagRowCount: ").put(lagRowCount);
+        sink.put(", lagMinTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, lagMinTimestamp);
+        sink.put("', lagMaxTimestamp: '");
+        TimestampFormatUtils.appendDateTime(sink, lagMaxTimestamp);
+        sink.put("', lagTxnCount: ").put(lagTxnCount);
+        sink.put(", lagOrdered: ").put(lagOrdered);
+        sink.put("}");
+        return sink.toString();
+    }
+
     public boolean unsafeLoadAll() {
         if (unsafeLoadBaseOffset()) {
             txn = version;
@@ -541,11 +612,7 @@ public class TxReader implements Closeable, Mutable {
         return roTxMemBase.getLong(baseOffset + readOffset);
     }
 
-    private long getPartitionFloor(long timestamp) {
-        return partitionFloorMethod != null ? (timestamp != Long.MIN_VALUE ? partitionFloorMethod.floor(timestamp) : Long.MIN_VALUE) : DEFAULT_PARTITION_TIMESTAMP;
-    }
-
-    private long getPartitionParquetFileSizeByIndex(int partitionRawIndex) {
+    private long getPartitionParquetFileSizeByRawIndex(int partitionRawIndex) {
         return attachedPartitions.getQuick(partitionRawIndex + PARTITION_PARQUET_FILE_SIZE_OFFSET);
     }
 

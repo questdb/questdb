@@ -188,7 +188,7 @@ public class WalListenerTest extends AbstractCairoTest {
             // No data event, segment closed ignored
             Assert.assertEquals(0, listener.events.size());
 
-            engine.drop(Path.getThreadLocal(""), tableToken2.get());
+            engine.dropTable(Path.getThreadLocal(""), tableToken2.get());
 
             Assert.assertEquals(
                     new WalListenerEvent(

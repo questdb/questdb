@@ -172,7 +172,7 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     }
 
     @Override
-    public boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
+    public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex) {
         AlterOperationBuilder builder = new AlterOperationBuilder().ofColumnChangeType(
                 0,
                 wApi.getTableToken(),

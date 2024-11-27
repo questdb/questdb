@@ -223,9 +223,9 @@ public class ParallelLatestByTest extends AbstractTest {
             String ddl2,
             String query
     ) throws SqlException {
-        CairoEngine.ddl(compiler, ddl, sqlExecutionContext, null);
+        CairoEngine.execute(compiler, ddl, sqlExecutionContext, null);
         if (ddl2 != null) {
-            CairoEngine.ddl(compiler, ddl2, sqlExecutionContext, null);
+            CairoEngine.execute(compiler, ddl2, sqlExecutionContext, null);
         }
 
         CompiledQuery cc = compiler.compile(query, sqlExecutionContext);

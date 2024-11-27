@@ -46,7 +46,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     @Test
     public void testBadCompression() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
@@ -71,7 +71,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     @Test
     public void testBadVersion() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
@@ -97,7 +97,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     @Ignore
     public void testEncodeExternal() {
         final String root2 = "/Users/alpel/temp/db";
-        final QuestDBTestNode node2 = newNode(2, root2);
+        final QuestDBTestNode node2 = newNode();
         nodes.remove(node2);
 
         try (
@@ -117,7 +117,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 10000000;
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " x id," +
                     " rnd_boolean() a_boolean," +
                     " rnd_byte() a_byte," +
@@ -162,7 +162,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
     public void testUuid() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 1;
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " cast('7c0bd97b-0593-47d2-be17-b8f3f89ca555' as uuid), " +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");

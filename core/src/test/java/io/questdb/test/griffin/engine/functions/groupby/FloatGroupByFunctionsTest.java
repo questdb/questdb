@@ -37,7 +37,7 @@ public class FloatGroupByFunctionsTest extends AbstractCairoTest {
     public void testRndFloatsWithAggregates() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setRandom(new Rnd());
-            ddl("create table tab as ( select rnd_float() ch from long_sequence(100) )");
+            execute("create table tab as ( select rnd_float() ch from long_sequence(100) )");
 
             assertSql("min\tmax\tfirst\tlast\tcount\n" +
                     "0.0011\t0.9856\t0.6608\t0.7998\t100\n", "select min(ch), max(ch), first(ch), last(ch), count() from tab"

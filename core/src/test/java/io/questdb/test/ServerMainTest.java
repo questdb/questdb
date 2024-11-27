@@ -232,7 +232,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.backup.mkdir.mode\tQDB_CAIRO_SQL_BACKUP_MKDIR_MODE\t509\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.bind.variable.pool.size\tQDB_CAIRO_SQL_BIND_VARIABLE_POOL_SIZE\t8\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.query.registry.pool.size\tQDB_CAIRO_SQL_QUERY_REGISTRY_POOL_SIZE\t32\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.column.cast.model.pool.capacity\tQDB_CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.purge.queue.capacity\tQDB_CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.purge.retry.delay\tQDB_CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.column.purge.retry.delay.limit\tQDB_CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT\t60000000\tdefault\tfalse\tfalse\n" +
@@ -247,7 +246,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.copy.queue.capacity\tQDB_CAIRO_SQL_COPY_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.count.distinct.capacity\tQDB_CAIRO_SQL_COUNT_DISTINCT_CAPACITY\t3\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.count.distinct.load.factor\tQDB_CAIRO_SQL_COUNT_DISTINCT_LOAD_FACTOR\t0.75\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.create.table.model.pool.capacity\tQDB_CAIRO_SQL_CREATE_TABLE_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.create.table.model.batch.size\tQDB_CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.distinct.timestamp.key.capacity\tQDB_CAIRO_SQL_DISTINCT_TIMESTAMP_KEY_CAPACITY\t512\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.distinct.timestamp.load.factor\tQDB_CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR\t0.5\tdefault\tfalse\tfalse\n" +
@@ -480,7 +478,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "line.tcp.net.idle.timeout\tQDB_LINE_TCP_NET_IDLE_TIMEOUT\t0\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.queued.timeout\tQDB_LINE_TCP_NET_QUEUED_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.net.recv.buf.size\tQDB_LINE_TCP_NET_RECV_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
-                                    "line.tcp.symbol.cache.wait.us.before.reload\tQDB_LINE_TCP_SYMBOL_CACHE_WAIT_US_BEFORE_RELOAD\t500000\tdefault\tfalse\tfalse\n" +
+                                    "line.tcp.symbol.cache.wait.before.reload\tQDB_LINE_TCP_SYMBOL_CACHE_WAIT_BEFORE_RELOAD\t500000\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.timestamp\tQDB_LINE_TCP_TIMESTAMP\tn\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.undocumented.string.to.char.cast.allowed\tQDB_LINE_TCP_UNDOCUMENTED_STRING_TO_CHAR_CAST_ALLOWED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "line.tcp.writer.halt.on.error\tQDB_LINE_TCP_WRITER_HALT_ON_ERROR\tfalse\tdefault\tfalse\tfalse\n" +
@@ -515,6 +513,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.insert.cache.block.count\tQDB_PG_INSERT_CACHE_BLOCK_COUNT\t4\tdefault\tfalse\tfalse\n" +
                                     "pg.insert.cache.enabled\tQDB_PG_INSERT_CACHE_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
                                     "pg.insert.cache.row.count\tQDB_PG_INSERT_CACHE_ROW_COUNT\t4\tdefault\tfalse\tfalse\n" +
+                                    "pg.legacy.mode.enabled\tQDB_PG_LEGACY_MODE_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "pg.max.blob.size.on.query\tQDB_PG_MAX_BLOB_SIZE_ON_QUERY\t524288\tdefault\tfalse\tfalse\n" +
                                     "pg.named.statement.cache.capacity\tQDB_PG_NAMED_STATEMENT_CACHE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "pg.named.statement.pool.capacity\tQDB_PG_NAMED_STATEMENT_POOL_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
@@ -549,6 +548,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "pg.worker.sleep.threshold\tQDB_PG_WORKER_SLEEP_THRESHOLD\t10000\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.nap.threshold\tQDB_PG_WORKER_NAP_THRESHOLD\t7000\tdefault\tfalse\tfalse\n" +
                                     "pg.worker.yield.threshold\tQDB_PG_WORKER_YIELD_THRESHOLD\t10\tdefault\tfalse\tfalse\n" +
+                                    "pg.named.statement.limit\tQDB_PG_NAMED_STATEMENT_LIMIT\t10000\tdefault\tfalse\tfalse\n" +
                                     "posthog.enabled\tQDB_POSTHOG_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "posthog.api.key\tQDB_POSTHOG_API_KEY\t\tdefault\tfalse\tfalse\n" +
                                     "query.timeout.sec\tQDB_QUERY_TIMEOUT_SEC\t60\tdefault\tfalse\tfalse\n" +
@@ -593,7 +593,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.multipart.idle.spin.count\tQDB_HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.overwrite.control.enabled\tQDB_CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
                                     "http.min.worker.priority\tQDB_HTTP_MIN_WORKER_PRIORITY\t8\tdefault\tfalse\tfalse\n" +
-                                    "cairo.commit.latency\tQDB_CAIRO_COMMIT_LATENCY\t30000000\tdefault\tfalse\tfalse\n"
+                                    "cairo.commit.latency\tQDB_CAIRO_COMMIT_LATENCY\t30000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.create.table.column.model.pool.capacity\tQDB_CAIRO_CREATE_TABLE_COLUMN_MODEL_POOL_CAPACITY\t16\tdefault\tfalse\tfalse\n"
                             )
                                     .split("\n");
 

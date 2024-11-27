@@ -114,13 +114,14 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         return lockFd != -1;
     }
 
-    public void reload(
+    public boolean reload(
             ConcurrentHashMap<TableToken> tableNameToTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> dirNameToTokenMap,
             @Nullable ObjList<TableToken> convertedTables
     ) {
-        reloadFromTablesFile(tableNameToTokenMap, dirNameToTokenMap, convertedTables);
+        boolean consistent = reloadFromTablesFile(tableNameToTokenMap, dirNameToTokenMap, convertedTables);
         reloadFromRootDirectory(tableNameToTokenMap, dirNameToTokenMap);
+        return consistent;
     }
 
     @TestOnly
@@ -388,7 +389,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         }
     }
 
-    private void reloadFromTablesFile(
+    private boolean reloadFromTablesFile(
             ConcurrentHashMap<TableToken> tableNameToTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap,
             @Nullable ObjList<TableToken> convertedTables
@@ -416,7 +417,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     if (e.errnoReadPathDoesNotExist()) {
                         if (lastFileVersion == 0) {
                             // This is RO mode and file and tables.d.0 does not exist.
-                            return;
+                            return false;
                         } else {
                             // This is RO mode and file we want to read was just swapped to new one by the RW instance.
                             continue;
@@ -481,7 +482,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                                 dirName,
                                 existing
                         );
-                        return;
+                        return false;
                     }
                     tableNameToTableTokenMap.put(tableName, token);
                     if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
@@ -511,7 +512,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                                 token.getDirName(),
                                 existing
                         );
-                        return;
+                        return false;
                     }
 
                     if (token.isWal()) {
@@ -538,6 +539,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         } else {
             tableNameRoMemory.close();
         }
+        return true;
     }
 
     private boolean resolveTableNameConflict(

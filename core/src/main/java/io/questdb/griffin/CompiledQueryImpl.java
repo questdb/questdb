@@ -25,14 +25,15 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
@@ -48,12 +49,13 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private long affectedRowsCount;
     private AlterOperation alterOp;
     private InsertOperation insertOp;
+    private boolean isExecutedAtParseTime;
+    private Operation operation;
     private RecordCursorFactory recordCursorFactory;
     private SqlExecutionContext sqlExecutionContext;
     private String sqlStatement;
     // prepared statement name for DEALLOCATE operation
     private CharSequence statementName;
-    private TableToken tableToken;
     private short type;
     private UpdateOperation updateOp;
 
@@ -82,12 +84,13 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     public void clear() {
         this.type = NONE;
         this.recordCursorFactory = null;
-        this.tableToken = null;
         this.affectedRowsCount = -1;
         this.insertOp = null;
         this.alterOp = null;
         this.updateOp = null;
         this.statementName = null;
+        this.operation = null;
+        this.isExecutedAtParseTime = false;
     }
 
     @Override
@@ -96,19 +99,35 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
-    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException {
+    public OperationFuture execute(
+            SqlExecutionContext sqlExecutionContext,
+            SCSequence eventSubSeq,
+            boolean closeOnDone
+    ) throws SqlException {
         switch (type) {
             case INSERT:
                 return insertOp.execute(sqlExecutionContext);
+            case CREATE_TABLE:
+            case CREATE_TABLE_AS_SELECT:
+                assert false;
+                doneFuture.of(0);
             case UPDATE:
                 updateOp.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);
             case ALTER:
                 alterOp.withSqlStatement(sqlStatement);
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
+            case DROP:
+                assert false;
+                // fall thru
             default:
                 return doneFuture.of(0);
         }
+    }
+
+    @Override
+    public boolean executedAtParseTime() {
+        return isExecutedAtParseTime;
     }
 
     @Override
@@ -127,23 +146,23 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
+    public Operation getOperation() {
+        return operation;
+    }
+
+    @Override
     public RecordCursorFactory getRecordCursorFactory() {
         return recordCursorFactory;
     }
 
     @Override
-    public String getSqlStatement() {
+    public String getSqlText() {
         return sqlStatement;
     }
 
     @Override
     public CharSequence getStatementName() {
         return statementName;
-    }
-
-    @Override
-    public TableToken getTableToken() {
-        return tableToken;
     }
 
     @Override
@@ -156,94 +175,95 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         return updateOp;
     }
 
-    public CompiledQuery of(short type) {
-        return of(type, null, null);
-    }
-
-    public CompiledQuery of(short type, RecordCursorFactory recordCursorFactory) {
-        return of(type, recordCursorFactory, null);
-    }
-
-    public CompiledQuery of(RecordCursorFactory recordCursorFactory) {
-        return of(SELECT, recordCursorFactory, null);
-    }
-
-    public CompiledQuery ofAlter(AlterOperation alterOp) {
+    public void ofAlter(AlterOperation alterOp) {
         of(ALTER);
         this.alterOp = alterOp;
-        return this;
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofAlterUser() {
         of(ALTER_USER);
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofBackupTable() {
         of(BACKUP_TABLE);
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofBegin() {
         of(BEGIN);
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofCancelQuery() {
         of(CANCEL_QUERY);
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofCheckpointCreate() {
         of(CHECKPOINT_CREATE);
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofCheckpointRelease() {
         of(CHECKPOINT_RELEASE);
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofCommit() {
         of(COMMIT);
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofCopyRemote() {
         of(COPY_REMOTE);
+        this.isExecutedAtParseTime = true;
     }
 
-    public void ofCreateTable(TableToken tableToken) {
-        of(CREATE_TABLE, null, tableToken);
-    }
-
-    public void ofCreateTableAsSelect(TableToken tableToken, long affectedRowsCount) {
-        of(CREATE_TABLE_AS_SELECT, null, tableToken);
-        this.affectedRowsCount = affectedRowsCount;
+    public void ofCreateTable(CreateTableOperation createTableOp) {
+        of(createTableOp.getRecordCursorFactory() == null ? CREATE_TABLE : CREATE_TABLE_AS_SELECT);
+        this.operation = createTableOp;
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofCreateUser() {
         of(CREATE_USER);
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofDeallocate(CharSequence statementName) {
         this.statementName = Chars.toString(statementName);
         of(DEALLOCATE);
+        this.isExecutedAtParseTime = false;
     }
 
-    public void ofDrop() {
+    public void ofDrop(Operation op) {
         of(DROP);
+        this.operation = op;
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofEmpty() {
-        of(EMPTY, new EmptyTableRecordCursorFactory(EmptyRecordMetadata.INSTANCE), null);
+        of(EMPTY, new EmptyTableRecordCursorFactory(EmptyRecordMetadata.INSTANCE));
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofExplain(RecordCursorFactory recordCursorFactory) {
-        of(EXPLAIN, recordCursorFactory, null);
+        of(EXPLAIN, recordCursorFactory);
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofInsert(InsertOperation insertOperation) {
         this.insertOp = insertOperation;
         of(INSERT);
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofInsertAsSelect(long affectedRowsCount) {
         of(INSERT_AS_SELECT);
         this.affectedRowsCount = affectedRowsCount;
+        this.isExecutedAtParseTime = true;
     }
 
     // although executor was there it had to fail back to the model
@@ -257,47 +277,63 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.type = PSEUDO_SELECT;
         this.recordCursorFactory = factory;
         this.affectedRowsCount = -1;
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofRenameTable() {
         of(RENAME_TABLE);
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofRepair() {
         of(REPAIR);
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofRollback() {
         of(ROLLBACK);
+        this.isExecutedAtParseTime = false;
+    }
+
+    public void ofSelect(RecordCursorFactory recordCursorFactory) {
+        of(SELECT, recordCursorFactory);
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofSet() {
         of(SET);
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofTableResume() {
         type = TABLE_RESUME;
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofTableSetType() {
         type = TABLE_SET_TYPE;
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofTableSuspend() {
         type = TABLE_SUSPEND;
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofTruncate() {
         of(TRUNCATE);
+        this.isExecutedAtParseTime = true;
     }
 
     public void ofUpdate(UpdateOperation updateOperation) {
         this.updateOp = updateOperation;
         this.type = UPDATE;
+        this.isExecutedAtParseTime = false;
     }
 
     public void ofVacuum() {
         of(VACUUM);
+        this.isExecutedAtParseTime = true;
     }
 
     public CompiledQueryImpl withContext(SqlExecutionContext sqlExecutionContext) {
@@ -305,14 +341,17 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         return this;
     }
 
-    public void withSqlStatement(String sqlStatement) {
-        this.sqlStatement = sqlStatement;
+    public void withSqlText(String sqlText) {
+        this.sqlStatement = sqlText;
     }
 
-    private CompiledQuery of(short type, RecordCursorFactory factory, TableToken tableToken) {
+    private CompiledQuery of(short type) {
+        return of(type, null);
+    }
+
+    private CompiledQuery of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
-        this.tableToken = tableToken;
         this.affectedRowsCount = -1;
         return this;
     }

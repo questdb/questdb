@@ -3100,7 +3100,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testFloatToLong() throws Exception {
-        ddl("create table rndfloat as (select rnd_float(2) fl from long_sequence(10))");
+        execute("create table rndfloat as (select rnd_float(2) fl from long_sequence(10))");
         engine.releaseAllReaders();
         engine.releaseAllWriters();
 

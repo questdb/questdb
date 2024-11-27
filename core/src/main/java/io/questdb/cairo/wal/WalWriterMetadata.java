@@ -100,13 +100,55 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             int writerIndex,
-            boolean isDedupKey
+            boolean isDedupKey,
+            boolean symbolIsCached,
+            int symbolCapacity
     ) {
-        addColumn0(columnName, columnType);
+        addColumn0(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolIsCached,
+                isDedupKey
+        );
     }
 
-    public void addColumn(CharSequence columnName, int columnType) {
-        addColumn0(columnName, columnType);
+    public void addColumn(
+            CharSequence columnName,
+            int columnType,
+            boolean isDedupKey,
+            boolean symbolIsCached,
+            int symbolCapacity
+    ) {
+        addColumn0(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolIsCached,
+                isDedupKey
+        );
+        structureVersion++;
+    }
+
+    public void changeColumnType(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity
+    ) {
+        TableUtils.changeColumnTypeInMetadata(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                columnNameIndexMap,
+                columnMetadata
+        );
+        columnCount++;
         structureVersion++;
     }
 
@@ -129,7 +171,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
-    public void enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+    public void enableDeduplicationWithUpsertKeys() {
         structureVersion++;
     }
 
@@ -186,11 +228,20 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         syncToMetaFile(metaMem, structureVersion, columnCount, timestampIndex, tableId, suspended, this);
     }
 
-    private void addColumn0(CharSequence columnName, int columnType) {
+    private void addColumn0(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isDedupKey
+    ) {
         final String name = columnName.toString();
         if (columnType > 0) {
             columnNameIndexMap.put(name, columnMetadata.size());
         }
+        // sequencer metadata is servicing WALs, and it does not have
+        // information about symbol indexing and index storage parameters
+        // therefore we ignore the incoming parameters and assume defaults
         columnMetadata.add(
                 new TableColumnMetadata(
                         name,
@@ -200,7 +251,10 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                         false,
                         null,
                         columnMetadata.size(),
-                        false
+                        isDedupKey,
+                        0,
+                        symbolCacheFlag,
+                        symbolCapacity
                 )
         );
         columnCount++;

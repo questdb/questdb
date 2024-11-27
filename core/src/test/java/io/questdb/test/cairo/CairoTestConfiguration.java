@@ -31,9 +31,14 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.NanosecondClock;
+import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Map;
@@ -59,7 +64,7 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
-        return overrides.getCircuitBreakerConfiguration() != null ? overrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
+        return AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() != null ? AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
     }
 
     @Override
@@ -117,6 +122,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public @NotNull RostiAllocFacade getRostiAllocFacade() {
         return overrides.getRostiAllocFacade() != null ? overrides.getRostiAllocFacade() : super.getRostiAllocFacade();
+    }
+
+    @Override
+    public long getSpinLockTimeout() {
+        return overrides != null ? overrides.getSpinLockTimeout() : super.getSpinLockTimeout();
     }
 
     @Override

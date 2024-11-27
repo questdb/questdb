@@ -102,6 +102,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     exceptions.add(e);
                     LOG.error().$(e).$();
                 } finally {
+                    Path.clearThreadLocals();
                     done.incrementAndGet();
                 }
             });
@@ -157,6 +158,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                     LOG.error().$(e).$();
                 } finally {
                     Misc.freeObjList(symbolCacheObjList);
+                    Path.clearThreadLocals();
                     Unsafe.free(mem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 }
             });
@@ -187,7 +189,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
-                     public long getSymbolCacheWaitUsBeforeReload() {
+                     public long getSymbolCacheWaitBeforeReload() {
                          return 0;
                      }
                  })
@@ -262,7 +264,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             copyUtf8StringChars(constValue, constMem, constDus);
             FilesFacade ff = new TestFilesFacadeImpl();
 
-            ddl("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY");
+            execute("create table x(a symbol, c int, b symbol capacity 10000000, ts timestamp) timestamp(ts) partition by DAY");
             TableToken tableToken = engine.verifyTableName("x");
             try (
                     SymbolCache symbolCache = new SymbolCache(new DefaultLineTcpReceiverConfiguration());
@@ -353,7 +355,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             } finally {
                 Unsafe.free(constMem, DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
-            drop("drop table x");
+            execute("drop table x");
         });
     }
 
@@ -368,7 +370,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
-                     public long getSymbolCacheWaitUsBeforeReload() {
+                     public long getSymbolCacheWaitBeforeReload() {
                          return 0;
                      }
                  })
@@ -431,7 +433,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
-                     public long getSymbolCacheWaitUsBeforeReload() {
+                     public long getSymbolCacheWaitBeforeReload() {
                          return 0;
                      }
                  })
@@ -591,7 +593,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
-                     public long getSymbolCacheWaitUsBeforeReload() {
+                     public long getSymbolCacheWaitBeforeReload() {
                          return 0;
                      }
                  })
@@ -674,7 +676,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
             try (Path path = new Path();
                  SymbolCache cache = new SymbolCache(new DefaultLineTcpReceiverConfiguration() {
                      @Override
-                     public long getSymbolCacheWaitUsBeforeReload() {
+                     public long getSymbolCacheWaitBeforeReload() {
                          return 0;
                      }
                  })
@@ -745,7 +747,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
     private void createTable(String tableName) {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY);
         model.timestamp();
-        TestUtils.create(model, engine);
+        TestUtils.createTable(engine, model);
     }
 
     private static class Holder implements Mutable {
