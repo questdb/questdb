@@ -330,6 +330,13 @@ public class ServerMain implements Closeable {
                     sharedPool.assign(engine.getEngineMaintenanceJob());
 
                     WorkerPoolUtils.setupQueryJobs(sharedPool, engine);
+                    
+                    // [EDIT] A worker procees that brings up existing Tables to in-memory
+                    final CallTablesMemory CallTablesMemory = new CallTablesMemory(engine);
+                    
+                    for (Object[] column : CallTablesMemory.columnDataList) {
+                        System.out.println("First value in column: " + column[0]);
+                    }
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPool, engine);
@@ -369,9 +376,6 @@ public class ServerMain implements Closeable {
                             sharedPool.assign(telemetryJob);
                         }
                     }
-
-                    // [EDIT] A worker procees that brings up existing Tables to in-memory
-                    final CallTablesMemory CallTablesMemory = new CallTablesMemory(engine);
 
                 } catch (Throwable thr) {
                     throw new Bootstrap.BootstrapException(thr);
