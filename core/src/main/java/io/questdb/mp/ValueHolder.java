@@ -24,6 +24,6 @@
 
 package io.questdb.mp;
 
-public interface QueueValueHolder<T> {
-    void copyTo(T anotherHolder);
+public interface ValueHolder<T> {
+    void copyTo(T dest);
 }
