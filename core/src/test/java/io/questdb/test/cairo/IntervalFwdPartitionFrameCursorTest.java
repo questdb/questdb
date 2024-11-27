@@ -489,7 +489,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 }
 
                 if (convertToParquet) {
-                    ddl("alter table x convert partition to parquet where timestamp >= 0;");
+                    execute("alter table x convert partition to parquet where timestamp >= 0;");
                 }
 
                 try (TableWriter writer = getWriter(x)) {
@@ -714,7 +714,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
             }
 
             if (convertToParquet) {
-                ddl("alter table x convert partition to parquet where timestamp >= 0;");
+                execute("alter table x convert partition to parquet where timestamp >= 0;");
             }
 
             try (

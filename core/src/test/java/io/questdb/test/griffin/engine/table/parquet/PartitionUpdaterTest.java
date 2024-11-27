@@ -45,7 +45,7 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
             final String tableName = "x";
             final long rows = 10;
             final FilesFacade ff = configuration.getFilesFacade();
-            ddl("create table " + tableName + " as (select" +
+            execute("create table " + tableName + " as (select" +
                     " x id," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");

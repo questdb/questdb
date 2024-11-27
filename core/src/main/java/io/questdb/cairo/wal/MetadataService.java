@@ -24,7 +24,11 @@
 
 package io.questdb.cairo.wal;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.UpdateOperator;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.std.LongList;
 import org.jetbrains.annotations.NotNull;
@@ -101,19 +105,6 @@ public interface MetadataService {
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
-
-    void changeColumnType(
-            CharSequence columnName,
-            int newType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isSequential,
-            SecurityContext securityContext
-    );
-
-    boolean convertPartition(long partitionTimestamp);
 
     void changeColumnType(
             CharSequence columnName,

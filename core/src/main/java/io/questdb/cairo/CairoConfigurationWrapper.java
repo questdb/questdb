@@ -551,8 +551,8 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean getPartitionO3OverwriteControlEnabled() {
-        return getDelegate().getPartitionO3OverwriteControlEnabled();
+    public boolean isPartitionO3OverwriteControlEnabled() {
+        return getDelegate().isPartitionO3OverwriteControlEnabled();
     }
 
     @Override

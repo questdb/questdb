@@ -232,7 +232,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     }
 
                     if (convertToParquet) {
-                        engine.ddl(
+                        engine.execute(
                                 "alter table test1 convert partition to parquet where timestamp >= 0",
                                 sqlExecutionContext
                         );
@@ -657,7 +657,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     engine.execute("CREATE TABLE mapping ( id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp ) timestamp(ts)", sqlExecutionContext);
                     engine.execute("insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
                     if (convertToParquet) {
-                        ddl(
+                        execute(
                                 compiler,
                                 "alter table price convert partition to parquet where ts >= 0",
                                 sqlExecutionContext
@@ -692,7 +692,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     );
                     engine.execute("insert into tab select x::timestamp, x%10, 't' || (x%10) from long_sequence(10)", sqlExecutionContext);
                     if (convertToParquet) {
-                        ddl(
+                        execute(
                                 compiler,
                                 "alter table tab convert partition to parquet where ts >= 0",
                                 sqlExecutionContext
@@ -732,7 +732,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     );
                     engine.execute("insert into tab select (x * 1000 * 1000 * 60)::timestamp, (x * 1000 * 1000 * 60)::timestamp, x%10, 't' || (x%10) from long_sequence(10000)", sqlExecutionContext);
                     if (convertToParquet) {
-                        ddl(
+                        execute(
                                 compiler,
                                 "alter table tab convert partition to parquet where ts >= 0",
                                 sqlExecutionContext
@@ -778,7 +778,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     );
                     engine.execute("insert into tab select (x * 1000 * 1000 * 60)::timestamp, (x * 1000 * 1000 * 60)::timestamp, x%10, 't' || (x%10) from long_sequence(10000)", sqlExecutionContext);
                     if (convertToParquet) {
-                        ddl(
+                        execute(
                                 compiler,
                                 "alter table tab convert partition to parquet where ts >= 0",
                                 sqlExecutionContext
@@ -928,7 +928,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     );
                     engine.execute("insert into price select x::timestamp, 't' || (x%5), rnd_double()  from long_sequence(100000)", sqlExecutionContext);
                     if (convertToParquet) {
-                        ddl(
+                        execute(
                                 compiler,
                                 "alter table price convert partition to parquet where ts >= 0",
                                 sqlExecutionContext

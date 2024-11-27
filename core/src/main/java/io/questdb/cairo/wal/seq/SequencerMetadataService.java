@@ -84,16 +84,6 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public boolean convertPartition(long partitionTimestamp) {
-        return false;
-    }
-
-    @Override
-    public void changeColumnType(CharSequence name, int newType, int symbolCapacity, boolean symbolCacheFlag, boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext) {
-        metadata.changeColumnType(name, newType);
-    }
-
-    @Override
     public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
         return false;
     }

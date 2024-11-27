@@ -81,9 +81,9 @@ public class TestServerMain extends ServerMain {
     public void compile(String sql) {
         try {
             if (sqlExecutionContext == null) {
-                getEngine().compile(sql);
+                getEngine().execute(sql);
             } else {
-                getEngine().compile(sql, sqlExecutionContext);
+                getEngine().execute(sql, sqlExecutionContext);
             }
         } catch (SqlException e) {
             throw new AssertionError(e);

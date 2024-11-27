@@ -105,7 +105,7 @@ public class TimestampFinderTest extends AbstractCairoTest {
             }
 
             // convert x to parquet
-            ddl("alter table x convert partition to parquet where timestamp >= 0");
+            execute("alter table x convert partition to parquet where timestamp >= 0");
 
             NativeTimestampFinder oracleFinder = new NativeTimestampFinder();
             try (

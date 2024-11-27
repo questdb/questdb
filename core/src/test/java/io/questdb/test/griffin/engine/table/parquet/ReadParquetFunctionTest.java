@@ -206,11 +206,11 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     @Test
     public void testFileSchemaChanged() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " x id," +
                     " timestamp_sequence(0,10000) as ts" +
                     " from long_sequence(1))");
-            ddl("create table y as (select" +
+            execute("create table y as (select" +
                     " x id," +
                     " 'foobar' str," +
                     " timestamp_sequence(0,10000) as ts" +

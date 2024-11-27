@@ -41,17 +41,17 @@ public class IntervalIntrinsicTest extends AbstractCairoTest {
     @Test
     public void testBasic() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (ts timestamp) timestamp(ts) partition by day;");
-            ddl("create table oracle (ts timestamp);");
+            execute("create table x (ts timestamp) timestamp(ts) partition by day;");
+            execute("create table oracle (ts timestamp);");
 
-            insert("insert into x values (1)");
-            insert("insert into x values (1);");
-            insert("insert into x values (1);");
-            insert("insert into x values (3);");
-            insert("insert into x values (3);");
-            insert("insert into x values (3);");
+            execute("insert into x values (1)");
+            execute("insert into x values (1);");
+            execute("insert into x values (1);");
+            execute("insert into x values (3);");
+            execute("insert into x values (3);");
+            execute("insert into x values (3);");
 
-            insert("insert into oracle select * from x;");
+            execute("insert into oracle select * from x;");
 
             // ASC exact
             String expected = "ts\n" +

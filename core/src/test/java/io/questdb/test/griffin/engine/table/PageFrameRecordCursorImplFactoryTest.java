@@ -257,7 +257,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
                 try (FullFwdPartitionFrameCursorFactory frameFactory = new FullFwdPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
-                    PageFrameFwdRowCursorFactory rowCursorFactory = new PageFrameFwdRowCursorFactory(); // stub RowCursorFactory
+                    FwdPageFrameRowCursorFactory rowCursorFactory = new FwdPageFrameRowCursorFactory(); // stub RowCursorFactory
                     try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
@@ -366,7 +366,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
                 try (FullFwdPartitionFrameCursorFactory frameFactory = new FullFwdPartitionFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata)) {
-                    PageFrameFwdRowCursorFactory rowCursorFactory = new PageFrameFwdRowCursorFactory(); // stub RowCursorFactory
+                    FwdPageFrameRowCursorFactory rowCursorFactory = new FwdPageFrameRowCursorFactory(); // stub RowCursorFactory
                     try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,

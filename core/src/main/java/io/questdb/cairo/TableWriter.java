@@ -1940,16 +1940,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (removedCount > 0) {
             if (txWriter.getPartitionCount() > 0) {
                 if (firstPartitionDropped) {
-                    minTimestamp = readMinTimestamp(txWriter.getPartitionTimestampByIndex(1));
+                    minTimestamp = readMinTimestamp(1);
                     txWriter.setMinTimestamp(minTimestamp);
                 }
 
                 if (activePartitionDropped) {
-                    long activePartitionTs = txWriter.getPartitionTimestampByIndex(txWriter.getPartitionCount() - 1);
-                    long activePartitionRows = txWriter.getPartitionSize(txWriter.getPartitionCount() - 1);
-                    setPathForPartition(path.trimTo(pathSize), partitionBy, activePartitionTs, txWriter.getPartitionNameTxn(txWriter.getPartitionCount() - 1));
+                    final int partitionIndex = txWriter.getPartitionCount() - 1;
+                    long activePartitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                    long activePartitionRows = txWriter.getPartitionSize(partitionIndex);
+                    long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+                    long txn = txWriter.getPartitionNameTxn(partitionIndex);
+                    setPathForNativePartition(path.trimTo(pathSize), partitionBy, activePartitionTs, txn);
                     try {
-                        readPartitionMinMax(ff, activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), activePartitionRows);
+                        readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), parquetSize, activePartitionRows);
                         maxTimestamp = attachMaxTimestamp;
                     } finally {
                         path.trimTo(pathSize);

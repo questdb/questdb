@@ -103,7 +103,7 @@ public class FullFwdPartitionFrameCursorFactoryTest extends AbstractCairoTest {
             }
 
             if (convertToParquet) {
-                ddl("alter table x convert partition to parquet where timestamp >= 0;");
+                execute("alter table x convert partition to parquet where timestamp >= 0;");
             }
 
             try (FullFwdPartitionFrameCursorFactory factory = new FullFwdPartitionFrameCursorFactory(tableToken, 0, metadata)) {

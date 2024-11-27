@@ -872,15 +872,15 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             assertContent(expected, tableName);
 
             engine.clear();
-            ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
             renameDetachedToAttachable(tableName, "2022-06-01");
-            ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
             engine.clear();
-            ddl("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
-            ddl("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
             renameDetachedToAttachable(tableName, "2022-06-01");
-            ddl("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
 
             assertContent(expected, tableName);
         });

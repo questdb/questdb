@@ -34,7 +34,11 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.seq.TableRecordMetadataSink;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
@@ -148,12 +152,6 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 columnNameIndexMap,
                 columnMetadata
         );
-        columnCount++;
-        structureVersion++;
-    }
-
-    public void changeColumnType(CharSequence columnName, int newType) {
-        TableUtils.changeColumnTypeInMetadata(columnName, newType, columnNameIndexMap, columnMetadata);
         columnCount++;
         structureVersion++;
     }

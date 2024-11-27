@@ -6995,7 +6995,7 @@ nodejs code:
                     // since PG JDBC does use phantom references to track statement instances
                     // and close them when they are GCed
                     statements.add(stmt);
-                    try (ResultSet ignore = stmt.executeQuery("select * from x");) {
+                    try (ResultSet ignore = stmt.executeQuery("select * from x")) {
                         // consume result set
                     }
                 }
@@ -12519,7 +12519,7 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer server = createPGServer(1);
+                    IPGWireServer server = createPGServer(1);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -12571,28 +12571,11 @@ create table tab as (
         });
     }
 
-    private void testSemicolon(boolean simpleQueryMode) throws Exception {
-        skipOnWalRun(); // non-partitioned table
-        assertMemoryLeak(() -> {
-            try (final PGWireServer server = createPGServer(2);
-                 final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), simpleQueryMode, true);
-                        final PreparedStatement statement = connection.prepareStatement(";;")
-                ) {
-                    statement.execute();
-                }
-            }
-        });
-    }
-
     private void testTableSchemaChange(boolean simple) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer server = createPGServer(1);
+                    IPGWireServer server = createPGServer(1);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);

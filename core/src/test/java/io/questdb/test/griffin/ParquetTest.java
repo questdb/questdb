@@ -39,18 +39,18 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testColTops() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (id long, ts timestamp) timestamp(ts) partition by month;");
-            insert("insert into x values(1, '2024-06-10T00:00:00.000000Z');");
-            insert("insert into x values(2, '2024-06-11T00:00:00.000000Z');");
-            insert("insert into x values(3, '2024-06-12T00:00:00.000000Z');");
-            insert("insert into x values(4, '2024-06-12T00:00:01.000000Z');");
-            insert("insert into x values(5, '2024-06-15T00:00:00.000000Z');");
-            insert("insert into x values(6, '2024-06-12T00:00:02.000000Z');");
+            execute("create table x (id long, ts timestamp) timestamp(ts) partition by month;");
+            execute("insert into x values(1, '2024-06-10T00:00:00.000000Z');");
+            execute("insert into x values(2, '2024-06-11T00:00:00.000000Z');");
+            execute("insert into x values(3, '2024-06-12T00:00:00.000000Z');");
+            execute("insert into x values(4, '2024-06-12T00:00:01.000000Z');");
+            execute("insert into x values(5, '2024-06-15T00:00:00.000000Z');");
+            execute("insert into x values(6, '2024-06-12T00:00:02.000000Z');");
 
-            ddl("alter table x add column a int;");
-            insert("insert into x values(7, '2024-06-10T00:00:00.000000Z', 1);");
+            execute("alter table x add column a int;");
+            execute("insert into x values(7, '2024-06-10T00:00:00.000000Z', 1);");
 
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
             assertSql(
                     "id\tts\ta\n" +
                             "1\t2024-06-10T00:00:00.000000Z\tnull\n" +
@@ -68,13 +68,13 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testFilterAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by hour;"
             );
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             assertSql(
                     "id\tts\n" +
@@ -89,16 +89,16 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testIndex() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
-            insert("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
-            insert("insert into x values('k2', '2024-06-11T00:00:00.000000Z');");
-            insert("insert into x values('k3', '2024-06-12T00:00:00.000000Z');");
-            insert("insert into x values('k1', '2024-06-12T00:00:01.000000Z');");
-            insert("insert into x values('k2', '2024-06-15T00:00:00.000000Z');");
-            insert("insert into x values('k3', '2024-06-12T00:00:02.000000Z');");
+            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
+            execute("insert into x values('k2', '2024-06-11T00:00:00.000000Z');");
+            execute("insert into x values('k3', '2024-06-12T00:00:00.000000Z');");
+            execute("insert into x values('k1', '2024-06-12T00:00:01.000000Z');");
+            execute("insert into x values('k2', '2024-06-15T00:00:00.000000Z');");
+            execute("insert into x values('k3', '2024-06-12T00:00:02.000000Z');");
 
-            ddl("alter table x alter column id add index;");
-            insert("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
+            execute("alter table x alter column id add index;");
+            execute("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
 
             final String expected = "id\tts\n" +
                     "k1\t2024-06-10T00:00:00.000000Z\n" +
@@ -106,17 +106,17 @@ public class ParquetTest extends AbstractCairoTest {
                     "k1\t2024-06-12T00:00:01.000000Z\n";
             final String query = "x where id = 'k1'";
 
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
             assertSql(expected, query);
 
-            ddl("alter table x convert partition to native where ts >= 0");
+            execute("alter table x convert partition to native where ts >= 0");
             assertSql(expected, query);
 
-            ddl("alter table x convert partition to parquet where ts >= 0");
-            ddl("alter table x alter column id drop index;");
+            execute("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x alter column id drop index;");
             assertSql(expected, query);
 
-            ddl("alter table x alter column id add index;");
+            execute("alter table x alter column id add index;");
             assertSql(expected, query);
         });
     }
@@ -126,24 +126,24 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testIndexBumpedColumnVersion() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
 
             // bump column version
-            ddl("alter table x drop column id;");
-            ddl("alter table x add column id symbol;");
+            execute("alter table x drop column id;");
+            execute("alter table x add column id symbol;");
 
-            insert("insert into x (id, ts) values('k1', '2024-06-10T01:00:00.000000Z');");
-            insert("insert into x (id, ts) values('k2', '2024-06-11T01:00:00.000000Z');");
-            insert("insert into x (id, ts) values('k3', '2024-06-12T01:00:00.000000Z');");
-            insert("insert into x (id, ts) values('k1', '2024-06-12T01:00:01.000000Z');");
-            insert("insert into x (id, ts) values('k2', '2024-06-15T01:00:00.000000Z');");
-            insert("insert into x (id, ts) values('k3', '2024-06-12T01:00:02.000000Z');");
+            execute("insert into x (id, ts) values('k1', '2024-06-10T01:00:00.000000Z');");
+            execute("insert into x (id, ts) values('k2', '2024-06-11T01:00:00.000000Z');");
+            execute("insert into x (id, ts) values('k3', '2024-06-12T01:00:00.000000Z');");
+            execute("insert into x (id, ts) values('k1', '2024-06-12T01:00:01.000000Z');");
+            execute("insert into x (id, ts) values('k2', '2024-06-15T01:00:00.000000Z');");
+            execute("insert into x (id, ts) values('k3', '2024-06-12T01:00:02.000000Z');");
 
             // bump column version one more time
-            ddl("alter table x alter column id add index;");
-            ddl("alter table x alter column id drop index;");
+            execute("alter table x alter column id add index;");
+            execute("alter table x alter column id drop index;");
 
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             final String expected = "ts\tid\n" +
                     "2024-06-10T01:00:00.000000Z\tk1\n" +
@@ -156,7 +156,7 @@ public class ParquetTest extends AbstractCairoTest {
 
             assertSql(expected, query);
 
-            ddl("alter table x convert partition to native where ts >= 0");
+            execute("alter table x convert partition to native where ts >= 0");
             assertSql(expected, query);
         });
     }
@@ -164,19 +164,19 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testIndexColTopColumn() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (ts timestamp) timestamp(ts) partition by day;");
-            insert("insert into x values('2024-06-10T00:00:00.000000Z');");
+            execute("create table x (ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into x values('2024-06-10T00:00:00.000000Z');");
 
-            ddl("alter table x add column id symbol");
-            insert("insert into x values('2024-06-11T00:00:00.000000Z', 'k1');");
-            insert("insert into x values('2024-06-12T00:00:00.000000Z', 'k2');");
-            insert("insert into x values('2024-06-12T00:00:01.000000Z', 'k3');");
-            insert("insert into x values('2024-06-15T00:00:00.000000Z', 'k3');");
+            execute("alter table x add column id symbol");
+            execute("insert into x values('2024-06-11T00:00:00.000000Z', 'k1');");
+            execute("insert into x values('2024-06-12T00:00:00.000000Z', 'k2');");
+            execute("insert into x values('2024-06-12T00:00:01.000000Z', 'k3');");
+            execute("insert into x values('2024-06-15T00:00:00.000000Z', 'k3');");
 
-            ddl("alter table x alter column id add index;");
-            insert("insert into x values('2024-06-10T00:00:00.000000Z', 'k1');");
+            execute("alter table x alter column id add index;");
+            execute("insert into x values('2024-06-10T00:00:00.000000Z', 'k1');");
 
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
             assertSql(
                     "ts\tid\n" +
                             "2024-06-10T00:00:00.000000Z\tk1\n" +
@@ -189,20 +189,20 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testIndexO3Writes() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
-            insert("insert into x values('k1', '2024-06-10T01:00:00.000000Z');");
-            insert("insert into x values('k2', '2024-06-11T01:00:00.000000Z');");
-            insert("insert into x values('k3', '2024-06-12T01:00:00.000000Z');");
-            insert("insert into x values('k1', '2024-06-12T01:00:01.000000Z');");
-            insert("insert into x values('k2', '2024-06-15T01:00:00.000000Z');");
-            insert("insert into x values('k3', '2024-06-12T01:00:02.000000Z');");
+            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("insert into x values('k1', '2024-06-10T01:00:00.000000Z');");
+            execute("insert into x values('k2', '2024-06-11T01:00:00.000000Z');");
+            execute("insert into x values('k3', '2024-06-12T01:00:00.000000Z');");
+            execute("insert into x values('k1', '2024-06-12T01:00:01.000000Z');");
+            execute("insert into x values('k2', '2024-06-15T01:00:00.000000Z');");
+            execute("insert into x values('k3', '2024-06-12T01:00:02.000000Z');");
 
-            ddl("alter table x convert partition to parquet where ts >= 0");
-            ddl("alter table x alter column id add index;");
+            execute("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x alter column id add index;");
 
-            insert("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
-            insert("insert into x values('k1', '2024-06-11T00:00:00.000000Z');");
-            insert("insert into x values('k1', '2024-06-12T00:00:00.000000Z');");
+            execute("insert into x values('k1', '2024-06-10T00:00:00.000000Z');");
+            execute("insert into x values('k1', '2024-06-11T00:00:00.000000Z');");
+            execute("insert into x values('k1', '2024-06-12T00:00:00.000000Z');");
 
             final String expected = "id\tts\n" +
                     "k1\t2024-06-10T00:00:00.000000Z\n" +
@@ -214,7 +214,7 @@ public class ParquetTest extends AbstractCairoTest {
 
             assertSql(expected, query);
 
-            ddl("alter table x convert partition to native where ts >= 0");
+            execute("alter table x convert partition to native where ts >= 0");
             assertSql(expected, query);
         });
     }
@@ -222,25 +222,25 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testIndexO3WritesBumpedColumnVersion() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
 
-            insert("insert into x (id, ts) values('k1', '2024-06-10T01:00:00.000000Z');");
-            insert("insert into x (id, ts) values('k2', '2024-06-11T01:00:00.000000Z');");
-            insert("insert into x (id, ts) values('k3', '2024-06-12T01:00:00.000000Z');");
-            insert("insert into x (id, ts) values('k1', '2024-06-12T01:00:01.000000Z');");
-            insert("insert into x (id, ts) values('k2', '2024-06-15T01:00:00.000000Z');");
-            insert("insert into x (id, ts) values('k3', '2024-06-12T01:00:02.000000Z');");
+            execute("insert into x (id, ts) values('k1', '2024-06-10T01:00:00.000000Z');");
+            execute("insert into x (id, ts) values('k2', '2024-06-11T01:00:00.000000Z');");
+            execute("insert into x (id, ts) values('k3', '2024-06-12T01:00:00.000000Z');");
+            execute("insert into x (id, ts) values('k1', '2024-06-12T01:00:01.000000Z');");
+            execute("insert into x (id, ts) values('k2', '2024-06-15T01:00:00.000000Z');");
+            execute("insert into x (id, ts) values('k3', '2024-06-12T01:00:02.000000Z');");
 
             // bump column version
-            ddl("alter table x alter column id add index;");
-            ddl("alter table x alter column id drop index;");
+            execute("alter table x alter column id add index;");
+            execute("alter table x alter column id drop index;");
 
-            ddl("alter table x convert partition to parquet where ts >= 0");
-            ddl("alter table x alter column id add index;");
+            execute("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x alter column id add index;");
 
-            insert("insert into x (id, ts) values('k1', '2024-06-10T00:00:00.000000Z');");
-            insert("insert into x (id, ts) values('k1', '2024-06-11T00:00:00.000000Z');");
-            insert("insert into x (id, ts) values('k1', '2024-06-12T00:00:00.000000Z');");
+            execute("insert into x (id, ts) values('k1', '2024-06-10T00:00:00.000000Z');");
+            execute("insert into x (id, ts) values('k1', '2024-06-11T00:00:00.000000Z');");
+            execute("insert into x (id, ts) values('k1', '2024-06-12T00:00:00.000000Z');");
 
             final String expected = "id\tts\n" +
                     "k1\t2024-06-10T00:00:00.000000Z\n" +
@@ -252,7 +252,7 @@ public class ParquetTest extends AbstractCairoTest {
 
             assertSql(expected, query);
 
-            ddl("alter table x convert partition to native where ts >= 0");
+            execute("alter table x convert partition to native where ts >= 0");
             assertSql(expected, query);
         });
     }
@@ -262,13 +262,13 @@ public class ParquetTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
 
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by hour;"
             );
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             assertSql(
                     "id\tts\n" +
@@ -283,13 +283,13 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testMixedPartitionsNativeLast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by hour;"
             );
-            ddl("alter table x convert partition to parquet where ts = '1970-01-01T02'");
+            execute("alter table x convert partition to parquet where ts = '1970-01-01T02'");
 
             assertSql(
                     "id\tts\n" +
@@ -311,13 +311,13 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testMixedPartitionsParquetLast() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by hour;"
             );
-            ddl("alter table x convert partition to parquet where ts = '1970-01-01T01'");
+            execute("alter table x convert partition to parquet where ts = '1970-01-01T01'");
 
             assertSql(
                     "id\tts\n" +
@@ -339,13 +339,13 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by hour;"
             );
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             assertSql(
                     "id\tts\n" +
@@ -369,13 +369,13 @@ public class ParquetTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
 
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by hour;"
             );
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             assertSql(
                     "id\tts\n" +
@@ -390,13 +390,13 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testNonWildcardSelect1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by hour;"
             );
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             assertSql(
                     "1\tts\tid\tid2\tts2\n" +
@@ -418,13 +418,13 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testNonWildcardSelect2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by hour;"
             );
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             assertSql(
                     "ts\n" +
@@ -446,13 +446,13 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testO3Inserts() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x (x int, ts timestamp) timestamp(ts) partition by day;");
+            execute("create table x (x int, ts timestamp) timestamp(ts) partition by day;");
 
-            insert("insert into x(x,ts) values ('1', '2020-01-01T00:00:00.000Z');");
-            insert("insert into x(x,ts) values ('2', '2020-01-02T00:00:00.000Z');");
-            insert("insert into x(x,ts) values ('3', '2020-01-03T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('1', '2020-01-01T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('2', '2020-01-02T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('3', '2020-01-03T00:00:00.000Z');");
 
-            ddl("alter table x convert partition to parquet list '2020-01-02';");
+            execute("alter table x convert partition to parquet list '2020-01-02';");
             assertSql(
                     "x\tts\n" +
                             "1\t2020-01-01T00:00:00.000000Z\n" +
@@ -461,9 +461,9 @@ public class ParquetTest extends AbstractCairoTest {
                     "x"
             );
 
-            insert("insert into x(x,ts) values ('1', '2020-01-01T00:00:00.000Z');");
-            insert("insert into x(x,ts) values ('2', '2020-01-02T00:00:00.000Z');");
-            insert("insert into x(x,ts) values ('3', '2020-01-03T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('1', '2020-01-01T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('2', '2020-01-02T00:00:00.000Z');");
+            execute("insert into x(x,ts) values ('3', '2020-01-03T00:00:00.000Z');");
 
             assertSql(
                     "x\tts\n" +
@@ -481,13 +481,13 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testOrderBy1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by hour;"
             );
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             // Order by single long column uses only a single record
             assertSql(
@@ -510,13 +510,13 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testOrderBy2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x%5 id1, x id2, timestamp_sequence(0,1000000000) as ts\n" +
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by hour;"
             );
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             // Order by single long column uses both records
             assertSql(
@@ -539,13 +539,13 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testSinglePartition() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x id, timestamp_sequence(0,10000000) as ts\n" +
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by day;"
             );
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             assertSql(
                     "id\tts\n" +
@@ -567,7 +567,7 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testSymbols() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x (\n" +
                             "  id int,\n" +
                             "  ts timestamp,\n" +
@@ -576,37 +576,37 @@ public class ParquetTest extends AbstractCairoTest {
             );
 
             // Day 0 -- using every symbol, two nulls
-            insert("insert into x values (0, 0, 'SYM_A')");
-            insert("insert into x values (1, 10000000, 'SYM_A')");
-            insert("insert into x values (2, 20000000, 'SYM_B_junk123')");
-            insert("insert into x values (3, 30000000, 'SYM_C_junk123123123123')");
-            insert("insert into x values (4, 40000000, 'SYM_D_junk12319993')");
-            insert("insert into x values (5, 50000000, 'SYM_E_junk9923')");
-            insert("insert into x values (6, 60000000, 'SYM_A')");
-            insert("insert into x values (7, 70000000, NULL)");
-            insert("insert into x values (8, 80000000, 'SYM_C_junk123123123123')");
-            insert("insert into x values (9, 90000000, NULL)");
+            execute("insert into x values (0, 0, 'SYM_A')");
+            execute("insert into x values (1, 10000000, 'SYM_A')");
+            execute("insert into x values (2, 20000000, 'SYM_B_junk123')");
+            execute("insert into x values (3, 30000000, 'SYM_C_junk123123123123')");
+            execute("insert into x values (4, 40000000, 'SYM_D_junk12319993')");
+            execute("insert into x values (5, 50000000, 'SYM_E_junk9923')");
+            execute("insert into x values (6, 60000000, 'SYM_A')");
+            execute("insert into x values (7, 70000000, NULL)");
+            execute("insert into x values (8, 80000000, 'SYM_C_junk123123123123')");
+            execute("insert into x values (9, 90000000, NULL)");
 
             // Day 1, NULLS, using two symbols
-            insert("insert into x values (10, 86400000000, 'SYM_B_junk123')");
-            insert("insert into x values (11, 86410000000, NULL)");
-            insert("insert into x values (12, 86420000000, 'SYM_B_junk123')");
-            insert("insert into x values (13, 86430000000, 'SYM_B_junk123')");
-            insert("insert into x values (14, 86440000000, 'SYM_B_junk123')");
-            insert("insert into x values (15, 86450000000, NULL)");
-            insert("insert into x values (16, 86460000000, NULL)");
-            insert("insert into x values (17, 86470000000, 'SYM_D_junk12319993')");
-            insert("insert into x values (18, 86480000000, NULL)");
-            insert("insert into x values (19, 86490000000, NULL)");
+            execute("insert into x values (10, 86400000000, 'SYM_B_junk123')");
+            execute("insert into x values (11, 86410000000, NULL)");
+            execute("insert into x values (12, 86420000000, 'SYM_B_junk123')");
+            execute("insert into x values (13, 86430000000, 'SYM_B_junk123')");
+            execute("insert into x values (14, 86440000000, 'SYM_B_junk123')");
+            execute("insert into x values (15, 86450000000, NULL)");
+            execute("insert into x values (16, 86460000000, NULL)");
+            execute("insert into x values (17, 86470000000, 'SYM_D_junk12319993')");
+            execute("insert into x values (18, 86480000000, NULL)");
+            execute("insert into x values (19, 86490000000, NULL)");
 
             // Day 2, no nulls, using first and last symbols only
-            insert("insert into x values (20, 172800000000, 'SYM_A')");
-            insert("insert into x values (21, 172810000000, 'SYM_A')");
-            insert("insert into x values (22, 172820000000, 'SYM_A')");
-            insert("insert into x values (23, 172830000000, 'SYM_A')");
-            insert("insert into x values (24, 172840000000, 'SYM_E_junk9923')");
-            insert("insert into x values (25, 172850000000, 'SYM_E_junk9923')");
-            insert("insert into x values (26, 172860000000, 'SYM_E_junk9923')");
+            execute("insert into x values (20, 172800000000, 'SYM_A')");
+            execute("insert into x values (21, 172810000000, 'SYM_A')");
+            execute("insert into x values (22, 172820000000, 'SYM_A')");
+            execute("insert into x values (23, 172830000000, 'SYM_A')");
+            execute("insert into x values (24, 172840000000, 'SYM_E_junk9923')");
+            execute("insert into x values (25, 172850000000, 'SYM_E_junk9923')");
+            execute("insert into x values (26, 172860000000, 'SYM_E_junk9923')");
 
             TestUtils.LeakProneCode checkData = () -> assertQueryNoLeakCheck(
                     "id\tts\tname\n" +
@@ -647,7 +647,7 @@ public class ParquetTest extends AbstractCairoTest {
 
             checkData.run();
 
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             checkData.run();
         });
@@ -666,13 +666,13 @@ public class ParquetTest extends AbstractCairoTest {
     private void testTimeFilter(int rowGroupSize) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table x as (\n" +
                             "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
                             "  from long_sequence(100)\n" +
                             ") timestamp(ts) partition by day;"
             );
-            ddl("alter table x convert partition to parquet where ts >= 0");
+            execute("alter table x convert partition to parquet where ts >= 0");
 
             // fwd
             assertSql(

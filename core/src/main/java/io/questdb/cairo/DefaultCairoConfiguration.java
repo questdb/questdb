@@ -563,11 +563,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean getPartitionO3OverwriteControlEnabled() {
-        return false;
-    }
-
-    @Override
     public long getPartitionO3SplitMinSize() {
         return 50 * Numbers.SIZE_1MB;
     }

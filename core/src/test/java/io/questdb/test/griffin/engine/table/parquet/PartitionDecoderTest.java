@@ -124,7 +124,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
 
         // We first set up the table without memory limits.
         assertMemoryLeak(() -> {
-            ddl("create table x as (select" +
+            execute("create table x as (select" +
                     " x id," +
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
@@ -211,7 +211,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
             ); // generate 2 partitions
 
             // Convert the partition to parquet via SQL.
-            ddl("alter table x convert partition to parquet where designated_ts >= 0");
+            execute("alter table x convert partition to parquet where designated_ts >= 0");
 
             long fd = -1;
             long addr = 0;

@@ -62,8 +62,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("alter table " + tableName + " convert partition to parquet where timestamp > 0");
 
             assertPartitionExists(tableName, "2024-06-10.8");
-            assertPartitionExists(tableName, "2024-06-11.7");
-            assertPartitionExists(tableName, "2024-06-12.6");
+            assertPartitionExists(tableName, "2024-06-11.6");
+            assertPartitionExists(tableName, "2024-06-12.7");
             // last partition is not converted
         });
     }
@@ -85,8 +85,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("alter table " + tableName + " convert partition to parquet where timestamp > 0");
 
             assertPartitionExists(tableName, "2024-06-10.8");
-            assertPartitionExists(tableName, "2024-06-11.7");
-            assertPartitionExists(tableName, "2024-06-12.6");
+            assertPartitionExists(tableName, "2024-06-11.6");
+            assertPartitionExists(tableName, "2024-06-12.7");
 
             execute("alter table " + tableName + " convert partition to native where timestamp > 0");
             assertPartitionDoesNotExist(tableName, "2024-06-10.12");
@@ -339,8 +339,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("alter table " + tableName + " convert partition to parquet where timestamp > 0 and timestamp < '2024-06-15'");
 
             assertPartitionExists(tableName, "2024-06-10.10");
-            assertPartitionExists(tableName, "2024-06-11.9");
-            assertPartitionExists(tableName, "2024-06-12.8");
+            assertPartitionExists(tableName, "2024-06-11.8");
+            assertPartitionExists(tableName, "2024-06-12.9");
 
             assertPartitionDoesNotExist(tableName, "2024-06-15.3");
         });
