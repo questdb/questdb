@@ -146,67 +146,69 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                         sink.put(" BYPASS ");
                     }
                     sink.put(" WAL");
+                }
 
-                    final CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
-                    final boolean withMaxUncommittedRows = table.getMaxUncommittedRows() != config.getMaxUncommittedRows();
-                    final boolean withO3MaxLag = table.getO3MaxLag() != config.getO3MaxLag();
-                    final boolean withRequired = withMaxUncommittedRows || withO3MaxLag;
+                final CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
+                final boolean withMaxUncommittedRows = table.getMaxUncommittedRows() != config.getMaxUncommittedRows();
+                final boolean withO3MaxLag = table.getO3MaxLag() != config.getO3MaxLag();
+                final boolean withRequired = withMaxUncommittedRows || withO3MaxLag;
 
-                    // WITH maxUncommittedRows=123, o3MaxLag=456
-                    if (withRequired) {
-                        sink.put('\n').put("WITH ");
-                        if (withMaxUncommittedRows) {
-                            sink.put("maxUncommittedRows=").put(table.getMaxUncommittedRows());
-                        }
-                        if (withO3MaxLag) {
-                            if (withMaxUncommittedRows) {
-                                sink.put(',');
-                            }
-                            sink.put("o3MaxLag=").put(table.getO3MaxLag());
-                        }
+                // WITH maxUncommittedRows=123, o3MaxLag=456
+                if (withRequired) {
+                    sink.put('\n').put("WITH ");
+                    if (withMaxUncommittedRows) {
+                        sink.put("maxUncommittedRows=").put(table.getMaxUncommittedRows());
                     }
-
-                    if (table.getIsSoftLink()) {
-                        if (withRequired) {
+                    if (withO3MaxLag) {
+                        if (withMaxUncommittedRows) {
                             sink.put(',');
                         }
-                        sink.put(" IN VOLUME ");
-
-                        FilesFacade ff = config.getFilesFacade();
-                        try (Path softLinkPath = new Path().of(config.getRoot()).concat(table.getDirectoryName())) {
-                            try (Path otherVolumePath = new Path()) {
-                                ff.readLink(softLinkPath, otherVolumePath);
-                                otherVolumePath.trimTo(otherVolumePath.size()
-                                        - table.getDirectoryName().length()  // look for directory
-                                        - 1 // get rid of trailing slash
-                                );
-                                CharSequence alias = config.getVolumeDefinitions().resolvePath(otherVolumePath.asAsciiCharSequence());
-
-                                if (alias == null) {
-                                    throw CairoException.nonCritical().put("could not find volume alias for table [table=").put(tableToken).put(']');
-                                } else {
-                                    sink.put(alias);
-                                }
-                            }
-                        }
-                    }
-
-                    // DEDUP UPSERT(key1, key2)
-                    if (table.getIsDedup()) {
-                        sink.put('\n');
-                        sink.put("DEDUP UPSERT KEYS(");
-                        for (int i = 0, n = (int) table.getColumnCount(); i < n; i++) {
-                            final CairoColumn column = table.getColumnQuiet(i);
-                            if (column.getIsDedupKey()) {
-                                sink.put(column.getName());
-                                sink.put(',');
-                            }
-                        }
-                        // drop the last comma
-                        sink.clear(sink.length() - 1);
-                        sink.put(')');
+                        sink.put("o3MaxLag=").put(table.getO3MaxLag());
                     }
                 }
+
+                // IN VOLUME OTHER_VOLUME
+                if (table.getIsSoftLink()) {
+                    if (withRequired) {
+                        sink.put(',');
+                    }
+                    sink.put(" IN VOLUME ");
+
+                    FilesFacade ff = config.getFilesFacade();
+                    try (Path softLinkPath = new Path().of(config.getRoot()).concat(table.getDirectoryName())) {
+                        try (Path otherVolumePath = new Path()) {
+                            ff.readLink(softLinkPath, otherVolumePath);
+                            otherVolumePath.trimTo(otherVolumePath.size()
+                                    - table.getDirectoryName().length()  // look for directory
+                                    - 1 // get rid of trailing slash
+                            );
+                            CharSequence alias = config.getVolumeDefinitions().resolvePath(otherVolumePath.asAsciiCharSequence());
+
+                            if (alias == null) {
+                                throw CairoException.nonCritical().put("could not find volume alias for table [table=").put(tableToken).put(']');
+                            } else {
+                                sink.put(alias);
+                            }
+                        }
+                    }
+                }
+
+                // DEDUP UPSERT(key1, key2)
+                if (table.getIsDedup()) {
+                    sink.put('\n');
+                    sink.put("DEDUP UPSERT KEYS(");
+                    for (int i = 0, n = (int) table.getColumnCount(); i < n; i++) {
+                        final CairoColumn column = table.getColumnQuiet(i);
+                        if (column.getIsDedupKey()) {
+                            sink.put(column.getName());
+                            sink.put(',');
+                        }
+                    }
+                    // drop the last comma
+                    sink.clear(sink.length() - 1);
+                    sink.put(')');
+                }
+
                 // todo - owned by/other enterprise needs?
                 sink.put(';');
                 hasRun = true;
