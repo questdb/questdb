@@ -2637,6 +2637,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
         try {
             engine.dropTable(path, tableToken);
+        } catch (CairoException ex) {
+            if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
+                // all good, table dropped already
+                return;
+            } else if (!op.ifExists() && ex.isTableDropped()) {
+                // Concurrently dropped, this should report table does not exist
+                throw CairoException.tableDoesNotExist(op.getTableName());
+            }
+            throw ex;
         } finally {
             queryRegistry.unregister(queryId, sqlExecutionContext);
         }
