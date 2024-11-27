@@ -430,6 +430,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
                         .address("localhost:" + port)
                         .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .retryTimeoutMillis(0)
                         .build()
                 ) {
                     sender.table(tableName)
@@ -437,7 +438,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             .symbol("y", "{6f1.0,2.5,3.0,4.5,5.0}")  // ensuring no array parsing for symbol
                             .longColumn("l1", 23452345)
                             .arrayColumn("a1", "{6f1.0,2.5,3.0,4.5,5.0}")
-                            .arrayColumn("a2", "{6i-1,0,100000000}")
+                            .arrayColumn("a2", "{6s-1,0,100000000}")
                             .atNow();
                     sender.flush();
                 }

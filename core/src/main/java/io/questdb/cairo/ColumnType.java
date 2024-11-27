@@ -164,13 +164,15 @@ public final class ColumnType {
     }
 
     public static ColumnTypeDriver getDriver(int columnType) {
-        switch (columnType) {
+        switch (tagOf(columnType)) {
             case STRING:
                 return StringTypeDriver.INSTANCE;
             case BINARY:
                 return BinaryTypeDriver.INSTANCE;
             case VARCHAR:
                 return VarcharTypeDriver.INSTANCE;
+            case ND_ARRAY:
+                return NdArrayTypeDriver.INSTANCE;
             default:
                 throw CairoException.critical(0).put("no driver for type: ").put(columnType);
         }
@@ -357,7 +359,10 @@ public final class ColumnType {
     }
 
     public static boolean isVarSize(int columnType) {
-        return columnType == STRING || columnType == BINARY || columnType == VARCHAR;
+        return columnType == STRING ||
+                columnType == BINARY ||
+                columnType == VARCHAR ||
+                tagOf(columnType) == ND_ARRAY;
     }
 
     public static boolean isVarchar(int columnType) {

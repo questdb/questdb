@@ -44,7 +44,7 @@ import io.questdb.std.str.Utf8s;
  * <p>Here are a few examples:</p>
  *
  * <p>A 1-D array of longs:</p>
- * <pre><code>{6i1,2,3}</code></pre>
+ * <pre><code>{6s1,2,3}</code></pre>
  *
  * <p>A 2-D array of doubles:</p>
  * <pre><code>
@@ -55,13 +55,13 @@ import io.questdb.std.str.Utf8s;
  * }
  * </code></pre>
  *
- * <p>The type marker is as follows: <code>[precision][number_class]</code></p>
+ * <p>The type marker is as follows: <code>[type_precision][type_class]</code></p>
  * <dl>
- *     <dt>precision</dt>
+ *     <dt>type_precision</dt>
  *     <dd>power of two of number of bits in the numeric type, e.g.
  *         <code>0=1 bit (bool)</code>, <code>2=2 bit int</code> .. <code>5=32 bit</code> .. <code>6=64 bit</code></dd>
- *     <dt>number_class</dt>
- *     <dd>type of number, <code>i</code> for signed integer, <code>u</code> for unsigned,
+ *     <dt>type_class</dt>
+ *     <dd>type of number, <code>s</code> for signed integer, <code>u</code> for unsigned,
  *         <code>f</code> for floating point</dd>
  * </dl>
  * <p><string>Obviously not all combinations are valid</strong>: Refer to `ColType.java`'s ND_ARRAY implementation.</p>
@@ -78,13 +78,12 @@ import io.questdb.std.str.Utf8s;
  *     {0, 8, 0, 0, 0}
  * }
  * </code></pre>
- *
  * <p><code>R</code> tags <strong>CSR</strong> and <code>C</code> tags <strong>CSC</strong>.</p>
  * <p>The three following arrays of numbers indicate:</p>
  * <ul>
  *   <li><code>{row_pointers/col_pointers}</code></li>
  *   <li><code>{column_indices/row_indices}</code></li>
- *   <li><code>{values}</code></li>
+ *   <li><code>values</code></li>
  * </ul>
  */
 public class NdArrParser implements QuietCloseable {
@@ -110,7 +109,7 @@ public class NdArrParser implements QuietCloseable {
      * <p>When format is <code>NdArrFormat.CSR</code> or <code>NdArrFormat.CSC</code>, this field is set after parsing.
      */
     private final IntList dims = new IntList(8);
-    private final DirectByteSink elements = new DirectByteSink(64);  // TODO(amunra): Memory Tag
+    private final DirectByteSink values = new DirectByteSink(64);  // TODO(amunra): Memory Tag
     private final DirectUtf8String parsing = new DirectUtf8String();
     private final DirectUtf8String token = new DirectUtf8String();
     private final DirectIntList sparseIndices = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
@@ -135,7 +134,7 @@ public class NdArrParser implements QuietCloseable {
      * and we can't determine the elementsCount if the <code>type</code>
      * has a precision smaller than a byte.</p>
      */
-    private int elementsCount = 0;
+    private int valuesCount = 0;
     private ErrorCode error = ErrorCode.NONE;
     private int format = NdArrFormat.UNDEFINED;
     private int type = ColumnType.UNDEFINED;
@@ -167,10 +166,9 @@ public class NdArrParser implements QuietCloseable {
 
     @Override
     public void close() {
-        Misc.free(elements);
+        Misc.free(values);
         Misc.free(sparsePointers);
         Misc.free(sparseIndices);
-        throw new UnsupportedOperationException("nyi");
     }
 
     /**
@@ -198,16 +196,16 @@ public class NdArrParser implements QuietCloseable {
      *
      * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
-    public DirectByteSequence getElements() {
-        return elements;
+    public DirectByteSequence getValues() {
+        return values;
     }
 
     /**
      * Number of elements returned by `getElements()`.
      * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
-    public int getElementsCount() {
-        return elementsCount;
+    public int getValuesCount() {
+        return valuesCount;
     }
 
     /**
@@ -251,7 +249,7 @@ public class NdArrParser implements QuietCloseable {
      * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
      */
     public boolean isNullArray() {
-        return elements.size() == 0;
+        return values.size() == 0;
     }
 
     /**
@@ -321,15 +319,9 @@ public class NdArrParser implements QuietCloseable {
         return (int) (parsing.lo() - baseLo);
     }
 
-    private void actualPutCodepoint(int codepoint) {
-        chEncodeTmp[0] = 0;
-        chEncodeTmp[1] = 0;
-        if (Character.toChars(codepoint, chEncodeTmp, 0) == 1) {
-            actual.put(chEncodeTmp[0]);
-        } else {
-            actual.put(chEncodeTmp[0]);
-            actual.put(chEncodeTmp[1]);
-        }
+    private void actualPutNextChar() {
+        char c = (char)(Utf8s.utf8CharDecode(parsing) >> 16);
+        actual.put(c);
     }
 
     private void clearError() {
@@ -407,7 +399,7 @@ public class NdArrParser implements QuietCloseable {
                 format = NdArrFormat.RM;
                 return;
             default:
-                actualPutCodepoint(Utf8s.utf8CharDecode(parsing));
+                actualPutNextChar();
                 unexpectedErrorMsg = "Invalid array format, must be one of 'C', 'R' or missing, not ";
                 error = ErrorCode.ND_ARR_UNEXPECTED;
                 break;
@@ -422,12 +414,10 @@ public class NdArrParser implements QuietCloseable {
         final byte b0 = parsing.byteAt(0);
         if (b0 != (byte) '{') {
             unexpectedErrorMsg = "expected '{', not ";
-            actualPutCodepoint(Utf8s.utf8CharDecode(parsing));
+            actualPutNextChar();
             error = ErrorCode.ND_ARR_UNEXPECTED;
             return;
         }
-
-        pushDim();
         parsing.advance();
     }
 
@@ -443,7 +433,7 @@ public class NdArrParser implements QuietCloseable {
                 return ch;
             default:
                 unexpectedErrorMsg = "Invalid number class, must be one of `u`, `s` of `f`, not ";
-                actualPutCodepoint(Utf8s.utf8CharDecode(parsing));
+                actualPutNextChar();
                 error = ErrorCode.ND_ARR_UNEXPECTED;
                 return 0;
         }
@@ -456,7 +446,7 @@ public class NdArrParser implements QuietCloseable {
         final char ch = (char) parsing.byteAt(0);
         if (ch < '0' || ch > '6') {
             unexpectedErrorMsg = "Invalid power of 2 for numeric precision. Must be one of 0, 1, 2, 3, 4, 6, not ";
-            actualPutCodepoint(Utf8s.utf8CharDecode(parsing));
+            actualPutNextChar();
             error = ErrorCode.ND_ARR_UNEXPECTED;
             return -1;
         }
@@ -477,7 +467,6 @@ public class NdArrParser implements QuietCloseable {
         if (error != ErrorCode.NONE) {
             return;
         }
-        pushDim();
 
         if (Utf8s.equalsUtf16("1.0,2.5,3.0,4.5,5.0}", parsing)) {
             assert type == ColumnType.buildNdArrayType('f', (byte) 6);  // ARRAY(DOUBLE)
@@ -486,18 +475,19 @@ public class NdArrParser implements QuietCloseable {
             elementsPutDouble(3.0);
             elementsPutDouble(4.5);
             elementsPutDouble(5.0);
+            dims.add(5);
             parsing.advance(20);
         } else if (Utf8s.equalsUtf16("-1,0,100000000}", parsing)) {
-            assert type == ColumnType.buildNdArrayType('i', (byte) 6);  // ARRAY(LONG)
+            assert type == ColumnType.buildNdArrayType('s', (byte) 6);  // ARRAY(LONG)
             elementsPutLong(-1);
             elementsPutLong(0);
             elementsPutLong(100000000);
+            dims.add(3);
             parsing.advance(15);
         } else {
             throw new UnsupportedOperationException("not yet implemented");
         }
 
-        popDim();
 
         // TODO(amunra): Complete the parser.
 //        final long endOfInput = parsing.hi();
@@ -531,13 +521,13 @@ public class NdArrParser implements QuietCloseable {
     }
 
     private void elementsPutLong(int n) {
-        elements.putLong(n);
-        ++elementsCount;
+        values.putLong(n);
+        ++valuesCount;
     }
 
     private void elementsPutDouble(double n) {
-        elements.putDouble(n);
-        ++elementsCount;
+        values.putDouble(n);
+        ++valuesCount;
     }
 
     /**
@@ -556,10 +546,10 @@ public class NdArrParser implements QuietCloseable {
         dims.clear();
         type = ColumnType.UNDEFINED;
         format = NdArrFormat.UNDEFINED;
-        elements.clear();
+        values.clear();
         sparsePointers.clear();
         sparseIndices.clear();
-        elementsCount = 0;
+        valuesCount = 0;
         baseLo = 0;
         format = NdArrFormat.UNDEFINED;
     }

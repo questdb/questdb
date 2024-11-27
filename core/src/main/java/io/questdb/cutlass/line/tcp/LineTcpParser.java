@@ -27,14 +27,16 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 
-public class LineTcpParser {
+public class LineTcpParser implements QuietCloseable {
 
     public static final byte ENTITY_TYPE_BOOLEAN = 6;
     public static final byte ENTITY_TYPE_BYTE = 17;
@@ -50,6 +52,7 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_INTEGER = 3;
     public static final byte ENTITY_TYPE_LONG = 14;
     public static final byte ENTITY_TYPE_LONG256 = 7;
+    public static final byte ENTITY_TYPE_ND_ARRAY = 22;
     public static final byte ENTITY_TYPE_NONE = (byte) 0xff; // visible for testing
     public static final byte ENTITY_TYPE_NULL = 0;
     public static final byte ENTITY_TYPE_SHORT = 16;
@@ -59,7 +62,6 @@ public class LineTcpParser {
     public static final byte ENTITY_TYPE_TIMESTAMP = 13;
     public static final byte ENTITY_TYPE_UUID = 20;
     public static final byte ENTITY_TYPE_VARCHAR = 21;
-    public static final byte ENTITY_TYPE_ND_ARRAY = 22;
     public static final byte ENTITY_UNIT_NONE = 0;
     public static final byte ENTITY_UNIT_NANO = ENTITY_UNIT_NONE + 1;
     public static final byte ENTITY_UNIT_MICRO = ENTITY_UNIT_NANO + 1;
@@ -99,6 +101,11 @@ public class LineTcpParser {
     private byte timestampUnit;
 
     public LineTcpParser() {
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjList(entityCache);
     }
 
     public long getBufferAddress() {
@@ -187,13 +194,6 @@ public class LineTcpParser {
             soFar.of(lineStart, bufAt + 1);
             System.err.println("entityHandler=" + entityHandler + ", braceCount=" + braceCount + ", soFar=`" + soFar + "`");
             byte b = Unsafe.getUnsafe().getByte(bufAt);
-
-            if ((char)b == '}') {
-                System.err.println("  -> }");
-            }
-            if ((char)b == 'i') {
-                System.err.println("  -> i");
-            }
 
             if (nEscapedChars == 0 && !controlBytes[b & 0xff]) {
                 // hot path
@@ -644,13 +644,19 @@ public class LineTcpParser {
         MISSING_FIELD_VALUE,
         MISSING_TAG_VALUE,
 
-        /** Unexpected early end of input */
+        /**
+         * Unexpected early end of input
+         */
         ND_ARR_TOO_SHORT,
 
-        /** Unexpected token found */
+        /**
+         * Unexpected token found
+         */
         ND_ARR_UNEXPECTED,
 
-        /** Invalid array dimension nesting. E.g. {{1, 2}, {1, 2, 3}} */
+        /**
+         * Invalid array dimension nesting. E.g. {{1, 2}, {1, 2, 3}}
+         */
         ND_ARR_UNALIGNED,
         ND_ARR_EARLY_TERMINATION, NONE
     }
@@ -659,15 +665,20 @@ public class LineTcpParser {
         MEASUREMENT_COMPLETE, BUFFER_UNDERFLOW, ERROR
     }
 
-    public class ProtoEntity {
+    public class ProtoEntity implements QuietCloseable {
         private final DirectUtf8String name = new DirectUtf8String();
+        private final NdArrParser ndArrParser = new NdArrParser();
         private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
         private double floatValue;
         private long longValue;
-        private final NdArrParser ndArrParser = new NdArrParser();
         private byte type = ENTITY_TYPE_NONE;
         private byte unit = ENTITY_UNIT_NONE;
+
+        @Override
+        public void close() {
+            Misc.free(ndArrParser);
+        }
 
         public boolean getBooleanValue() {
             return booleanValue;
@@ -785,10 +796,10 @@ public class LineTcpParser {
                     return false;
                 }
                 case '}': {
-                    // TODO(amunra): complete this, handle errors
-                    ndArrParser.parse(value);
+                    // TODO(amunra): I have no idea if this is a decent way of handling errors
+                    errorCode = ndArrParser.parse(value);
                     type = ENTITY_TYPE_ND_ARRAY;
-                    return true;
+                    return errorCode == ErrorCode.NONE;
                 }
                 // fall through
                 default:

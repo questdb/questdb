@@ -112,6 +112,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         recvBufStartOfMeasurement = recvBufEnd = recvBufPos = buffer = 0;
         Misc.free(ilpTudCache);
         Misc.free(symbolCachePool);
+        Misc.free(parser);
     }
 
     public void commit() {

@@ -44,11 +44,11 @@ public interface NdArrFormat {
      * Sparse, CSR
      * 32-bit int pointers/indices
      */
-    int CSR = RM + 1;  // = 1
+    int CSR = RM + 1;  // = 2
 
     /**
      * Sparse, CSC
      * 32-bit int pointers/indices
      */
-    int CSC = CSR + 1;  // = 2
+    int CSC = CSR + 1;  // = 3
 }
