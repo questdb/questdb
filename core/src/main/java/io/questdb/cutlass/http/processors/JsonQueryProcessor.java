@@ -580,6 +580,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         sendConfirmation(state, keepAliveHeader);
     }
 
+    private void executeCachedSelect(JsonQueryProcessorState state, RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
+        state.setCompilerNanos(0);
+        sqlExecutionContext.setCacheHit(true);
+        executeSelect(state, factory);
+    }
+
     private void executeDdl(
             JsonQueryProcessorState state,
             CompiledQuery cq,
@@ -599,12 +605,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         }
         metrics.jsonQuery().markComplete();
         sendConfirmation(state, keepAliveHeader);
-    }
-
-    private void executeCachedSelect(JsonQueryProcessorState state, RecordCursorFactory factory) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        state.setCompilerNanos(0);
-        sqlExecutionContext.setCacheHit(true);
-        executeSelect(state, factory);
     }
 
     //same as for select new but disallows caching of explain plans
