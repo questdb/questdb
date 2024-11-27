@@ -2685,7 +2685,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.critical().$("could not perform rollback [table=").$(tableToken).$(", msg=").$(e).I$();
                 distressed = true;
             }
-            assert distressed || (!inTransaction() && !o3InError);
+            // If it's a manual rollback call, throw exception to indicate that the rollback was not successful
+            // and writer must be closed.
+            checkDistressed();
         }
     }
 
