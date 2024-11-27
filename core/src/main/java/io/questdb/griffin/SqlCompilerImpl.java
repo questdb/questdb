@@ -2487,7 +2487,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 createTableOp.ignoreIfExists(),
                                 createTableOp,
                                 keepLock,
-                                volumeAlias != null
+                                volumeAlias != null ? volumeAlias.toString() : null
                         );
 
                         try {
@@ -2537,7 +2537,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         createTableOp.ignoreIfExists(),
                                         createTableOp,
                                         false,
-                                        volumeAlias != null
+                                        volumeAlias != null ? volumeAlias.toString() : null
                                 );
                             }
                         } else {
@@ -2548,7 +2548,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     createTableOp.ignoreIfExists(),
                                     createTableOp,
                                     false,
-                                    volumeAlias != null
+                                    volumeAlias != null ? volumeAlias.toString() : null
                             );
                         }
                         createTableOp.updateOperationFutureTableToken(tableToken);

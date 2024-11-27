@@ -374,7 +374,7 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock
     ) {
-        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false);
+        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, null);
     }
 
     public @NotNull TableToken createTable(
@@ -384,10 +384,10 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean ifNotExists,
             TableStructure struct,
             boolean keepLock,
-            boolean inVolume
+            @Nullable String volumeAlias
     ) {
         securityContext.authorizeTableCreate();
-        return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, inVolume);
+        return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, volumeAlias);
     }
 
     public void dropTable(@Transient Path path, TableToken tableToken) {
@@ -825,12 +825,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.isTableDropped(tableToken);
     }
 
-    public boolean isWalTableDropped(CharSequence tableDir) {
-        return tableNameRegistry.isWalTableDropped(tableDir);
-    }
-
     public boolean isWalTable(TableToken tableToken) {
         return tableToken.isWal();
+    }
+
+    public boolean isWalTableDropped(CharSequence tableDir) {
+        return tableNameRegistry.isWalTableDropped(tableDir);
     }
 
     public void load() {
@@ -906,22 +906,27 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public TableToken lockTableName(CharSequence tableName, boolean isWal) {
         int tableId = getNextTableId();
-        return lockTableName(tableName, tableId, isWal);
+        return lockTableName(tableName, tableId, isWal, null);
     }
 
     @Nullable
-    public TableToken lockTableName(CharSequence tableName, int tableId, boolean isWal) {
+    public TableToken lockTableName(CharSequence tableName, int tableId, boolean isWal, @Nullable String volumeAlias) {
         String tableNameStr = Chars.toString(tableName);
         final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableNameStr, tableId, isWal);
-        return lockTableName(tableNameStr, dirName, tableId, isWal);
+        return lockTableName(tableNameStr, dirName, tableId, isWal, volumeAlias);
     }
 
     @SuppressWarnings("unused")
     @Nullable
     public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isWal) {
+        return lockTableName(tableName, dirName, tableId, isWal, null);
+    }
+
+    @Nullable
+    public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isWal, @Nullable String volumeAlias) {
         validNameOrThrow(tableName);
         String tableNameStr = Chars.toString(tableName);
-        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
+        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal, volumeAlias);
     }
 
     public void notifyDropped(TableToken tableToken) {
@@ -1330,7 +1335,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean ifNotExists,
             TableStructure struct,
             boolean keepLock,
-            boolean inVolume
+            @Nullable String volumeAlias
     ) {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
         final CharSequence tableName = struct.getTableName();
@@ -1339,7 +1344,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final int tableId = (int) tableIdGenerator.getNextId();
 
         while (true) {
-            TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
+            TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled(), volumeAlias);
             if (tableToken == null) {
                 if (ifNotExists) {
                     tableToken = getTableTokenIfExists(tableName);
@@ -1359,7 +1364,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (lockedReason == null) {
                     boolean tableCreated = false;
                     try {
-                        if (inVolume) {
+                        if (volumeAlias != null) {
                             createTableInVolumeUnsafe(mem, path, struct, tableToken);
                         } else {
                             createTableUnsafe(mem, path, struct, tableToken);
@@ -1411,7 +1416,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
         fromPath.of(root).concat(fromTableToken).$();
 
-        TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), false);
+        TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), false, fromTableToken.getVolumeAlias());
 
         if (toTableToken == null) {
             LOG.error()
