@@ -432,11 +432,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         ErrorTag errorTag;
         String errorMessage;
 
-        if (engine.isTableDropped(tableToken)
-                || ((throwable instanceof CairoException) && ((CairoException) throwable).isTableDropped())
-                || engine.getTableTokenIfExists(tableToken.getTableName()) == null) {
+        if (engine.isTableDropped(tableToken)) {
             // Sometimes we can have SQL exceptions when re-compiling ALTER or UPDATE statements
             // that the table we work on is already dropped. In this case, we can ignore the exception.
+            // WARNING: do not treat "table does not exist" same as "table is dropped"
+            // table can be renamed, not dropped and deleting table files is not the right thing to do.
             purgeTableFiles(tableToken, null, engine, Path.PATH.get());
             return;
         }
@@ -549,19 +549,44 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         operationExecutor.resetRnd(sqlInfo.getRndSeed0(), sqlInfo.getRndSeed1());
         sqlInfo.populateBindVariableService(operationExecutor.getBindVariableService());
         try {
-            switch (cmdType) {
-                case CMD_ALTER_TABLE:
-                    operationExecutor.executeAlter(tableWriter, sql, seqTxn);
-                    return -1;
-                case CMD_UPDATE_TABLE:
-                    return operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
-                default:
-                    throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
+            while (true) {
+                try {
+                    switch (cmdType) {
+                        case CMD_ALTER_TABLE:
+                            operationExecutor.executeAlter(tableWriter, sql, seqTxn);
+                            return -1;
+                        case CMD_UPDATE_TABLE:
+                            return operationExecutor.executeUpdate(tableWriter, sql, seqTxn);
+                        default:
+                            throw new UnsupportedOperationException("Unsupported command type: " + cmdType);
+                    }
+                } catch (SqlException ex) {
+                    if (!ex.isTableDoesNotExist()) {
+                        throw ex;
+                    }
+                } catch (CairoException ex) {
+                    if (!ex.isTableDoesNotExist()) {
+                        throw ex;
+                    }
+                }
+
+                TableToken tableToken = tableWriter.getTableToken();
+
+                // Here means we got TableDoesNotExist SQL or Cairo Exception.
+                // Table may be renamed while processing the WAL transaction.
+                // Need to refresh the table token and retry.
+                TableToken updatedToken = engine.getUpdatedTableToken(tableToken);
+                if (updatedToken == null || tableToken.equals(updatedToken)) {
+                    if (engine.isTableDropped(tableToken)) {
+                        // This is definitely dropped table.
+                        throw CairoException.tableDropped(tableToken);
+                    }
+                    // No progress, same token or no token and it's not dropped. Avoid infinite loop.
+                    throw CairoException.tableDoesNotExist(tableToken.getTableName());
+                }
+                tableWriter.updateTableToken(updatedToken);
             }
         } catch (SqlException ex) {
-            if (ex.isTableDoesNotExist()) {
-                throw CairoException.tableDropped(tableWriter.getTableToken());
-            }
             throw CairoException.nonCritical().put("error applying SQL to wal table [table=")
                     .put(tableWriter.getTableToken().getTableName()).put(", sql=").put(sql)
                     .put(", position=").put(ex.getPosition())
