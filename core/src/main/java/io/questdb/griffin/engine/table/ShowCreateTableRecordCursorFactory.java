@@ -23,7 +23,6 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
-import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoConfiguration;
@@ -35,7 +34,6 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -43,6 +41,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
@@ -172,13 +172,22 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                         }
                         sink.put(" IN VOLUME ");
 
-                        final VolumeDefinitions vds = config.getVolumeDefinitions();
+                        FilesFacade ff = config.getFilesFacade();
+                        try (Path softLinkPath = new Path().of(config.getRoot()).concat(table.getDirectoryName())) {
+                            try (Path otherVolumePath = new Path()) {
+                                ff.readLink(softLinkPath, otherVolumePath);
+                                otherVolumePath.trimTo(otherVolumePath.size()
+                                        - table.getDirectoryName().length()  // look for directory
+                                        - 1 // get rid of trailing slash
+                                );
+                                CharSequence alias = config.getVolumeDefinitions().resolvePath(otherVolumePath.asAsciiCharSequence());
 
-                        CharSequence dir = TableUtils.getTableDir(true, tableToken.getTableName(), tableToken.getTableId(), tableToken.isWal());
-                        CharSequence alias = vds.findAliasFromPath(tableToken.getDirName());
-
-                        if (alias == null) {
-                            throw CairoException.nonCritical().put("could not find volume alias for table [table=").put(tableToken).put(']');
+                                if (alias == null) {
+                                    throw CairoException.nonCritical().put("could not find volume alias for table [table=").put(tableToken).put(']');
+                                } else {
+                                    sink.put(alias);
+                                }
+                            }
                         }
                     }
 
@@ -208,6 +217,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
         public ShowCreateTableCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) throws SqlException {
             this.tableToken = tableToken;
+            this.executionContext = executionContext;
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.table = metadataRO.getTable(tableToken);
                 if (this.table == null) {

@@ -80,6 +80,18 @@ public class VolumeDefinitions {
         return aliasToVolumeRoot.get(alias);
     }
 
+    public @Nullable CharSequence resolvePath(@NotNull CharSequence path) {
+        for (int i = 0, n = aliasToVolumeRoot.keys().size(); i < n; i++) {
+            final CharSequence candidateAlias = aliasToVolumeRoot.keys().get(i);
+
+            final CharSequence candidatePath = aliasToVolumeRoot.get(candidateAlias);
+            if (Chars.equals(candidatePath, path)) {
+                return candidateAlias;
+            }
+        }
+        return null;
+    }
+
     private void addVolumeDefinition(String alias, CharSequence volumePath, Path path, String root) throws ServerConfigurationException {
         int len = volumePath.length();
         if (len > 0 && volumePath.charAt(len - 1) == Files.SEPARATOR) {
