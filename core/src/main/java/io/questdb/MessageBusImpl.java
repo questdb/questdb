@@ -28,10 +28,28 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cutlass.text.CopyRequestTask;
 import io.questdb.cutlass.text.CopyTask;
-import io.questdb.mp.*;
+import io.questdb.metrics.QueryMetrics;
+import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.FanOut;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SPSequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.tasks.*;
+import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.ColumnPurgeTask;
+import io.questdb.tasks.ColumnTask;
+import io.questdb.tasks.GroupByMergeShardTask;
+import io.questdb.tasks.LatestByTask;
+import io.questdb.tasks.O3CopyTask;
+import io.questdb.tasks.O3OpenColumnTask;
+import io.questdb.tasks.O3PartitionPurgeTask;
+import io.questdb.tasks.O3PartitionTask;
+import io.questdb.tasks.TableWriterTask;
+import io.questdb.tasks.VectorAggregateTask;
+import io.questdb.tasks.WalTxnNotificationTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -71,6 +89,7 @@ public class MessageBusImpl implements MessageBus {
     private final MCSequence[] pageFrameReduceSubSeq;
     private final MPSequence queryCacheEventPubSeq;
     private final MCSequence queryCacheEventSubSeq;
+    private final ConcurrentQueue<QueryMetrics> queryMetricsQueue;
     private final MPSequence tableWriterEventPubSeq;
     private final RingQueue<TableWriterTask> tableWriterEventQueue;
     private final FanOut tableWriterEventSubSeq;
@@ -194,6 +213,8 @@ public class MessageBusImpl implements MessageBus {
             this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
             this.queryCacheEventSubSeq = new MCSequence(configuration.getQueryCacheEventQueueCapacity());
             queryCacheEventPubSeq.then(queryCacheEventSubSeq).then(queryCacheEventPubSeq);
+
+            this.queryMetricsQueue = new ConcurrentQueue<>(QueryMetrics::new);
         } catch (Throwable th) {
             close();
             throw th;
@@ -412,6 +433,11 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public MCSequence getQueryCacheEventSubSeq() {
         return queryCacheEventSubSeq;
+    }
+
+    @Override
+    public ConcurrentQueue<QueryMetrics> getQueryMetricsQueue() {
+        return queryMetricsQueue;
     }
 
     @Override
