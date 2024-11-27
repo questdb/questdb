@@ -2,6 +2,7 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
@@ -24,6 +25,8 @@ public interface CreateTableOperation extends TableStructure, Operation {
     CharSequence getSqlText();
 
     int getTableNamePosition();
+
+    OperationFuture getOperationFuture();
 
     CharSequence getVolumeAlias();
 
