@@ -55,6 +55,7 @@ import io.questdb.griffin.SqlTimeoutException;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.QueryMetrics;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -73,6 +74,7 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.TimeUnit;
 
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_LIMIT;
 import static io.questdb.cutlass.http.HttpConstants.URL_PARAM_QUERY;
@@ -93,6 +95,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final Metrics metrics;
     private final NanosecondClock nanosecondClock;
     private final Path path;
+    private final QueryMetrics queryMetrics = new QueryMetrics();
     private final byte requiredAuthType;
     private final SqlExecutionContextImpl sqlExecutionContext;
 
@@ -525,13 +528,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private void compileAndExecuteQuery(
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, QueryPausedException, SqlException {
-        boolean recompileStale = true;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            for (int retries = 0; recompileStale; retries++) {
-                final long nanos = nanosecondClock.getTicks();
+            for (int retries = 0; ; retries++) {
+                final long compilationStart = nanosecondClock.getTicks();
                 final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
-                state.setCompilerNanos(nanosecondClock.getTicks() - nanos);
+                long executionStart = nanosecondClock.getTicks();
+                state.setCompilerNanos(executionStart - compilationStart);
                 state.setQueryType(cc.getType());
                 // todo: reconsider whether we need to keep the SqlCompiler instance open while executing the query
                 // the problem is the each instance of the compiler has just a single instance of the CompilerQuery object.
@@ -543,7 +546,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                             cc,
                             configuration.getKeepAliveHeader()
                     );
-                    recompileStale = false;
+                    queryMetrics.timestamp = nanosecondClock.getTicks();
+                    queryMetrics.queryText = state.getQuery();
+                    queryMetrics.executionNanos = TimeUnit.NANOSECONDS.toMicros(queryMetrics.timestamp - executionStart);
+                    engine.getMessageBus().getQueryMetricsQueue().enqueue(queryMetrics);
+                    break;
                 } catch (TableReferenceOutOfDateException e) {
                     if (retries == maxSqlRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
