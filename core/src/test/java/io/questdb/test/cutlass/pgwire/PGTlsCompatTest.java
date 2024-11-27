@@ -183,7 +183,6 @@ public class PGTlsCompatTest extends BasePGTest {
                     Assert.assertEquals("No create TLS session calls expected: " + createTlsSessionCalls.get(), 0, createTlsSessionCalls.get());
                     Assert.assertEquals("No TLS I/O calls expected: " + tlsIOCalls.get(), 0, tlsIOCalls.get());
                 }
-            } finally {
                 workerPool.halt();
             }
         });
