@@ -29,6 +29,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueBatchConsumerJob;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.ValueHolderList;
 
 public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics> {
@@ -40,40 +41,45 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
     public QueryMetricsJob(CairoEngine engine) {
         super(engine.getMessageBus().getQueryMetricsQueue());
         this.engine = engine;
-        init();
     }
 
-    public void init() {
-        try {
-            engine.execute("CREATE TABLE IF NOT EXISTS _query_metrics_ (ts TIMESTAMP, query VARCHAR, execution_micros LONG)");
-        } catch (SqlException e) {
-            throw new RuntimeException(e);
+    public static void assignToPool(CairoEngine engine, WorkerPool pool) {
+        for (int i = 0, n = pool.getWorkerCount(); i < n; i++) {
+            pool.assign(i, new QueryMetricsJob(engine));
         }
+    }
+
+    private void init() throws SqlException {
+        engine.execute("CREATE TABLE IF NOT EXISTS _query_metrics_ (ts TIMESTAMP, query VARCHAR, execution_micros LONG)");
     }
 
     @Override
     protected boolean canRun() {
-//        return false;
         return engine.getConfiguration().isQueryMetricsEnabled();
     }
 
     @Override
     protected boolean doRun(int workerId, ValueHolderList<QueryMetrics> metricsList, RunStatus runStatus) {
-        try {
-            StringBuilder b = new StringBuilder("INSERT INTO _query_metrics_ VALUES ");
-            String separator = "";
-            for (int n = metricsList.size(), i = 0; i < n; i++) {
-                metricsList.getQuick(i, metrics);
-                b.append(separator).append('(')
-                        .append(metrics.timestamp).append(", '")
-                        .append(metrics.queryText).append("', ")
-                        .append(metrics.executionNanos).append(')');
-                separator = ", ";
-            }
-            engine.execute(b);
-            return false;
-        } catch (SqlException e) {
-            throw new RuntimeException(e);
+        StringBuilder b = new StringBuilder("INSERT INTO _query_metrics_ VALUES ");
+        String separator = "";
+        for (int n = metricsList.size(), i = 0; i < n; i++) {
+            metricsList.getQuick(i, metrics);
+            b.append(separator).append('(')
+                    .append(metrics.timestamp).append(", '")
+                    .append(metrics.queryText).append("', ")
+                    .append(metrics.executionNanos).append(')');
+            separator = ", ";
         }
+        try {
+            engine.execute(b);
+        } catch (SqlException e) {
+            try {
+                init();
+                engine.execute(b);
+            } catch (SqlException ex) {
+                LOG.error().$("Failed to save query metrics").$((Throwable) e).$();
+            }
+        }
+        return false;
     }
 }

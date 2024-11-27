@@ -329,9 +329,9 @@ public class ServerMain implements Closeable {
                 try {
                     sharedPool.assign(engine.getEngineMaintenanceJob());
 
-                    sharedPool.assign(new QueryMetricsJob(engine));
-
                     WorkerPoolUtils.setupQueryJobs(sharedPool, engine);
+
+                    QueryMetricsJob.assignToPool(engine, sharedPool);
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPool, engine);

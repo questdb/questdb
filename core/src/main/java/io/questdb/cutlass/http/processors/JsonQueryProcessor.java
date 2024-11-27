@@ -69,6 +69,7 @@ import io.questdb.std.NanosecondClock;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
@@ -93,6 +94,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     private final CairoEngine engine;
     private final int maxSqlRecompileAttempts;
     private final Metrics metrics;
+    private final MicrosecondClock microsecondClock;
     private final NanosecondClock nanosecondClock;
     private final Path path;
     private final QueryMetrics queryMetrics = new QueryMetrics();
@@ -165,6 +167,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
             assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);
             this.sqlExecutionContext = sqlExecutionContext;
+            this.microsecondClock = engine.getConfiguration().getMicrosecondClock();
             this.nanosecondClock = configuration.getNanosecondClock();
             this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
             this.circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB3);
@@ -531,7 +534,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
-                final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                String query = state.getQuery().toString();
+                final CompiledQuery cc = compiler.compile(query, sqlExecutionContext);
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_JSON);
                 long executionStart = nanosecondClock.getTicks();
                 state.setCompilerNanos(executionStart - compilationStart);
@@ -546,9 +550,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                             cc,
                             configuration.getKeepAliveHeader()
                     );
-                    queryMetrics.timestamp = nanosecondClock.getTicks();
-                    queryMetrics.queryText = state.getQuery();
-                    queryMetrics.executionNanos = TimeUnit.NANOSECONDS.toMicros(queryMetrics.timestamp - executionStart);
+                    long executionEnd = nanosecondClock.getTicks();
+                    queryMetrics.timestamp = microsecondClock.getTicks();
+                    queryMetrics.queryText = query;
+                    queryMetrics.executionNanos = TimeUnit.NANOSECONDS.toMicros(executionEnd - executionStart);
                     engine.getMessageBus().getQueryMetricsQueue().enqueue(queryMetrics);
                     break;
                 } catch (TableReferenceOutOfDateException e) {

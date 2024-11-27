@@ -42,12 +42,12 @@ public abstract class AbstractQueueBatchConsumerJob<T extends ValueHolder<T>> im
         if (!canRun()) {
             return false;
         }
+        buffer.clear();
         while (queue.tryDequeue(buffer.peekNextHolder())) {
             buffer.commitNextHolder();
         }
         if (buffer.size() > 0) {
             doRun(workerId, buffer, runStatus);
-            buffer.clear();
         }
         return false;
     }
