@@ -23,9 +23,11 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
+import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -33,6 +35,7 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -163,13 +166,20 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                         }
                     }
 
-                    String volumeAlias;
-                    if ((volumeAlias = tableToken.getVolumeAlias()) != null) {
+                    if (table.getIsSoftLink()) {
                         if (withRequired) {
                             sink.put(',');
                         }
-                        sink.put(" IN VOLUME ")
-                                .put(volumeAlias);
+                        sink.put(" IN VOLUME ");
+
+                        final VolumeDefinitions vds = config.getVolumeDefinitions();
+
+                        CharSequence dir = TableUtils.getTableDir(true, tableToken.getTableName(), tableToken.getTableId(), tableToken.isWal());
+                        CharSequence alias = vds.findAliasFromPath(tableToken.getDirName());
+
+                        if (alias == null) {
+                            throw CairoException.nonCritical().put("could not find volume alias for table [table=").put(tableToken).put(']');
+                        }
                     }
 
                     // DEDUP UPSERT(key1, key2)
@@ -198,7 +208,6 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
         public ShowCreateTableCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) throws SqlException {
             this.tableToken = tableToken;
-            this.executionContext = executionContext;
             try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
                 this.table = metadataRO.getTable(tableToken);
                 if (this.table == null) {

@@ -81,22 +81,16 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
 
     @Override
     public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal) {
-        return lockTableName(tableName, dirName, tableId, isWal, null);
-    }
-
-    @Override
-    public TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal, @Nullable String volumeAlias) {
         final TableToken registeredRecord = tableNameToTableTokenMap.putIfAbsent(tableName, LOCKED_TOKEN);
         if (registeredRecord == null) {
             boolean isProtected = tableFlagResolver.isProtected(tableName);
             boolean isSystem = tableFlagResolver.isSystem(tableName);
             boolean isPublic = tableFlagResolver.isPublic(tableName);
-            return new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected, isPublic, volumeAlias);
+            return new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected, isPublic);
         } else {
             return null;
         }
     }
-
 
     @Override
     public void purgeToken(TableToken token) {

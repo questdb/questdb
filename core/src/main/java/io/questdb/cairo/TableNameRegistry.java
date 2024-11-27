@@ -133,8 +133,6 @@ public interface TableNameRegistry extends Closeable {
      * @return table token or null if table name with the same tableId, private name is already registered
      */
     TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal);
-    
-    TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal, @Nullable String volumeAlias);
 
     /**
      * Purges token from registry after table, and it's WAL segments have been removed on disk. This method is

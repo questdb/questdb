@@ -29,7 +29,6 @@ import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.GcUtf8String;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class TableToken implements Sinkable {
     @NotNull
@@ -41,7 +40,6 @@ public class TableToken implements Sinkable {
     private final int tableId;
     @NotNull
     private final String tableName;
-    private final @Nullable String volumeAlias;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
         this(tableName, new GcUtf8String(dirName), tableId, isWal, isSystem, isProtected, false);
@@ -51,15 +49,7 @@ public class TableToken implements Sinkable {
         this(tableName, new GcUtf8String(dirName), tableId, isWal, isSystem, isProtected, isPublic);
     }
 
-    public TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
-        this(tableName, dirName, tableId, isWal, isSystem, isProtected, isPublic, null);
-    }
-
-    public TableToken(@NotNull String tableName, @NotNull String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic, @Nullable String volumeAlias) {
-        this(tableName, new GcUtf8String(dirName), tableId, isWal, isSystem, isProtected, isPublic, volumeAlias);
-    }
-
-    public TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic, @Nullable String volumeAlias) {
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, int tableId, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
@@ -67,7 +57,6 @@ public class TableToken implements Sinkable {
         this.isSystem = isSystem;
         this.isProtected = isProtected;
         this.isPublic = isPublic;
-        this.volumeAlias = volumeAlias;
     }
 
     @Override
@@ -81,15 +70,22 @@ public class TableToken implements Sinkable {
 
         TableToken that = (TableToken) o;
 
-        return tableId == that.tableId
-                && isWal == that.isWal
-                && isSystem == that.isSystem
-                && isProtected == that.isProtected
-                && tableName.equals(that.tableName)
-                && dirName.equals(that.dirName)
-                && ((volumeAlias == null && that.volumeAlias == null)
-                || (volumeAlias != null && that.volumeAlias != null &&
-                volumeAlias.equals(that.volumeAlias)));
+        if (tableId != that.tableId) {
+            return false;
+        }
+        if (isWal != that.isWal) {
+            return false;
+        }
+        if (isSystem != that.isSystem) {
+            return false;
+        }
+        if (isProtected != that.isProtected) {
+            return false;
+        }
+        if (!tableName.equals(that.tableName)) {
+            return false;
+        }
+        return dirName.equals(that.dirName);
     }
 
     /**
@@ -120,10 +116,6 @@ public class TableToken implements Sinkable {
         return tableName;
     }
 
-    public @Nullable String getVolumeAlias() {
-        return volumeAlias;
-    }
-
     @Override
     public int hashCode() {
         return tableId;
@@ -146,7 +138,7 @@ public class TableToken implements Sinkable {
     }
 
     public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, tableId, isWal, isSystem, isProtected, isPublic, volumeAlias);
+        return new TableToken(newName, dirName, tableId, isWal, isSystem, isProtected, isPublic);
     }
 
     @Override
