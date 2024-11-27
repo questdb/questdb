@@ -114,8 +114,8 @@ public class ConcurrentQueue<T extends ValueHolder<T>> {
         }
     }
 
-    public T newItem() {
-        return factory.newInstance();
+    public ObjectFactory<T> itemFactory() {
+        return factory;
     }
 
     /**

@@ -51,6 +51,7 @@ import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.QueryMetricsJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -327,6 +328,8 @@ public class ServerMain implements Closeable {
             protected void configureSharedPool(WorkerPool sharedPool) {
                 try {
                     sharedPool.assign(engine.getEngineMaintenanceJob());
+
+                    sharedPool.assign(new QueryMetricsJob(engine));
 
                     WorkerPoolUtils.setupQueryJobs(sharedPool, engine);
 
