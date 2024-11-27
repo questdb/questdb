@@ -207,6 +207,16 @@ public class PGWireConfigurationWrapper implements PGWireConfiguration {
     }
 
     @Override
+    public int getNetRecvBufferSize() {
+        return getDelegate().getNetRecvBufferSize();
+    }
+
+    @Override
+    public int getNetSendBufferSize() {
+        return getDelegate().getNetSendBufferSize();
+    }
+
+    @Override
     public NetworkFacade getNetworkFacade() {
         return getDelegate().getNetworkFacade();
     }

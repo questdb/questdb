@@ -67,6 +67,16 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
     }
 
     @Override
+    public int getNetRecvBufferSize() {
+        return -1; // use system default
+    }
+
+    @Override
+    public int getNetSendBufferSize() {
+        return -1; // use system default
+    }
+
+    @Override
     public NetworkFacade getNetworkFacade() {
         return NetworkFacadeImpl.INSTANCE;
     }
@@ -78,7 +88,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
 
     @Override
     public int getRecvBufferSize() {
-        return -1; // use system default
+        return 131072;
     }
 
     @Override
@@ -88,7 +98,7 @@ public class DefaultIODispatcherConfiguration implements IODispatcherConfigurati
 
     @Override
     public int getSendBufferSize() {
-        return -1; // use system default
+        return 131072;
     }
 
     @Override

@@ -28,6 +28,7 @@ import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cutlass.http.HttpContextConfiguration;
+import io.questdb.cutlass.http.HttpMinServerConfiguration;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
@@ -71,11 +72,12 @@ public class HttpMinTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_ENABLED.getEnvVarName(), "false"
             )) {
                 serverMain.start();
-                HttpContextConfiguration httpMinConfg = serverMain.getConfiguration().getHttpMinServerConfiguration().getHttpContextConfiguration();
-                long expectedAllocation = httpMinConfg.getSendBufferSize() + 20
-                        + httpMinConfg.getRecvBufferSize()
-                        + httpMinConfg.getRequestHeaderBufferSize() + 64
-                        + httpMinConfg.getMultipartHeaderBufferSize() + 64;
+                HttpMinServerConfiguration httpMinConfig = serverMain.getConfiguration().getHttpMinServerConfiguration();
+                HttpContextConfiguration httpMinContextConfig = httpMinConfig.getHttpContextConfiguration();
+                long expectedAllocation = httpMinConfig.getSendBufferSize() + 20
+                        + httpMinConfig.getRecvBufferSize()
+                        + httpMinContextConfig.getRequestHeaderBufferSize() + 64
+                        + httpMinContextConfig.getMultipartHeaderBufferSize() + 64;
 
                 // Wait http min threads to start, they will need to allocate some memory
                 // directly after the server start.

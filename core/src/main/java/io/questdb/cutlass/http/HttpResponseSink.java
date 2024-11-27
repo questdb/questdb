@@ -90,17 +90,18 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long totalBytesSent = 0;
     private long zStreamPtr = 0;
 
-    public HttpResponseSink(HttpContextConfiguration configuration) {
+    public HttpResponseSink(HttpMinServerConfiguration configuration) {
         final int responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
         this.nf = configuration.getNetworkFacade();
         this.buffer = new ChunkUtf8Sink(responseBufferSize);
         this.compressOutBuffer = new ChunkUtf8Sink(responseBufferSize);
-        this.headerImpl = new HttpResponseHeaderImpl(configuration.getMillisecondClock());
-        this.dumpNetworkTraffic = configuration.getDumpNetworkTraffic();
-        this.httpVersion = configuration.getHttpVersion();
-        this.connectionCloseHeader = !configuration.getServerKeepAlive();
-        this.cookiesEnabled = configuration.areCookiesEnabled();
-        this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
+        final HttpContextConfiguration contextConfiguration = configuration.getHttpContextConfiguration();
+        this.headerImpl = new HttpResponseHeaderImpl(contextConfiguration.getMillisecondClock());
+        this.dumpNetworkTraffic = contextConfiguration.getDumpNetworkTraffic();
+        this.httpVersion = contextConfiguration.getHttpVersion();
+        this.connectionCloseHeader = !contextConfiguration.getServerKeepAlive();
+        this.cookiesEnabled = contextConfiguration.areCookiesEnabled();
+        this.forceSendFragmentationChunkSize = contextConfiguration.getForceSendFragmentationChunkSize();
     }
 
     public static String getStatusMessage(int code) {

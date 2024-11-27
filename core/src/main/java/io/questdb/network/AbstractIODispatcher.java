@@ -337,12 +337,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                 nf.configureNoLinger(fd);
             }
 
-            final int sndBufSize = configuration.getSendBufferSize();
+            final int sndBufSize = configuration.getNetSendBufferSize();
             if (sndBufSize > 0) {
                 nf.setSndBuf(fd, Numbers.ceilPow2(sndBufSize));
             }
 
-            final int rcvBufSize = configuration.getRecvBufferSize();
+            final int rcvBufSize = configuration.getNetRecvBufferSize();
             if (rcvBufSize > 0) {
                 nf.setRcvBuf(fd, Numbers.ceilPow2(rcvBufSize));
             }

@@ -196,6 +196,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean httpNetConnectionHint;
     private final String httpPassword;
     private final boolean httpPessimisticHealthCheckEnabled;
+    private final int httpRecvBufferSize;
+    private final int httpSendBufferSize;
     private final boolean httpServerEnabled;
     private final int httpSqlCacheBlockCount;
     private final boolean httpSqlCacheEnabled;
@@ -472,6 +474,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpMinNetConnectionRcvBuf;
     private int httpMinNetConnectionSndBuf;
     private long httpMinNetConnectionTimeout;
+    private int httpMinRecvBufferSize;
+    private int httpMinSendBufferSize;
     private int[] httpMinWorkerAffinity;
     private int httpMinWorkerCount;
     private boolean httpMinWorkerHaltOnError;
@@ -504,6 +508,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpIOWorkerYieldThreshold;
     private long lineTcpMaintenanceInterval;
     private int lineTcpMaxMeasurementSize;
+    private int lineTcpMsgBufferSize;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
     private long lineTcpNetConnectionHeartbeatInterval;
@@ -557,9 +562,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean pgReadOnlySecurityContext;
     private boolean pgReadOnlyUserEnabled;
     private String pgReadOnlyUsername;
+    private int pgRecvBufferSize;
     private int pgSelectCacheBlockCount;
     private boolean pgSelectCacheEnabled;
     private int pgSelectCacheRowCount;
+    private int pgSendBufferSize;
     private int pgUpdateCacheBlockCount;
     private boolean pgUpdateCacheEnabled;
     private int pgUpdateCacheRowCount;
@@ -571,7 +578,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerYieldThreshold;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitBeforeReload;
-
 
     public PropServerConfiguration(
             String root,
@@ -826,12 +832,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.httpMinNetConnectionQueueTimeout = getMillis(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT, this.httpMinNetConnectionQueueTimeout);
 
                 // deprecated
-                this.httpMinNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_MIN_NET_SND_BUF_SIZE, 1024);
-                this.httpMinNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_SNDBUF, this.httpMinNetConnectionSndBuf);
+                this.httpMinNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_MIN_NET_SND_BUF_SIZE, -1);
+                this.httpMinNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_SNDBUF, httpMinNetConnectionSndBuf);
+                this.httpMinSendBufferSize = getIntSize(properties, env, PropertyKey.HTTP_MIN_SEND_BUFFER_SIZE, 1024);
 
                 // deprecated
-                this.httpMinNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_RCV_BUF_SIZE, 1024);
-                this.httpMinNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF, this.httpMinNetConnectionRcvBuf);
+                this.httpMinNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_RCV_BUF_SIZE, -1);
+                this.httpMinNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF, httpMinNetConnectionRcvBuf);
+                this.httpMinRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_MIN_RECV_BUFFER_SIZE, 1024);
                 this.httpMinNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_MIN_NET_CONNECTION_HINT, false);
             }
 
@@ -849,12 +857,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpWorkerSleepTimeout = getMillis(properties, env, PropertyKey.HTTP_WORKER_SLEEP_TIMEOUT, 10);
             this.indexFileName = getString(properties, env, PropertyKey.HTTP_STATIC_INDEX_FILE_NAME, "index.html");
 
-            int httpSendBufferSize = getIntSize(properties, env, PropertyKey.HTTP_SEND_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
-            if (httpSendBufferSize < HttpServerConfiguration.MIN_SEND_BUFFER_SIZE) {
-                throw new ServerConfigurationException("invalid configuration value [key=" + PropertyKey.HTTP_SEND_BUFFER_SIZE.getPropertyPath() +
-                        ", description=http response send buffer should be at least " + HttpServerConfiguration.MIN_SEND_BUFFER_SIZE + " bytes]");
-            }
-
             String httpVersion = getString(properties, env, PropertyKey.HTTP_VERSION, "HTTP/1.1");
             if (!httpVersion.endsWith(" ")) {
                 httpVersion += ' ';
@@ -863,7 +865,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             int httpForceSendFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE, forceSendFragmentationChunkSize);
             int httpForceRecvFragmentationChunkSize = getInt(properties, env, PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE, forceRecvFragmentationChunkSize);
 
-            int httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECEIVE_BUFFER_SIZE, Numbers.SIZE_1MB);
             int connectionStringPoolCapacity = getInt(properties, env, PropertyKey.HTTP_CONNECTION_STRING_POOL_CAPACITY, 128);
             int connectionPoolInitialCapacity = getInt(properties, env, PropertyKey.HTTP_CONNECTION_POOL_INITIAL_CAPACITY, 4);
             int multipartHeaderBufferSize = getIntSize(properties, env, PropertyKey.HTTP_MULTIPART_HEADER_BUFFER_SIZE, 512);
@@ -882,8 +883,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpForceSendFragmentationChunkSize,
                     httpFrozenClock,
                     httpReadOnlySecurityContext,
-                    httpRecvBufferSize,
-                    httpSendBufferSize,
                     httpServerCookiesEnabled,
                     httpServerKeepAlive,
                     httpVersion,
@@ -894,8 +893,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
 
             // Use a separate configuration for min server. It does not make sense for the min server to grow the buffer sizes together with the main http server
-            int minHttpSendBufferSize = getIntSize(properties, env, PropertyKey.HTTP_MIN_SEND_BUFFER_SIZE, 4096);
-            int minHttpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_MIN_RECEIVE_BUFFER_SIZE, 1024);
             int minHttpConnectionStringPoolCapacity = getInt(properties, env, PropertyKey.HTTP_MIN_CONNECTION_STRING_POOL_CAPACITY, 2);
             int minHttpconnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.HTTP_MIN_CONNECTION_POOL_INITIAL_CAPACITY, 2);
             int minHttpMultipartHeaderBufferSize = getIntSize(properties, env, PropertyKey.HTTP_MIN_MULTIPART_HEADER_BUFFER_SIZE, 512);
@@ -914,8 +911,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                     httpForceSendFragmentationChunkSize,
                     httpFrozenClock,
                     true,
-                    minHttpRecvBufferSize,
-                    minHttpSendBufferSize,
                     minHttpServerCookiesEnabled,
                     minHttpMinServerKeepAlive,
                     httpVersion,
@@ -957,12 +952,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.httpNetConnectionQueueTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT, this.httpNetConnectionQueueTimeout);
 
             // deprecated
-            this.httpNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_SND_BUF_SIZE, 2 * Numbers.SIZE_1MB);
-            this.httpNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_SNDBUF, this.httpNetConnectionSndBuf);
+            this.httpNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_SND_BUF_SIZE, -1);
+            this.httpNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_SNDBUF, httpNetConnectionSndBuf);
+            this.httpSendBufferSize = getIntSize(properties, env, PropertyKey.HTTP_SEND_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
 
             // deprecated
-            this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_RCV_BUF_SIZE, 2 * Numbers.SIZE_1MB);
-            this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_RCVBUF, this.httpNetConnectionRcvBuf);
+            this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_RCV_BUF_SIZE, -1);
+            this.httpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_CONNECTION_RCVBUF, httpNetConnectionRcvBuf);
+            this.httpRecvBufferSize = getIntSize(properties, env, PropertyKey.HTTP_RECV_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
 
             this.dateAdapterPoolCapacity = getInt(properties, env, PropertyKey.HTTP_TEXT_DATE_ADAPTER_POOL_CAPACITY, 16);
             this.jsonCacheLimit = getIntSize(properties, env, PropertyKey.HTTP_TEXT_JSON_CACHE_LIMIT, 16384);
@@ -1055,11 +1052,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.pgMaxBlobSizeOnQuery = getIntSize(properties, env, PropertyKey.PG_MAX_BLOB_SIZE_ON_QUERY, 512 * 1024);
 
                 // deprecated
-                this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.PG_RECV_BUFFER_SIZE, Numbers.SIZE_1MB);
+                this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.PG_NET_RECV_BUF_SIZE, -1);
                 this.pgNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.PG_NET_CONNECTION_RCVBUF, pgNetConnectionRcvBuf);
+                this.pgRecvBufferSize = getIntSize(properties, env, PropertyKey.PG_RECV_BUFFER_SIZE, Numbers.SIZE_1MB);
+
                 // deprecated
-                this.pgNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.PG_SEND_BUFFER_SIZE, Numbers.SIZE_1MB);
+                this.pgNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.PG_NET_SEND_BUF_SIZE, -1);
                 this.pgNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.PG_NET_CONNECTION_SNDBUF, pgNetConnectionSndBuf);
+                this.pgSendBufferSize = getIntSize(properties, env, PropertyKey.PG_SEND_BUFFER_SIZE, Numbers.SIZE_1MB);
 
                 final String dateLocale = getString(properties, env, PropertyKey.PG_DATE_LOCALE, "en");
                 this.pgDefaultLocale = DateLocaleFactory.INSTANCE.getLocale(dateLocale);
@@ -1347,12 +1347,14 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.lineTcpConnectionPoolInitialCapacity = getInt(properties, env, PropertyKey.LINE_TCP_CONNECTION_POOL_CAPACITY, 8);
 
                 // deprecated
-                this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_MSG_BUFFER_SIZE, 131072);
-                this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF, this.lineTcpNetConnectionRcvBuf);
+                this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE, -1);
+                this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF, lineTcpNetConnectionRcvBuf);
+                this.lineTcpMsgBufferSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MSG_BUFFER_SIZE, 131072);
                 this.lineTcpMaxMeasurementSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE, 32768);
-                if (lineTcpMaxMeasurementSize > lineTcpNetConnectionRcvBuf) {
-                    lineTcpNetConnectionRcvBuf = lineTcpMaxMeasurementSize;
+                if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
+                    lineTcpMsgBufferSize = lineTcpMaxMeasurementSize;
                 }
+
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
                 this.lineTcpWriterWorkerCount = getInt(properties, env, PropertyKey.LINE_TCP_WRITER_WORKER_COUNT, 0);
                 cpuUsed += this.lineTcpWriterWorkerCount;
@@ -1944,6 +1946,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.HTTP_MIN_NET_SND_BUF_SIZE,
                     PropertyKey.HTTP_MIN_NET_CONNECTION_SNDBUF
             );
+            registerDeprecated(PropertyKey.HTTP_MIN_RECEIVE_BUFFER_SIZE);
+            registerDeprecated(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE);
             registerDeprecated(
                     PropertyKey.HTTP_NET_RCV_BUF_SIZE,
                     PropertyKey.HTTP_MIN_NET_CONNECTION_RCVBUF,
@@ -1961,9 +1965,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.HTTP_NET_QUEUED_CONNECTION_TIMEOUT,
                     PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT
             );
-            registerDeprecated(PropertyKey.HTTP_NET_SND_BUF_SIZE);
             registerDeprecated(
-                    PropertyKey.PG_SEND_BUFFER_SIZE,
+                    PropertyKey.HTTP_NET_SND_BUF_SIZE,
                     PropertyKey.HTTP_NET_CONNECTION_SNDBUF
             );
             registerDeprecated(
@@ -1974,10 +1977,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.PG_NET_IDLE_TIMEOUT,
                     PropertyKey.PG_NET_CONNECTION_TIMEOUT
             );
-            registerDeprecated(PropertyKey.PG_NET_RECV_BUF_SIZE);
             registerDeprecated(
-                    PropertyKey.PG_RECV_BUFFER_SIZE,
+                    PropertyKey.PG_NET_RECV_BUF_SIZE,
                     PropertyKey.PG_NET_CONNECTION_RCVBUF
+            );
+            registerDeprecated(
+                    PropertyKey.PG_NET_SEND_BUF_SIZE,
+                    PropertyKey.PG_NET_CONNECTION_SNDBUF
             );
             registerDeprecated(
                     PropertyKey.LINE_TCP_NET_ACTIVE_CONNECTION_LIMIT,
@@ -1991,9 +1997,8 @@ public class PropServerConfiguration implements ServerConfiguration {
                     PropertyKey.LINE_TCP_NET_QUEUED_TIMEOUT,
                     PropertyKey.LINE_TCP_NET_CONNECTION_QUEUE_TIMEOUT
             );
-            registerDeprecated(PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE);
             registerDeprecated(
-                    PropertyKey.LINE_TCP_MSG_BUFFER_SIZE,
+                    PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE,
                     PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF
             );
             registerDeprecated(
@@ -3403,6 +3408,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getNetRecvBufferSize() {
+            return httpMinNetConnectionRcvBuf;
+        }
+
+        @Override
+        public int getNetSendBufferSize() {
+            return httpMinNetConnectionSndBuf;
+        }
+
+        @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }
@@ -3419,7 +3434,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getRecvBufferSize() {
-            return httpMinNetConnectionRcvBuf;
+            return httpMinRecvBufferSize;
         }
 
         @Override
@@ -3434,7 +3449,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getSendBufferSize() {
-            return httpMinNetConnectionSndBuf;
+            return httpMinSendBufferSize;
         }
 
         @Override
@@ -3576,6 +3591,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getNetRecvBufferSize() {
+            return httpNetConnectionRcvBuf;
+        }
+
+        @Override
+        public int getNetSendBufferSize() {
+            return httpNetConnectionSndBuf;
+        }
+
+        @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }
@@ -3607,7 +3632,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getRecvBufferSize() {
-            return httpNetConnectionRcvBuf;
+            return httpRecvBufferSize;
         }
 
         @Override
@@ -3622,7 +3647,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getSendBufferSize() {
-            return httpNetConnectionSndBuf;
+            return httpSendBufferSize;
         }
 
         @Override
@@ -3993,6 +4018,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getNetRecvBufferSize() {
+            return lineTcpNetConnectionRcvBuf;
+        }
+
+        @Override
+        public int getNetSendBufferSize() {
+            return -1;
+        }
+
+        @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }
@@ -4004,7 +4039,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getRecvBufferSize() {
-            return lineTcpNetConnectionRcvBuf;
+            return lineTcpMsgBufferSize;
         }
 
         @Override
@@ -4358,6 +4393,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getNetRecvBufferSize() {
+            return pgNetConnectionRcvBuf;
+        }
+
+        @Override
+        public int getNetSendBufferSize() {
+            return pgNetConnectionSndBuf;
+        }
+
+        @Override
         public NetworkFacade getNetworkFacade() {
             return NetworkFacadeImpl.INSTANCE;
         }
@@ -4389,7 +4434,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getRecvBufferSize() {
-            return pgNetConnectionRcvBuf;
+            return pgRecvBufferSize;
         }
 
         @Override
@@ -4409,7 +4454,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getSendBufferSize() {
-            return pgNetConnectionSndBuf;
+            return pgSendBufferSize;
         }
 
         @Override

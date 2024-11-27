@@ -81,6 +81,12 @@ public interface IODispatcherConfiguration {
         return getLimit();
     }
 
+    // OS socket buffer size
+    int getNetRecvBufferSize();
+
+    // OS socket buffer size
+    int getNetSendBufferSize();
+
     NetworkFacade getNetworkFacade();
 
     default boolean getPeerNoLinger() {
@@ -89,10 +95,12 @@ public interface IODispatcherConfiguration {
 
     long getQueueTimeout();
 
+    // user-land buffer size
     int getRecvBufferSize();
 
     SelectFacade getSelectFacade();
 
+    // user-land buffer size
     int getSendBufferSize();
 
     int getTestConnectionBufferSize();

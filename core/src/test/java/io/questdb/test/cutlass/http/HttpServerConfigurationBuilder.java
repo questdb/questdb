@@ -195,16 +195,6 @@ public class HttpServerConfigurationBuilder {
                     }
 
                     @Override
-                    public int getRecvBufferSize() {
-                        return receiveBufferSize;
-                    }
-
-                    @Override
-                    public int getSendBufferSize() {
-                        return sendBufferSize == 0 ? super.getSendBufferSize() : sendBufferSize;
-                    }
-
-                    @Override
                     public boolean getServerKeepAlive() {
                         return serverKeepAlive;
                     }
@@ -217,8 +207,18 @@ public class HttpServerConfigurationBuilder {
             }
 
             @Override
+            public int getNetSendBufferSize() {
+                return tcpSndBufSize == 0 ? super.getSendBufferSize() : tcpSndBufSize;
+            }
+
+            @Override
             public NetworkFacade getNetworkFacade() {
                 return nf;
+            }
+
+            @Override
+            public int getRecvBufferSize() {
+                return receiveBufferSize;
             }
 
             @Override
@@ -228,7 +228,7 @@ public class HttpServerConfigurationBuilder {
 
             @Override
             public int getSendBufferSize() {
-                return tcpSndBufSize == 0 ? super.getSendBufferSize() : tcpSndBufSize;
+                return sendBufferSize == 0 ? super.getSendBufferSize() : sendBufferSize;
             }
 
             @Override

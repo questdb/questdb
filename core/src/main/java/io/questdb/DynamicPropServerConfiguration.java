@@ -79,12 +79,13 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             PropertyKey.PG_RO_USER,
             PropertyKey.PG_RO_PASSWORD,
             PropertyKey.PG_NAMED_STATEMENT_LIMIT,
-            PropertyKey.PG_RECV_BUFFER_SIZE, // deprecated, but someone may be using it
-            PropertyKey.PG_NET_CONNECTION_RCVBUF,
-            PropertyKey.PG_SEND_BUFFER_SIZE, // deprecated, but someone may be using it
-            PropertyKey.PG_NET_CONNECTION_SNDBUF,
+            PropertyKey.PG_RECV_BUFFER_SIZE,
+            PropertyKey.PG_SEND_BUFFER_SIZE,
             PropertyKey.PG_NET_CONNECTION_LIMIT,
+            PropertyKey.HTTP_RECV_BUFFER_SIZE,
+            PropertyKey.HTTP_SEND_BUFFER_SIZE,
             PropertyKey.HTTP_NET_CONNECTION_LIMIT,
+            PropertyKey.LINE_TCP_MSG_BUFFER_SIZE,
             PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT
     ));
     private final BuildInformation buildInformation;
