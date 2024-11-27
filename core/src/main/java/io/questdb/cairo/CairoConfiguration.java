@@ -625,6 +625,10 @@ public interface CairoConfiguration {
 
     boolean isPartitionEncoderParquetStatisticsEnabled();
 
+    default boolean isQueryMetricsEnabled() {
+        return true;
+    }
+
     boolean isReadOnlyInstance();
 
     boolean isSqlJitDebugEnabled();
