@@ -49,6 +49,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTimeZoneFactory;
 import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLevelCursorFactory;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
+import io.questdb.griffin.engine.table.ShowCreateTableRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.JoinContext;
@@ -3247,6 +3248,13 @@ public class SqlOptimiser implements Mutable {
                     break;
                 case QueryModel.SHOW_SERVER_VERSION_NUM:
                     tableFactory = new ShowServerVersionNumCursorFactory();
+                    break;
+                case QueryModel.SHOW_CREATE_TABLE:
+                    tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
+                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+                        throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
+                    }
+                    tableFactory = new ShowCreateTableRecordCursorFactory(tableToken, model.getTableNameExpr().position);
                     break;
                 default:
                     tableFactory = sqlParserCallback.generateShowSqlFactory(model);
