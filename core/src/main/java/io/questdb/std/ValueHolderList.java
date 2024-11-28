@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.mp.ValueHolder;
+import org.jetbrains.annotations.NotNull;
 
 public class ValueHolderList<T extends ValueHolder<T>> {
     private final ObjectFactory<T> factory;
@@ -48,12 +49,12 @@ public class ValueHolderList<T extends ValueHolder<T>> {
         size++;
     }
 
-    public void getQuick(int i, T dest) {
+    public void getQuick(int i, @NotNull T dest) {
         assert i >= 0 && i < size;
         storage.getQuick(i).copyTo(dest);
     }
 
-    public T peekNextHolder() {
+    public @NotNull T peekNextHolder() {
         T holder;
         if (size < storage.size()) {
             holder = storage.getQuick(size);
