@@ -546,11 +546,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public void copyDeclsFrom(QueryModel model) {
-        decls.putAll(model.getDecls());
+        copyDeclsFrom(model.getDecls());
     }
 
     public void copyDeclsFrom(LowerCaseCharSequenceObjHashMap<ExpressionNode> decls) {
-        this.decls.putAll(decls);
+        if (decls != null && decls.size() > 0) {
+            this.decls.putAll(decls);
+        }
     }
 
     public void copyOrderByAdvice(ObjList<ExpressionNode> orderByAdvice) {

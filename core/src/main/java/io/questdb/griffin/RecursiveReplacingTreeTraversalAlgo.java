@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.griffin.model.ExpressionNode;
 
-// todo: rewrite as non recursive
 public final class RecursiveReplacingTreeTraversalAlgo {
 
     public ExpressionNode traverse(ExpressionNode node, ReplacingVisitor visitor) throws SqlException {
@@ -56,7 +55,6 @@ public final class RecursiveReplacingTreeTraversalAlgo {
     }
 
     public interface ReplacingVisitor {
-
         ExpressionNode visit(ExpressionNode node) throws SqlException;
     }
 }

@@ -166,7 +166,6 @@ public final class OperatorExpression {
 
     public enum Operator {
         BinaryDeclareVariableAssignment(":="),
-        SetDeclareVariableAssignment(":="),
         UnaryMinus("-"),
         UnaryComplement("~"),
         UnarySetNegation("not"),
