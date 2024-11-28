@@ -38,17 +38,17 @@ import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
 import java.io.IOException;
-import java.sql.*;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Collection;
 import java.util.Properties;
 
-import static org.junit.Assert.*;
-
 import static io.questdb.test.cutlass.pgwire.BasePGTest.LegacyMode.LEGACY;
 import static io.questdb.test.cutlass.pgwire.BasePGTest.legacyModeParams;
+import static org.junit.Assert.assertEquals;
 
 @RunWith(Parameterized.class)
 public class PgBootstrapTest extends AbstractBootstrapTest {
