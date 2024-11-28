@@ -1985,31 +1985,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
             }
 
-            for (int i = 0, n = tableWriters.size(); i < n; i++) {
-                final TableWriterAPI writer = tableWriters.getQuick(i);
-                try {
-                    if (writer.getMetadata().isWalEnabled()) {
-                        writer.truncateSoft();
-                    } else {
-                        TableToken tableToken = writer.getTableToken();
-                        if (engine.lockReaders(tableToken)) {
-                            try {
-                                if (keepSymbolTables) {
-                                    writer.truncateSoft();
-                                } else {
-                                    writer.truncate();
-                                }
-                            } finally {
-                                engine.unlockReaders(tableToken);
-                            }
+            final long queryId = queryRegistry.register(sqlText, executionContext);
+            try {
+                for (int i = 0, n = tableWriters.size(); i < n; i++) {
+                    final TableWriterAPI writer = tableWriters.getQuick(i);
+                    try {
+                        if (writer.getMetadata().isWalEnabled()) {
+                            writer.truncateSoft();
                         } else {
-                            throw SqlException.$(0, "there is an active query against '").put(tableToken.getTableName()).put("'. Try again.");
+                            TableToken tableToken = writer.getTableToken();
+                            if (engine.lockReaders(tableToken)) {
+                                try {
+                                    if (keepSymbolTables) {
+                                        writer.truncateSoft();
+                                    } else {
+                                        writer.truncate();
+                                    }
+                                } finally {
+                                    engine.unlockReaders(tableToken);
+                                }
+                            } else {
+                                throw SqlException.$(0, "there is an active query against '").put(tableToken.getTableName()).put("'. Try again.");
+                            }
                         }
+                    } catch (CairoException | CairoError e) {
+                        LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).$(']').$();
+                        throw e;
                     }
-                } catch (CairoException | CairoError e) {
-                    LOG.error().$("could not truncate [table=").$(writer.getTableToken()).$(", e=").$((Sinkable) e).$(']').$();
-                    throw e;
                 }
+            } finally {
+                queryRegistry.unregister(queryId, executionContext);
             }
         } finally {
             for (int i = 0, n = tableWriters.size(); i < n; i++) {
@@ -2098,7 +2103,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     type == CompiledQuery.INSERT_AS_SELECT // insert as select is immediate, simple insert is not!
                             || type == CompiledQuery.EXPLAIN
                             || type == CompiledQuery.RENAME_TABLE  // non-wal rename table is complete at this point
-                            || type == CompiledQuery.CREATE_TABLE || type == CompiledQuery.CREATE_TABLE_AS_SELECT // create table is complete at this point
             ) {
                 queryRegistry.unregister(sqlId, executionContext);
             }
@@ -2508,8 +2512,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             engine.dropTable(path, tableToken);
                             engine.unlockTableName(tableToken);
                             throw e;
-                        } finally {
-                            queryRegistry.unregister(sqlId, executionContext);
                         }
                     } finally {
                         executionContext.setUseSimpleCircuitBreaker(false);
@@ -2526,7 +2528,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         .put(createTableOp.getLikeTableName()).put(']');
                             }
 
-                            //
                             try (TableMetadata likeTableMetadata = executionContext.getCairoEngine().getTableMetadata(likeTableToken)) {
                                 createTableOp.updateFromLikeTableMetadata(likeTableMetadata);
                                 tableToken = engine.createTable(
@@ -2568,15 +2569,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
             }
-            // todo: jit is always false, why?
             QueryProgress.logEnd(sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
         } catch (Throwable e) {
             if (e instanceof CairoException) {
                 ((CairoException) e).position(createTableOp.getTableNamePosition());
             }
-            // todo: jit is always false, why?
             QueryProgress.logError(e, sqlId, createTableOp.getSqlText(), executionContext, beginNanos, false);
             throw e;
+        } finally {
+            queryRegistry.unregister(sqlId, executionContext);
         }
     }
 
@@ -2628,7 +2629,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.tableDoesNotExist(op.getTableNamePosition(), op.getTableName());
         }
         sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
-        engine.dropTable(path, tableToken);
+
+        final String sqlText = op.getSqlText();
+        final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
+        try {
+            engine.dropTable(path, tableToken);
+        } catch (CairoException ex) {
+            if ((ex.isTableDropped() || ex.isTableDoesNotExist()) && op.ifExists()) {
+                // all good, table dropped already
+                return;
+            } else if (!op.ifExists() && ex.isTableDropped()) {
+                // Concurrently dropped, this should report table does not exist
+                throw CairoException.tableDoesNotExist(op.getTableName());
+            }
+            throw ex;
+        } finally {
+            queryRegistry.unregister(queryId, sqlExecutionContext);
+        }
     }
 
     private void executeWithRetries(

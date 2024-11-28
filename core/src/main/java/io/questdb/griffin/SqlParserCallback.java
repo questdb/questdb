@@ -35,21 +35,21 @@ import org.jetbrains.annotations.Nullable;
 
 public interface SqlParserCallback {
 
-    // todo: rename to parseCreateTableEx
-    default void createTableExt(
+    default RecordCursorFactory generateShowSqlFactory(QueryModel model) {
+        assert false;
+        return null;
+    }
+
+    default CreateTableOperationBuilder parseCreateTableExt(
             GenericLexer lexer,
             SecurityContext securityContext,
-            CreateTableOperationBuilder opBuilder,
+            CreateTableOperationBuilder builder,
             @Nullable CharSequence tok
     ) throws SqlException {
         if (tok != null) {
             throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
         }
-    }
-
-    default RecordCursorFactory generateShowSqlFactory(QueryModel model) {
-        assert false;
-        return null;
+        return builder;
     }
 
     default int parseShowSql(

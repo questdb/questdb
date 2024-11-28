@@ -37,9 +37,10 @@ import org.jetbrains.annotations.Nullable;
 public class SqlException extends Exception implements Sinkable, FlyweightMessageContainer {
 
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
-
+    private static final int EXCEPTION_TABLE_DOES_NOT_EXIST = -102;
     private static final ThreadLocal<SqlException> tlException = new ThreadLocal<>(SqlException::new);
     private final StringSink message = new StringSink();
+    private int error;
     private int position;
 
     protected SqlException() {
@@ -118,11 +119,12 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         assert (ex = new SqlException()) != null;
         ex.message.clear();
         ex.position = position;
+        ex.error = 0;
         return ex;
     }
 
     public static SqlException tableDoesNotExist(int position, CharSequence tableName) {
-        return position(position).put("table does not exist [table=").put(tableName).put(']');
+        return position(position).errorCode(EXCEPTION_TABLE_DOES_NOT_EXIST).put("table does not exist [table=").put(tableName).put(']');
     }
 
     public static SqlException unexpectedToken(int position, CharSequence token) {
@@ -156,6 +158,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         // This is to have correct stack trace reported in CI
         assert (result = super.getStackTrace()) != null;
         return result;
+    }
+
+    public boolean isTableDoesNotExist() {
+        return error == EXCEPTION_TABLE_DOES_NOT_EXIST;
     }
 
     public SqlException put(@Nullable CharSequence cs) {
@@ -209,5 +215,10 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii('[').put(position).putAscii("]: ").put(message);
+    }
+
+    private SqlException errorCode(int errorCode) {
+        this.error = errorCode;
+        return this;
     }
 }

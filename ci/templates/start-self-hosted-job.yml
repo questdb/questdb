@@ -26,7 +26,8 @@ jobs:
           payload: |
             {
               "pool": "arm64",
-              "buildid": "$(System.StageName)$(Build.BuildId)"
+              "buildid": "$(System.StageName)$(Build.BuildId)",
+              "instancetype": "c7g.xlarge"
             }
           outputVariable: "functionResult"
       - bash: |
@@ -73,7 +74,7 @@ jobs:
             {
               "pool": "amd64-zfs",
               "buildid": "$(System.StageName)$(Build.BuildId)",
-              "instancetype": "c6a.xlarge",
+              "instancetype": "c7a.xlarge",
               "ami": "ami-0e93be55518876452",
               "devicename": "/dev/xvdb"
             }
