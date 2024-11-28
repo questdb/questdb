@@ -550,11 +550,13 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                             cc,
                             configuration.getKeepAliveHeader()
                     );
-                    long executionEnd = nanosecondClock.getTicks();
-                    queryMetrics.timestamp = microsecondClock.getTicks();
-                    queryMetrics.queryText = query;
-                    queryMetrics.executionNanos = TimeUnit.NANOSECONDS.toMicros(executionEnd - executionStart);
-                    engine.getMessageBus().getQueryMetricsQueue().enqueue(queryMetrics);
+                    if (engine.getConfiguration().isQueryMetricsEnabled()) {
+                        long executionEnd = nanosecondClock.getTicks();
+                        queryMetrics.timestamp = microsecondClock.getTicks();
+                        queryMetrics.queryText = query;
+                        queryMetrics.executionNanos = TimeUnit.NANOSECONDS.toMicros(executionEnd - executionStart);
+                        engine.getMessageBus().getQueryMetricsQueue().enqueue(queryMetrics);
+                    }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
                     if (retries == maxSqlRecompileAttempts) {

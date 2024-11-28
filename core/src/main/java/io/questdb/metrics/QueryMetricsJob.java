@@ -54,11 +54,6 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
     }
 
     @Override
-    protected boolean canRun() {
-        return engine.getConfiguration().isQueryMetricsEnabled();
-    }
-
-    @Override
     protected boolean doRun(int workerId, ValueHolderList<QueryMetrics> metricsList, RunStatus runStatus) {
         StringBuilder b = new StringBuilder("INSERT INTO _query_metrics_ VALUES ");
         String separator = "";
