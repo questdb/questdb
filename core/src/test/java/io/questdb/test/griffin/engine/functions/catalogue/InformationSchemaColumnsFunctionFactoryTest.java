@@ -39,10 +39,10 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             assertQueryNoLeakCheck(
                     "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
                             "qdb\tpublic\tA\tcol0\t0\t\tyes\tinteger\n" +
-                            "qdb\tpublic\tA\tcol1\t1\t\tyes\tvariable character\n" +
+                            "qdb\tpublic\tA\tcol1\t1\t\tyes\tcharacter varying\n" +
                             "qdb\tpublic\tA\tcol2\t2\t\tyes\tdouble precision\n" +
                             "qdb\tpublic\tB\tcol0\t0\t\tyes\tbigint\n" +
-                            "qdb\tpublic\tB\tcol1\t1\t\tyes\tvariable character\n" +
+                            "qdb\tpublic\tB\tcol1\t1\t\tyes\tcharacter varying\n" +
                             "qdb\tpublic\tB\tcol2\t2\t\tyes\treal\n" +
                             "qdb\tpublic\tC\tcol0\t0\t\tyes\tdouble precision\n" +
                             "qdb\tpublic\tC\tcol1\t1\t\tyes\tcharacter\n" +
