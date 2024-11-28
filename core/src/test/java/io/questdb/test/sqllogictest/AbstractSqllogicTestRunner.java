@@ -24,10 +24,13 @@
 
 package io.questdb.test.sqllogictest;
 
+import io.questdb.network.NetworkError;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Misc;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
@@ -55,8 +58,8 @@ import static org.junit.Assert.assertNotNull;
 
 @RunWith(Parameterized.class)
 public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
-    private static short pgPort;
-    private static TestServerMain serverMain;
+    private short pgPort;
+    private TestServerMain serverMain;
     private final String testFile;
 
     public AbstractSqllogicTestRunner(String testFile) {
@@ -81,23 +84,32 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
     public void setUp() {
         super.setUp();
         try (Path path = new Path()) {
-            if (pgPort == 0) {
-                pgPort = (short) (10000 + TestUtils.generateRandom(null).nextInt(1000));
-            }
-            String testResourcePath = getTestResourcePath();
-            path.of(testResourcePath).concat("test");
+            Rnd rnd = TestUtils.generateRandom(null);
+            while (true) {
+                pgPort = (short) (10000 + rnd.nextInt(1000));
+                String testResourcePath = getTestResourcePath();
+                path.of(testResourcePath).concat("test");
 
-            serverMain = startWithEnvVariables(
-                    PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
-                    CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath,
-                    CONFIG_RELOAD_ENABLED.getEnvVarName(), "false",
-                    HTTP_MIN_ENABLED.getEnvVarName(), "false",
-                    HTTP_ENABLED.getEnvVarName(), "false",
-                    LINE_TCP_ENABLED.getEnvVarName(), "false",
-                    TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true",
-                    CAIRO_SQL_BACKUP_ROOT.getEnvVarName(), testResourcePath
-            );
-            serverMain.start();
+                try {
+                    serverMain = startWithEnvVariables(
+                            PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
+                            CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath,
+                            CONFIG_RELOAD_ENABLED.getEnvVarName(), "false",
+                            HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                            HTTP_ENABLED.getEnvVarName(), "false",
+                            LINE_TCP_ENABLED.getEnvVarName(), "false",
+                            TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true",
+                            CAIRO_SQL_BACKUP_ROOT.getEnvVarName(), testResourcePath
+                    );
+                    serverMain.start();
+                    break;
+                } catch (NetworkError e) {
+                    Misc.free(serverMain);
+                    if (e.getMessage() == null || !Chars.contains(e.getMessage(), "could not bind socket")) {
+                        throw e;
+                    }
+                }
+            }
         }
     }
 
