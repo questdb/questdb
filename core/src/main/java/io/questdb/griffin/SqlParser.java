@@ -1165,6 +1165,11 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "variables cannot be subqueries");
             }
 
+            if (!Chars.equalsIgnoreCase(expr.lhs.token, tok)) {
+                // could be a `DECLARE @x := (1,2,3)` situation
+                throw SqlException.$(lexer.lastTokenPosition(), "unexpected bind expression - bracket lists not supported");
+            }
+
             if (model.getDecls().size() > 0) {
                 expr = rewriteDeclaredVariables(expr, model.getDecls(), tok);
             }

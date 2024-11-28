@@ -3394,7 +3394,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("insert batch 1000000 into foo select-choose column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))", "INSERT INTO foo SELECT * FROM (DECLARE @x := 1, @y := 2 SELECT @x + @y)", ExecutionModel.INSERT);
+            assertModel("insert batch 1000000 into foo select-choose column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
+                    "INSERT INTO foo SELECT * FROM (DECLARE @x := 1, @y := 2 SELECT @x + @y)", ExecutionModel.INSERT);
         });
     }
 
@@ -3406,7 +3407,6 @@ public class SqlParserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) asof join bah timestamp (ts))",
                     "DECLARE @foo := foo, @bah := bah SELECT foo.ts, foo.x FROM @foo ASOF JOIN @bah", ExecutionModel.QUERY);
-
         });
     }
 
@@ -3418,7 +3418,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectCase() throws Exception {
-        assertModel("select-virtual case(1 = 1,5,2) case from (long_sequence(1))", "DECLARE @x := 1, @y := 5, @z := 2 SELECT CASE WHEN @x = @X THEN @y ELSE @z END", ExecutionModel.QUERY);
+        assertModel("select-virtual case(1 = 1,5,2) case from (long_sequence(1))",
+                "DECLARE @x := 1, @y := 5, @z := 2 SELECT CASE WHEN @x = @X THEN @y ELSE @z END", ExecutionModel.QUERY);
     }
 
     @Test
@@ -3429,7 +3430,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectCast2() throws Exception {
-        assertModel("select-virtual cast(5,timestamp) cast from (long_sequence(1))", "DECLARE @x := 5 SELECT CAST(@x AS timestamp)", ExecutionModel.QUERY);
+        assertModel("select-virtual cast(5,timestamp) cast from (long_sequence(1))",
+                "DECLARE @x := 5 SELECT CAST(@x AS timestamp)", ExecutionModel.QUERY);
     }
 
     @Test
@@ -3437,13 +3439,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-distinct [symbol] symbol from (select-choose [symbol] symbol from (select [symbol] from trades timestamp (timestamp)))", "DECLARE @x := symbol SELECT DISTINCT symbol FROM trades", ExecutionModel.QUERY);
+            assertModel("select-distinct [symbol] symbol from (select-choose [symbol] symbol from (select [symbol] from trades timestamp (timestamp)))",
+                    "DECLARE @x := symbol SELECT DISTINCT symbol FROM trades", ExecutionModel.QUERY);
         });
     }
 
     @Test
     public void testDeclareSelectDouble() throws Exception {
-        assertModel("select-virtual 123.456 column1 from (long_sequence(1))", "DECLARE @x := 123.456 SELECT @x", ExecutionModel.QUERY);
+        assertModel("select-virtual 123.456 column1 from (long_sequence(1))",
+                "DECLARE @x := 123.456 SELECT @x", ExecutionModel.QUERY);
     }
 
     @Test
@@ -3472,7 +3476,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
             drainWalQueue();
-            assertException("DECLARE @subquery := (SELECT * FROM foo), @ts := ts, @x := x, SELECT @ts, @x FROM @subquery", 22, "function, literal or constant is expected");
+            assertException("DECLARE @subquery := (SELECT * FROM foo), @ts := ts, @x := x, SELECT @ts, @x FROM @subquery",
+                    22, "function, literal or constant is expected");
         });
     }
 
@@ -3481,7 +3486,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))", "DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, price", ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))",
+                    "DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, price", ExecutionModel.QUERY);
         });
     }
 
@@ -3490,13 +3496,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))", "DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, 3", ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))",
+                    "DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, 3", ExecutionModel.QUERY);
         });
     }
 
     @Test
     public void testDeclareSelectInt() throws Exception {
-        assertModel("select-virtual 5 5 from (long_sequence(1))", "DECLARE @x := 5 SELECT @x", ExecutionModel.QUERY);
+        assertModel("select-virtual 5 5 from (long_sequence(1))",
+                "DECLARE @x := 5 SELECT @x", ExecutionModel.QUERY);
     }
 
     @Test
@@ -3519,13 +3527,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) join select [y] from bah timestamp (ts) on bah.y = foo.x)",
                     "DECLARE @x := foo.x, @y := bah.y SELECT foo.ts, foo.x FROM foo JOIN bah on @x = @y", ExecutionModel.QUERY);
-
         });
     }
 
     @Test
     public void testDeclareSelectKeyedBindVariables() throws Exception {
-        assertModel("select-virtual $1 $1, $2 $2 from (long_sequence(1))", "DECLARE @x := $1, @y := $2 SELECT @x, @y", ExecutionModel.QUERY);
+        assertModel("select-virtual $1 $1, $2 $2 from (long_sequence(1))",
+                "DECLARE @x := $1, @y := $2 SELECT @x, @y", ExecutionModel.QUERY);
     }
 
     @Test
@@ -3533,7 +3541,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp) latest by timestamp)", "DECLARE @ts := timestamp SELECT * FROM trades LATEST BY @ts;", ExecutionModel.QUERY);
+            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp) latest by timestamp)",
+                    "DECLARE @ts := timestamp SELECT * FROM trades LATEST BY @ts;", ExecutionModel.QUERY);
         });
     }
 
@@ -3542,7 +3551,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades latest on timestamp partition by symbol)", "DECLARE @ts := timestamp, @sym := symbol SELECT * FROM trades LATEST ON @ts PARTITION BY @sym;", ExecutionModel.QUERY);
+            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades latest on timestamp partition by symbol)",
+                    "DECLARE @ts := timestamp, @sym := symbol SELECT * FROM trades LATEST ON @ts PARTITION BY @sym;", ExecutionModel.QUERY);
         });
     }
 
@@ -3551,32 +3561,38 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit 2,5", "DECLARE @lo := 2, @hi := 5 SELECT * FROM trades LIMIT @lo, @hi", ExecutionModel.QUERY);
+            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit 2,5",
+                    "DECLARE @lo := 2, @hi := 5 SELECT * FROM trades LIMIT @lo, @hi", ExecutionModel.QUERY);
         });
     }
 
     @Test
     public void testDeclareSelectMultipleCTEs() throws Exception {
         String query = "DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y as col1), b AS (SELECT (@x - @y) + col1 as col2 FROM a) SELECT * FROM b";
-        assertModel("select-choose col2 from (select-virtual [2 - 5 + col1 col2] 2 - 5 + col1 col2 from (select-virtual [2 + 5 col1] 2 + 5 col1 from (long_sequence(1))) a) b", query
+        assertModel("select-choose col2 from (select-virtual [2 - 5 + col1 col2] 2 - 5 + col1 col2 from (select-virtual [2 + 5 col1] 2 + 5 col1 from (long_sequence(1))) a) b",
+                query
                 , ExecutionModel.QUERY);
         assertSql("col2\n" +
-                "4\n", query);
+                        "4\n",
+                query);
     }
 
     @Test
     public void testDeclareSelectMultipleColumns() throws Exception {
-        assertModel("select-virtual 1 1, 2 2 from (long_sequence(1))", "DECLARE @x := 1, @y := 2 SELECT @x, @y", ExecutionModel.QUERY);
+        assertModel("select-virtual 1 1, 2 2 from (long_sequence(1))",
+                "DECLARE @x := 1, @y := 2 SELECT @x, @y", ExecutionModel.QUERY);
     }
 
     @Test
     public void testDeclareSelectMultipleColumnsBinaryExpr() throws Exception {
-        assertModel("select-virtual 1 + 2 column from (long_sequence(1))", "DECLARE @x := 1, @y := 2 SELECT @x + @y", ExecutionModel.QUERY);
+        assertModel("select-virtual 1 + 2 column from (long_sequence(1))",
+                "DECLARE @x := 1, @y := 2 SELECT @x + @y", ExecutionModel.QUERY);
     }
 
     @Test
     public void testDeclareSelectMultipleColumnsComplexNesting() throws Exception {
-        assertModel("select-virtual 1 * 2 + 1 / 2 column from (long_sequence(1))", "DECLARE @x := 1, @y := 2 SELECT @x * @y + @x / @y", ExecutionModel.QUERY);
+        assertModel("select-virtual 1 * 2 + 1 / 2 column from (long_sequence(1))",
+                "DECLARE @x := 1, @y := 2 SELECT @x * @y + @x / @y", ExecutionModel.QUERY);
     }
 
     @Test
@@ -3584,7 +3600,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit -(2),-(5)", "DECLARE @lo := -2, @hi := -5 SELECT * FROM trades LIMIT @lo, @hi", ExecutionModel.QUERY);
+            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit -(2),-(5)",
+                    "DECLARE @lo := -2, @hi := -5 SELECT * FROM trades LIMIT @lo, @hi", ExecutionModel.QUERY);
         });
     }
 
@@ -3593,7 +3610,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit -(2),-(5)", "DECLARE @lo := 2, @hi := 5 SELECT * FROM trades LIMIT -@lo, -@hi", ExecutionModel.QUERY);
+            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit -(2),-(5)",
+                    "DECLARE @lo := 2, @hi := 5 SELECT * FROM trades LIMIT -@lo, -@hi", ExecutionModel.QUERY);
         });
     }
 
@@ -3602,7 +3620,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-choose timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp)) order by timestamp, symbol, price", "DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades ORDER BY @x, @y, price", ExecutionModel.QUERY);
+            assertModel("select-choose timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp)) order by timestamp, symbol, price",
+                    "DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades ORDER BY @x, @y, price", ExecutionModel.QUERY);
         });
     }
 
@@ -3611,7 +3630,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-choose timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp)) order by timestamp, symbol, price", "DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades ORDER BY @x, @y, 3", ExecutionModel.QUERY);
+            assertModel("select-choose timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp)) order by timestamp, symbol, price",
+                    "DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades ORDER BY @x, @y, 3", ExecutionModel.QUERY);
         });
     }
 
@@ -3634,7 +3654,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-group-by timestamp_floor('1h',timestamp) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp", "DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit", ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp_floor('1h',timestamp) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
+                    "DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit", ExecutionModel.QUERY);
         });
     }
 
@@ -3643,7 +3664,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp)) sample by 1h", "DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit ALIGN TO FIRST OBSERVATION", ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp)) sample by 1h",
+                    "DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit ALIGN TO FIRST OBSERVATION", ExecutionModel.QUERY);
         });
     }
 
@@ -3652,7 +3674,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) where timestamp >= '2008-12-28' and timestamp < '2009-01-05') sample by 1h from '2008-12-28' to '2009-01-05' fill(null) align to calendar with offset '00:00'", "DECLARE @unit := 1h, @from := '2008-12-28', @to := '2009-01-05', @fill := null SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit FROM @from TO @to FILL(@fill)", ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) where timestamp >= '2008-12-28' and timestamp < '2009-01-05') sample by 1h from '2008-12-28' to '2009-01-05' fill(null) align to calendar with offset '00:00'",
+                    "DECLARE @unit := 1h, @from := '2008-12-28', @to := '2009-01-05', @fill := null SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit FROM @from TO @to FILL(@fill)", ExecutionModel.QUERY);
         });
     }
 
@@ -3661,7 +3684,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp)) sample by 1h align to calendar with offset '10:00'", "DECLARE @offset := '10:00' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET @offset", ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp)) sample by 1h align to calendar with offset '10:00'",
+                    "DECLARE @offset := '10:00' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET @offset", ExecutionModel.QUERY);
         });
     }
 
@@ -3670,7 +3694,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(tradesDdl);
             drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp)) sample by 1h align to calendar time zone 'Antarctica/McMurdo' with offset '00:00'", "DECLARE @tz := 'Antarctica/McMurdo' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE @tz", ExecutionModel.QUERY);
+            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp)) sample by 1h align to calendar time zone 'Antarctica/McMurdo' with offset '00:00'",
+                    "DECLARE @tz := 'Antarctica/McMurdo' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE @tz", ExecutionModel.QUERY);
         });
     }
 
@@ -3735,6 +3760,17 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testDeclareVariableDefinedByAnotherVariable() throws Exception {
         assertModel("select-virtual 2 2, 2 * 2 column from (long_sequence(1))",
                 "DECLARE @y := 2, @y2 := (@y * @y) SELECT @y, @y2", ExecutionModel.QUERY);
+    }
+
+    @Test
+    public void testDeclareVariableWithBracketedExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(tradesDdl);
+            assertException("DECLARE @symbols := ('ETH-USD', 'BTC-USD') " +
+                            "SELECT * FROM trades WHERE @symbols IN @symbols",
+                    43, "bracket lists");
+
+        });
     }
 
     @Test
