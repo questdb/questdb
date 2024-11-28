@@ -28,7 +28,8 @@ import io.questdb.std.ValueHolderList;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractQueueBatchConsumerJob<T extends ValueHolder<T>> implements Job {
-    public static final int INITIAL_CAPACITY = 128;
+    private static final int BATCH_LIMIT = 1024;
+    private static final int INITIAL_CAPACITY = 128;
     private final ValueHolderList<T> buffer;
     private final ConcurrentQueue<T> queue;
 
@@ -43,7 +44,7 @@ public abstract class AbstractQueueBatchConsumerJob<T extends ValueHolder<T>> im
             return false;
         }
         buffer.clear();
-        while (queue.tryDequeue(buffer.peekNextHolder())) {
+        for (int i = 0; i < BATCH_LIMIT && queue.tryDequeue(buffer.peekNextHolder()); i++) {
             buffer.commitNextHolder();
         }
         if (buffer.size() > 0) {
