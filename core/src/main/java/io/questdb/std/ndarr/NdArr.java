@@ -28,39 +28,39 @@ import io.questdb.std.Arc;
 import io.questdb.std.DirectIntSequence;
 import io.questdb.std.bytes.DirectByteSequence;
 
-/** An N-dimensional Array */
+/**
+ * An N-dimensional Array
+ */
 public interface NdArr {
-    /** Get the array's type */
-    int getType();
+    /**
+     * Get the <i>N-th</i> dimension's size, as element count.
+     */
+    int getDim(int dimIndex);
 
-    /** Constant returned from `NdArrFormat`. */
-    int getFormat();
-
-    /** Buffer to the CSR/CSC row or column pointers array. */
-    Arc<DirectIntSequence> getSparsePointers();
-
-    /** Buffer to the CSR/CSC column or row indices array. */
-    Arc<DirectIntSequence> getSparseIndices();
-
-    /** Buffer to the sparse values or dense flattened values. */
-    Arc<DirectByteSequence> getValues();
-
-    /** Number of values to skip reading before applying the strides logic to access the dense array */
-    int getValuesOffset();
-
-    /** Number of values readable, after skipping <code>getValuesOffset</code>. */
-    int getValuesCount();
-
-    /** Number of dimensions of this array. */
+    /**
+     * Number of dimensions of this array.
+     */
     int getDimsCount();
 
-    /** Get the <i>N-th</i> dimension's size, as element count. */
-    int getDim(int dimIndex);
+    /**
+     * Constant returned from `NdArrFormat`.
+     */
+    int getFormat();
+
+    /**
+     * Buffer to the CSR/CSC column or row indices array.
+     */
+    Arc<DirectIntSequence> getSparseIndices();
+
+    /**
+     * Buffer to the CSR/CSC row or column pointers array.
+     */
+    Arc<DirectIntSequence> getSparsePointers();
 
     /**
      * Get the <i>N-th</i> dimension's stride, as element count.
      * <p>The returned stride expresses the number of elements to skip to read the next
-     *    element in that dimension.</p>
+     * element in that dimension.</p>
      * <p><strong>IMPORTANT:</strong>
      * <ul>
      *     <li>A stride can be <code>0</code>, in case of broadcasting, or
@@ -69,6 +69,31 @@ public interface NdArr {
      *         Since we also support packed arrays (e.g. bool bit arrays),
      *         the stride here is expressed in the element count space instead.</li>
      * </ul></p>
-     * */
+     */
     int getStride(int dimIndex);
+
+    /**
+     * Get the array's type
+     */
+    int getType();
+
+    /**
+     * Buffer to the sparse values or dense flattened values.
+     */
+    Arc<DirectByteSequence> getValues();
+
+    /**
+     * Number of values readable, after skipping <code>getValuesOffset</code>.
+     */
+    int getValuesCount();
+
+    /**
+     * Number of values to skip reading before applying the strides logic to access the dense array
+     */
+    int getValuesOffset();
+
+    /**
+     * The values can be read in sequence when performing a row-major serialization.
+     */
+    boolean isDefaultRowMajorStride();
 }
