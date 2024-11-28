@@ -24,29 +24,42 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
+import java.util.Arrays;
+import java.util.Collection;
 
-import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
-
+@RunWith(Parameterized.class)
 public class PGDeclareSyntaxTest extends BasePGTest {
+
+    public PGDeclareSyntaxTest(@NonNull LegacyMode legacyMode) {
+        super(legacyMode);
+    }
+
+    @Parameterized.Parameters(name = "{0}, {1}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {LegacyMode.MODERN},
+                {LegacyMode.LEGACY},
+        });
+    }
 
     @Test
     public void testDeclareSyntaxWorksWithPositionalBindVariables() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement ps = connection.prepareStatement("DECLARE @x := ?, @y := ? SELECT @x::int + @y::int")) {
                 ps.setInt(1, 1);
                 ps.setInt(2, 2);
-                try (ResultSet rs = ps.executeQuery()) {
-                    assertResultSet(
-                            "column[INTEGER]\n" +
-                                    "3\n",
-                            sink,
-                            rs
-                    );
-                }
+                assertResultSet(
+                        "column[INTEGER]\n" +
+                                "3\n",
+                        sink,
+                        ps.executeQuery()
+                );
             }
         });
     }
