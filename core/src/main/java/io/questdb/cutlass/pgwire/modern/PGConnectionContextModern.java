@@ -304,9 +304,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             if (pipelineCurrentEntry != null) {
                 // do not return named portals and statements, since they are returned later
                 if (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal()) {
-                    Misc.free(pipelineCurrentEntry);
-                    pipelineCurrentEntry.clearForPooling();
-                    entryPool.release(pipelineCurrentEntry);
+                    releaseToPool(pipelineCurrentEntry);
                 }
             }
         } while ((pipelineCurrentEntry = pipeline.poll()) != null);
@@ -575,9 +573,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             pe.setStateClosed(true, isStatementClose);
             // return the factory back to global cache in case of a select
             pe.cacheIfPossible(tasCache, null);
-            Misc.free(pe);
-            pe.clearForPooling();
-            entryPool.release(pe);
+            releaseToPool(pe);
         }
         cache.clear();
     }
@@ -768,7 +764,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     final TypesAndSelectModern tas = tasCache.poll(pipelineCurrentEntry.getSqlText());
                     if (tas != null) {
                         if (pe.msgParseReconcileParameterTypes(tas)) {
-                            pe.ofSelect(pipelineCurrentEntry.getSqlText(), tas);
+                            pe.ofCachedSelect(pipelineCurrentEntry.getSqlText(), tas);
                             cachedStatus = CACHE_HIT_SELECT_VALID;
                         } else {
                             tas.close();
@@ -916,7 +912,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             throw msgKaput().put("spurious describe message received");
         }
 
-        pipelineCurrentEntry.setStateDesc(nullTargetName ? 1 : isPortal ? 2 : 3);
+        pipelineCurrentEntry.setStateDesc(nullTargetName || isPortal ? PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION : PGPipelineEntry.SYNC_DESC_PARAMETER_DESCRIPTION);
     }
 
     private void msgExecute(long lo, long msgLimit) throws BadProtocolException {
@@ -1056,7 +1052,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         final TypesAndInsertModern tai = taiCache.peek(taiKeyIndex);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
-                pipelineCurrentEntry.ofInsert(utf16SqlText, tai);
+                pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
                 cachedStatus = CACHE_HIT_INSERT_VALID;
             } else {
                 TypesAndInsertModern tai2 = taiCache.poll(taiKeyIndex);
@@ -1070,7 +1066,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             final TypesAndSelectModern tas = tasCache.poll(utf16SqlText);
             if (tas != null) {
                 if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
-                    pipelineCurrentEntry.ofSelect(utf16SqlText, tas);
+                    pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
                     cachedStatus = CACHE_HIT_SELECT_VALID;
                 } else {
                     tas.close();
@@ -1172,8 +1168,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         outReadForNewQuery();
         resumeCallback = null;
         responseUtf8Sink.sendBufferAndReset();
-
-        // todo: this is a wrap, prepare for new query execution
         prepareForNewQuery();
     }
 
@@ -1279,18 +1273,18 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    // clears whole state except for characterStore because top-level batch text is using it
-    private void prepareForNewBatchQuery() {
+    private void prepareForNewQuery() {
         LOG.debug().$("prepare for new query").$();
         Misc.clear(bindVariableService);
         freezeRecvBuffer = false;
         sqlExecutionContext.setCacheHit(false);
         sqlExecutionContext.containsSecret(false);
+        Misc.clear(characterStore);
     }
 
-    private void prepareForNewQuery() {
-        prepareForNewBatchQuery();
-        Misc.clear(characterStore);
+    private void releaseToPool(@NotNull PGPipelineEntry pe) {
+        pe.close();
+        entryPool.release(pe);
     }
 
     private void replaceCurrentPipelineEntry(PGPipelineEntry nextEntry) {
@@ -1376,16 +1370,22 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     }
                 }
             } while (true);
+
+            // we want the pipelineCurrentEntry to retain the last entry of the pipeline
+            // unless this entry was already executed, closed and is an error
+            // additionally, we do not want to "cacheIfPossible" the last entry, because
+            // "cacheIfPossible" has side effects on the entry.
+
             PGPipelineEntry nextEntry = pipeline.poll();
             if (nextEntry != null || isExec || isError || isClosed) {
-                pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
+                if (!isError) {
+                    pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
+                }
                 releaseToPoolIfAbandoned(pipelineCurrentEntry);
                 pipelineCurrentEntry = nextEntry;
             } else {
                 LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
                         .$(", sql=").$(pipelineCurrentEntry.getSqlText())
-                        .$(", isExec=").$(isExec)
-                        .$(", isError=").$(isError)
                         .$(", stmt=").$(pipelineCurrentEntry.getPreparedStatementName())
                         .$(", portal=").$(pipelineCurrentEntry.getPortalName())
                         .I$();
@@ -1487,9 +1487,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     void releaseToPoolIfAbandoned(PGPipelineEntry pe) {
         if (pe != null) {
             if (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal())) {
-                Misc.free(pe);
-                pe.clearForPooling();
-                entryPool.release(pe);
+                releaseToPool(pe);
             } else {
                 pe.clearState();
             }
