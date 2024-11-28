@@ -50,7 +50,9 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
     }
 
     private void init() throws SqlException {
-        engine.execute("CREATE TABLE IF NOT EXISTS _query_metrics_ (ts TIMESTAMP, query VARCHAR, execution_micros LONG)");
+        engine.execute("CREATE TABLE IF NOT EXISTS _query_metrics_" +
+                " (ts TIMESTAMP, query VARCHAR, execution_micros LONG)" +
+                " TIMESTAMP(ts) PARTITION BY DAY");
     }
 
     @Override
