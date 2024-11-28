@@ -210,8 +210,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     sink.clear(sink.size() - 1);
                     sink.put(')');
                 }
-
-                // todo - owned by/other enterprise needs?
+                
                 sink.put(';');
                 hasRun = true;
                 return true;
