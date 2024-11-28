@@ -1,4 +1,4 @@
-# description: Test dedup cases with string column type
+# description: Test WAL table backup SQL after DDL change
 # group: [dedup]
 
 control iso_timestamp on

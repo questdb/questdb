@@ -3539,29 +3539,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         sink.clear();
                         sink.put('\'').put(tableName).put('\'');
 
-                        while (true) {
-                            try (
-                                    SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
-                                    RecordCursorFactory factory = engine.select(sink, allowAllContext);
-                                    RecordCursor cursor = factory.getCursor(allowAllContext)
-                            ) {
-                                // statement/query timeout value is most likely too small for backup operation
-                                copyTableData(
-                                        cursor,
-                                        factory.getMetadata(),
-                                        backupWriter,
-                                        writerMetadata,
-                                        recordToRowCopier,
-                                        configuration.getCreateTableModelBatchSize(),
-                                        configuration.getO3MaxLag(),
-                                        SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
-                                );
-                                break;
-                            } catch (TableReferenceOutOfDateException ex) {
-                                // Sometimes table can be out of data when a DDL is committed concurrently, we need to retry
-                                LOG.info().$("retrying backup due to concurrent metadata update [table=").utf8(tableName).$(", ex=").$(ex.getFlyweightMessage()).I$();
+                        try (SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                            while (true) {
+                                try (
+                                        RecordCursorFactory factory = engine.select(sink, allowAllContext);
+                                        RecordCursor cursor = factory.getCursor(allowAllContext)
+                                ) {
+                                    // statement/query timeout value is most likely too small for backup operation
+                                    copyTableData(
+                                            cursor,
+                                            factory.getMetadata(),
+                                            backupWriter,
+                                            writerMetadata,
+                                            recordToRowCopier,
+                                            configuration.getCreateTableModelBatchSize(),
+                                            configuration.getO3MaxLag(),
+                                            SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+                                    );
+                                    break;
+                                } catch (TableReferenceOutOfDateException ex) {
+                                    // Sometimes table can be out of data when a DDL is committed concurrently, we need to retry
+                                    LOG.info().$("retrying backup due to concurrent metadata update [table=").utf8(tableName).$(", ex=").$(ex.getFlyweightMessage()).I$();
+                                }
                             }
                         }
+
                         backupWriter.commit();
                     }
                 } // release reader lock
