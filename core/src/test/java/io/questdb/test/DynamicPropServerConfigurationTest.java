@@ -37,7 +37,9 @@ import io.questdb.ServerMain;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.cutlass.http.TestHttpClient;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -326,6 +328,50 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
 
                 Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
+            }
+        });
+    }
+
+    @Test
+    public void testPgWireRecvBufferSizeReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.recv.buffer.size=256\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                final StringSink sink = new StringSink();
+                sink.put(Chars.repeat("q", 300));
+
+                try (Connection conn = getConnection("admin", "quest")) {
+                    try (PreparedStatement stmt = conn.prepareStatement("create table x (s varchar)")) {
+                        stmt.execute();
+                    }
+
+                    try (PreparedStatement stmt = conn.prepareStatement("insert into x values (?)")) {
+                        stmt.setString(1, sink.toString());
+                        stmt.execute();
+                        Assert.fail();
+                    } catch (PSQLException ignore) {
+                    }
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("pg.recv.buffer.size=512\n");
+                }
+
+                latch.await();
+
+                // Now we should be able to insert
+                try (
+                        Connection conn = getConnection("admin", "quest");
+                        PreparedStatement stmt = conn.prepareStatement("insert into x values (?)")
+                ) {
+                    stmt.setString(1, sink.toString());
+                    stmt.execute();
+                }
             }
         });
     }
