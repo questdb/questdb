@@ -273,7 +273,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getDefaultSymbolCapacity() {
-        return 128;
+        return 256;
     }
 
     @Override
