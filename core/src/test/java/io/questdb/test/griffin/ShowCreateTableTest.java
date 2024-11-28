@@ -30,6 +30,20 @@ import org.junit.Test;
 public class ShowCreateTableTest extends AbstractCairoTest {
 
     @Test
+    public void testDedup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table foo ( ts timestamp, s symbol, i int ) timestamp(ts) partition by day wal dedup upsert keys(ts, s, i)");
+            assertSql("ddl\n" +
+                    "CREATE TABLE foo ( \n" +
+                    "\tts TIMESTAMP,\n" +
+                    "\ts SYMBOL CAPACITY 128 CACHE,\n" +
+                    "\ti INT\n" +
+                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                    "DEDUP UPSERT KEYS(ts,s,i);\n", "show create table foo");
+        });
+    }
+
+    @Test
     public void testDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts)");
@@ -38,19 +52,6 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     "\tts TIMESTAMP,\n" +
                     "\ts SYMBOL CAPACITY 128 CACHE\n" +
                     ") timestamp(ts) BYPASS WAL;\n", "show create table foo");
-        });
-    }
-
-    @Test
-    public void testInVolume() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table foo ( ts timestamp, s symbol ) in volume OTHER_VOLUME");
-            assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ts SYMBOL CAPACITY 128 CACHE\n" +
-                    ")\n" +
-                    "WITH maxUncommittedRows=1234, o3MaxLag=1000000us;\n", "show create table foo");
         });
     }
 
@@ -181,21 +182,6 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     "\ts SYMBOL CAPACITY 128 CACHE\n" +
                     ")\n" +
                     "WITH maxUncommittedRows=1234;\n", "show create table foo");
-        });
-    }
-
-    @Test
-    public void testWithMaxUncommittedRowsAndInVolume() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table show_create_table_3 (\n" +
-                    "  ts timestamp, i int\n" +
-                    ") timestamp(ts) partition by day wal\n" +
-                    "with maxUncommittedRows=1234, in volume OTHER_VOLUME");
-            assertSql("CREATE TABLE show_create_table_3 ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ti INT\n" +
-                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
-                    "WITH maxUncommittedRows=1234, IN VOLUME OTHER_VOLUME;\n", "show create table foo");
         });
     }
 
