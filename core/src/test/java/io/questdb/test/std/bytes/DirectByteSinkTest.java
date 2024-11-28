@@ -47,7 +47,7 @@ public class DirectByteSinkTest {
         final Supplier<Long> getFreeCount = () -> Unsafe.getFreeCount() - freeCount0;
         final Supplier<Long> getMemUsed = () -> Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_BYTE_SINK) - memUsed0;
 
-        try (DirectByteSink sink = new DirectByteSink(0)) {
+        try (DirectByteSink sink = new DirectByteSink(0, MemoryTag.NATIVE_DIRECT_BYTE_SINK)) {
             Assert.assertEquals(0, sink.size());
             Assert.assertEquals(32, sink.allocatedCapacity());
             final long ptr = sink.ptr();
@@ -102,7 +102,7 @@ public class DirectByteSinkTest {
             Assert.assertEquals(getFreeCount.get().longValue(), 0);
             Assert.assertEquals(getMemUsed.get().longValue(), 64);
 
-            try (DirectByteSink other = new DirectByteSink(32)) {
+            try (DirectByteSink other = new DirectByteSink(32, MemoryTag.NATIVE_DIRECT_BYTE_SINK)) {
                 Assert.assertEquals(getMallocCount.get().longValue(), 2);
                 other.put((byte) 'x');
                 other.put((byte) 'y');
@@ -129,7 +129,7 @@ public class DirectByteSinkTest {
 
     @Test
     public void testBorrowNativeByteSink() {
-        try (DirectByteSink sink = new DirectByteSink(16)) {
+        try (DirectByteSink sink = new DirectByteSink(16, MemoryTag.NATIVE_DIRECT_BYTE_SINK)) {
             final long ptr = sink.ptr();
             Assert.assertNotEquals(0, ptr);
             Assert.assertEquals(32, sink.allocatedCapacity());
@@ -172,8 +172,8 @@ public class DirectByteSinkTest {
     @Test
     public void testOver2GiB() {
         try (
-                DirectByteSink oneMegChunk = new DirectByteSink(32);
-                DirectByteSink dbs = new DirectByteSink(32)
+                DirectByteSink oneMegChunk = new DirectByteSink(32, MemoryTag.NATIVE_DIRECT_BYTE_SINK);
+                DirectByteSink dbs = new DirectByteSink(32, MemoryTag.NATIVE_DIRECT_BYTE_SINK)
         ) {
 
             final int oneMiB = 1024 * 1024;

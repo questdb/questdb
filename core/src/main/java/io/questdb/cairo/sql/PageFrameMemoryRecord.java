@@ -41,6 +41,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
+import io.questdb.std.ndarr.NdArray;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StableStringSource;
@@ -63,6 +64,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
+    private final ObjList<NdArray> ndArrays = new ObjList<>(); // TODO(amunra): Implement NdArray support
     private LongList auxPageAddresses;
     private LongList auxPageSizes;
     private byte frameFormat = -1;

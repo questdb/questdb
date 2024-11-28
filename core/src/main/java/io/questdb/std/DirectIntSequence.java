@@ -24,5 +24,17 @@
 
 package io.questdb.std;
 
-public interface DirectIntSequence {
+import io.questdb.std.bytes.DirectSequence;
+
+public interface DirectIntSequence extends DirectSequence {
+    /**
+     * Returns integer at index.
+     * <p><strong>IMPORTANT</strong>: Unchecked bounds.</p>
+     */
+    default int get(int index) {
+        return Unsafe.getUnsafe().getInt(ptr() + ((long) index << 2));
+    }
+
+    /** Number of integers in the sequence. */
+    int length();
 }

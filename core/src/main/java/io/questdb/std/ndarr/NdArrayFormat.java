@@ -29,7 +29,7 @@ package io.questdb.std.ndarr;
  * * https://en.wikipedia.org/wiki/Matrix_representation
  * * https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)
  */
-public interface NdArrFormat {
+public interface NdArrayFormat {
     /**
      * Invalid value, used until the format is determined during parsing.
      */

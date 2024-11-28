@@ -667,7 +667,7 @@ public class LineTcpParser implements QuietCloseable {
 
     public class ProtoEntity implements QuietCloseable {
         private final DirectUtf8String name = new DirectUtf8String();
-        private final NdArrParser ndArrParser = new NdArrParser();
+        private final NdArrayParser ndArrParser = new NdArrayParser();
         private final DirectUtf8String value = new DirectUtf8String();
         private boolean booleanValue;
         private double floatValue;

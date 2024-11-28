@@ -33,7 +33,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.bytes.DirectByteSequence;
 import io.questdb.std.bytes.DirectByteSink;
-import io.questdb.std.ndarr.NdArrFormat;
+import io.questdb.std.ndarr.NdArrayFormat;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -86,7 +86,7 @@ import io.questdb.std.str.Utf8s;
  *   <li><code>values</code></li>
  * </ul>
  */
-public class NdArrParser implements QuietCloseable {
+public class NdArrayParser implements QuietCloseable {
     private final StringSink actual = new StringSink();
     /**
      * Temporary used to decode a single UTF-8 char and re-encode it as UTF-16
@@ -109,7 +109,7 @@ public class NdArrParser implements QuietCloseable {
      * <p>When format is <code>NdArrFormat.CSR</code> or <code>NdArrFormat.CSC</code>, this field is set after parsing.
      */
     private final IntList dims = new IntList(8);
-    private final DirectByteSink values = new DirectByteSink(64);  // TODO(amunra): Memory Tag
+    private final DirectByteSink values = new DirectByteSink(64, MemoryTag.NATIVE_ND_ARRAY);
     private final DirectUtf8String parsing = new DirectUtf8String();
     private final DirectUtf8String token = new DirectUtf8String();
     private final DirectIntList sparseIndices = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
@@ -136,7 +136,7 @@ public class NdArrParser implements QuietCloseable {
      */
     private int valuesCount = 0;
     private ErrorCode error = ErrorCode.NONE;
-    private int format = NdArrFormat.UNDEFINED;
+    private int format = NdArrayFormat.UNDEFINED;
     private int type = ColumnType.UNDEFINED;
 
     // TODO(amunra): Convert all usages of this into more enum values instead. */
@@ -298,11 +298,11 @@ public class NdArrParser implements QuietCloseable {
         }
 
         switch (format) {
-            case NdArrFormat.CSR:
-            case NdArrFormat.CSC:
+            case NdArrayFormat.CSR:
+            case NdArrayFormat.CSC:
                 throw new UnsupportedOperationException("not yet implemented");
 
-            case NdArrFormat.RM:
+            case NdArrayFormat.RM:
                 parseRowMajor();
                 break;
             default:
@@ -371,12 +371,12 @@ public class NdArrParser implements QuietCloseable {
         final byte next = parsing.byteAt(0);
         switch (next) {
             case 'C':
-                format = NdArrFormat.CSC;
+                format = NdArrayFormat.CSC;
                 parsing.advance();
                 break;
 
             case 'R':
-                format = NdArrFormat.CSR;
+                format = NdArrayFormat.CSR;
                 parsing.advance();
                 break;
 
@@ -396,7 +396,7 @@ public class NdArrParser implements QuietCloseable {
             case 'N':  // NaN
             case '{':
                 // The start of a number or a nesting level implies we're parsing a row-major dense array.
-                format = NdArrFormat.RM;
+                format = NdArrayFormat.RM;
                 return;
             default:
                 actualPutNextChar();
@@ -545,13 +545,13 @@ public class NdArrParser implements QuietCloseable {
         dimIndex = -1;  // No dimensions until the first `{`
         dims.clear();
         type = ColumnType.UNDEFINED;
-        format = NdArrFormat.UNDEFINED;
+        format = NdArrayFormat.UNDEFINED;
         values.clear();
         sparsePointers.clear();
         sparseIndices.clear();
         valuesCount = 0;
         baseLo = 0;
-        format = NdArrFormat.UNDEFINED;
+        format = NdArrayFormat.UNDEFINED;
     }
 
     private void valueWritten() {

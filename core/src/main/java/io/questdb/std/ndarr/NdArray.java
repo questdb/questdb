@@ -24,38 +24,22 @@
 
 package io.questdb.std.ndarr;
 
-import io.questdb.std.Arc;
-import io.questdb.std.DirectIntSequence;
 import io.questdb.std.bytes.DirectByteSequence;
 
 /**
  * An N-dimensional Array
  */
-public interface NdArr {
+public interface NdArray {
     /**
-     * Get the <i>N-th</i> dimension's size, as element count.
+     * Get the <i>N-th</i> dimension's size.
      */
-    int getDim(int dimIndex);
+    int getDim(int index);
 
     /**
-     * Number of dimensions of this array.
+     * Get the number of dimensions.
+     * <p>In other words, get the shape of the array.</p>
      */
     int getDimsCount();
-
-    /**
-     * Constant returned from `NdArrFormat`.
-     */
-    int getFormat();
-
-    /**
-     * Buffer to the CSR/CSC column or row indices array.
-     */
-    Arc<DirectIntSequence> getSparseIndices();
-
-    /**
-     * Buffer to the CSR/CSC row or column pointers array.
-     */
-    Arc<DirectIntSequence> getSparsePointers();
 
     /**
      * Get the <i>N-th</i> dimension's stride, as element count.
@@ -67,10 +51,13 @@ public interface NdArr {
      *         <code>&lt; 0</code> in case of reversing of data.</li>
      *     <li>Most libraries support strides expressed at the byte level.
      *         Since we also support packed arrays (e.g. bool bit arrays),
-     *         the stride here is expressed in the element count space instead.</li>
+     *         the stride here is expressed in the element count space
+     *         instead.</li>
      * </ul></p>
      */
     int getStride(int dimIndex);
+
+    // boolean getBool(NdArrayIndex index)  // TODO(amunra): Implement accessors
 
     /**
      * Get the array's type
@@ -80,7 +67,7 @@ public interface NdArr {
     /**
      * Buffer to the sparse values or dense flattened values.
      */
-    Arc<DirectByteSequence> getValues();
+    DirectByteSequence getValues();
 
     /**
      * Number of values readable, after skipping <code>getValuesOffset</code>.
@@ -88,12 +75,19 @@ public interface NdArr {
     int getValuesCount();
 
     /**
-     * Number of values to skip reading before applying the strides logic to access the dense array
+     * Number of values to skip reading before
+     * applying the strides logic to access the dense array.
+     * This is exposed (rather than being a part of the Values object)
+     * because of densly packed datatypes, such as boolean bit arrays,
+     * where this might mean slicing across the byte boundary.
      */
     int getValuesOffset();
 
     /**
-     * The values can be read in sequence when performing a row-major serialization.
+     * The values can be read in sequence when performing a row-major
+     * serialization.
+     * <p>This allows for efficient serialization of the array,
+     * without the need to inspect the strides.</p>
      */
     boolean isDefaultRowMajorStride();
 }

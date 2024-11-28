@@ -40,6 +40,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     private static final int BYTE_SINK_HI_OFFSET = BYTE_SINK_LO_OFFSET + 8;  // 16
     private static final int BYTE_SINK_OVERFLOW_OFFSET = BYTE_SINK_HI_OFFSET + 8;  // 24
     private static final int BYTE_SINK_ASCII_OFFSET = BYTE_SINK_OVERFLOW_OFFSET + 4;  // 28
+    private final int memoryTag;
     private final long initialCapacity;
     /**
      * Pointer to the C `questdb_byte_sink_t` structure. See `byte_sink.h`.
@@ -73,11 +74,11 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         }
     };
 
-    public DirectByteSink(long initialCapacity) {
-        this(initialCapacity, true);
+    public DirectByteSink(long initialCapacity, int memoryTag) {
+        this(initialCapacity, true, memoryTag);
     }
 
-    public DirectByteSink(long initialCapacity, boolean alloc) {
+    public DirectByteSink(long initialCapacity, boolean alloc, int memoryTag) {
         assert initialCapacity >= 0;
         assert initialCapacity <= Integer.MAX_VALUE;
         // this will allocate a minimum of 32 bytes of "allocated capacity"
@@ -87,6 +88,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         } else {
             impl = 0;
         }
+        this.memoryTag = memoryTag;
     }
 
     public static native long implBook(long impl, long len);
@@ -149,7 +151,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         final long newCapacity = allocatedCapacity();
         if (newCapacity > initCapacity) {
             Unsafe.incrReallocCount();
-            Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag());
+            Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag);
         }
         return p;
     }
@@ -269,7 +271,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         final long capacityChange = allocatedCapacity() - lastAllocatedCapacity;
         if (capacityChange != 0) {
             Unsafe.incrReallocCount();
-            Unsafe.recordMemAlloc(capacityChange, memoryTag());
+            Unsafe.recordMemAlloc(capacityChange, memoryTag);
         }
     }
 
@@ -280,7 +282,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         final long capAdjustment = -1 * allocatedCapacity();
         implDestroy(impl);
         Unsafe.incrFreeCount();
-        Unsafe.recordMemAlloc(capAdjustment, memoryTag());
+        Unsafe.recordMemAlloc(capAdjustment, memoryTag);
         impl = 0;
     }
 
@@ -307,16 +309,12 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         if (impl == 0) {
             throw CairoException.nonCritical().setOutOfMemory(true).put("could not allocate direct byte sink [maxCapacity=").put(initialCapacity).put(']');
         }
-        Unsafe.recordMemAlloc(this.allocatedCapacity(), memoryTag());
+        Unsafe.recordMemAlloc(this.allocatedCapacity(), memoryTag);
         Unsafe.incrMallocCount();
     }
 
     private void setImplPtr(long ptr) {
         Unsafe.getUnsafe().putLong(impl + BYTE_SINK_PTR_OFFSET, ptr);
-    }
-
-    protected int memoryTag() {
-        return MemoryTag.NATIVE_DIRECT_BYTE_SINK;
     }
 
     static {
