@@ -163,7 +163,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     }
                     if (withO3MaxLag) {
                         if (withMaxUncommittedRows) {
-                            sink.put(',');
+                            sink.put(", ");
                         }
                         sink.put("o3MaxLag=").put(table.getO3MaxLag()).put("us");
                     }

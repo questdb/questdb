@@ -53,6 +53,19 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWithInVolume() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table foo ( ts timestamp, s symbol ) in volume OTHER_VOLUME");
+            assertSql("ddl\n" +
+                    "CREATE TABLE foo ( \n" +
+                    "\tts TIMESTAMP,\n" +
+                    "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                    ")\n" +
+                    "WITH maxUncommittedRows=1234, o3MaxLag=1000000us;\n", "show create table foo");
+        });
+    }
+
+    @Test
     public void testWithManyOtherColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table foo as (" +
@@ -111,6 +124,10 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         });
     }
 
+    // o3MaxLag does not allow plain numbers in `CREATE TABLE`
+    // You must provide a unit. This differs from server.conf which
+    // allows you to give a plain value.
+    // The divergence exists between `Numbers.parseMicros` and `SqlUtil.expectMicros`
     @Test
     public void testWithMaxUncommittedRowsAndO3MaxLag() throws Exception {
         assertMemoryLeak(() -> {
