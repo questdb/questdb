@@ -25,6 +25,7 @@
 package io.questdb.std.bytes;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Os;

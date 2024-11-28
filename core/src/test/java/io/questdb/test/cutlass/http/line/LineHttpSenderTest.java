@@ -474,7 +474,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 String tableName = "ndarr_test";
-                serverMain.compile("create table " + tableName + " (x symbol, y symbol, l1 long, a1 array(double), a2 array(long), ts timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.ddl("create table " + tableName + " (x symbol, y symbol, l1 long, a1 array(double), a2 array(long), ts timestamp) timestamp(ts) partition by DAY WAL");
 
                 int port = serverMain.getHttpServerPort();
                 try (Sender sender = Sender.builder(Sender.Transport.HTTP)
