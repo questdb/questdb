@@ -31,16 +31,25 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueBatchConsumerJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ValueHolderList;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
+
+import java.util.concurrent.TimeUnit;
 
 public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics> {
+    public static final String TABLE_NAME = "_query_metrics_";
+    private static final long CLEANUP_INTERVAL_MICROS = TimeUnit.SECONDS.toMicros(10);
     private static final Log LOG = LogFactory.getLog(QueryMetricsJob.class.getName());
+    private static final long METRICS_LIFETIME_MICROS = TimeUnit.MINUTES.toMicros(61);
 
+    private final MicrosecondClock clock;
     private final CairoEngine engine;
     private final QueryMetrics metrics = new QueryMetrics();
+    private long lastCleanupTs;
 
     public QueryMetricsJob(CairoEngine engine) {
         super(engine.getMessageBus().getQueryMetricsQueue());
         this.engine = engine;
+        this.clock = engine.getConfiguration().getMicrosecondClock();
     }
 
     public static void assignToPool(CairoEngine engine, WorkerPool pool) {
@@ -49,15 +58,30 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
         }
     }
 
+    private void discardOldData() {
+        final long now = clock.getTicks();
+        if (now - lastCleanupTs > CLEANUP_INTERVAL_MICROS) {
+            try {
+                engine.execute("ALTER TABLE " + TABLE_NAME + " DROP PARTITION WHERE ts < " +
+                        (clock.getTicks() - METRICS_LIFETIME_MICROS));
+                lastCleanupTs = now;
+            } catch (SqlException e) {
+                LOG.error().$("Failed to discard old query metrics").$((Throwable) e).$();
+            }
+        }
+    }
+
     private void init() throws SqlException {
-        engine.execute("CREATE TABLE IF NOT EXISTS _query_metrics_" +
+        engine.execute("CREATE TABLE IF NOT EXISTS " + TABLE_NAME +
                 " (ts TIMESTAMP, query VARCHAR, execution_micros LONG)" +
-                " TIMESTAMP(ts) PARTITION BY DAY");
+                " TIMESTAMP(ts) PARTITION BY HOUR");
     }
 
     @Override
     protected boolean doRun(int workerId, ValueHolderList<QueryMetrics> metricsList, RunStatus runStatus) {
-        StringBuilder b = new StringBuilder("INSERT INTO _query_metrics_ VALUES ");
+        discardOldData();
+
+        StringBuilder b = new StringBuilder("INSERT INTO " + TABLE_NAME + " VALUES ");
         String separator = "";
         for (int n = metricsList.size(), i = 0; i < n; i++) {
             metricsList.getQuick(i, metrics);
