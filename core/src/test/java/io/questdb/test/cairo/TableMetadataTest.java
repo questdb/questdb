@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -55,7 +56,7 @@ public class TableMetadataTest extends AbstractCairoTest {
     public void testTableReaderMetadataPool() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "x";
-            ddl("create table x (a int, b long, c double, d symbol capacity 10, e string, ts timestamp) timestamp (ts) partition by WEEK " + (walEnabled ? "WAL" : ""));
+            execute("create table x (a int, b long, c double, d symbol capacity 10, e string, ts timestamp) timestamp (ts) partition by WEEK " + (walEnabled ? "WAL" : ""));
             TableToken tt = engine.verifyTableName(tableName);
             int maxUncommitted = 1234;
 
@@ -64,8 +65,8 @@ public class TableMetadataTest extends AbstractCairoTest {
                 Assert.assertEquals(configuration.getO3MaxLag(), m1.getO3MaxLag());
                 Assert.assertEquals(PartitionBy.WEEK, m1.getPartitionBy());
 
-                compile("alter table x set param maxUncommittedRows = " + maxUncommitted);
-                compile("alter table x set param o3MaxLag = 50s");
+                execute("alter table x set param maxUncommittedRows = " + maxUncommitted);
+                execute("alter table x set param o3MaxLag = 50s");
 
                 if (walEnabled) {
                     try (TableMetadata m2 = engine.getTableMetadata(tt)) {
@@ -106,8 +107,8 @@ public class TableMetadataTest extends AbstractCairoTest {
                 }
             }
 
-            compile("alter table x add column f int");
-            try (TableMetadata m1 = engine.getLegacyMetadata(tt)) {
+            execute("alter table x add column f int");
+            try (TableRecordMetadata m1 = engine.getLegacyMetadata(tt)) {
                 // No delay in meta changes for WAL tables
                 Assert.assertEquals(m1.getColumnCount() - 1, m1.getColumnIndex("f"));
             }

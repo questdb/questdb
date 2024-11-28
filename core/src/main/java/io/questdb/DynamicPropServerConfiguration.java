@@ -64,7 +64,8 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             PropertyKey.PG_PASSWORD,
             PropertyKey.PG_RO_USER_ENABLED,
             PropertyKey.PG_RO_USER,
-            PropertyKey.PG_RO_PASSWORD
+            PropertyKey.PG_RO_PASSWORD,
+            PropertyKey.PG_NAMED_STATEMENT_LIMIT
     ));
     private final BuildInformation buildInformation;
     private final java.nio.file.Path confPath;

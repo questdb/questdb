@@ -45,6 +45,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 import java.util.Iterator;
@@ -141,10 +142,12 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
-    // used for the parallel sample by rewrite. In future, if we deprecate original SAMPLE BY, then these will
+    // used for the parallel sample by rewrite. In the future, if we deprecate original SAMPLE BY, then these will
     // be the only fields for these values.
-    public ExpressionNode fillTimestampAlias;
     private ExpressionNode alias;
+    // used to block pushing down of order by advice to lower model
+    // this is used for negative limits optimisations
+    private boolean allowPropagationOfOrderByAdvice = true;
     private boolean artificialStar;
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
@@ -463,6 +466,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillStride = null;
         fillValues = null;
         skipped = false;
+        allowPropagationOfOrderByAdvice = true;
         decls.clear();
     }
 
@@ -566,6 +570,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     @Override
+    @TestOnly
+    // Used to test if clear implemented correctly. New fields should be added here and to clear()
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
@@ -668,6 +674,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(updateTableModel, that.updateTableModel)
                 && Objects.equals(updateTableToken, that.updateTableToken)
                 && skipped == that.skipped
+                && allowPropagationOfOrderByAdvice == that.allowPropagationOfOrderByAdvice
                 && Objects.equals(decls, that.decls);
     }
 
@@ -691,6 +698,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public LowerCaseCharSequenceObjHashMap<CharSequence> getAliasToColumnNameMap() {
         return aliasToColumnNameMap;
+    }
+
+    public boolean getAllowPropagationOfOrderByAdvice() {
+        return allowPropagationOfOrderByAdvice;
     }
 
     public ObjList<CharSequence> getBottomUpColumnAliases() {
@@ -1236,6 +1247,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setAlias(ExpressionNode alias) {
         this.alias = alias;
+    }
+
+    public void setAllowPropagationOfOrderByAdvice(boolean value) {
+        allowPropagationOfOrderByAdvice = value;
     }
 
     public void setArtificialStar(boolean artificialStar) {

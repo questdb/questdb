@@ -166,7 +166,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 w -> w.changeColumnType("sym", ColumnType.STRING, 0, false, false, 0, false, null),
                 w -> w.changeColumnType("str", ColumnType.VARCHAR, 0, false, false, 0, false, null),
                 w -> w.removeColumn("bool"),
-                w -> w.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, null),
+                w -> w.addColumn("bool2", ColumnType.BOOLEAN, 0, false, false, 0, false, false, null),
                 w -> w.changeColumnType("varchar", ColumnType.STRING, 0, false, false, 0, false, null)
         );
     }
@@ -457,7 +457,7 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
         // Test one by one
         runWithManipulators(expected, manipulators);
         try (Path path = new Path()) {
-            engine.drop(path, engine.verifyTableName("all"));
+            engine.dropTable(path, engine.verifyTableName("all"));
         }
         CreateTableTestUtils.createAllTable(engine, PartitionBy.DAY);
 

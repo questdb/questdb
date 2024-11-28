@@ -81,8 +81,8 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryConfigUpgrade() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("CREATE TABLE " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (id long256, enabled boolean)");
-            insert("INSERT INTO " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " values(CAST('0x01' AS LONG256), true)");
+            execute("CREATE TABLE " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (id long256, enabled boolean)");
+            execute("INSERT INTO " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " values(CAST('0x01' AS LONG256), true)");
 
             try (TelemetryJob ignore = new TelemetryJob(engine)) {
                 String expected = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated	upsertKey\n" +

@@ -32,8 +32,8 @@ import io.questdb.cutlass.http.DefaultHttpCookieHandler;
 import io.questdb.cutlass.http.DefaultHttpHeaderParserFactory;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpCookieHandler;
-import io.questdb.cutlass.pgwire.DefaultPgWireAuthenticatorFactory;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
+import io.questdb.cutlass.pgwire.modern.DefaultPgWireAuthenticatorFactoryModern;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.network.SocketFactory;
 import org.jetbrains.annotations.NotNull;
@@ -48,7 +48,7 @@ public class FactoryProviderImpl implements FactoryProvider {
     public FactoryProviderImpl(ServerConfiguration configuration) {
         this.lineAuthenticatorFactory = ServerMain.getLineAuthenticatorFactory(configuration);
         this.securityContextFactory = ServerMain.getSecurityContextFactory(configuration);
-        this.pgWireAuthenticatorFactory = new DefaultPgWireAuthenticatorFactory(configuration);
+        this.pgWireAuthenticatorFactory = new DefaultPgWireAuthenticatorFactoryModern(configuration);
         this.httpAuthenticatorFactory = ServerMain.getHttpAuthenticatorFactory(configuration);
     }
 

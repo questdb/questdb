@@ -189,7 +189,6 @@ public interface Record {
      * @param col numeric index of the column
      * @return 32-bit integer
      */
-
     default int getIPv4(int col) {
         throw new UnsupportedOperationException();
     }

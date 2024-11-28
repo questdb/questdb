@@ -39,7 +39,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testAllNull() throws SqlException {
-        ddl("create table tab (f date)");
+        execute("create table tab (f date)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {
@@ -61,7 +61,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNonNull() throws SqlException {
-        ddl("create table tab (f date)");
+        execute("create table tab (f date)");
 
         final Rnd rnd = new Rnd();
         try (TableWriter w = getWriter("tab")) {
@@ -245,7 +245,7 @@ public class LastDateGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSomeNull() throws SqlException {
-        ddl("create table tab (f date)");
+        execute("create table tab (f date)");
 
         try (TableWriter w = getWriter("tab")) {
             for (int i = 100; i > 10; i--) {

@@ -33,6 +33,7 @@ public final class HttpUtils {
     private HttpUtils() {
     }
 
+    @SuppressWarnings("CharsetObjectCanBeUsed")
     public static String urlEncodeQuery(String query) {
         return TestUtils.unchecked(() -> URLEncoder.encode(query, "UTF8"));
     }

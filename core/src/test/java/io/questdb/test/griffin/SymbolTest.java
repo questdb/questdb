@@ -31,11 +31,11 @@ public class SymbolTest extends AbstractCairoTest {
     @Test
     public void testNullSymbolOrderByRegression() throws Exception {
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE x (" +
+            execute("CREATE TABLE x (" +
                     " sym SYMBOL capacity 256 CACHE index capacity 256," +
                     " timestamp TIMESTAMP" +
                     ") timestamp (timestamp)");
-            compile("insert into x select" +
+            execute("insert into x select" +
                     " rnd_symbol(100, 2, 4, 2) sym," +
                     " '2024-03-05T12:13'::timestamp timestamp" +
                     " from long_sequence(51)");
@@ -54,8 +54,8 @@ public class SymbolTest extends AbstractCairoTest {
     @Test
     public void testSelectSymbolUsingBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table logs ( id symbol capacity 2)");
-            compile("insert into logs select x::string from long_sequence(10)");
+            execute("create table logs ( id symbol capacity 2)");
+            execute("insert into logs select x::string from long_sequence(10)");
 
             for (int i = 1; i < 11; i++) {
                 assertQueryNoLeakCheck("id\n" + i + "\n", "select * from logs where id = '" + i + "'", null, true);
@@ -66,8 +66,8 @@ public class SymbolTest extends AbstractCairoTest {
     @Test
     public void testSelectSymbolUsingLiteral() throws Exception {
         assertMemoryLeak(() -> {
-            compile("create table logs ( id symbol capacity 2)");
-            compile("insert into logs select x::string from long_sequence(10)");
+            execute("create table logs ( id symbol capacity 2)");
+            execute("insert into logs select x::string from long_sequence(10)");
 
             for (int i = 1; i < 11; i++) {
                 bindVariableService.clear();

@@ -96,8 +96,7 @@ public class CopyRequestJob extends SynchronizedJob implements Closeable {
                                 "errors long" + // 9
                                 ") timestamp(ts) partition by DAY BYPASS WAL"
                         )
-                        .compile(sqlExecutionContext)
-                        .getTableToken();
+                        .createTable(sqlExecutionContext);
             }
 
             this.writer = engine.getWriter(statusTableToken, "QuestDB system");

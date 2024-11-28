@@ -410,7 +410,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToIPv4_1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
+            execute("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
             assertSql(
                     "x\tip\tk\n" +
                             "1\t54.206.96.238\t54.206.96.238\n" +
@@ -434,7 +434,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToIPv4_2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
+            execute("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
             assertSql(
                     "x\tip\tk\n" +
                             "1\t54.206.96.238\t192.168.1.1\n" +
@@ -456,7 +456,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCastValueToLong256() throws Exception {
-        ddl(
+        execute(
                 "create table tanc as (" +
                         "select rnd_int() % 1000 x," +
                         " rnd_int() a," +
@@ -486,7 +486,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToUuid1() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
+            execute(
                     "create table tanc as (" +
                             "select rnd_int() % 1000 x," +
                             " rnd_int() a," +
@@ -518,7 +518,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToUuid2() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
+            execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
             assertSql(
                     "x\tu\tk\n" +
                             "1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t0010cde8-12ce-40ee-8010-a928bb8b9650\n" +
@@ -543,7 +543,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToUuid3() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
+            execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
             assertSql(
                     "x\tu\tk\n" +
                             "1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t00000000-0000-0000-0000-000000000000\n" +
@@ -566,7 +566,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testCastValueToUuid4() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
+            execute("create table x as (select x, rnd_uuid4() u from long_sequence(5))");
             assertSql(
                     "x\tu\tk\n" +
                             "1\t0010cde8-12ce-40ee-8010-a928bb8b9650\t\n" +
