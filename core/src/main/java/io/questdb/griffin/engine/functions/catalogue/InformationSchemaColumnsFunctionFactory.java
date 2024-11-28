@@ -56,7 +56,11 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
     private static final IntObjHashMap<String> OID_TO_TYPE_NAME = new IntObjHashMap<>();
     public static IntFunction<String> TYPE_TO_NAME = columnType -> {
         int typeOid = PGOids.getTypeOid(columnType);
-        return OID_TO_TYPE_NAME.get(typeOid);
+        String sqlStdName = OID_TO_TYPE_NAME.get(typeOid);
+        if (sqlStdName != null) {
+            return sqlStdName;
+        }
+        return "unknown";
     };
 
     @Override
@@ -257,7 +261,9 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         metadata.add(new TableColumnMetadata("data_type", ColumnType.STRING));
         METADATA = metadata;
 
-        OID_TO_TYPE_NAME.put(PGOids.PG_VARCHAR, "variable character");
+        // these are defined by the SQL standard, not even by PostgreSQL
+        // thus they are not in PGOids
+        OID_TO_TYPE_NAME.put(PGOids.PG_VARCHAR, "character varying");
         OID_TO_TYPE_NAME.put(PGOids.PG_TIMESTAMP, "timestamp without time zone");
         OID_TO_TYPE_NAME.put(PGOids.PG_FLOAT8, "double precision");
         OID_TO_TYPE_NAME.put(PGOids.PG_FLOAT4, "real");
@@ -268,8 +274,8 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         OID_TO_TYPE_NAME.put(PGOids.PG_BOOL, "boolean");
         OID_TO_TYPE_NAME.put(PGOids.PG_BYTEA, "bytea");
         OID_TO_TYPE_NAME.put(PGOids.PG_DATE, "date");
-        OID_TO_TYPE_NAME.put(PGOids.PG_UUID, "uuid");
+        OID_TO_TYPE_NAME.put(PGOids.PG_UUID, "character varying"); // SQL standard does not have UUID
         OID_TO_TYPE_NAME.put(PGOids.PG_INTERNAL, "internal");
-        OID_TO_TYPE_NAME.put(PGOids.PG_OID, "oid");
+        OID_TO_TYPE_NAME.put(PGOids.PG_OID, "integer"); // SQL standard does not have OID
     }
 }
