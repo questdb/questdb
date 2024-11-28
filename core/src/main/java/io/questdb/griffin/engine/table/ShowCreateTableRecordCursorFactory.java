@@ -43,7 +43,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -77,7 +78,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
     public static class ShowCreateTableCursor implements NoRandomAccessRecordCursor {
         private final ShowCreateTableRecord record = new ShowCreateTableRecord();
-        private final StringSink sink = new StringSink();
+        private final Utf8StringSink sink = new Utf8StringSink();
+
         private SqlExecutionContext executionContext;
         private boolean hasRun;
         private CairoTable table;
@@ -205,7 +207,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                         }
                     }
                     // drop the last comma
-                    sink.clear(sink.length() - 1);
+                    sink.clear(sink.size() - 1);
                     sink.put(')');
                 }
 
@@ -246,28 +248,28 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
             @Override
             @NotNull
-            public CharSequence getStrA(int col) {
+            public Utf8Sequence getVarcharA(int col) {
                 if (col == N_DDL_COL) {
-                    return sink.toString();
+                    return sink;
                 }
                 throw new UnsupportedOperationException();
             }
 
             @Override
-            public CharSequence getStrB(int col) {
-                return getStrA(col);
+            public Utf8Sequence getVarcharB(int col) {
+                return getVarcharA(col);
             }
 
             @Override
-            public int getStrLen(int col) {
-                return getStrA(col).length();
+            public int getVarcharSize(int col) {
+                return getVarcharA(col).size();
             }
         }
     }
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(new TableColumnMetadata("ddl", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("ddl", ColumnType.VARCHAR));
         METADATA = metadata;
     }
 }
