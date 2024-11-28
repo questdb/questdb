@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.CallTablesMemory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
@@ -329,6 +330,13 @@ public class ServerMain implements Closeable {
                     sharedPool.assign(engine.getEngineMaintenanceJob());
 
                     WorkerPoolUtils.setupQueryJobs(sharedPool, engine);
+                    
+                    // [EDIT] A worker procees that brings up existing Tables to in-memory
+                    final CallTablesMemory CallTablesMemory = new CallTablesMemory(engine);
+                    
+                    for (Object[] column : CallTablesMemory.columnDataList) {
+                        System.out.println("First value in column: " + column[0]);
+                    }
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPool, engine);
