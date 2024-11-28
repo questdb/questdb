@@ -4,6 +4,14 @@
 
 package io.questdb;
 
+import java.io.Closeable;
+import java.io.File;
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
@@ -13,14 +21,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.str.DirectString;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.Misc;
-
-import java.io.Closeable;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Timer;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.str.DirectString;
 
 public class CallTablesMemory extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CallTablesMemory.class);
@@ -146,5 +149,43 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     public boolean runSerially() {
         /* Implementation of Snapshot strategies can go in here */
         return false;
+    }
+
+    private int copyOnUpdateSnapshot(int lastDumpedIndex) {
+        List<Object[]> versionTwoTuples = columnDataList.subList(lastDumpedIndex + 1, columnDataList.size());
+
+        String latestSnapshot = writeToDisk(versionTwoTuples);
+
+        
+
+        return columnDataList.size();
+    }
+
+    private String writeToDisk(List<Object[]> versionTwoTuples) {
+        /*
+        * The TableWriter is specirfically designed for tokens, not tuples. 
+        */
+
+       String snapshotDir = "data/snapshots/" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss"));
+       new File(snapshotDir).mkdirs();
+       String filePath = snapshotDir + "/output.d";
+       
+
+       try {
+            BinarySerializer.serializeToBinary(versionTwoTuples, "data/output.d");
+        } catch (IOException e) {
+            e.printStackTrace();  // or handle the error appropriately
+        }
+
+
+        return filePath;
+    }
+
+    private List<Object[]> recoverFromDisk(String filePath) {
+        try {
+            return BinarySerializer.deserializeFromBinary(filePath);
+        } catch (IOException e) {
+        }
+        return new ArrayList<>();
     }
 }
