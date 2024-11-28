@@ -162,11 +162,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters;
     private final ArrayDeque<PGPipelineEntry> pipeline = new ArrayDeque<>();
     private final Consumer<? super CharSequence> preparedStatementDeallocator = this::uncacheNamedStatement;
-    private final int recvBufferSize;
     private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
     private final Rnd rnd;
     private final SecurityContextFactory securityContextFactory;
-    private final int sendBufferSize;
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool;
     private final SCSequence tempSequence = new SCSequence();
@@ -182,11 +180,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private PGPipelineEntry pipelineCurrentEntry;
     private long recvBuffer;
     private long recvBufferReadOffset = 0;
+    private int recvBufferSize;
     private long recvBufferWriteOffset = 0;
     private PGResumeCallback resumeCallback;
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
+    private int sendBufferSize;
     private SuspendEvent suspendEvent;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsertModern> taiCache;
@@ -215,7 +215,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             this.engine = engine;
             this.configuration = configuration;
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-            // TODO: read from props
             this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
             this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
             this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
@@ -459,9 +458,13 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         super.of(fd, dispatcher);
         sqlExecutionContext.with(fd);
         if (recvBuffer == 0) {
+            // re-read recv buffer size in case the config was reloaded
+            this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
             this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         }
         if (sendBuffer == 0) {
+            // re-read recv buffer size in case the config was reloaded
+            this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
             this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
             this.sendBufferPtr = sendBuffer;
             this.responseUtf8Sink.bookmarkPtr = this.sendBufferPtr;
@@ -1080,7 +1083,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    // processes one or more queries (batch/script). "Simple Query" in PostgresSQL docs.
+    // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
     private void msgQuery(long lo, long limit) throws BadProtocolException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
         if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
             return;

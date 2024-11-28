@@ -159,7 +159,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private String preparedStatementName;
     // the name of the prepared statement as used by "deallocate" SQL
     // not to be confused with prepared statements that come on the
-    // PostgresSQL wire.
+    // PostgreSQL wire.
     private CharSequence preparedStatementNameToDeallocate;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
@@ -316,7 +316,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         try {
             sqlExecutionContext.setCacheHit(cacheHit = false);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                // Define the provided PostgresSQL types on the BindVariableService. The compilation
+                // Define the provided PostgreSQL types on the BindVariableService. The compilation
                 // below will use these types to build the plan, and it will also define any missing bind
                 // variables.
                 msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
@@ -2012,10 +2012,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
         utf8Sink.putAscii('C'); // C = SQLSTATE
         if (stalePlanError) {
-            // this is what PostgresSQL sends when recompiling a query produces a different ResultSet.
+            // this is what PostgreSQL sends when recompiling a query produces a different ResultSet.
             // some clients act on it by restarting the query from the beginning.
             utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
-            utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgresSQL here
+            utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgreSQL here
             utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
         } else {
             utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
@@ -2670,7 +2670,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     // When we pick up SQL (insert or select) from cache we have to check that the SQL was compiled with
-    // the same PostgresSQL parameter types that were supplied when SQL was cached. When the parameter types
+    // the same PostgreSQL parameter types that were supplied when SQL was cached. When the parameter types
     // are different we will have to recompile the SQL.
     //
     // In this method we only compare PG parameter types. For example, if client sent 0 parameters

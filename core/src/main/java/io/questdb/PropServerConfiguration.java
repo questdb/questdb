@@ -508,7 +508,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpIOWorkerYieldThreshold;
     private long lineTcpMaintenanceInterval;
     private int lineTcpMaxMeasurementSize;
-    private int lineTcpMsgBufferSize;
     private int lineTcpNetBindIPv4Address;
     private int lineTcpNetBindPort;
     private long lineTcpNetConnectionHeartbeatInterval;
@@ -517,6 +516,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long lineTcpNetConnectionQueueTimeout;
     private int lineTcpNetConnectionRcvBuf;
     private long lineTcpNetConnectionTimeout;
+    private int lineTcpRecvBufferSize;
     private LineTcpTimestampAdapter lineTcpTimestampAdapter;
     private int lineTcpWriterQueueCapacity;
     private int[] lineTcpWriterWorkerAffinity;
@@ -1349,10 +1349,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                 // deprecated
                 this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE, -1);
                 this.lineTcpNetConnectionRcvBuf = getIntSize(properties, env, PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF, lineTcpNetConnectionRcvBuf);
-                this.lineTcpMsgBufferSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MSG_BUFFER_SIZE, 131072);
+                // deprecated
+                this.lineTcpRecvBufferSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MSG_BUFFER_SIZE, 131072);
+                this.lineTcpRecvBufferSize = getIntSize(properties, env, PropertyKey.LINE_TCP_RECV_BUFFER_SIZE, lineTcpRecvBufferSize);
                 this.lineTcpMaxMeasurementSize = getIntSize(properties, env, PropertyKey.LINE_TCP_MAX_MEASUREMENT_SIZE, 32768);
-                if (lineTcpMaxMeasurementSize > lineTcpMsgBufferSize) {
-                    lineTcpMsgBufferSize = lineTcpMaxMeasurementSize;
+                if (lineTcpMaxMeasurementSize > lineTcpRecvBufferSize) {
+                    lineTcpRecvBufferSize = lineTcpMaxMeasurementSize;
                 }
 
                 this.lineTcpWriterQueueCapacity = getQueueCapacity(properties, env, PropertyKey.LINE_TCP_WRITER_QUEUE_CAPACITY, 128);
@@ -1588,7 +1590,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         return configReloadEnabled;
     }
 
-    // Used by dynamic configuration to avoid factory provider recreation.
+    // Used by dynamic configuration to reuse already created factory provider.
     public void reinit(FactoryProvider factoryProvider) {
         this.factoryProvider = factoryProvider;
     }
@@ -2000,6 +2002,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(
                     PropertyKey.LINE_TCP_NET_RECV_BUF_SIZE,
                     PropertyKey.LINE_TCP_NET_CONNECTION_RCVBUF
+            );
+            registerDeprecated(
+                    PropertyKey.LINE_TCP_MSG_BUFFER_SIZE,
+                    PropertyKey.LINE_TCP_RECV_BUFFER_SIZE
             );
             registerDeprecated(
                     PropertyKey.LINE_TCP_DEFAULT_PARTITION_BY,
@@ -4039,7 +4045,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         @Override
         public int getRecvBufferSize() {
-            return lineTcpMsgBufferSize;
+            return lineTcpRecvBufferSize;
         }
 
         @Override

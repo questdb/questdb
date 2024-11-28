@@ -39,6 +39,7 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.test.cutlass.http.TestHttpClient;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -51,6 +52,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
@@ -323,6 +326,47 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
 
                 Assert.assertThrows(PSQLException.class, () -> getConnection("admin", "quest"));
+            }
+        });
+    }
+
+    @Test
+    public void testPgWireSendBufferSizeReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.send.buffer.size=256\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                final int len = 300;
+                final String query = "select rpad('QuestDB', " + len + ", '0');";
+                try (
+                        Connection conn = getConnection("admin", "quest");
+                        PreparedStatement stmt = conn.prepareStatement(query)
+                ) {
+                    try (ResultSet ignore = stmt.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "not enough space in send buffer");
+                    }
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("pg.send.buffer.size=512\n");
+                }
+
+                latch.await();
+
+                try (
+                        Connection conn = getConnection("admin", "quest");
+                        PreparedStatement stmt = conn.prepareStatement(query);
+                        ResultSet rs = stmt.executeQuery()
+                ) {
+                    Assert.assertTrue(rs.next());
+                    Assert.assertEquals(len, rs.getString(1).length());
+                }
             }
         });
     }
