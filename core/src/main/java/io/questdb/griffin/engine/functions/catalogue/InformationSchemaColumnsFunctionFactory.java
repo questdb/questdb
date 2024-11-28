@@ -38,18 +38,26 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.ObjList;
+
+import java.util.function.IntFunction;
 
 public class InformationSchemaColumnsFunctionFactory implements FunctionFactory {
     public static final RecordMetadata METADATA;
     public static final String SIGNATURE = "information_schema.columns()";
-
+    private static final IntObjHashMap<String> OID_TO_TYPE_NAME = new IntObjHashMap<>();
+    public static IntFunction<String> TYPE_TO_NAME = columnType -> {
+        int typeOid = PGOids.getTypeOid(columnType);
+        return OID_TO_TYPE_NAME.get(typeOid);
+    };
 
     @Override
     public String getSignature() {
@@ -69,18 +77,17 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new ColumnsCursorFactory());
+        return new CursorFunction(new ColumnsCursorFactory(TYPE_TO_NAME));
     }
 
-
-    private static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
+    static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
         private final ColumnRecordCursor cursor;
         private final CharSequenceObjHashMap<CairoTable> tableCache = new CharSequenceObjHashMap<>();
         private long tableCacheVersion = -1;
 
-        private ColumnsCursorFactory() {
+        ColumnsCursorFactory(IntFunction<String> typeToName) {
             super(METADATA);
-            this.cursor = new ColumnRecordCursor(tableCache);
+            this.cursor = new ColumnRecordCursor(tableCache, typeToName);
         }
 
         @Override
@@ -106,12 +113,14 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         private static class ColumnRecordCursor implements NoRandomAccessRecordCursor {
             private final ColumnsRecord record = new ColumnsRecord();
             private final CharSequenceObjHashMap<CairoTable> tableCache;
+            private final IntFunction<String> typeToName;
             private int columnIdx;
             private int iteratorIdx;
             private CairoTable table;
 
-            private ColumnRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache) {
+            private ColumnRecordCursor(CharSequenceObjHashMap<CairoTable> tableCache, IntFunction<String> typeToName) {
                 this.tableCache = tableCache;
+                this.typeToName = typeToName;
             }
 
             @Override
@@ -152,7 +161,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                 CairoColumn column = table.getColumnQuiet(columnIdx);
                 assert column != null;
 
-                record.of(table.getTableName(), columnIdx, column.getName(), ColumnType.nameOf(column.getType()));
+                record.of(table.getTableName(), columnIdx, column.getName(), typeToName.apply(column.getType()));
 
                 return true;
             }
@@ -247,5 +256,20 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         metadata.add(new TableColumnMetadata("is_nullable", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("data_type", ColumnType.STRING));
         METADATA = metadata;
+
+        OID_TO_TYPE_NAME.put(PGOids.PG_VARCHAR, "variable character");
+        OID_TO_TYPE_NAME.put(PGOids.PG_TIMESTAMP, "timestamp without time zone");
+        OID_TO_TYPE_NAME.put(PGOids.PG_FLOAT8, "double precision");
+        OID_TO_TYPE_NAME.put(PGOids.PG_FLOAT4, "real");
+        OID_TO_TYPE_NAME.put(PGOids.PG_INT4, "integer");
+        OID_TO_TYPE_NAME.put(PGOids.PG_INT2, "smallint");
+        OID_TO_TYPE_NAME.put(PGOids.PG_CHAR, "character");
+        OID_TO_TYPE_NAME.put(PGOids.PG_INT8, "bigint");
+        OID_TO_TYPE_NAME.put(PGOids.PG_BOOL, "boolean");
+        OID_TO_TYPE_NAME.put(PGOids.PG_BYTEA, "bytea");
+        OID_TO_TYPE_NAME.put(PGOids.PG_DATE, "date");
+        OID_TO_TYPE_NAME.put(PGOids.PG_UUID, "uuid");
+        OID_TO_TYPE_NAME.put(PGOids.PG_INTERNAL, "internal");
+        OID_TO_TYPE_NAME.put(PGOids.PG_OID, "oid");
     }
 }

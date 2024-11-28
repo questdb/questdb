@@ -27,8 +27,8 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTest {
-
+public class InformationSchemaQuestdbColumnsFunctionFactoryTest extends AbstractCairoTest {
+    
     @Test
     public void testColumns() throws Exception {
         assertMemoryLeak(() -> {
@@ -38,16 +38,16 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             drainWalQueue();
             assertQueryNoLeakCheck(
                     "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                            "qdb\tpublic\tA\tcol0\t0\t\tyes\tinteger\n" +
-                            "qdb\tpublic\tA\tcol1\t1\t\tyes\tvariable character\n" +
-                            "qdb\tpublic\tA\tcol2\t2\t\tyes\tdouble precision\n" +
-                            "qdb\tpublic\tB\tcol0\t0\t\tyes\tbigint\n" +
-                            "qdb\tpublic\tB\tcol1\t1\t\tyes\tvariable character\n" +
-                            "qdb\tpublic\tB\tcol2\t2\t\tyes\treal\n" +
-                            "qdb\tpublic\tC\tcol0\t0\t\tyes\tdouble precision\n" +
-                            "qdb\tpublic\tC\tcol1\t1\t\tyes\tcharacter\n" +
-                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tsmallint\n",
-                    "SELECT * FROM information_schema.columns() ORDER BY table_name",
+                            "qdb\tpublic\tA\tcol0\t0\t\tyes\tINT\n" +
+                            "qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL\n" +
+                            "qdb\tpublic\tA\tcol2\t2\t\tyes\tDOUBLE\n" +
+                            "qdb\tpublic\tB\tcol0\t0\t\tyes\tLONG\n" +
+                            "qdb\tpublic\tB\tcol1\t1\t\tyes\tSTRING\n" +
+                            "qdb\tpublic\tB\tcol2\t2\t\tyes\tFLOAT\n" +
+                            "qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE\n" +
+                            "qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR\n" +
+                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE\n",
+                    "SELECT * FROM information_schema.questdb_columns() ORDER BY table_name",
                     null,
                     null,
                     true
@@ -66,8 +66,8 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                     "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_rename");
 
             assertSql("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                    "qdb\tpublic\ttest_rename\tts\t0\t\tyes\ttimestamp without time zone\n" +
-                    "qdb\tpublic\ttest_rename\tx\t1\t\tyes\tinteger\n", "information_schema.columns()");
+                    "qdb\tpublic\ttest_rename\tts\t0\t\tyes\tTIMESTAMP\n" +
+                    "qdb\tpublic\ttest_rename\tx\t1\t\tyes\tINT\n", "information_schema.questdb_columns()");
 
             execute("rename table test_rename to test_renamed");
             drainWalQueue();
@@ -77,8 +77,8 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                     "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_renamed");
 
             assertSql("table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
-                    "qdb\tpublic\ttest_renamed\tts\t0\t\tyes\ttimestamp without time zone\n" +
-                    "qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tinteger\n", "information_schema.columns()");
+                    "qdb\tpublic\ttest_renamed\tts\t0\t\tyes\tTIMESTAMP\n" +
+                    "qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tINT\n", "information_schema.questdb_columns()");
         });
     }
 }
