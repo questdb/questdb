@@ -145,7 +145,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
                     // (BYPASS) WAL
                     if (!table.getWalEnabled()) {
-                        sink.put(" BYPASS ");
+                        sink.put(" BYPASS");
                     }
                     sink.put(" WAL");
                 }
@@ -155,7 +155,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 final boolean withO3MaxLag = table.getO3MaxLag() != config.getO3MaxLag();
                 final boolean withRequired = withMaxUncommittedRows || withO3MaxLag;
 
-                // WITH maxUncommittedRows=123, o3MaxLag=456
+                // WITH maxUncommittedRows=123, o3MaxLag=456s
                 if (withRequired) {
                     sink.put('\n').put("WITH ");
                     if (withMaxUncommittedRows) {
@@ -165,7 +165,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                         if (withMaxUncommittedRows) {
                             sink.put(',');
                         }
-                        sink.put("o3MaxLag=").put(table.getO3MaxLag());
+                        sink.put("o3MaxLag=").put(table.getO3MaxLag()).put("us");
                     }
                 }
 
