@@ -76,7 +76,7 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
             try (ServerMain serverMain = startWithEnvVariables()) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getBindPort();
 
-                try (Connection conn = getTlsConnection("admin", "quest", port)) {
+                try (Connection conn = getTlsConnection(port)) {
                     conn.createStatement().execute("select 1;");
                     Assert.fail();
                 } catch (PSQLException e) {
@@ -228,10 +228,10 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         });
     }
 
-    private static Connection getTlsConnection(String username, String password, int port) throws SQLException {
+    private static Connection getTlsConnection(int port) throws SQLException {
         Properties properties = new Properties();
-        properties.setProperty("user", username);
-        properties.setProperty("password", password);
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
         properties.setProperty("sslmode", "require");
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
         return DriverManager.getConnection(url, properties);
