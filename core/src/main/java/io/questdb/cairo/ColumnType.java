@@ -137,21 +137,22 @@ public final class ColumnType {
     public static int buildNdArrayType(char typeClass, byte typePrecision) {
         assert typeClass > 0;  // to avoid taking up the last reserved bit.
         if (
-                (typePrecision == 0 && typeClass == 'u') ||
-                        (typePrecision == 1 && typeClass == 'u') ||
-                        (typePrecision == 2 && typeClass == 'u') ||
-                        (typePrecision == 3 && typeClass == 'u') ||
-                        (typePrecision == 4 && typeClass == 'u') ||
-                        (typePrecision == 5 && typeClass == 'u') ||
-                        (typePrecision == 6 && typeClass == 'u') ||
-                        (typePrecision == 3 && typeClass == 's') ||
-                        (typePrecision == 4 && typeClass == 's') ||
-                        (typePrecision == 5 && typeClass == 's') ||
-                        (typePrecision == 6 && typeClass == 's') ||
-                        (typePrecision == 3 && typeClass == 'f') ||
-                        (typePrecision == 4 && typeClass == 'f') ||
-                        (typePrecision == 5 && typeClass == 'f') ||
-                        (typePrecision == 6 && typeClass == 'f')) {
+                // N.B.: Types which we currently don't support are commented out.
+                (typePrecision == 0 && typeClass == 'u') ||  // boolean
+//                        (typePrecision == 1 && typeClass == 'u') ||
+//                        (typePrecision == 2 && typeClass == 'u') ||
+//                        (typePrecision == 3 && typeClass == 'u') ||
+//                        (typePrecision == 4 && typeClass == 'u') ||
+//                        (typePrecision == 5 && typeClass == 'u') ||
+//                        (typePrecision == 6 && typeClass == 'u') ||
+                        (typePrecision == 3 && typeClass == 's') ||  // byte
+                        (typePrecision == 4 && typeClass == 's') ||  // short
+                        (typePrecision == 5 && typeClass == 's') ||  // int
+                        (typePrecision == 6 && typeClass == 's') ||  // long
+//                        (typePrecision == 3 && typeClass == 'f') ||
+//                        (typePrecision == 4 && typeClass == 'f') ||
+                        (typePrecision == 5 && typeClass == 'f') ||  // float
+                        (typePrecision == 6 && typeClass == 'f')) {  // double
             final int elementType = (((int) typeClass) << BITS_OFFSET) | typePrecision;
             return ND_ARRAY | (elementType << BITS_OFFSET);
         } else {
