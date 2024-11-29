@@ -27,6 +27,7 @@ package io.questdb.metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -34,6 +35,7 @@ import io.questdb.mp.AbstractQueueBatchConsumerJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ValueHolderList;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
+import io.questdb.std.str.Utf8StringSink;
 
 import java.util.concurrent.TimeUnit;
 
@@ -46,6 +48,7 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
     private final MicrosecondClock clock;
     private final CairoEngine engine;
     private final QueryMetrics metrics = new QueryMetrics();
+    private final Utf8StringSink utf8sink = new Utf8StringSink();
     private long lastCleanupTs;
     private TableToken tableToken;
 
@@ -81,31 +84,32 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
         tableToken = engine.verifyTableName(TABLE_NAME);
     }
 
-    private void insertData(ValueHolderList<QueryMetrics> metricsList) {
-        try (TableWriter tableWriter = engine.getWriter(tableToken, "query_tracing")) {
-            for (int n = metricsList.size(), i = 0; i < n; i++) {
-                metricsList.getQuick(i, metrics);
-                final TableWriter.Row row = tableWriter.newRow(metrics.timestamp);
-                row.putStr(1, metrics.queryText);
-                row.putLong(2, metrics.executionNanos);
-                row.append();
-            }
-            tableWriter.commit();
-        }
-    }
-
     @Override
     protected boolean doRun(int workerId, ValueHolderList<QueryMetrics> metricsList, RunStatus runStatus) {
         discardOldData();
+        WalWriter walWriter0;
         try {
-            insertData(metricsList);
+            walWriter0 = engine.getWalWriter(tableToken);
         } catch (Exception firstException) {
             try {
                 init();
-                insertData(metricsList);
+                walWriter0 = engine.getWalWriter(tableToken);
             } catch (Exception e) {
                 LOG.error().$("Failed to save query metrics").$(e).$();
+                return false;
             }
+        }
+        try (WalWriter walWriter = walWriter0) {
+            for (int n = metricsList.size(), i = 0; i < n; i++) {
+                metricsList.getQuick(i, metrics);
+                final TableWriter.Row row = walWriter.newRow(metrics.timestamp);
+                utf8sink.clear();
+                utf8sink.put(metrics.queryText);
+                row.putVarchar(1, utf8sink);
+                row.putLong(2, metrics.executionNanos);
+                row.append();
+            }
+            walWriter.commit();
         }
         return false;
     }
