@@ -24,7 +24,7 @@
 
 package io.questdb.cutlass.line;
 
-import io.questdb.client.Sender;
+
 import io.questdb.cutlass.line.udp.UdpLineChannel;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;

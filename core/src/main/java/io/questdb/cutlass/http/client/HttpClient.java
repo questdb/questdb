@@ -98,7 +98,7 @@ public abstract class HttpClient implements QuietCloseable {
     public String getDebugBuffer() {
         DirectUtf8String s = new DirectUtf8String();
         s.of(bufLo, ptr);
-        return Utf8s.toString(s);
+        return Utf8s.toString(s).replace('\0', '␀');
     }
 
     public Request newRequest(CharSequence host, int port) {
