@@ -7,9 +7,15 @@ package io.questdb;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.DirectoryNotEmptyException;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.List;
 
 import io.questdb.cairo.CairoEngine;
@@ -25,9 +31,13 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.DirectString;
 
+
 public class CallTablesMemory extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CallTablesMemory.class);
     public static List<Object[]> columnDataList = new ArrayList<>();
+
+    public static List<Object[]> recoveredTuples = new ArrayList<>(); // Can be updated if we're doing recovery
+    private static Deque<String> versionCounterForCOU = new ArrayDeque<>();
 
     public CallTablesMemory(CairoEngine engine) throws SqlException{
         try{
@@ -148,22 +158,48 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     @Override
     public boolean runSerially() {
         /* Implementation of Snapshot strategies can go in here */
+        copyOnUpdateSnapshot();
+        if (false) {
+            /*
+            * Add appropriate flags if doing recovery
+            */
+            recovery();
+        } 
         return false;
     }
 
-    private int copyOnUpdateSnapshot(int lastDumpedIndex) {
-        List<Object[]> versionTwoTuples = columnDataList.subList(lastDumpedIndex + 1, columnDataList.size());
+    private void copyOnUpdateSnapshot() {
+        /*
+        * Flow: 
+        * (1) Saves everything to disk from columnDataList as a binary file with extension .d (as is common in QuestDB)
+        * (2) Updates the global variable versionCounterForCOU so that at a time we only save two snapshots: the ultimate and penultimate
+        * (3) Cleans out previous files from disk
+        */
+        String latestSnapshotFile = writeToDisk(columnDataList);
 
-        String latestSnapshot = writeToDisk(versionTwoTuples);
+        versionCounterForCOU.add(latestSnapshotFile);
+        LOG.info().$("Snapshot successfully saved");
 
+        while (versionCounterForCOU.size() > 2) {
+            String garbage = versionCounterForCOU.remove();
+
+            try {
+                Files.deleteIfExists(Paths.get(garbage));
+                LOG.info().$("Removed previous versions");
+            } catch (NoSuchFileException e) {
+                LOG.info().$("Nonexistent file at ").$(garbage).$();
+            } catch (DirectoryNotEmptyException e) {
+                LOG.info().$("Directory is not empty");
+            } catch (IOException e) {
+                LOG.info().$("Invalid permissions to access").$(garbage).$();
+            }
+        }
         
-
-        return columnDataList.size();
     }
 
     private String writeToDisk(List<Object[]> versionTwoTuples) {
         /*
-        * The TableWriter is specirfically designed for tokens, not tuples. 
+        * Custom writer which serializes versionTwoTuples into a file with .d extension
         */
 
        String snapshotDir = "data/snapshots/" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss"));
@@ -182,10 +218,22 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     }
 
     private List<Object[]> recoverFromDisk(String filePath) {
+        /*
+        Add some flags if we're dong recovery
+        */
         try {
             return BinarySerializer.deserializeFromBinary(filePath);
         } catch (IOException e) {
         }
         return new ArrayList<>();
     }
+
+    private void recovery() {
+        String temp = versionCounterForCOU.removeLast();
+        recoveredTuples = recoverFromDisk(temp);
+        versionCounterForCOU.add(temp);
+
+    }
+
+
 }
