@@ -120,6 +120,15 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         setCapacityBytes(initialCapacity);
     }
 
+    public void reverse() {
+        final long len = size();
+        for (long index = 0, mid = len / 2; index < mid; ++index) {
+            final int temp = get(index);
+            set(index, get(len - index - 1));
+            set(len - index - 1, temp);
+        }
+    }
+
     public void set(long p, int v) {
         Unsafe.getUnsafe().putInt(address + (p << 2), v);
     }

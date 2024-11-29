@@ -32,18 +32,6 @@ import io.questdb.std.DirectIntSlice;
  * This is a flyweight object.
  */
 public class NdArrayView {
-    /**
-     * Maximum size of any given dimension.
-     * <p>Why:
-     * <ul>
-     *   <li>Our buffers are at most Integer.MAX_VALUE long</li>
-     *   <li>Our largest datatypes are 8 bytes</li>
-     * </ul></p>
-     * Assuming a 1-D array, <code>Integer.MAX_VALUE / Long.BYTES</code> gives us a maximum
-     * of 2 ** 28 - 1.
-     * For simplicity, we thus round this down to 2 ** 27.
-     */
-    public static final int MAX_DIM_SIZE = 1 << 27;
     private final DirectIntSlice dims = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
     private final NdArrayValuesSlice values = new NdArrayValuesSlice();
@@ -147,10 +135,10 @@ public class NdArrayView {
             int valuesSize,
             int valuesOffset) {
         assert ColumnType.isNdArray(type);
-        assert dims.length() == strides.length();
+        assert dimsLength == stridesLength;
         this.type = type;
         this.dims.of(dimsPtr, dimsLength);
-        assert validDims(this.dims);
+        assert NdArrayMeta.validDims(this.dims);
         valuesLength = calcValuesLength();
         assert validValuesSize(type, valuesOffset, valuesLength, valuesSize);
         this.strides.of(stridesPtr, stridesLength);
@@ -196,19 +184,6 @@ public class NdArrayView {
         this.values.reset();
         this.valuesOffset = 0;
         this.valuesLength = 0;
-    }
-
-    private static boolean validDims(DirectIntSlice dims) {
-        for (int dimIndex = 0, nDims = dims.length(); dimIndex < nDims; ++dimIndex) {
-            final int dim = dims.get(dimIndex);
-            if (dim <= 0)
-                // having a zero-dimension is never valid
-                return false;
-
-            if (dim >= MAX_DIM_SIZE)
-                return false;
-        }
-        return true;
     }
 
     /**
