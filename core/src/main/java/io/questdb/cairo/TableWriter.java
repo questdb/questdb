@@ -642,7 +642,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
 
         if (!Os.isWindows()) {
-            ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
+            try {
+                ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
+            } catch (CairoException e) {
+                LOG.info().$("could not fsync after column added, non-critical [path=").$(path).$();
+            }
         }
 
         if (securityContext != null) {
@@ -5561,6 +5565,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         primary.ofOffset(
                                 configuration.getFilesFacade(),
                                 fd,
+                                false,
                                 dfile,
                                 rowLo << sizeBitsPow2,
                                 rowHi << sizeBitsPow2,

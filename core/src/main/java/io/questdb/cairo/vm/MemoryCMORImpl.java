@@ -36,6 +36,7 @@ import io.questdb.std.str.LPSZ;
 // Contiguous mapped with offset readable memory
 public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     private static final Log LOG = LogFactory.getLog(MemoryCMORImpl.class);
+    private boolean closeFdOnClose;
     private long mapFileOffset;
     private long offset;
 
@@ -63,6 +64,9 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
 
     @Override
     public void close() {
+        if (!closeFdOnClose) {
+            fd = -1;
+        }
         super.close();
         mapFileOffset = 0;
         offset = 0;
@@ -111,8 +115,9 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     @Override
-    public void ofOffset(FilesFacade ff, long fd, LPSZ name, long lo, long hi, int memoryTag, long opts) {
+    public void ofOffset(FilesFacade ff, long fd, boolean keepFdOpen, LPSZ name, long lo, long hi, int memoryTag, long opts) {
         this.memoryTag = memoryTag;
+        this.closeFdOnClose = !keepFdOpen;
         if (fd > -1) {
             close();
             this.ff = ff;
@@ -121,11 +126,6 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
             openFile(ff, name);
         }
         mapLazy(lo, hi);
-    }
-
-    @Override
-    public void ofOffset(FilesFacade ff, LPSZ name, long lo, long hi, int memoryTag, long opts) {
-        ofOffset(ff, -1, name, lo, hi, memoryTag, opts);
     }
 
     /**

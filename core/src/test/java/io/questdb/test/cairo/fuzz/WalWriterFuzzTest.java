@@ -30,6 +30,7 @@ import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -56,6 +57,7 @@ import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE
  */
 public class WalWriterFuzzTest extends AbstractFuzzTest {
     private boolean fsAllowsMixedIO;
+    private boolean existingFilesParanoia;
 
     @Before
     public void setUp() {
@@ -65,7 +67,14 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         fsAllowsMixedIO = FilesFacadeImpl.INSTANCE.allowMixedIO(root);
         node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, fsAllowsMixedIO);
         setFuzzProperties(100, 1000, 2);
+        existingFilesParanoia = Files.PARANOIA_FD_MODE;
         Files.PARANOIA_FD_MODE = true;
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        super.tearDown();
+        Files.PARANOIA_FD_MODE = existingFilesParanoia;
     }
 
     @Test
@@ -155,7 +164,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 937061385844208L, 1732815671316L);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 0.01, 1.0, 0.01, 0.01, 0.05, 0.0);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         setFuzzProperties(rnd);
@@ -181,7 +190,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalMetadataChangeHeavy() throws Exception {
-        Rnd rnd = generateRandom(LOG, 880433405728750L, 1732705928413L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.01, 0.0);
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
         setFuzzProperties(rnd);
@@ -282,7 +291,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalWriteRollbackHeavy() throws Exception {
-        Rnd rnd = generateRandom(LOG, 880231256930708L, 1732705726267L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0.5, 0.5, 0.1, 0.5, 0.05, 0.05, 0.05, 0.01, 1.0, 0.01, 0.01, 0.01, 0.0);
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 1000, 1000, 100, 3);
         runFuzz(rnd);

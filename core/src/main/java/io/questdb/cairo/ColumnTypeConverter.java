@@ -359,7 +359,7 @@ public class ColumnTypeConverter {
         MemoryCMORImpl srcVarMem = srcVarMemTL.get();
 
         try {
-            srcVarMem.ofOffset(ff, srcVarFd, null, skipDataSize, dataSize, memoryTag, CairoConfiguration.O_NONE);
+            srcVarMem.ofOffset(ff, srcVarFd, true, null, skipDataSize, dataSize, memoryTag, CairoConfiguration.O_NONE);
             switch (dstColumnType) {
                 case ColumnType.VARCHAR:
                     convertStringToVarchar(skipDataSize, rowCount, dstFixFd, dstVarFd, ff, appendPageSize, srcVarMem, columnSizesSink);
@@ -427,9 +427,9 @@ public class ColumnTypeConverter {
             if (dataHi > skipDataSize) {
                 // Data can be fully inlined then no need to open / map data file
                 srcVarMem = srcVarMemTL.get();
-                srcVarMem.ofOffset(ff, srcVarFd, null, skipDataSize, dataHi, memoryTag, CairoConfiguration.O_NONE);
+                srcVarMem.ofOffset(ff, srcVarFd, true, null, skipDataSize, dataHi, memoryTag, CairoConfiguration.O_NONE);
             }
-            srcFixMem.ofOffset(ff, srcFixFd, null, skipAuxOffset, skipAuxOffset + driverInstance.getAuxVectorSize(rowCount), memoryTag, CairoConfiguration.O_NONE);
+            srcFixMem.ofOffset(ff, srcFixFd, true, null, skipAuxOffset, skipAuxOffset + driverInstance.getAuxVectorSize(rowCount), memoryTag, CairoConfiguration.O_NONE);
 
             switch (ColumnType.tagOf(dstColumnType)) {
                 case ColumnType.STRING:
