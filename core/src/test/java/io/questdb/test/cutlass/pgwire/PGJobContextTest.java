@@ -5304,6 +5304,48 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testInsertAsSelect() throws Exception {
+        Assume.assumeFalse(legacyMode);
+        assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
+            conn.createStatement().execute("create table x(ts timestamp, col1 long) timestamp(ts) partition by day wal");
+            conn.createStatement().execute("create table y(ts timestamp, col1 long) timestamp(ts) partition by day wal");
+
+            assertEquals(10, conn.createStatement().executeUpdate("insert into x select timestamp_sequence(1677628800000000, 10000000), x from long_sequence(10)"));
+            drainWalQueue();
+            assertSql(
+                    conn,
+                    "x",
+                    "ts[TIMESTAMP],col1[BIGINT]\n" +
+                            "2023-03-01 00:00:00.0,1\n" +
+                            "2023-03-01 00:00:10.0,2\n" +
+                            "2023-03-01 00:00:20.0,3\n" +
+                            "2023-03-01 00:00:30.0,4\n" +
+                            "2023-03-01 00:00:40.0,5\n" +
+                            "2023-03-01 00:00:50.0,6\n" +
+                            "2023-03-01 00:01:00.0,7\n" +
+                            "2023-03-01 00:01:10.0,8\n" +
+                            "2023-03-01 00:01:20.0,9\n" +
+                            "2023-03-01 00:01:30.0,10\n"
+            );
+            assertSql(
+                    conn,
+                    "y",
+                    "ts[TIMESTAMP],col1[BIGINT]\n"
+            );
+
+            assertEquals(2, conn.createStatement().executeUpdate("insert into y select * from x where col1 > 8"));
+            drainWalQueue();
+            assertSql(
+                    conn,
+                    "y",
+                    "ts[TIMESTAMP],col1[BIGINT]\n" +
+                            "2023-03-01 00:01:20.0,9\n" +
+                            "2023-03-01 00:01:30.0,10\n"
+            );
+        });
+    }
+
+    @Test
     public void testInsertBinaryBindVariable() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
@@ -11807,6 +11849,16 @@ create table tab as (
                     assertResultSet(expected, sink, rs);
                 }
             }
+        }
+    }
+
+    private void assertSql(Connection conn, String sql, String expectedResult) throws SQLException, IOException {
+        final StringSink sink = Misc.getThreadLocalSink();
+        sink.clear();
+
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(sql)) {
+            BasePGTest.assertResultSet(expectedResult, sink, rs);
         }
     }
 
