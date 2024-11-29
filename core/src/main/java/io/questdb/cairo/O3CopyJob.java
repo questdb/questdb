@@ -192,14 +192,25 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     break;
             }
         } catch (Throwable th) {
-            FilesFacade ff = tableWriter.getFilesFacade();
-            O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
-            O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
-            O3Utils.unmapAndClose(ff, dstFixFd, dstAuxAddr, dstFixSize);
-            O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
-
             // Notify table writer of error before clocking down done counters
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+
+            // We cannot close / unmap fds here. Other copy jobs may still be running and using them.
+            // exception handling code of the stack will check if all the parts are finished before closing the memory / fds.
+            if (partCounter != null && partCounter.decrementAndGet() == 0) {
+                FilesFacade ff = tableWriter.getFilesFacade();
+                O3Utils.unmapAndClose(ff, srcDataFixFd, srcDataFixAddr, srcDataFixSize);
+                O3Utils.unmapAndClose(ff, srcDataVarFd, srcDataVarAddr, srcDataVarSize);
+                O3Utils.unmapAndClose(ff, dstFixFd, dstAuxAddr, dstFixSize);
+                O3Utils.unmapAndClose(ff, dstVarFd, dstVarAddr, dstVarSize);
+
+                if (indexBlockCapacity > -1 && indexWriter != null && !indexWriter.isOpen()) {
+                    ff.close(dstKFd);
+                    ff.close(dstVFd);
+                }
+            }
+
+
             closeColumnIdle(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -209,6 +220,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     srcTimestampSize,
                     tableWriter
             );
+
             throw th;
         }
 
@@ -760,7 +772,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount(false);
-            unmapAndClose(
+            unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
                     timestampMergeIndexSize,
@@ -835,7 +847,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     .$(", e=").$(e)
                     .I$();
             tableWriter.o3BumpErrorCount(false);
-            unmapAndClose(
+            unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
                     timestampMergeIndexSize,
@@ -1070,7 +1082,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     ) {
         if (partCounter == null || partCounter.decrementAndGet() == 0) {
             // unmap memory
-            unmapAndClose(
+            unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
                     timestampMergeIndexSize,
@@ -1096,7 +1108,8 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
-    static void unmapAndClose(
+    // This method should only be called after check that partCounter is 0
+    static void unmapAndCloseAllPartsComplete(
             AtomicInteger columnCounter,
             long timestampMergeIndexAddr,
             long timestampMergeIndexSize,

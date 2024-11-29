@@ -164,7 +164,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testWalAddRemoveCommitFuzzO3() throws Exception {
-        Rnd rnd = generateRandom(LOG, 937061385844208L, 1732815671316L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.05, 0.05, 0.05, 0.01, 1.0, 0.01, 0.01, 0.05, 0.0);
         setFuzzCounts(true, 100_000, 500, 20, 1000, 20, 100_000, 5);
         setFuzzProperties(rnd);
