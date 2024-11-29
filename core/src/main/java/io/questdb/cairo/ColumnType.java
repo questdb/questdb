@@ -409,49 +409,25 @@ public final class ColumnType {
     public static int parseNdArrayType(CharSequence name) {
         final char typeClass;
         final byte precision;  // power of 2
-        if (Chars.equalsIgnoreCase(name, "u1") || Chars.equalsIgnoreCase(name, "boolean")) {
+        if (Chars.equalsIgnoreCase(name, "boolean")) {
             typeClass = 'u';
             precision = 0;
-        } else if (Chars.equalsIgnoreCase(name, "u2")) {
-            typeClass = 'u';
-            precision = 1;
-        } else if (Chars.equalsIgnoreCase(name, "u4")) {
-            typeClass = 'u';
-            precision = 2;
-        } else if (Chars.equalsIgnoreCase(name, "u8")) {
-            typeClass = 'u';
-            precision = 3;
-        } else if (Chars.equalsIgnoreCase(name, "u16")) {
-            typeClass = 'u';
-            precision = 4;
-        } else if (Chars.equalsIgnoreCase(name, "u32")) {
-            typeClass = 'u';
-            precision = 5;
-        } else if (Chars.equalsIgnoreCase(name, "u64")) {
-            typeClass = 'u';
-            precision = 6;
-        } else if (Chars.equalsIgnoreCase(name, "s8") || Chars.equalsIgnoreCase(name, "byte")) {
+        } else if (Chars.equalsIgnoreCase(name, "byte")) {
             typeClass = 's';
             precision = 3;
-        } else if (Chars.equalsIgnoreCase(name, "s16") || Chars.equalsIgnoreCase(name, "short")) {
+        } else if (Chars.equalsIgnoreCase(name, "short")) {
             typeClass = 's';
             precision = 4;
-        } else if (Chars.equalsIgnoreCase(name, "s32") || Chars.equalsIgnoreCase(name, "int")) {
+        } else if (Chars.equalsIgnoreCase(name, "int")) {
             typeClass = 's';
             precision = 5;
-        } else if (Chars.equalsIgnoreCase(name, "s64") || Chars.equalsIgnoreCase(name, "long")) {
+        } else if (Chars.equalsIgnoreCase(name, "long")) {
             typeClass = 's';
             precision = 6;
-        } else if (Chars.equalsIgnoreCase(name, "f8")) {
-            typeClass = 'f';
-            precision = 3;
-        } else if (Chars.equalsIgnoreCase(name, "f16")) {
-            typeClass = 'f';
-            precision = 4;
-        } else if (Chars.equalsIgnoreCase(name, "f32") || Chars.equalsIgnoreCase(name, "float")) {
+        } else if (Chars.equalsIgnoreCase(name, "float")) {
             typeClass = 'f';
             precision = 5;
-        } else if (Chars.equalsIgnoreCase(name, "f64") || Chars.equalsIgnoreCase(name, "double")) {
+        } else if (Chars.equalsIgnoreCase(name, "double")) {
             typeClass = 'f';
             precision = 6;
         } else {

@@ -146,7 +146,7 @@ public class NdArrayView {
             long valuesPtr,
             int valuesSize,
             int valuesOffset) {
-        assert ColumnType.tagOf(type) == ColumnType.ND_ARRAY;
+        assert ColumnType.isNdArray(type);
         assert dims.length() == strides.length();
         this.type = type;
         this.dims.of(dimsPtr, dimsLength);
