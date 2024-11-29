@@ -24,23 +24,9 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.cairo.vm.api.MemoryMA;
-import io.questdb.cairo.vm.api.MemoryOM;
-import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
-import io.questdb.std.str.DirectUtf8Sequence;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8SplitString;
+import io.questdb.cairo.vm.api.*;
+import io.questdb.std.*;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
