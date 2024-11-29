@@ -386,6 +386,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.net.snd.buf.size\tQDB_HTTP_MIN_NET_SND_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
                                     "http.min.send.buffer.size\tQDB_HTTP_MIN_SEND_BUFFER_SIZE\t1024\tdefault\tfalse\tfalse\n" +
                                     "http.min.net.connection.rcvbuf\tQDB_HTTP_MIN_NET_CONNECTION_RCVBUF\t-1\tdefault\tfalse\tfalse\n" +
+                                    "http.min.receive.buffer.size\tQDB_HTTP_MIN_RECEIVE_BUFFER_SIZE\t1024\tdefault\tfalse\tfalse\n" +
                                     "http.min.recv.buffer.size\tQDB_HTTP_MIN_RECV_BUFFER_SIZE\t1024\tdefault\tfalse\tfalse\n" +
                                     "http.min.net.connection.queue.timeout\tQDB_HTTP_MIN_NET_CONNECTION_QUEUE_TIMEOUT\t5000\tdefault\tfalse\tfalse\n" +
                                     "http.min.net.connection.timeout\tQDB_HTTP_MIN_NET_CONNECTION_TIMEOUT\t300000\tdefault\tfalse\tfalse\n" +
@@ -405,6 +406,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.send.buffer.size\tQDB_HTTP_SEND_BUFFER_SIZE\t2097152\tdefault\tfalse\tfalse\n" +
                                     "http.net.rcv.buf.size\tQDB_HTTP_NET_RCV_BUF_SIZE\t-1\tdefault\tfalse\tfalse\n" +
                                     "http.net.connection.rcvbuf\tQDB_HTTP_NET_CONNECTION_RCVBUF\t-1\tdefault\tfalse\tfalse\n" +
+                                    "http.receive.buffer.size\tQDB_HTTP_RECEIVE_BUFFER_SIZE\t2097152\tdefault\tfalse\tfalse\n" +
                                     "http.recv.buffer.size\tQDB_HTTP_RECV_BUFFER_SIZE\t2097152\tdefault\tfalse\tfalse\n" +
                                     "http.net.active.connection.limit\tQDB_HTTP_NET_ACTIVE_CONNECTION_LIMIT\t256\tdefault\tfalse\tfalse\n" +
                                     "http.net.bind.to\tQDB_HTTP_NET_BIND_TO\t0.0.0.0:9010\tdefault\tfalse\tfalse\n" +
