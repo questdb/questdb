@@ -102,7 +102,7 @@ public class NdArrayParser implements QuietCloseable {
      * </ul>
      * <p>In short, negative (uncertain) dimensions are counted down, positive (determined) dimensions validate future data.</p>
      */
-    private final IntList dims = new IntList(8);
+    private final IntList shape = new IntList(8);
     private final DirectByteSink values = new DirectByteSink(64, MemoryTag.NATIVE_ND_ARRAY);
     private final DirectUtf8String parsing = new DirectUtf8String();
     private final DirectUtf8String token = new DirectUtf8String();
@@ -149,12 +149,12 @@ public class NdArrayParser implements QuietCloseable {
     private void popDim() {
         // Solidify the last dim before going back to the previous level.
         // The negative (uncertain) value will be converted to positive.
-        dims.setQuick(dimIndex, currDimLen);
+        shape.setQuick(dimIndex, currDimLen);
         assert (dimIndex >= 0);
         assert dimIndex <= 0 || currDimLen > 0;
         --dimIndex;
         if (dimIndex >= 0) {
-            currDimLen = Math.abs(dims.getQuick(dimIndex));
+            currDimLen = Math.abs(shape.getQuick(dimIndex));
         }
     }
 
@@ -336,14 +336,14 @@ public class NdArrayParser implements QuietCloseable {
             elementsPutDouble(3.0);
             elementsPutDouble(4.5);
             elementsPutDouble(5.0);
-            dims.add(5);
+            shape.add(5);
             parsing.advance(20);
         } else if (Utf8s.equalsUtf16("-1,0,100000000}", parsing)) {
             assert type == ColumnType.buildNdArrayType('s', (byte) 6);  // ARRAY(LONG)
             elementsPutLong(-1);
             elementsPutLong(0);
             elementsPutLong(100000000);
-            dims.add(3);
+            shape.add(3);
             parsing.advance(15);
         } else {
             throw new UnsupportedOperationException("not yet implemented");
@@ -368,7 +368,7 @@ public class NdArrayParser implements QuietCloseable {
      * Parse the next level of array nesting.
      */
     private void pushDim() {
-        dims.add(0);
+        shape.add(0);
         ++dimIndex;
         currDimLen = 0;
     }
@@ -378,7 +378,7 @@ public class NdArrayParser implements QuietCloseable {
         array.reset();
         currDimLen = 0;
         dimIndex = -1;  // No dimensions until the first `{`
-        dims.clear();
+        shape.clear();
         type = ColumnType.UNDEFINED;
         values.clear();
         sparsePointers.clear();
@@ -389,10 +389,10 @@ public class NdArrayParser implements QuietCloseable {
 
     private void valueWritten() {
         currDimLen++;
-        final int lastDimLen = dims.getQuick(dimIndex);
+        final int lastDimLen = shape.getQuick(dimIndex);
         if (lastDimLen <= 0) {
             // yet undetermined
-            dims.setQuick(dimIndex, -currDimLen);
+            shape.setQuick(dimIndex, -currDimLen);
         } else if (lastDimLen >= currDimLen) {
             error = ErrorCode.ND_ARR_UNALIGNED;
         }

@@ -25,13 +25,14 @@
 package io.questdb.std.ndarr;
 
 import io.questdb.std.Unsafe;
+import io.questdb.std.bytes.DirectSequence;
 
 /**
  * A flyweight to an immutable byte sequence containing flattened NdArray values.
  * <p><strong>IMPORTANT</strong>: The values are accessed by element index,
  * not by address offset.</p>
  */
-public class NdArrayValuesSlice {
+public class NdArrayValuesSlice implements DirectSequence {
     private long ptr = 0;
     private int size = 0;
 
@@ -101,6 +102,7 @@ public class NdArrayValuesSlice {
     /**
      * Address of the start of the buffer
      */
+    @Override
     public long ptr() {
         assert ptr != 0;
         return ptr;
@@ -117,6 +119,7 @@ public class NdArrayValuesSlice {
     /**
      * Buffer size, as byte count.
      */
+    @Override
     public int size() {
         assert size > 0;
         return size;

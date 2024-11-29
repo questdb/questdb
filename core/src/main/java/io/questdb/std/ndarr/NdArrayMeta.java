@@ -28,9 +28,9 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectIntSlice;
 
 /**
- * Algorithms to work with dimensions and strides.
- * <p>Note that, unlike in most array implementations, our strides are defined in element space,
- * thus are the same regardless of type.</p>
+ * Algorithms to work with the shape (dimensions) and strides.
+ * <p>Note that, unlike in most array implementations,
+ * the strides are defined in element space, thus are the same regardless of type.</p>
  */
 public class NdArrayMeta {
 
@@ -54,17 +54,35 @@ public class NdArrayMeta {
      * Set the list to the default strides for a row-major vector of the specified dimensions.
      * <p>The strides are expressed in element space (not byte space).</p>
      */
-    public static void setDefaultStrides(DirectIntSlice dims, DirectIntList strides) {
+    public static void setDefaultStrides(DirectIntSlice shape, DirectIntList strides) {
+        assert shape.length() == strides.size();
         strides.clear();
-        strides.setCapacity(dims.length());
-        for (int dimIndex = 0, nDims = dims.length(); dimIndex < nDims; dimIndex++) {
+        strides.setCapacity(shape.length());
+        for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; dimIndex++) {
             strides.add(0);
         }
         int stride = 1;
-        for (int dimIndex = dims.length() - 1; dimIndex >= 0; --dimIndex) {
+        for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
             strides.set(dimIndex, stride);
-            stride *= dims.get(dimIndex);
+            stride *= shape.get(dimIndex);
         }
+    }
+
+    /**
+     * Determine if the strides are the default strides.
+     * <p>If they are, the data can be iterated in order simply by accessing the {@link NdArrayView#getValues()} vec.</p>
+     */
+    public static boolean isDefaultStrides(DirectIntSlice shape, DirectIntSlice strides) {
+        assert shape.length() == strides.length();
+        int expected = 1;
+        for (int dimIndex = shape.length() - 1; dimIndex >= 0; --dimIndex) {
+            final int actual = strides.get(dimIndex);
+            if (actual != expected) {
+                return false;
+            }
+            expected *= shape.get(dimIndex);
+        }
+        return true;
     }
 
     /**
@@ -76,9 +94,10 @@ public class NdArrayMeta {
         strides.reverse();
     }
 
-    public static boolean validDims(DirectIntSlice dims) {
-        for (int dimIndex = 0, nDims = dims.length(); dimIndex < nDims; ++dimIndex) {
-            final int dim = dims.get(dimIndex);
+    /** Check that each dimension in the shape is &gt;= 0. */
+    public static boolean validShape(DirectIntSlice shape) {
+        for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
+            final int dim = shape.get(dimIndex);
             if ((dim <= 0) || (dim >= MAX_DIM_SIZE))
                 // having a zero or negative dimension is never valid.
                 return false;

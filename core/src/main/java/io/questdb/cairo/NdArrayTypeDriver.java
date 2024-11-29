@@ -42,35 +42,25 @@ import io.questdb.std.str.LPSZ;
  * <pre>
  * 128-bit fixed size entries
  *     * manydims_and_dim0: int =======
- *         * bit 0: manydims: 1-bit bool
- *             * if `1`, this nd array has more than two dimensions
- *         * bits 1 to =31: dim0: 31-bit unsigned integer
+ *         * bit 0 to =26: dim0: 27-bit unsigned integer
  *             * the first dimension of the array,
  *             * or `0` if null.
+ *         * bits 27 to =30: unused
+ *         * bit 31: manydims: 1-bit bool
+ *             * if `1`, this nd array has more than two dimensions
  *     * dim1_and_format: int =======
- *         * bits 0 to =1: format
- *             * One of the values from `NdArrFormat - 1`:
- *                 * 0 = RM: Row major
- *                 * 1 = CSR: Compressed Sparse Row
- *                 * 2 = CSC: Compressed Sparse Column
- *                 * (3 = COO: Coordinate list - unimplemented, reserved value)
- *         * bits 2 to =31: dim1: 30-bit unsigned integer
+ *         * bits 0 to =26: dim1: 27-bit unsigned integer
  *             * the second dimension of the array
  *             * or `0` if a 1D array.
+ *         * bits 27 to =31: unused
  *     * offset_and_hash: long ======
  *         * bits 0 to =47: offset: 48-bit unsigned integer
  *             * byte count offset into the data vector
  *         * bits 48 to =64: hash: 16-bit
- *             * A hash code used to speed equality comparisons
- *             * should help in de-duplication logic
- *             * CRC-16/XMODEM algo over:
- *                 * the first 14 bytes of the aux header, all except this hash field!
- *                 * all the associated bytes in the data vector
+ *             * CRC-16/XMODEM hash used to speed up equality comparisons
  * </pre>
  * <p><strong>Special NULL value encoding:</strong> All bits of the entry are 0.</p>
  * <h1>Data vector</h1>
- * <p>Layout depends on the format</p>
- * <h2><code>NdArrFormat.RM</code> - Row Major Dense Array</h2>
  * <pre>
  * variable length encoding, starting at the offset specified in the `aux` entry.
  *     * A sequence of extra dimensions.
@@ -107,26 +97,6 @@ import io.questdb.std.str.LPSZ;
  *                   precision: 5
  *                   n_bytes_size = 168
  *                       (bits_per_elem:32 * product(all_dimensions):42 + 7) / 8
- * </pre>
- * <h2>Sparse 1D or 2D <code>NdArrFormat.CSR</code> and <code>NdArrFormat.CSC</code> arrays.</h2>
- * <p>We encode (legend: <code>{CSR/CSC}</code>):
- * <ul>
- *   <li><code>{row_pointers/col_pointers}</code></li>
- *   <li><code>{column_indices/row_indices}</code></li>
- *   <li><code>values</code></li>
- * </ul></p>
- * <p>Lengths are encoded as two 32-bit ints at the start, then the values.
- * In other words:</p>
- * <pre>
- *     * 32-bit int: element count of {row_pointers/col_pointers}
- *     * 32-bit int: element count of {column_indices/row_indices}
- *     * 32-bit int: element count of values
- *     * buffer of 32-bit integers of {row_pointers/col_pointers}
- *     * buffer of 32-bit integers of {column_indices/row_indices}
- *     * buffer of values
- *         * its size is calculated as:
- *             bits_per_elem = pow(2, ColumnType.getNdArrayElementTypePrecision(type))
- *             n_bytes_size = (bits_per_elem * element_count_of_values + 7) / 8
  * </pre>
  */
 public class NdArrayTypeDriver implements ColumnTypeDriver {

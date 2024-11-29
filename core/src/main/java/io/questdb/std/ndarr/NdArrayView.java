@@ -32,7 +32,7 @@ import io.questdb.std.DirectIntSlice;
  * This is a flyweight object.
  */
 public class NdArrayView {
-    private final DirectIntSlice dims = new DirectIntSlice();
+    private final DirectIntSlice shape = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
     private final NdArrayValuesSlice values = new NdArrayValuesSlice();
     int valuesLength = 0;
@@ -113,6 +113,7 @@ public class NdArrayView {
 
     /**
      * The array is a typeless zero-dimensional array.
+     * <p>This maps to the <code>NULL</code> value in an array column.</p>
      */
     public boolean isNull() {
         return type == ColumnType.NULL;
@@ -122,23 +123,23 @@ public class NdArrayView {
      * Set to a non-null array.
      *
      * @param stridesLength number of elements
-     * @param dimsLength    number of elements
+     * @param shapeLength   number of elements
      * @param valuesSize    number of bytes
      */
     public NdArrayView of(
             int type,
-            long dimsPtr,
-            int dimsLength,
+            long shapePtr,
+            int shapeLength,
             long stridesPtr,
             int stridesLength,
             long valuesPtr,
             int valuesSize,
             int valuesOffset) {
         assert ColumnType.isNdArray(type);
-        assert dimsLength == stridesLength;
+        assert shapeLength == stridesLength;
         this.type = type;
-        this.dims.of(dimsPtr, dimsLength);
-        assert NdArrayMeta.validDims(this.dims);
+        this.shape.of(shapePtr, shapeLength);
+        assert NdArrayMeta.validShape(this.shape);
         valuesLength = calcValuesLength();
         assert validValuesSize(type, valuesOffset, valuesLength, valuesSize);
         this.strides.of(stridesPtr, stridesLength);
@@ -158,8 +159,8 @@ public class NdArrayView {
     /** Infer the number of addressable elements in the flat buffer from the shape. */
     private int calcValuesLength() {
         int length = 1;
-        for (int dimIndex = 0, nDims = dims.length(); dimIndex < nDims; ++dimIndex) {
-            final int dim = dims.get(dimIndex);
+        for (int dimIndex = 0, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
+            final int dim = shape.get(dimIndex);
             length *= dim;
         }
         return length;
@@ -179,7 +180,7 @@ public class NdArrayView {
      */
     public void reset() {
         this.type = ColumnType.UNDEFINED;
-        this.dims.reset();
+        this.shape.reset();
         this.strides.reset();
         this.values.reset();
         this.valuesOffset = 0;
@@ -209,8 +210,8 @@ public class NdArrayView {
      *     <li>A 2-D matrix of 50 rows and 2 columns: <code>[50, 2]</code>.</li>
      * </ul></p>
      */
-    DirectIntSlice getDims() {
-        return dims;
+    DirectIntSlice getShape() {
+        return shape;
     }
 
     /**

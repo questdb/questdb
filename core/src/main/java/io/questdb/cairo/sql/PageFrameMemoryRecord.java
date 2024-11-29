@@ -62,7 +62,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     private final ObjList<DirectString> csViewsB = new ObjList<>();
     private final ObjList<Long256Impl> longs256A = new ObjList<>();
     private final ObjList<Long256Impl> longs256B = new ObjList<>();
-    private final ObjList<DirectIntList> ndArrayDims = new ObjList<>();  // TODO(amunra): Wire up!
+    private final ObjList<DirectIntList> ndArrayShapes = new ObjList<>();  // TODO(amunra): Wire up!
     private final ObjList<DirectIntList> ndArrayStrides = new ObjList<>();  // TODO(amunra): Wire up!
     private final ObjList<NdArrayView> ndArrays = new ObjList<>(); // TODO(amunra): Wire up!
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
