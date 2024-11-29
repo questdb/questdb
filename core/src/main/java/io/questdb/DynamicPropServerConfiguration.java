@@ -82,6 +82,10 @@ public class DynamicPropServerConfiguration implements DynamicServerConfiguratio
             PropertyKey.PG_RECV_BUFFER_SIZE,
             PropertyKey.PG_SEND_BUFFER_SIZE,
             PropertyKey.PG_NET_CONNECTION_LIMIT,
+            PropertyKey.HTTP_REQUEST_HEADER_BUFFER_SIZE,
+            PropertyKey.HTTP_MULTIPART_HEADER_BUFFER_SIZE,
+            PropertyKey.HTTP_RECV_BUFFER_SIZE,
+            PropertyKey.HTTP_SEND_BUFFER_SIZE,
             PropertyKey.HTTP_NET_CONNECTION_LIMIT,
             PropertyKey.LINE_TCP_NET_CONNECTION_LIMIT
     ));

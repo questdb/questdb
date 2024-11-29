@@ -215,8 +215,8 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             this.engine = engine;
             this.configuration = configuration;
             this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
-            this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
-            this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+            this.recvBufferSize = configuration.getRecvBufferSize();
+            this.sendBufferSize = configuration.getSendBufferSize();
             this.forceSendFragmentationChunkSize = configuration.getForceSendFragmentationChunkSize();
             this.forceRecvFragmentationChunkSize = configuration.getForceRecvFragmentationChunkSize();
             this.characterStore = new CharacterStore(
@@ -459,12 +459,12 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         sqlExecutionContext.with(fd);
         if (recvBuffer == 0) {
             // re-read recv buffer size in case the config was reloaded
-            this.recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
+            this.recvBufferSize = configuration.getRecvBufferSize();
             this.recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         }
         if (sendBuffer == 0) {
-            // re-read recv buffer size in case the config was reloaded
-            this.sendBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+            // re-read send buffer size in case the config was reloaded
+            this.sendBufferSize = configuration.getSendBufferSize();
             this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
             this.sendBufferPtr = sendBuffer;
             this.responseUtf8Sink.bookmarkPtr = this.sendBufferPtr;

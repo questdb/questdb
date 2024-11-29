@@ -41,7 +41,6 @@ import io.questdb.network.IODispatcher;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringObjHashMap;
@@ -220,7 +219,8 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
         if (recvBufStart == 0) {
-            final int recvBufferSize = Numbers.ceilPow2(configuration.getRecvBufferSize());
+            // re-read recv buffer size in case the config was reloaded
+            final int recvBufferSize = configuration.getRecvBufferSize();
             recvBufStart = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_ILP_RSS);
             recvBufEnd = recvBufStart + recvBufferSize;
             recvBufPos = recvBufStart;

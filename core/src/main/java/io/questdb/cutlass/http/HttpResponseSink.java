@@ -24,7 +24,6 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cairo.Reopenable;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.network.Net;
@@ -91,7 +90,7 @@ public class HttpResponseSink implements Closeable, Mutable {
     private long zStreamPtr = 0;
 
     public HttpResponseSink(HttpMinServerConfiguration configuration) {
-        final int responseBufferSize = Numbers.ceilPow2(configuration.getSendBufferSize());
+        final int responseBufferSize = configuration.getSendBufferSize();
         this.nf = configuration.getNetworkFacade();
         this.buffer = new ChunkUtf8Sink(responseBufferSize);
         this.compressOutBuffer = new ChunkUtf8Sink(responseBufferSize);
@@ -160,11 +159,11 @@ public class HttpResponseSink implements Closeable, Mutable {
         }
     }
 
-    public void setDeflateBeforeSend(boolean deflateBeforeSend) {
+    public void setDeflateBeforeSend(boolean deflateBeforeSend, long bufferSize) {
         this.deflateBeforeSend = deflateBeforeSend;
         if (zStreamPtr == 0 && deflateBeforeSend) {
             zStreamPtr = Zip.deflateInit();
-            compressOutBuffer.reopen();
+            compressOutBuffer.reopen(bufferSize);
         }
     }
 
@@ -321,23 +320,23 @@ public class HttpResponseSink implements Closeable, Mutable {
         return totalBytesSent;
     }
 
-    void of(Socket socket) {
+    void of(Socket socket, long bufferSize) {
         this.socket = socket;
         if (socket != null) {
-            this.buffer.reopen();
+            buffer.reopen(bufferSize);
         }
     }
 
-    void open() {
-        this.buffer.reopen();
+    void open(long bufferSize) {
+        buffer.reopen(bufferSize);
     }
 
-    private class ChunkUtf8Sink implements Utf8Sink, Closeable, Mutable, Reopenable {
+    private class ChunkUtf8Sink implements Utf8Sink, Closeable, Mutable {
         private static final String EOF_CHUNK = "\r\n00\r\n\r\n";
         private static final int MAX_CHUNK_HEADER_SIZE = 12;
-        private final long bufSize;
         private long _rptr;
         private long _wptr;
+        private long bufSize;
         private long bufStart;
         private long bufStartOfData;
 
@@ -384,9 +383,9 @@ public class HttpResponseSink implements Closeable, Mutable {
             return this;
         }
 
-        @Override
-        public void reopen() {
+        public void reopen(long bufSize) {
             if (bufStart == 0) {
+                this.bufSize = bufSize;
                 bufStart = Unsafe.malloc(bufSize + MAX_CHUNK_HEADER_SIZE + EOF_CHUNK.length(), MemoryTag.NATIVE_HTTP_CONN);
                 bufStartOfData = bufStart + MAX_CHUNK_HEADER_SIZE;
                 clear();
@@ -475,8 +474,11 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public boolean resetToBookmark() {
-            buffer._wptr = bookmark;
-            return bookmark != buffer.bufStartOfData;
+            if (bookmark != 0) {
+                buffer._wptr = bookmark;
+                return bookmark != buffer.bufStartOfData;
+            }
+            return false;
         }
 
         @Override

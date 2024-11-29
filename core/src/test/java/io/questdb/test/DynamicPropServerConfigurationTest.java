@@ -35,6 +35,7 @@ import io.questdb.PropertyKey;
 import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
@@ -153,6 +154,92 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                                 "select 1;"
                         );
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHttpRecvBufferSizeReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("http.net.bind.to=0.0.0.0:9001\n");
+                w.write("http.request.header.buffer.size=100\n");
+                w.write("http.recv.buffer.size=100\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                final StringSink querySink = new StringSink();
+                querySink.put("select length('");
+                querySink.put(Chars.repeat("q", 150));
+                querySink.put("');");
+                final String query = querySink.toString();
+                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                    testHttpClient.assertGet(
+                            "/exec",
+                            "",
+                            query
+                    );
+                    Assert.fail();
+                } catch (HttpClientException ignore) {
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("http.net.bind.to=0.0.0.0:9001\n");
+                    w.write("http.request.header.buffer.size=300\n");
+                    w.write("http.recv.buffer.size=300\n");
+                }
+
+                latch.await();
+
+                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                    testHttpClient.assertGet(
+                            "/exec",
+                            "{\"query\":\"select length('qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq');\",\"columns\":[{\"name\":\"length\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[150]],\"count\":1}",
+                            query
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHttpSendBufferSizeReload() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("http.net.bind.to=0.0.0.0:9001\n");
+                w.write("http.send.buffer.size=100\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+
+                final String query = "select rpad('QuestDB', 150, '0');";
+                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                    testHttpClient.assertGet(
+                            "/exec",
+                            "",
+                            query
+                    );
+                    Assert.fail();
+                } catch (HttpClientException ignore) {
+                }
+
+                try (FileWriter w = new FileWriter(serverConf)) {
+                    w.write("http.net.bind.to=0.0.0.0:9001\n");
+                    w.write("http.send.buffer.size=200\n");
+                }
+
+                latch.await();
+
+                try (TestHttpClient testHttpClient = new TestHttpClient()) {
+                    testHttpClient.assertGet(
+                            "/exec",
+                            "{\"query\":\"select rpad('QuestDB', 150, '0');\",\"columns\":[{\"name\":\"rpad\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"QuestDB00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\"]],\"count\":1}",
+                            query
+                    );
                 }
             }
         });
