@@ -72,7 +72,9 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
                         (clock.getTicks() - METRICS_LIFETIME_MICROS));
                 lastCleanupTs = now;
             } catch (SqlException e) {
-                LOG.error().$("Failed to discard old query metrics").$((Throwable) e).$();
+                if (!e.getMessage().contains("table does not exist [table=_query_metrics_]")) {
+                    LOG.error().$("Failed to discard old query metrics").$((Throwable) e).$();
+                }
             }
         }
     }
