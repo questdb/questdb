@@ -28,7 +28,7 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class InformationSchemaQuestdbColumnsFunctionFactoryTest extends AbstractCairoTest {
-    
+
     @Test
     public void testColumns() throws Exception {
         assertMemoryLeak(() -> {
