@@ -119,6 +119,46 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
         assertSqlWithTypes("dateadd\n2020-10-26T23:00:00.000000Z:TIMESTAMP\n", "select dateadd('d', 2, 1603580400000000L, 'Random/Time')");
     }
 
+    @Test
+    public void testDateAddEquivalenceWithUTC() throws Exception {
+        // Direct calculation with DATEADD
+        String directQuery = "select dateadd('w', 1, '2024-10-21', 'Europe/Bratislava') as direct";
+        // Equivalent calculation with intermediate conversions
+        String conversionQuery = "select to_utc(dateadd('w', 1, to_timezone('2024-10-21', 'Europe/Bratislava')), 'Europe/Bratislava') as via_conversion";
+
+        // Validate the two produce the same result
+        assertQuery(
+            "direct\tvia_conversion\n" +
+            "2024-10-28T01:00:00.000000Z\t2024-10-28T01:00:00.000000Z\n",
+            String.format("select direct, via_conversion from (%s) cross join (%s)", directQuery, conversionQuery)
+        );
+    }
+
+    @Test
+    public void testDSTTransitionToUTC() throws Exception {
+        // Input query performing DATEADD and converting to UTC
+        String query = "select to_utc(dateadd('w', 1, '2024-10-21'), 'Europe/Bratislava') as utc_time";
+
+        // Validate the result accounts for DST transition correctly
+        assertQuery(
+            "utc_time\n" +
+            "2024-10-27T23:00:00.000000Z\n",
+            query
+        );
+    }
+
+    @Test
+    public void testDateAddWithTimezonePlan() throws Exception {
+        assertMemoryLeak(() -> assertPlanNoLeakCheck(
+            // Input query testing DATEADD behavior
+            "select dateadd('w', 1, '2024-10-21', 'Europe/Bratislava')",
+            // Updated expected plan
+            "VirtualRecord\n" +
+            "  functions: [1730077200000000]\n" +
+            "    long_sequence count: 1\n"
+        ));
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new TimestampAddWithTimezoneFunctionFactory();
