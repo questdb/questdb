@@ -22,33 +22,48 @@
  *
  ******************************************************************************/
 
-package io.questdb.std.ndarr;
+package io.questdb.std;
+
+import io.questdb.std.bytes.DirectSequence;
 
 /**
- * Tag indicating how the array is represented.
- * * https://en.wikipedia.org/wiki/Matrix_representation
- * * https://en.wikipedia.org/wiki/Sparse_matrix#Compressed_sparse_row_(CSR,_CRS_or_Yale_format)
+ * A flyweight to an immutable int slice stored in native memory.
  */
-public interface NdArrayFormat {
-    /**
-     * Invalid value, used until the format is determined during parsing.
-     */
-    int UNDEFINED = 0;
+public class DirectIntSlice implements DirectSequence {
+    private long ptr = 0;
+    private int size = 0;
 
-    /**
-     * Dense, row-major
-     */
-    int RM = 1;
+    public int get(int index) {
+        return Unsafe.getUnsafe().getInt(ptr + ((long) index << 2));
+    }
 
-    /**
-     * Sparse, CSR
-     * 32-bit int pointers/indices
-     */
-    int CSR = RM + 1;  // = 2
+    public int length() {
+        return size() / Integer.BYTES;
+    }
 
-    /**
-     * Sparse, CSC
-     * 32-bit int pointers/indices
-     */
-    int CSC = CSR + 1;  // = 3
+    public DirectIntSlice of(long ptr, int size) {
+        assert ptr > 0;
+        assert size > 0;
+        assert size % Integer.BYTES == 0;
+        this.ptr = ptr;
+        this.size = size;
+        return this;
+    }
+
+    @Override
+    public long ptr() {
+        assert ptr != 0;
+        return ptr;
+    }
+
+    public void reset() {
+        ptr = 0;
+        size = 0;
+    }
+
+    @Override
+    public int size() {
+        assert size >= 0;
+        return size;
+    }
 }

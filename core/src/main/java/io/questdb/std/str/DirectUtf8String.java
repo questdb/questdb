@@ -29,7 +29,7 @@ import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * An immutable flyweight for a UTF-8 string stored in native memory.
+ * A flyweight to an immutable UTF-8 string stored in native memory.
  */
 public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     public static final Factory FACTORY = new Factory();

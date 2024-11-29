@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Acceptor;
 import io.questdb.std.Long256Impl;
@@ -41,7 +42,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
-import io.questdb.std.ndarr.NdArray;
+import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.StableStringSource;
@@ -61,10 +62,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     private final ObjList<DirectString> csViewsB = new ObjList<>();
     private final ObjList<Long256Impl> longs256A = new ObjList<>();
     private final ObjList<Long256Impl> longs256B = new ObjList<>();
+    private final ObjList<DirectIntList> ndArrayDims = new ObjList<>();  // TODO(amunra): Wire up!
+    private final ObjList<DirectIntList> ndArrayStrides = new ObjList<>();  // TODO(amunra): Wire up!
+    private final ObjList<NdArrayView> ndArrays = new ObjList<>(); // TODO(amunra): Wire up!
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
     private final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
-    private final ObjList<NdArray> ndArrays = new ObjList<>(); // TODO(amunra): Implement NdArray support
     private LongList auxPageAddresses;
     private LongList auxPageSizes;
     private byte frameFormat = -1;

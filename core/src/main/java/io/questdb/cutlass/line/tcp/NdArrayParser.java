@@ -31,12 +31,12 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.bytes.DirectByteSequence;
 import io.questdb.std.bytes.DirectByteSink;
-import io.questdb.std.ndarr.NdArrayFormat;
+import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Parse N-dimensional arrays for ILP input.
@@ -89,12 +89,7 @@ import io.questdb.std.str.Utf8s;
 public class NdArrayParser implements QuietCloseable {
     private final StringSink actual = new StringSink();
     /**
-     * Temporary used to decode a single UTF-8 char and re-encode it as UTF-16
-     */
-    private final char[] chEncodeTmp = new char[2];
-    /**
      * Stack-like state used to parse the dimensions.
-     * <p>When <code>NdArrFormat.RM</code>:</p>
      * <ul>
      *     <li>Each dimension is stored as a level.</li>
      *     <li>Each dimension can be either known, or unknown.</li>
@@ -106,7 +101,6 @@ public class NdArrayParser implements QuietCloseable {
      *     is flipped to positive.</li>
      * </ul>
      * <p>In short, negative (uncertain) dimensions are counted down, positive (determined) dimensions validate future data.</p>
-     * <p>When format is <code>NdArrFormat.CSR</code> or <code>NdArrFormat.CSC</code>, this field is set after parsing.
      */
     private final IntList dims = new IntList(8);
     private final DirectByteSink values = new DirectByteSink(64, MemoryTag.NATIVE_ND_ARRAY);
@@ -114,6 +108,7 @@ public class NdArrayParser implements QuietCloseable {
     private final DirectUtf8String token = new DirectUtf8String();
     private final DirectIntList sparseIndices = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
     private final DirectIntList sparsePointers = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
+    private final NdArrayView array = new NdArrayView();
     /**
      * Starting address first encountered when parsing. Used to calculate the current position.
      */
@@ -136,7 +131,6 @@ public class NdArrayParser implements QuietCloseable {
      */
     private int valuesCount = 0;
     private ErrorCode error = ErrorCode.NONE;
-    private int format = NdArrayFormat.UNDEFINED;
     private int type = ColumnType.UNDEFINED;
 
     // TODO(amunra): Convert all usages of this into more enum values instead. */
@@ -172,84 +166,13 @@ public class NdArrayParser implements QuietCloseable {
     }
 
     /**
-     * Get the dimensions of the ND Array
+     * Obtain the parsed result.
+     * <p>Throws if {@link NdArrayParser#parse(DirectUtf8String)} returned an error.</p>
      */
-    public IntList getDims() {
-        return dims;
-    }
-
-    /**
-     * Get the ptr address to the flattened values buffer.
-     * Its content depends on the format (see `getFormat()`).
-     * <p>
-     * When the format is `NdArrFormat.RM` (dense, row-major) it's a
-     * flattened array of all the elements.
-     * <p>
-     * For example, for the 4x3x2 matrix: {
-     * {{1, 2}, {3, 4}, {5, 6}},
-     * {{7, 8}, {9, 0}, {1, 2}},
-     * {{3, 4}, {5, 6}, {7, 8}},
-     * {{9, 0}, {1, 2}, {3, 4}}
-     * }
-     * The buffer would contain a flat vector of elements (see getElementType)
-     * with the numbers [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4]
-     *
-     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
-     */
-    public DirectByteSequence getValues() {
-        return values;
-    }
-
-    /**
-     * Number of elements returned by `getElements()`.
-     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
-     */
-    public int getValuesCount() {
-        return valuesCount;
-    }
-
-    /**
-     * Returns a value from the `NdArrFormat` enum indicating how the array is represented in memory.
-     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
-     */
-    public int getFormat() {
-        return format;
-    }
-
-    /**
-     * Get the {column_indices/row_indices} vector for the CSR/CSC sparse array.
-     * Returns a nullptr if `getFormat()` is dense (i.e. `RM`).
-     * The returned buffer contains 32-bit integers.
-     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
-     */
-    public DirectIntList getSparseIndices() {
-        return sparseIndices;
-    }
-
-    /**
-     * Get the address of the {row_pointers/col_pointers} vector for the CSR/CSC sparse array.
-     * Returns a null address if `getFormat()` is dense (i.e. `RM`).
-     * The returned buffer contains 32-bit integers.
-     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
-     */
-    public DirectIntList getSparsePointers() {
-        return sparsePointers;
-    }
-
-    /**
-     * Get the array ColumnType.
-     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
-     */
-    public int getType() {
-        return type;
-    }
-
-    /**
-     * The parsed array is effectively NULL, i.e. contains no values.
-     * <p><strong>N.B.</strong>: This method should only be called once parsing is complete.</p>
-     */
-    public boolean isNullArray() {
-        return values.size() == 0;
+    public @NotNull NdArrayView getArray() {
+        if (array.getType() == ColumnType.UNDEFINED)
+            throw new IllegalStateException("Parsing error");
+        return array;
     }
 
     /**
@@ -276,6 +199,7 @@ public class NdArrayParser implements QuietCloseable {
         reset();
 
         if (Utf8s.equalsAscii("{}", value)) {
+            array.ofNull();
             return ErrorCode.NONE;
         }
 
@@ -292,28 +216,13 @@ public class NdArrayParser implements QuietCloseable {
             return error;
         }
 
-        parseFormat();
-        if (error != ErrorCode.NONE) {
-            return error;
-        }
-
-        switch (format) {
-            case NdArrayFormat.CSR:
-            case NdArrayFormat.CSC:
-                throw new UnsupportedOperationException("not yet implemented");
-
-            case NdArrayFormat.RM:
-                parseRowMajor();
-                break;
-            default:
-                throw new IllegalStateException("expected unreachable code, invalid value: " + format);
-        }
-
+        parseElements();
         return error;
     }
 
     /**
-     * Get the position of the parsing error, relative to the start of the input passed to `parse()`.
+     * Get the position of the parsing error,
+     * relative to the start of the input passed to {@link NdArrayParser#parse(DirectUtf8String)}.
      */
     public int position() {
         return (int) (parsing.lo() - baseLo);
@@ -329,12 +238,8 @@ public class NdArrayParser implements QuietCloseable {
         actual.clear();
     }
 
-    private boolean mayAdvance(int required) {
-        return parsing.size() >= required;
-    }
-
     private void parseDataType() {
-        if (!mayAdvance(2)) {
+        if (parsing.size() < 3) {
             error = ErrorCode.ND_ARR_TOO_SHORT;
             return;
         }
@@ -360,50 +265,6 @@ public class NdArrayParser implements QuietCloseable {
 
         type = arrayType;
         parsing.advance();
-    }
-
-    private void parseFormat() {
-        if (parsing.size() < 1) {
-            error = ErrorCode.ND_ARR_TOO_SHORT;
-            return;
-        }
-
-        final byte next = parsing.byteAt(0);
-        switch (next) {
-            case 'C':
-                format = NdArrayFormat.CSC;
-                parsing.advance();
-                break;
-
-            case 'R':
-                format = NdArrayFormat.CSR;
-                parsing.advance();
-                break;
-
-            case '0':
-            case '1':
-            case '2':
-            case '3':
-            case '4':
-            case '5':
-            case '6':
-            case '7':
-            case '8':
-            case '9':
-            case '.':
-            case '+':
-            case '-':
-            case 'N':  // NaN
-            case '{':
-                // The start of a number or a nesting level implies we're parsing a row-major dense array.
-                format = NdArrayFormat.RM;
-                return;
-            default:
-                actualPutNextChar();
-                unexpectedErrorMsg = "Invalid array format, must be one of 'C', 'R' or missing, not ";
-                error = ErrorCode.ND_ARR_UNEXPECTED;
-                break;
-        }
     }
 
     private void parseLeftBrace() {
@@ -463,7 +324,7 @@ public class NdArrayParser implements QuietCloseable {
      * </pre>
      * <p>Note that by the time we call this function, the opening left brace and type have already been parsed.</p>
      */
-    private void parseRowMajor() {
+    private void parseElements() {
         if (error != ErrorCode.NONE) {
             return;
         }
@@ -490,33 +351,6 @@ public class NdArrayParser implements QuietCloseable {
 
 
         // TODO(amunra): Complete the parser.
-//        final long endOfInput = parsing.hi();
-//        boolean more = true;
-//        for (long current = parsing.lo(); more; ++current) {
-//            if (current == endOfInput) {
-//                error = ErrorCode.ND_ARR_TOO_SHORT;
-//                return;
-//            }
-//
-//            final byte at = Unsafe.getUnsafe().getByte(current);
-//
-//            switch (at) {
-//                case '}':
-//                    popDim();
-//                    if (dimIndex == -1) {
-//                        more = false;  // reached the end of the array
-//                        if (current + 1 != endOfInput) {
-//                            error = ErrorCode.ND_ARR_EARLY_TERMINATION;
-//                            return;
-//                        }
-//                    }
-//                case ',':
-//
-//                default:
-//            }
-//        }
-
-
 
     }
 
@@ -541,17 +375,16 @@ public class NdArrayParser implements QuietCloseable {
 
     private void reset() {
         clearError();
+        array.reset();
         currDimLen = 0;
         dimIndex = -1;  // No dimensions until the first `{`
         dims.clear();
         type = ColumnType.UNDEFINED;
-        format = NdArrayFormat.UNDEFINED;
         values.clear();
         sparsePointers.clear();
         sparseIndices.clear();
         valuesCount = 0;
         baseLo = 0;
-        format = NdArrayFormat.UNDEFINED;
     }
 
     private void valueWritten() {
