@@ -2557,6 +2557,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
                 sqlTag = TAG_INSERT_AS_SELECT;
+                sqlAffectedRowCount = cq.getAffectedRowsCount();
                 break;
             case CompiledQuery.SET:
                 sqlTag = TAG_SET;
