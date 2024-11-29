@@ -38,10 +38,10 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
@@ -100,117 +100,107 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             if (!hasRun) {
                 sink.clear();
                 // CREATE TABLE table_name
-                sink.put("CREATE TABLE ")
+                sink.putAscii("CREATE TABLE ")
                         .put(tableToken.getTableName())
-                        .put(" ( ")
-                        .put('\n');
+                        .putAscii(" ( ")
+                        .putAscii('\n');
 
                 // column_name TYPE
-                for (int i = 0, n = (int) table.getColumnCount(); i < n; i++) {
+                for (int i = 0, n = table.getColumnCount(); i < n; i++) {
                     final CairoColumn column = table.getColumnQuiet(i);
                     sink.put('\t')
                             .put(column.getName())
-                            .put(' ')
+                            .putAscii(' ')
                             .put(ColumnType.nameOf(column.getType()));
 
                     if (column.getType() == ColumnType.SYMBOL) {
                         // CAPACITY value (NO)CACHE
-                        sink.put(" CAPACITY ").put(column.getSymbolCapacity());
-                        sink.put(column.getSymbolCached() ? " CACHE" : " NOCACHE");
+                        sink.putAscii(" CAPACITY ").put(column.getSymbolCapacity());
+                        sink.putAscii(column.getSymbolCached() ? " CACHE" : " NOCACHE");
 
                         if (column.getIsIndexed()) {
                             // INDEX CAPACITY value
-                            sink.put(" INDEX CAPACITY ")
+                            sink.putAscii(" INDEX CAPACITY ")
                                     .put(column.getIndexBlockCapacity());
                         }
                     }
 
                     if (i < n - 1) {
-                        sink.put(',');
+                        sink.putAscii(',');
                     }
-                    sink.put('\n');
+                    sink.putAscii('\n');
                 }
-                sink.put(')');
+                sink.putAscii(')');
 
                 // timestamp(ts)
                 if (table.getTimestampIndex() != -1) {
-                    sink.put(" timestamp(")
+                    sink.putAscii(" timestamp(")
                             .put(table.getTimestampName())
-                            .put(')');
+                            .putAscii(')');
 
                     // PARTITION BY unit
                     if (table.getPartitionBy() != PartitionBy.NONE) {
-                        sink.put(" PARTITION BY ").put(table.getPartitionByName());
+                        sink.putAscii(" PARTITION BY ").put(table.getPartitionByName());
                     }
 
                     // (BYPASS) WAL
                     if (!table.getWalEnabled()) {
-                        sink.put(" BYPASS");
+                        sink.putAscii(" BYPASS");
                     }
-                    sink.put(" WAL");
+                    sink.putAscii(" WAL");
                 }
 
                 final CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
-                final boolean withMaxUncommittedRows = table.getMaxUncommittedRows() != config.getMaxUncommittedRows();
-                final boolean withO3MaxLag = table.getO3MaxLag() != config.getO3MaxLag();
-                final boolean withRequired = withMaxUncommittedRows || withO3MaxLag;
 
                 // WITH maxUncommittedRows=123, o3MaxLag=456s
-                if (withRequired) {
-                    sink.put('\n').put("WITH ");
-                    if (withMaxUncommittedRows) {
-                        sink.put("maxUncommittedRows=").put(table.getMaxUncommittedRows());
-                    }
-                    if (withO3MaxLag) {
-                        if (withMaxUncommittedRows) {
-                            sink.put(", ");
-                        }
-                        sink.put("o3MaxLag=").put(table.getO3MaxLag()).put("us");
-                    }
-                }
+                sink.putAscii('\n').putAscii("WITH ");
+                sink.putAscii("maxUncommittedRows=").put(table.getMaxUncommittedRows());
+                sink.put(", ");
+                sink.putAscii("o3MaxLag=").put(table.getO3MaxLag()).putAscii("us");
 
                 // IN VOLUME OTHER_VOLUME
                 if (table.getIsSoftLink()) {
-                    if (withRequired) {
-                        sink.put(',');
-                    }
-                    sink.put(" IN VOLUME ");
+                    sink.putAscii(", IN VOLUME ");
 
-                    FilesFacade ff = config.getFilesFacade();
-                    try (Path softLinkPath = new Path().of(config.getRoot()).concat(table.getDirectoryName())) {
-                        try (Path otherVolumePath = new Path()) {
-                            ff.readLink(softLinkPath, otherVolumePath);
-                            otherVolumePath.trimTo(otherVolumePath.size()
-                                    - table.getDirectoryName().length()  // look for directory
-                                    - 1 // get rid of trailing slash
-                            );
-                            CharSequence alias = config.getVolumeDefinitions().resolvePath(otherVolumePath.asAsciiCharSequence());
+                    Path.clearThreadLocals();
+                    Path softLinkPath = Path.getThreadLocal(config.getRoot()).concat(table.getDirectoryName());
+                    Path otherVolumePath = Path.getThreadLocal2("");
 
-                            if (alias == null) {
-                                throw CairoException.nonCritical().put("could not find volume alias for table [table=").put(tableToken).put(']');
-                            } else {
-                                sink.put(alias);
-                            }
-                        }
+                    config.getFilesFacade().readLink(softLinkPath, otherVolumePath);
+                    otherVolumePath.trimTo(otherVolumePath.size()
+                            - table.getDirectoryName().length()  // look for directory
+                            - 1 // get rid of trailing slash
+                    );
+
+                    CharSequence alias = config.getVolumeDefinitions().resolvePath(otherVolumePath.asAsciiCharSequence());
+
+                    if (alias == null) {
+                        throw CairoException.nonCritical().put("could not find volume alias for table [table=").put(tableToken).put(']');
+                    } else {
+                        sink.put(alias);
                     }
                 }
+
 
                 // DEDUP UPSERT(key1, key2)
+                boolean afterFirst = false;
                 if (table.getIsDedup()) {
-                    sink.put('\n');
-                    sink.put("DEDUP UPSERT KEYS(");
-                    for (int i = 0, n = (int) table.getColumnCount(); i < n; i++) {
+                    sink.putAscii('\n');
+                    sink.putAscii("DEDUP UPSERT KEYS(");
+                    for (int i = 0, n = table.getColumnCount(); i < n; i++) {
                         final CairoColumn column = table.getColumnQuiet(i);
                         if (column.getIsDedupKey()) {
+                            if (afterFirst) {
+                                sink.putAscii(',');
+                            } else {
+                                afterFirst = true;
+                            }
                             sink.put(column.getName());
-                            sink.put(',');
                         }
                     }
-                    // drop the last comma
-                    sink.clear(sink.size() - 1);
-                    sink.put(')');
+                    sink.putAscii(')');
                 }
-                sink.put(';');
+                sink.putAscii(';');
                 hasRun = true;
                 return true;
             }
@@ -225,6 +215,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 if (this.table == null) {
                     throw SqlException.$(tokenPosition, "table does not exist [table=")
                             .put(tableToken.getTableName()).put(']');
+                } else if (!this.tableToken.equals(this.table.getTableToken())) {
+                    throw TableReferenceOutOfDateException.of(this.tableToken);
                 }
             }
             toTop();

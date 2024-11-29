@@ -34,12 +34,14 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol, i int ) timestamp(ts) partition by day wal dedup upsert keys(ts, s, i)");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ts SYMBOL CAPACITY 128 CACHE,\n" +
-                    "\ti INT\n" +
-                    ") timestamp(ts) PARTITION BY DAY WAL\n" +
-                    "DEDUP UPSERT KEYS(ts,s,i);\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE,\n" +
+                            "\ti INT\n" +
+                            ") timestamp(ts) PARTITION BY DAY WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us\n" +
+                            "DEDUP UPSERT KEYS(ts,s,i);\n",
+                    "show create table foo");
         });
     }
 
@@ -48,10 +50,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts)");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ts SYMBOL CAPACITY 128 CACHE\n" +
-                    ") timestamp(ts) BYPASS WAL;\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                            ") timestamp(ts) BYPASS WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table foo");
         });
     }
 
@@ -79,24 +83,26 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                     " from long_sequence(10)" +
                     ") timestamp (timestamp);");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\ti INT,\n" +
-                    "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
-                    "\tamt DOUBLE,\n" +
-                    "\ttimestamp TIMESTAMP,\n" +
-                    "\tb BOOLEAN,\n" +
-                    "\tc STRING,\n" +
-                    "\td DOUBLE,\n" +
-                    "\te FLOAT,\n" +
-                    "\tf SHORT,\n" +
-                    "\tg DATE,\n" +
-                    "\tik SYMBOL CAPACITY 128 CACHE,\n" +
-                    "\tj LONG,\n" +
-                    "\tk TIMESTAMP,\n" +
-                    "\tl BYTE,\n" +
-                    "\tm BINARY,\n" +
-                    "\tn STRING\n" +
-                    ") timestamp(timestamp) BYPASS WAL;\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\ti INT,\n" +
+                            "\tsym SYMBOL CAPACITY 128 CACHE,\n" +
+                            "\tamt DOUBLE,\n" +
+                            "\ttimestamp TIMESTAMP,\n" +
+                            "\tb BOOLEAN,\n" +
+                            "\tc STRING,\n" +
+                            "\td DOUBLE,\n" +
+                            "\te FLOAT,\n" +
+                            "\tf SHORT,\n" +
+                            "\tg DATE,\n" +
+                            "\tik SYMBOL CAPACITY 128 CACHE,\n" +
+                            "\tj LONG,\n" +
+                            "\tk TIMESTAMP,\n" +
+                            "\tl BYTE,\n" +
+                            "\tm BINARY,\n" +
+                            "\tn STRING\n" +
+                            ") timestamp(timestamp) BYPASS WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table foo");
         });
     }
 
@@ -105,9 +111,11 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp)");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP\n" +
-                    ");\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\tts TIMESTAMP\n" +
+                            ")\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table foo");
         });
     }
 
@@ -116,10 +124,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, s symbol capacity 256)");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ts SYMBOL CAPACITY 256 CACHE\n" +
-                    ");\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 256 CACHE\n" +
+                            ")\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table foo");
         });
     }
 
@@ -128,10 +138,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year wal;");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ts SYMBOL CAPACITY 128 CACHE\n" +
-                    ") timestamp(ts) PARTITION BY YEAR WAL;\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                            ") timestamp(ts) PARTITION BY YEAR WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table foo");
         });
     }
 
@@ -140,10 +152,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo ( ts timestamp, s symbol ) timestamp(ts) partition by year bypass wal;");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ts SYMBOL CAPACITY 128 CACHE\n" +
-                    ") timestamp(ts) PARTITION BY YEAR BYPASS WAL;\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                            ") timestamp(ts) PARTITION BY YEAR BYPASS WAL\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table foo");
         });
     }
 
@@ -152,10 +166,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, s symbol capacity 512 nocache)");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ts SYMBOL CAPACITY 512 NOCACHE\n" +
-                    ");\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 512 NOCACHE\n" +
+                            ")\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table foo");
         });
     }
 
@@ -164,11 +180,18 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, s symbol capacity 512 nocache index capacity 1024)");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ts SYMBOL CAPACITY 512 NOCACHE INDEX CAPACITY 1024\n" +
-                    ");\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 512 NOCACHE INDEX CAPACITY 1024\n" +
+                            ")\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=300000000us;\n",
+                    "show create table foo");
         });
+    }
+
+    @Test
+    public void testTableDoesNotExist() throws Exception {
+        assertMemoryLeak(() -> assertException("show create table foo;", 18, "table does not exist"));
     }
 
     @Test
@@ -177,11 +200,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             execute("create table foo ( ts timestamp, s symbol ) " +
                     "with maxUncommittedRows=1234");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ts SYMBOL CAPACITY 128 CACHE\n" +
-                    ")\n" +
-                    "WITH maxUncommittedRows=1234;\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                            ")\n" +
+                            "WITH maxUncommittedRows=1234, o3MaxLag=300000000us;\n",
+                    "show create table foo");
         });
     }
 
@@ -195,11 +219,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             execute("create table foo ( ts timestamp, s symbol ) " +
                     "with maxUncommittedRows=1234, o3MaxLag=1s");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ts SYMBOL CAPACITY 128 CACHE\n" +
-                    ")\n" +
-                    "WITH maxUncommittedRows=1234, o3MaxLag=1000000us;\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                            ")\n" +
+                            "WITH maxUncommittedRows=1234, o3MaxLag=1000000us;\n",
+                    "show create table foo");
         });
     }
 
@@ -209,12 +234,12 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             execute("create table foo ( ts timestamp, s symbol ) " +
                     "with o3MaxLag=1s");
             assertSql("ddl\n" +
-                    "CREATE TABLE foo ( \n" +
-                    "\tts TIMESTAMP,\n" +
-                    "\ts SYMBOL CAPACITY 128 CACHE\n" +
-                    ")\n" +
-                    "WITH o3MaxLag=1000000us;\n", "show create table foo");
+                            "CREATE TABLE foo ( \n" +
+                            "\tts TIMESTAMP,\n" +
+                            "\ts SYMBOL CAPACITY 128 CACHE\n" +
+                            ")\n" +
+                            "WITH maxUncommittedRows=1000, o3MaxLag=1000000us;\n",
+                    "show create table foo");
         });
     }
-
 }
