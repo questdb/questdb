@@ -141,33 +141,21 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             @Override
             public boolean hasNext() {
 
-                if (table == null) {
-                    if (!nextTable()) {
+                do {
+                    if (table == null && !nextTable()) {
                         return false;
                     }
-                }
-
-                assert table != null;
-                // we have a table
-
-                if (table == null) {
-                    throw new RuntimeException();
-                }
-
-                if (columnIdx < table.getColumnCount() - 1) {
-                    columnIdx++;
-                } else {
-                    columnIdx = -1;
-                    table = null;
-                    return hasNext();
-                }
-
-                CairoColumn column = table.getColumnQuiet(columnIdx);
-                assert column != null;
-
-                record.of(table.getTableName(), columnIdx, column.getName(), typeToName.apply(column.getType()));
-
-                return true;
+                    // we have a table
+                    if (columnIdx < table.getColumnCount() - 1) {
+                        columnIdx++;
+                        CairoColumn column = table.getColumnQuiet(columnIdx);
+                        record.of(table.getTableName(), columnIdx, column.getName(), typeToName.apply(column.getType()));
+                        return true;
+                    } else {
+                        columnIdx = -1;
+                        table = null;
+                    }
+                } while (true);
             }
 
             public boolean nextTable() {
@@ -175,9 +163,9 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
                 if (iteratorIdx < tableCache.size() - 1) {
                     table = tableCache.getAt(++iteratorIdx);
-                } else return false;
-
-                return true;
+                    return true;
+                }
+                return false;
             }
 
             @Override
