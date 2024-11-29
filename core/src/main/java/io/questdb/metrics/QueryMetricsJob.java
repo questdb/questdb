@@ -25,6 +25,8 @@
 package io.questdb.metrics;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -45,6 +47,7 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
     private final CairoEngine engine;
     private final QueryMetrics metrics = new QueryMetrics();
     private long lastCleanupTs;
+    private TableToken tableToken;
 
     public QueryMetricsJob(CairoEngine engine) {
         super(engine.getMessageBus().getQueryMetricsQueue());
@@ -75,30 +78,33 @@ public class QueryMetricsJob extends AbstractQueueBatchConsumerJob<QueryMetrics>
         engine.execute("CREATE TABLE IF NOT EXISTS " + TABLE_NAME +
                 " (ts TIMESTAMP, query VARCHAR, execution_micros LONG)" +
                 " TIMESTAMP(ts) PARTITION BY HOUR");
+        tableToken = engine.verifyTableName(TABLE_NAME);
+    }
+
+    private void insertData(ValueHolderList<QueryMetrics> metricsList) {
+        try (TableWriter tableWriter = engine.getWriter(tableToken, "query_tracing")) {
+            for (int n = metricsList.size(), i = 0; i < n; i++) {
+                metricsList.getQuick(i, metrics);
+                final TableWriter.Row row = tableWriter.newRow(metrics.timestamp);
+                row.putStr(1, metrics.queryText);
+                row.putLong(2, metrics.executionNanos);
+                row.append();
+            }
+            tableWriter.commit();
+        }
     }
 
     @Override
     protected boolean doRun(int workerId, ValueHolderList<QueryMetrics> metricsList, RunStatus runStatus) {
         discardOldData();
-
-        StringBuilder b = new StringBuilder("INSERT INTO " + TABLE_NAME + " VALUES ");
-        String separator = "";
-        for (int n = metricsList.size(), i = 0; i < n; i++) {
-            metricsList.getQuick(i, metrics);
-            b.append(separator).append('(')
-                    .append(metrics.timestamp).append(", '")
-                    .append(metrics.queryText).append("', ")
-                    .append(metrics.executionNanos).append(')');
-            separator = ", ";
-        }
         try {
-            engine.execute(b);
-        } catch (SqlException e) {
+            insertData(metricsList);
+        } catch (Exception firstException) {
             try {
                 init();
-                engine.execute(b);
-            } catch (SqlException ex) {
-                LOG.error().$("Failed to save query metrics").$((Throwable) e).$();
+                insertData(metricsList);
+            } catch (Exception e) {
+                LOG.error().$("Failed to save query metrics").$(e).$();
             }
         }
         return false;

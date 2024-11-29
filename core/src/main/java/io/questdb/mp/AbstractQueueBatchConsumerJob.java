@@ -27,11 +27,18 @@ package io.questdb.mp;
 import io.questdb.std.ValueHolderList;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+
 public abstract class AbstractQueueBatchConsumerJob<T extends ValueHolder<T>> implements Job {
     private static final int BATCH_LIMIT = 1024;
     private static final int INITIAL_CAPACITY = 128;
+    @SuppressWarnings("rawtypes")
+    private static final AtomicIntegerFieldUpdater<AbstractQueueBatchConsumerJob> LOCK = AtomicIntegerFieldUpdater.newUpdater(
+            AbstractQueueBatchConsumerJob.class, "lock");
+
     private final ValueHolderList<T> buffer;
     private final ConcurrentQueue<T> queue;
+    private volatile int lock;
 
     public AbstractQueueBatchConsumerJob(ConcurrentQueue<T> queue) {
         this.queue = queue;
@@ -40,17 +47,21 @@ public abstract class AbstractQueueBatchConsumerJob<T extends ValueHolder<T>> im
 
     @Override
     public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        if (!canRun()) {
+        if (!canRun() || !LOCK.compareAndSet(this, 0, 1)) {
             return false;
         }
-        buffer.clear();
-        for (int i = 0; i < BATCH_LIMIT && queue.tryDequeue(buffer.peekNextHolder()); i++) {
-            buffer.commitNextHolder();
+        try {
+            buffer.clear();
+            for (int i = 0; i < BATCH_LIMIT && queue.tryDequeue(buffer.peekNextHolder()); i++) {
+                buffer.commitNextHolder();
+            }
+            if (buffer.size() > 0) {
+                doRun(workerId, buffer, runStatus);
+            }
+            return false;
+        } finally {
+            LOCK.lazySet(this, 0);
         }
-        if (buffer.size() > 0) {
-            doRun(workerId, buffer, runStatus);
-        }
-        return false;
     }
 
     protected boolean canRun() {
