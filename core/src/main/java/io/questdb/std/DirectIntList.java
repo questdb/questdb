@@ -43,6 +43,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     private long capacity;
     private long limit;
     private long pos;
+    private DirectIntSlice slice = new DirectIntSlice();
 
     public DirectIntList(long capacity, int memoryTag) {
         this.memoryTag = memoryTag;
@@ -197,6 +198,14 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
                 throw t;
             }
         }
+    }
+
+    public DirectIntSlice asSlice() {
+        final long length = size();
+        assert length > 0;
+        assert length <= Integer.MAX_VALUE;
+        slice.of(getAddress(), (int) length);
+        return slice;
     }
 
     void checkCapacity() {

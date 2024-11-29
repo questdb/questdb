@@ -32,6 +32,22 @@ import io.questdb.std.DirectIntSlice;
  * This is a flyweight object.
  */
 public class NdArrayView {
+    public enum ValidatonStatus {
+        OK,
+
+        /** Not an ARRAY(...) ColumnType. */
+        BAD_TYPE,
+
+        /** There are a different number of dimensions and strides. */
+        UNALIGNED_SHAPE_AND_STRIDES,
+
+        /** The shape contains 0 or negative dimensions. */
+        BAD_SHAPE,
+
+        /** The values vector is of an unexpected byte length. */
+        BAD_VALUES_SIZE,
+    }
+
     private final DirectIntSlice shape = new DirectIntSlice();
     private final DirectIntSlice strides = new DirectIntSlice();
     private final NdArrayValuesSlice values = new NdArrayValuesSlice();
@@ -126,7 +142,7 @@ public class NdArrayView {
      * @param shapeLength   number of elements
      * @param valuesSize    number of bytes
      */
-    public NdArrayView of(
+    public ValidatonStatus of(
             int type,
             long shapePtr,
             int shapeLength,
@@ -135,17 +151,34 @@ public class NdArrayView {
             long valuesPtr,
             int valuesSize,
             int valuesOffset) {
-        assert ColumnType.isNdArray(type);
-        assert shapeLength == stridesLength;
-        this.type = type;
-        this.shape.of(shapePtr, shapeLength);
-        assert NdArrayMeta.validShape(this.shape);
-        valuesLength = calcValuesLength();
-        assert validValuesSize(type, valuesOffset, valuesLength, valuesSize);
-        this.strides.of(stridesPtr, stridesLength);
-        this.values.of(valuesPtr, valuesSize);
-        this.valuesOffset = valuesOffset;
-        return this;
+        boolean complete = false;
+        try {
+            if (!ColumnType.isNdArray(type)) {
+                return ValidatonStatus.BAD_TYPE;
+            }
+            if (shapeLength != stridesLength) {
+                return ValidatonStatus.UNALIGNED_SHAPE_AND_STRIDES;
+            }
+            this.type = type;
+            this.shape.of(shapePtr, shapeLength);
+            if (!NdArrayMeta.validShape(this.shape)) {
+                return ValidatonStatus.BAD_SHAPE;
+            }
+            valuesLength = calcValuesLength();
+            if (!validValuesSize(type, valuesOffset, valuesLength, valuesSize)) {
+                return ValidatonStatus.BAD_VALUES_SIZE;
+            }
+            this.strides.of(stridesPtr, stridesLength);
+            this.values.of(valuesPtr, valuesSize);
+            this.valuesOffset = valuesOffset;
+            complete = true;
+        }
+        finally {
+            if (!complete) {
+                reset();
+            }
+        }
+        return ValidatonStatus.OK;
     }
 
     private static boolean validValuesSize(int type, int valuesOffset, int valuesLength, int valuesSize) {

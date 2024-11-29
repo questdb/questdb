@@ -27,11 +27,11 @@ package io.questdb.cutlass.line.tcp;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ErrorCode;
 import io.questdb.std.DirectIntList;
-import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.bytes.DirectByteSink;
+import io.questdb.std.ndarr.NdArrayMeta;
 import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
@@ -88,6 +88,8 @@ import org.jetbrains.annotations.NotNull;
  */
 public class NdArrayParser implements QuietCloseable {
     private final StringSink actual = new StringSink();
+    private final NdArrayView array = new NdArrayView();
+    private final DirectUtf8String parsing = new DirectUtf8String();
     /**
      * Stack-like state used to parse the dimensions.
      * <ul>
@@ -102,13 +104,10 @@ public class NdArrayParser implements QuietCloseable {
      * </ul>
      * <p>In short, negative (uncertain) dimensions are counted down, positive (determined) dimensions validate future data.</p>
      */
-    private final IntList shape = new IntList(8);
-    private final DirectByteSink values = new DirectByteSink(64, MemoryTag.NATIVE_ND_ARRAY);
-    private final DirectUtf8String parsing = new DirectUtf8String();
+    private final DirectIntList shape = new DirectIntList(8, MemoryTag.NATIVE_ND_ARRAY);
+    private final DirectIntList strides = new DirectIntList(8, MemoryTag.NATIVE_ND_ARRAY);
     private final DirectUtf8String token = new DirectUtf8String();
-    private final DirectIntList sparseIndices = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-    private final DirectIntList sparsePointers = new DirectIntList(0, MemoryTag.NATIVE_ND_ARRAY);
-    private final NdArrayView array = new NdArrayView();
+    private final DirectByteSink values = new DirectByteSink(64, MemoryTag.NATIVE_ND_ARRAY);
     /**
      * Starting address first encountered when parsing. Used to calculate the current position.
      */
@@ -122,7 +121,12 @@ public class NdArrayParser implements QuietCloseable {
      * The dimension index we're currently parsing (for `NdArrFormat.RM` parsing).
      */
     private int dimIndex = -1;
-
+    private ErrorCode error = ErrorCode.NONE;
+    private int type = ColumnType.UNDEFINED;
+    /**
+     * Message prelude for any `PARSING_UNEXPECTED` error
+     */
+    private String unexpectedErrorMsg = "";
     /**
      * Count of how many elements we've stored.
      * <p>This is tracked separately since our <code>elements</code> is just bytes,
@@ -130,49 +134,25 @@ public class NdArrayParser implements QuietCloseable {
      * has a precision smaller than a byte.</p>
      */
     private int valuesCount = 0;
-    private ErrorCode error = ErrorCode.NONE;
-    private int type = ColumnType.UNDEFINED;
-
-    // TODO(amunra): Convert all usages of this into more enum values instead. */
-    public String getUnexpectedErrorMsg() {
-        return unexpectedErrorMsg;
-    }
-
-    /**
-     * Message prelude for any `PARSING_UNEXPECTED` error
-     */
-    private String unexpectedErrorMsg = "";
-
-    /**
-     * Continue parsing the previous level of array nesting.
-     */
-    private void popDim() {
-        // Solidify the last dim before going back to the previous level.
-        // The negative (uncertain) value will be converted to positive.
-        shape.setQuick(dimIndex, currDimLen);
-        assert (dimIndex >= 0);
-        assert dimIndex <= 0 || currDimLen > 0;
-        --dimIndex;
-        if (dimIndex >= 0) {
-            currDimLen = Math.abs(shape.getQuick(dimIndex));
-        }
-    }
 
     @Override
     public void close() {
         Misc.free(values);
-        Misc.free(sparsePointers);
-        Misc.free(sparseIndices);
     }
 
     /**
      * Obtain the parsed result.
-     * <p>Throws if {@link NdArrayParser#parse(DirectUtf8String)} returned an error.</p>
+     * <p>Throws if {@link #parse(DirectUtf8String)} returned an error.</p>
      */
     public @NotNull NdArrayView getArray() {
         if (array.getType() == ColumnType.UNDEFINED)
             throw new IllegalStateException("Parsing error");
         return array;
+    }
+
+    // TODO(amunra): Convert all usages of this into more enum values instead. */
+    public String getUnexpectedErrorMsg() {
+        return unexpectedErrorMsg;
     }
 
     /**
@@ -217,25 +197,39 @@ public class NdArrayParser implements QuietCloseable {
         }
 
         parseElements();
-        return error;
+        if (error != ErrorCode.NONE) {
+            return error;
+        }
+
+        return setArray();
     }
 
     /**
      * Get the position of the parsing error,
-     * relative to the start of the input passed to {@link NdArrayParser#parse(DirectUtf8String)}.
+     * relative to the start of the input passed to {@link #parse(DirectUtf8String)}.
      */
     public int position() {
         return (int) (parsing.lo() - baseLo);
     }
 
     private void actualPutNextChar() {
-        char c = (char)(Utf8s.utf8CharDecode(parsing) >> 16);
+        char c = (char) (Utf8s.utf8CharDecode(parsing) >> 16);
         actual.put(c);
     }
 
     private void clearError() {
         error = ErrorCode.NONE;
         actual.clear();
+    }
+
+    private void elementsPutDouble(double n) {
+        values.putDouble(n);
+        ++valuesCount;
+    }
+
+    private void elementsPutLong(int n) {
+        values.putLong(n);
+        ++valuesCount;
     }
 
     private void parseDataType() {
@@ -265,6 +259,45 @@ public class NdArrayParser implements QuietCloseable {
 
         type = arrayType;
         parsing.advance();
+    }
+
+    /**
+     * Parse the outermost level of a row-major array.
+     * <p>Generally, this would look something like so:</p>
+     * <pre>
+     *     {5f2.5,1.0,NaN}
+     *        ^_____________ we start here!
+     * </pre>
+     * <p>Note that by the time we call this function, the opening left brace and type have already been parsed.</p>
+     */
+    private void parseElements() {
+        if (error != ErrorCode.NONE) {
+            return;
+        }
+
+        if (Utf8s.equalsUtf16("1.0,2.5,3.0,4.5,5.0}", parsing)) {
+            assert type == ColumnType.buildNdArrayType('f', (byte) 6);  // ARRAY(DOUBLE)
+            elementsPutDouble(1.0);
+            elementsPutDouble(2.5);
+            elementsPutDouble(3.0);
+            elementsPutDouble(4.5);
+            elementsPutDouble(5.0);
+            shape.add(5);
+            parsing.advance(20);
+        } else if (Utf8s.equalsUtf16("-1,0,100000000}", parsing)) {
+            assert type == ColumnType.buildNdArrayType('s', (byte) 6);  // ARRAY(LONG)
+            elementsPutLong(-1);
+            elementsPutLong(0);
+            elementsPutLong(100000000);
+            shape.add(3);
+            parsing.advance(15);
+        } else {
+            throw new UnsupportedOperationException("not yet implemented");
+        }
+
+
+        // TODO(amunra): Complete the parser.
+
     }
 
     private void parseLeftBrace() {
@@ -316,52 +349,18 @@ public class NdArrayParser implements QuietCloseable {
     }
 
     /**
-     * Parse the outermost level of a row-major array.
-     * <p>Generally, this would look something like so:</p>
-     * <pre>
-     *     {5f2.5,1.0,NaN}
-     *        ^_____________ we start here!
-     * </pre>
-     * <p>Note that by the time we call this function, the opening left brace and type have already been parsed.</p>
+     * Continue parsing the previous level of array nesting.
      */
-    private void parseElements() {
-        if (error != ErrorCode.NONE) {
-            return;
+    private void popDim() {
+        // Solidify the last dim before going back to the previous level.
+        // The negative (uncertain) value will be converted to positive.
+        shape.set(dimIndex, currDimLen);
+        assert (dimIndex >= 0);
+        assert dimIndex <= 0 || currDimLen > 0;
+        --dimIndex;
+        if (dimIndex >= 0) {
+            currDimLen = Math.abs(shape.get(dimIndex));
         }
-
-        if (Utf8s.equalsUtf16("1.0,2.5,3.0,4.5,5.0}", parsing)) {
-            assert type == ColumnType.buildNdArrayType('f', (byte) 6);  // ARRAY(DOUBLE)
-            elementsPutDouble(1.0);
-            elementsPutDouble(2.5);
-            elementsPutDouble(3.0);
-            elementsPutDouble(4.5);
-            elementsPutDouble(5.0);
-            shape.add(5);
-            parsing.advance(20);
-        } else if (Utf8s.equalsUtf16("-1,0,100000000}", parsing)) {
-            assert type == ColumnType.buildNdArrayType('s', (byte) 6);  // ARRAY(LONG)
-            elementsPutLong(-1);
-            elementsPutLong(0);
-            elementsPutLong(100000000);
-            shape.add(3);
-            parsing.advance(15);
-        } else {
-            throw new UnsupportedOperationException("not yet implemented");
-        }
-
-
-        // TODO(amunra): Complete the parser.
-
-    }
-
-    private void elementsPutLong(int n) {
-        values.putLong(n);
-        ++valuesCount;
-    }
-
-    private void elementsPutDouble(double n) {
-        values.putDouble(n);
-        ++valuesCount;
     }
 
     /**
@@ -381,18 +380,33 @@ public class NdArrayParser implements QuietCloseable {
         shape.clear();
         type = ColumnType.UNDEFINED;
         values.clear();
-        sparsePointers.clear();
-        sparseIndices.clear();
         valuesCount = 0;
         baseLo = 0;
     }
 
+    private ErrorCode setArray() {
+        NdArrayMeta.setDefaultStrides(shape.asSlice(), strides);
+        if (array.of(
+                type,
+                shape.getAddress(),
+                (int) shape.size(),
+                strides.getAddress(),
+                (int) strides.size(),
+                values.ptr(),
+                values.size(),
+                0
+        ) != NdArrayView.ValidatonStatus.OK) {
+            return ErrorCode.ND_ARR_MALFORMED;
+        }
+        return ErrorCode.NONE;
+    }
+
     private void valueWritten() {
         currDimLen++;
-        final int lastDimLen = shape.getQuick(dimIndex);
+        final int lastDimLen = shape.get(dimIndex);
         if (lastDimLen <= 0) {
             // yet undetermined
-            shape.setQuick(dimIndex, -currDimLen);
+            shape.set(dimIndex, -currDimLen);
         } else if (lastDimLen >= currDimLen) {
             error = ErrorCode.ND_ARR_UNALIGNED;
         }

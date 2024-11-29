@@ -658,7 +658,7 @@ public class LineTcpParser implements QuietCloseable {
          * Invalid array dimension nesting. E.g. {{1, 2}, {1, 2, 3}}
          */
         ND_ARR_UNALIGNED,
-        ND_ARR_EARLY_TERMINATION, NONE
+        ND_ARR_EARLY_TERMINATION, ND_ARR_MALFORMED, NONE
     }
 
     public enum ParseResult {
