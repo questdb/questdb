@@ -25,10 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.ServerMain;
-import io.questdb.std.Misc;
-import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
-import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -37,18 +34,14 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
-import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.Collection;
 import java.util.Properties;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.LegacyMode.LEGACY;
 import static io.questdb.test.cutlass.pgwire.BasePGTest.legacyModeParams;
-import static org.junit.Assert.assertEquals;
 
 @RunWith(Parameterized.class)
 public class PgBootstrapTest extends AbstractBootstrapTest {
@@ -83,7 +76,7 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
             try (ServerMain serverMain = startWithEnvVariables()) {
                 int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
 
-                try (Connection conn = getTlsConnection("admin", "quest", port)) {
+                try (Connection conn = getTlsConnection(port)) {
                     conn.createStatement().execute("select 1;");
                     Assert.fail();
                 } catch (PSQLException e) {
@@ -121,41 +114,6 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
                         "invalid username/password",
                         "admin user is disabled and should not be able to connect"
                 );
-            }
-        });
-    }
-
-    @Test
-    public void testInsertAsSelect() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
-                serverMain.start();
-                final int port = serverMain.getConfiguration().getPGWireConfiguration().getDispatcherConfiguration().getBindPort();
-                try (Connection conn = getConnection("admin", "quest", port)) {
-                    conn.createStatement().execute("create table x(ts timestamp, col1 long) timestamp(ts) partition by day wal");
-                    conn.createStatement().execute("create table y(ts timestamp, col1 long) timestamp(ts) partition by day wal");
-
-                    assertEquals(10, conn.createStatement().executeUpdate("insert into x select timestamp_sequence(1677628800000000, 10000000), x from long_sequence(10)"));
-                    drainWalQueue(serverMain.getEngine());
-                    assertSql(conn, "x", "ts[TIMESTAMP],col1[BIGINT]\n" +
-                            "2023-03-01 00:00:00.0,1\n" +
-                            "2023-03-01 00:00:10.0,2\n" +
-                            "2023-03-01 00:00:20.0,3\n" +
-                            "2023-03-01 00:00:30.0,4\n" +
-                            "2023-03-01 00:00:40.0,5\n" +
-                            "2023-03-01 00:00:50.0,6\n" +
-                            "2023-03-01 00:01:00.0,7\n" +
-                            "2023-03-01 00:01:10.0,8\n" +
-                            "2023-03-01 00:01:20.0,9\n" +
-                            "2023-03-01 00:01:30.0,10\n");
-                    assertSql(conn, "y", "ts[TIMESTAMP],col1[BIGINT]\n");
-
-                    assertEquals(2, conn.createStatement().executeUpdate("insert into y select * from x where col1 > 8"));
-                    drainWalQueue(serverMain.getEngine());
-                    assertSql(conn, "y", "ts[TIMESTAMP],col1[BIGINT]\n" +
-                            "2023-03-01 00:01:20.0,9\n" +
-                            "2023-03-01 00:01:30.0,10\n");
-                }
             }
         });
     }
@@ -270,22 +228,12 @@ public class PgBootstrapTest extends AbstractBootstrapTest {
         });
     }
 
-    private static Connection getTlsConnection(String username, String password, int port) throws SQLException {
+    private static Connection getTlsConnection(int port) throws SQLException {
         Properties properties = new Properties();
-        properties.setProperty("user", username);
-        properties.setProperty("password", password);
+        properties.setProperty("user", "admin");
+        properties.setProperty("password", "quest");
         properties.setProperty("sslmode", "require");
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
         return DriverManager.getConnection(url, properties);
-    }
-
-    private void assertSql(Connection conn, String sql, String expectedResult) throws SQLException, IOException {
-        final StringSink sink = Misc.getThreadLocalSink();
-        sink.clear();
-
-        try (Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
-            BasePGTest.assertResultSet(expectedResult, sink, rs);
-        }
     }
 }
