@@ -25,8 +25,6 @@
 package io.questdb.std.bytes;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -40,8 +38,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     private static final int BYTE_SINK_HI_OFFSET = BYTE_SINK_LO_OFFSET + 8;  // 16
     private static final int BYTE_SINK_OVERFLOW_OFFSET = BYTE_SINK_HI_OFFSET + 8;  // 24
     private static final int BYTE_SINK_ASCII_OFFSET = BYTE_SINK_OVERFLOW_OFFSET + 4;  // 28
-    private final int memoryTag;
     private final long initialCapacity;
+    private final int memoryTag;
     /**
      * Pointer to the C `questdb_byte_sink_t` structure. See `byte_sink.h`.
      * <p>
@@ -83,12 +81,12 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         assert initialCapacity <= Integer.MAX_VALUE;
         // this will allocate a minimum of 32 bytes of "allocated capacity"
         this.initialCapacity = initialCapacity;
+        this.memoryTag = memoryTag;
         if (alloc) {
             inflate();
         } else {
             impl = 0;
         }
-        this.memoryTag = memoryTag;
     }
 
     public static native long implBook(long impl, long len);
@@ -213,15 +211,39 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         return this;
     }
 
-    public DirectByteSink putDouble(double n) {
-        Unsafe.getUnsafe().putDouble(ensureCapacity(Double.BYTES), n);
+    public DirectByteSink putByte(byte value) {
+        Unsafe.getUnsafe().putByte(ensureCapacity(Byte.BYTES), value);
+        advance(Byte.BYTES);
+        return this;
+    }
+
+    public DirectByteSink putDouble(double value) {
+        Unsafe.getUnsafe().putDouble(ensureCapacity(Double.BYTES), value);
         advance(Double.BYTES);
         return this;
     }
 
-    public DirectByteSink putLong(long n) {
-        Unsafe.getUnsafe().putLong(ensureCapacity(Long.BYTES), n);
+    public DirectByteSink putFloat(float value) {
+        Unsafe.getUnsafe().putFloat(ensureCapacity(Float.BYTES), value);
+        advance(Float.BYTES);
+        return this;
+    }
+
+    public DirectByteSink putInt(int value) {
+        Unsafe.getUnsafe().putInt(ensureCapacity(Integer.BYTES), value);
+        advance(Integer.BYTES);
+        return this;
+    }
+
+    public DirectByteSink putLong(long value) {
+        Unsafe.getUnsafe().putLong(ensureCapacity(Long.BYTES), value);
         advance(Long.BYTES);
+        return this;
+    }
+
+    public DirectByteSink putShort(short value) {
+        Unsafe.getUnsafe().putShort(ensureCapacity(Short.BYTES), value);
+        advance(Short.BYTES);
         return this;
     }
 

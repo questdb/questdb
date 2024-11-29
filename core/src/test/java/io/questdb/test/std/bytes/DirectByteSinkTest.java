@@ -53,29 +53,29 @@ public class DirectByteSinkTest {
             final long ptr = sink.ptr();
             Assert.assertNotEquals(0, ptr);
             Assert.assertEquals(ptr, sink.lo());
-            Assert.assertEquals(getMallocCount.get().longValue(), 1);
-            Assert.assertEquals(getReallocCount.get().longValue(), 0);
-            Assert.assertEquals(getFreeCount.get().longValue(), 0);
-            Assert.assertEquals(getMemUsed.get().longValue(), 32);
+            Assert.assertEquals(1, getMallocCount.get().longValue());
+            Assert.assertEquals(0, getReallocCount.get().longValue());
+            Assert.assertEquals(0, getFreeCount.get().longValue());
+            Assert.assertEquals(32, getMemUsed.get().longValue());
 
             sink.put((byte) 'a');
             Assert.assertEquals(1, sink.size());
             Assert.assertEquals(32, sink.allocatedCapacity());
             Assert.assertEquals(ptr, sink.ptr());
             Assert.assertEquals(ptr + sink.size(), sink.hi());
-            Assert.assertEquals(getMallocCount.get().longValue(), 1);
-            Assert.assertEquals(getReallocCount.get().longValue(), 0);
-            Assert.assertEquals(getFreeCount.get().longValue(), 0);
-            Assert.assertEquals(getMemUsed.get().longValue(), 32);
+            Assert.assertEquals(1, getMallocCount.get().longValue());
+            Assert.assertEquals(0, getReallocCount.get().longValue());
+            Assert.assertEquals(0, getFreeCount.get().longValue());
+            Assert.assertEquals(32, getMemUsed.get().longValue());
 
             sink.clear();
             Assert.assertEquals(0, sink.size());
             Assert.assertEquals(32, sink.allocatedCapacity());
             Assert.assertEquals(ptr, sink.ptr());
-            Assert.assertEquals(getMallocCount.get().longValue(), 1);
-            Assert.assertEquals(getReallocCount.get().longValue(), 0);
-            Assert.assertEquals(getFreeCount.get().longValue(), 0);
-            Assert.assertEquals(getMemUsed.get().longValue(), 32);
+            Assert.assertEquals(1, getMallocCount.get().longValue());
+            Assert.assertEquals(0, getReallocCount.get().longValue());
+            Assert.assertEquals(0, getFreeCount.get().longValue());
+            Assert.assertEquals(32, getMemUsed.get().longValue());
 
             final ByteSequence bs = new ByteSequence() {
                 @Override
@@ -92,18 +92,18 @@ public class DirectByteSinkTest {
             sink.put(bs);
             Assert.assertEquals(40, sink.size());
             Assert.assertEquals(64, sink.allocatedCapacity());
-            Assert.assertEquals(getMallocCount.get().longValue(), 1);
-            Assert.assertEquals(getReallocCount.get().longValue(), 1);
-            Assert.assertEquals(getFreeCount.get().longValue(), 0);
-            Assert.assertEquals(getMemUsed.get().longValue(), 64);
+            Assert.assertEquals(1, getMallocCount.get().longValue());
+            Assert.assertEquals(1, getReallocCount.get().longValue());
+            Assert.assertEquals(0, getFreeCount.get().longValue());
+            Assert.assertEquals(64, getMemUsed.get().longValue());
 
-            Assert.assertEquals(getMallocCount.get().longValue(), 1);
-            Assert.assertEquals(getReallocCount.get().longValue(), 1);
-            Assert.assertEquals(getFreeCount.get().longValue(), 0);
-            Assert.assertEquals(getMemUsed.get().longValue(), 64);
+            Assert.assertEquals(1, getMallocCount.get().longValue());
+            Assert.assertEquals(1, getReallocCount.get().longValue());
+            Assert.assertEquals(0, getFreeCount.get().longValue());
+            Assert.assertEquals(64, getMemUsed.get().longValue());
 
             try (DirectByteSink other = new DirectByteSink(32, MemoryTag.NATIVE_DIRECT_BYTE_SINK)) {
-                Assert.assertEquals(getMallocCount.get().longValue(), 2);
+                Assert.assertEquals(2, getMallocCount.get().longValue());
                 other.put((byte) 'x');
                 other.put((byte) 'y');
                 other.put((byte) 'z');
@@ -112,19 +112,19 @@ public class DirectByteSinkTest {
                 sink.put(null).put(other);  // passed in as DirectByteSequence
                 Assert.assertEquals(43, sink.size());
                 Assert.assertEquals(64, sink.allocatedCapacity());
-                Assert.assertEquals(getMemUsed.get().longValue(), 96);
+                Assert.assertEquals(96, getMemUsed.get().longValue());
             }
 
-            Assert.assertEquals(getMallocCount.get().longValue(), 2);
-            Assert.assertEquals(getReallocCount.get().longValue(), 1);
-            Assert.assertEquals(getFreeCount.get().longValue(), 1);
-            Assert.assertEquals(getMemUsed.get().longValue(), 64);
+            Assert.assertEquals(2, getMallocCount.get().longValue());
+            Assert.assertEquals(1, getReallocCount.get().longValue());
+            Assert.assertEquals(1, getFreeCount.get().longValue());
+            Assert.assertEquals(64, getMemUsed.get().longValue());
         }
 
-        Assert.assertEquals(getMallocCount.get().longValue(), 2);
-        Assert.assertEquals(getReallocCount.get().longValue(), 1);
-        Assert.assertEquals(getFreeCount.get().longValue(), 2);
-        Assert.assertEquals(getMemUsed.get().longValue(), 0);
+        Assert.assertEquals(2, getMallocCount.get().longValue());
+        Assert.assertEquals(1, getReallocCount.get().longValue());
+        Assert.assertEquals(2, getFreeCount.get().longValue());
+        Assert.assertEquals(0, getMemUsed.get().longValue());
     }
 
     @Test
