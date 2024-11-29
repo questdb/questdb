@@ -118,6 +118,9 @@ public class PageFrameAddressCache implements Mutable {
 
     @Override
     public void clear() {
+        columnCount = 0;
+        columnIndexes.clear();
+        columnTypes.clear();
         frameSizes.clear();
         frameFormats.clear();
         parquetAddresses.clear();
@@ -221,13 +224,11 @@ public class PageFrameAddressCache implements Mutable {
     }
 
     public void of(@Transient RecordMetadata metadata, @Transient IntList columnIndexes) {
+        clear();
         columnCount = metadata.getColumnCount();
-        columnTypes.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));
         }
-        this.columnIndexes.clear();
         this.columnIndexes.addAll(columnIndexes);
-        clear();
     }
 }

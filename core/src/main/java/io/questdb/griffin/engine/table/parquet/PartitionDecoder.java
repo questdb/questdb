@@ -51,8 +51,8 @@ public class PartitionDecoder implements QuietCloseable {
     private static final long ROW_GROUP_SIZES_PTR_OFFSET;
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final Metadata metadata = new Metadata();
-    private long addr; // mmapped parquet file's address
     private long columnsPtr;
+    private long fileAddr; // mmapped parquet file's address
     private long fileSize; // mmapped parquet file's size
     private long ptr;
     private long rowGroupSizesPtr;
@@ -68,7 +68,7 @@ public class PartitionDecoder implements QuietCloseable {
     @Override
     public void close() {
         destroy();
-        addr = 0;
+        fileAddr = 0;
         fileSize = 0;
     }
 
@@ -122,12 +122,12 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
-    public long getAddr() {
-        return addr;
+    public long getFileAddr() {
+        return fileAddr;
     }
 
     public long getFileSize() {
-        assert fileSize > 0 || addr == 0;
+        assert fileSize > 0 || fileAddr == 0;
         return fileSize;
     }
 
@@ -140,7 +140,7 @@ public class PartitionDecoder implements QuietCloseable {
         assert addr != 0;
         assert fileSize > 0;
         destroy();
-        this.addr = addr;
+        this.fileAddr = addr;
         this.fileSize = fileSize;
         final long allocator = Unsafe.getNativeAllocator(memoryTag);
         ptr = create(allocator, addr, fileSize); // throws CairoException on error

@@ -294,7 +294,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;
         frame.format = PartitionFormat.PARQUET;
-        frame.parquetFd = reenterParquetDecoder.getAddr();
+        frame.parquetFd = reenterParquetDecoder.getFileAddr();
         frame.parquetFileSize = reenterParquetDecoder.getFileSize();
         frame.rowGroupIndex = rowGroupIndex;
         frame.rowGroupLo = (int) (partitionLo - rowCount);

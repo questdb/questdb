@@ -289,7 +289,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         frame.partitionLo = adjustedLo;
         frame.partitionHi = partitionHi;
         frame.format = PartitionFormat.PARQUET;
-        frame.parquetAddr = reenterParquetDecoder.getAddr();
+        frame.parquetAddr = reenterParquetDecoder.getFileAddr();
         frame.parquetFileSize = reenterParquetDecoder.getFileSize();
         frame.rowGroupIndex = rowGroupIndex;
         frame.rowGroupLo = (int) (adjustedLo - rowCount);

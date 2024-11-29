@@ -995,7 +995,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         try {
             final long partitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
 
-            if (txFile.isPartitionParquet(partitionIndex)) { // parquet partition
+            if (txFile.isPartitionParquet(partitionIndex)) {
                 Path path = pathGenParquetPartition(partitionIndex, partitionNameTxn);
                 if (ff.exists(path.$())) {
                     final long partitionSize = txFile.getPartitionSize(partitionIndex);
