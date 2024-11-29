@@ -576,40 +576,40 @@ public final class ColumnType {
         //
         // All types must be mentioned at all times.
         OVERLOAD_PRIORITY = new short[][]{
-                /* 0 UNDEFINED      */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
-                /* 1  BOOLEAN       */, {BOOLEAN}
-                /* 2  BYTE          */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 3  SHORT         */, {SHORT, INT, LONG, FLOAT, DOUBLE}
-                /* 4  CHAR          */, {CHAR, STRING, VARCHAR}
-                /* 5  INT           */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
-                /* 6  LONG          */, {LONG, DOUBLE, TIMESTAMP, DATE}
-                /* 7  DATE          */, {DATE, TIMESTAMP, LONG}
-                /* 8  TIMESTAMP     */, {TIMESTAMP, LONG, DATE}
-                /* 9  FLOAT         */, {FLOAT, DOUBLE}
-                /* 10 DOUBLE        */, {DOUBLE}
-                /* 11 STRING        */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 12 SYMBOL        */, {SYMBOL, STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 13 LONG256       */, {LONG256}
-                /* 14 GEOBYTE       */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 15 GEOSHORT      */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
-                /* 16 GEOINT        */, {GEOINT, GEOLONG, GEOHASH}
-                /* 17 GEOLONG       */, {GEOLONG, GEOHASH}
-                /* 18 BINARY        */, {BINARY}
-                /* 19 UUID          */, {UUID, STRING, VARCHAR}
-                /* 20 CURSOR        */, {CURSOR}
-                /* 21 unused        */, {}
-                /* 22 unused        */, {}
-                /* 23 unused        */, {}
-                /* 24 LONG128       */, {LONG128}
-                /* 25 IPv4          */, {IPv4}
-                /* 26 VARCHAR       */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 27 ND_ARR_DOUBLE */, {ND_ARRAY}
-                /* 28 unused        */, {}
-                /* 29 unused        */, {}
-                /* 30 unused        */, {}
-                /* 31 unused        */, {}
-                /* 32 INTERVAL      */, {INTERVAL, STRING}
-                /* 33 NULL          */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
+                /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
+                /* 1  BOOLEAN   */, {BOOLEAN}
+                /* 2  BYTE      */, {BYTE, SHORT, INT, LONG, FLOAT, DOUBLE}
+                /* 3  SHORT     */, {SHORT, INT, LONG, FLOAT, DOUBLE}
+                /* 4  CHAR      */, {CHAR, STRING, VARCHAR}
+                /* 5  INT       */, {INT, LONG, FLOAT, DOUBLE, TIMESTAMP, DATE}
+                /* 6  LONG      */, {LONG, DOUBLE, TIMESTAMP, DATE}
+                /* 7  DATE      */, {DATE, TIMESTAMP, LONG}
+                /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE}
+                /* 9  FLOAT     */, {FLOAT, DOUBLE}
+                /* 10 DOUBLE    */, {DOUBLE}
+                /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
+                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
+                /* 13 LONG256   */, {LONG256}
+                /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+                /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
+                /* 16 GEOINT    */, {GEOINT, GEOLONG, GEOHASH}
+                /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
+                /* 18 BINARY    */, {BINARY}
+                /* 19 UUID      */, {UUID, STRING, VARCHAR}
+                /* 20 CURSOR    */, {CURSOR}
+                /* 21 unused    */, {}
+                /* 22 unused    */, {}
+                /* 23 unused    */, {}
+                /* 24 LONG128   */, {LONG128}
+                /* 25 IPv4      */, {IPv4}
+                /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
+                /* 27 ND_ARRAY  */, {ND_ARRAY}
+                /* 28 unused    */, {}
+                /* 29 unused    */, {}
+                /* 30 unused    */, {}
+                /* 31 unused    */, {}
+                /* 32 INTERVAL  */, {INTERVAL, STRING}
+                /* 32 NULL      */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
