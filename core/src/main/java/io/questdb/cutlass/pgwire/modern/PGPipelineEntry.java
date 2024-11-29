@@ -1390,7 +1390,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             }
 
             sqlExecutionContext.getCircuitBreaker().resetTimer();
-            sqlExecutionContext.setCacheHit(preparedStatement || cacheHit);
+            sqlExecutionContext.setCacheHit(cacheHit);
+            if (preparedStatement && !cacheHit) {
+                cacheHit = true;
+            }
+
             try {
                 RecordMetadata oldMeta = factory.getMetadata();
                 for (int attempt = 1; ; attempt++) {
