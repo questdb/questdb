@@ -105,6 +105,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                         .putAscii(" ( ")
                         .putAscii('\n');
 
+                final CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
+
                 // column_name TYPE
                 for (int i = 0, n = table.getColumnCount(); i < n; i++) {
                     final CairoColumn column = table.getColumnQuiet(i);
@@ -115,7 +117,16 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
                     if (column.getType() == ColumnType.SYMBOL) {
                         // CAPACITY value (NO)CACHE
-                        sink.putAscii(" CAPACITY ").put(column.getSymbolCapacity());
+                        int symbolCapacity = column.getSymbolCapacity();
+
+                        // some older versions of QuestDB can have `0` written to the metadata file
+                        // this will produce an incorrect DDL if we print it
+                        // so we fallback to default capacity
+                        if (symbolCapacity < 2) {
+                            symbolCapacity = config.getDefaultSymbolCapacity();
+                        }
+
+                        sink.putAscii(" CAPACITY ").put(symbolCapacity);
                         sink.putAscii(column.getSymbolCached() ? " CACHE" : " NOCACHE");
 
                         if (column.getIsIndexed()) {
@@ -149,8 +160,6 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                     }
                     sink.putAscii(" WAL");
                 }
-
-                final CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
 
                 // WITH maxUncommittedRows=123, o3MaxLag=456s
                 sink.putAscii('\n').putAscii("WITH ");
