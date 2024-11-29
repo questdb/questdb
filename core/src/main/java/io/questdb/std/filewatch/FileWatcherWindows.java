@@ -76,7 +76,7 @@ public class FileWatcherWindows extends FileWatcher {
     @Override
     protected void waitForChange() {
         if (accessor.readDirectoryChanges(pWatch)) {
-            callback.onFileEvent();
+            callback.reload();
         }
     }
 }

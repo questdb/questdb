@@ -33,7 +33,7 @@ public class PropBootstrapConfiguration extends DefaultBootstrapConfiguration {
         return new DynamicPropServerConfiguration(
                 bootstrap.getRootDirectory(),
                 bootstrap.loadProperties(),
-                getEnv(),
+                this,
                 bootstrap.getLog(),
                 bootstrap.getBuildInformation(),
                 FilesFacadeImpl.INSTANCE,

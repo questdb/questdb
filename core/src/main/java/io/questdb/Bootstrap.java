@@ -186,7 +186,7 @@ public class Bootstrap {
                     config = new DynamicPropServerConfiguration(
                             rootDirectory,
                             properties,
-                            bootstrapConfiguration.getEnv(),
+                            bootstrapConfiguration,
                             log,
                             buildInformation
                     );
@@ -194,7 +194,7 @@ public class Bootstrap {
                     config = new DynamicPropServerConfiguration(
                             rootDirectory,
                             properties,
-                            bootstrapConfiguration.getEnv(),
+                            bootstrapConfiguration,
                             log,
                             buildInformation,
                             ffOverride,

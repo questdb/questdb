@@ -119,11 +119,12 @@ public abstract class FileWatcher implements QuietCloseable {
         }
 
         @Override
-        public void onFileEvent() {
+        public boolean reload() {
             synchronized (mutex) {
                 notifyAt = System.nanoTime() + debouncePeriodNanos;
                 mutex.notifyAll();
             }
+            return false;
         }
 
         private void start() {
@@ -142,7 +143,7 @@ public abstract class FileWatcher implements QuietCloseable {
                             if (waitMillis > 0) {
                                 mutex.wait(waitMillis);
                             } else {
-                                delegate.onFileEvent();
+                                delegate.reload();
                                 notifyAt = Long.MAX_VALUE + now;
                             }
                         } catch (InterruptedException e) {
