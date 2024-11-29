@@ -187,6 +187,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private int stateSync = 0;
     private TypesAndInsertModern tai = null;
     private TypesAndSelectModern tas = null;
+    // IMPORTANT: if you add a new state, make sure to add it to the close() method too!
+    // PGPipelineEntry instances are pooled and reused, so we need to make sure
+    // that all state is cleared before returning the instance to the pool
 
     public PGPipelineEntry(CairoEngine engine) {
         this.isCopy = false;
@@ -232,14 +235,17 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     @Override
     public void close() {
-        clearState();
-        cursor = Misc.free(cursor);
-        factory = Misc.free(factory);
-        if (parameterValueArenaPtr != 0) {
-            Unsafe.free(parameterValueArenaPtr, parameterValueArenaHi - parameterValueArenaPtr, MemoryTag.NATIVE_PGW_PIPELINE);
-            parameterValueArenaPtr = 0;
-        }
+        // Release resources before returning to the pool.
+        // INVARIANT: After calling this method the state of this object must be indistinguishable
+        // from the state of the object after it was created by the constructor.
+
+        // For maintainability, we should clear all fields in the order they are declared in the class
+        // this makes it easier to check if a particular field has been cleared or not.
+        // Once exception to this rule are fields which are guarded by !isCopy condition
+
         if (!isCopy) {
+            // if we are a copy, we do not own operations -> we cannot close them
+            // so we just null them out and let the original entry close them
             insertOp = Misc.free(insertOp);
             operation = Misc.free(operation);
             Misc.free(compiledQuery.getUpdateOperation());
@@ -247,33 +253,56 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             insertOp = null;
             operation = null;
         }
-        outParameterTypeDescriptionTypeOIDs.clear();
-        msgParseParameterTypeOIDs.clear();
-        pgResultSetColumnTypes.clear();
-        portalNames.clear();
+
         errorMessageSink.clear();
+        msgBindParameterFormatCodes.clear();
         msgBindSelectFormatCodes.clear();
+        msgParseParameterTypeOIDs.clear();
+        outParameterTypeDescriptionTypeOIDs.clear();
         pgResultSetColumnNames.clear();
         pgResultSetColumnTypes.clear();
-        tai = null;
-        tas = null;
-        stateParseExecuted = false;
+        portalNames.clear();
+        isCopy = false;
+        cacheHit = false;
+        compiledQuery = compiledQueryCopy;
+        cursor = Misc.free(cursor);
+        error = false;
+        empty = false;
+        errorMessagePosition = 0;
+        factory = Misc.free(factory);
+        msgBindParameterValueCount = 0;
+        msgBindSelectFormatCodeCount = 0;
+        outResendColumnIndex = 0;
         outResendCursorRecord = false;
         outResendRecordHeader = true;
-        outResendColumnIndex = 0;
-        sqlReturnRowCountLimit = 0;
-        sqlReturnRowCountToBeSent = 0;
-        parameterValueArenaHi = parameterValueArenaPtr;
-        compiledQuery = compiledQueryCopy;
-        isCopy = false;
-        preparedStatement = false;
-        preparedStatementName = null;
+        if (parameterValueArenaPtr != 0) {
+            parameterValueArenaPtr = Unsafe.free(parameterValueArenaPtr, parameterValueArenaHi - parameterValueArenaPtr, MemoryTag.NATIVE_PGW_PIPELINE);
+            // no need to set lo and hi to 0, as they are not used after the pointer is freed
+        }
+        parentPreparedStatementPipelineEntry = null;
         portal = false;
         portalName = null;
-        sqlType = 0;
-        sqlTag = null;
+        preparedStatement = false;
+        preparedStatementName = null;
         preparedStatementNameToDeallocate = null;
+        sqlAffectedRowCount = 0;
+        sqlReturnRowCount = 0;
+        sqlReturnRowCountLimit = 0;
+        sqlReturnRowCountToBeSent = 0;
+        sqlTag = null;
         sqlText = null;
+        sqlTextHasSecret = false;
+        sqlType = 0;
+        stalePlanError = false;
+        stateBind = false;
+        stateClosed = false;
+        stateDesc = SYNC_DESC_NONE;
+        stateExec = false;
+        stateParse = false;
+        stateParseExecuted = false;
+        stateSync = SYNC_PARSE;
+        tai = null;
+        tas = null;
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws BadProtocolException {
