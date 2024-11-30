@@ -29,14 +29,17 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.DirectString;
+import io.questdb.tasks.O3OpenColumnTask;
 
 
 public class CallTablesMemory extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CallTablesMemory.class);
     public static List<Object[]> columnDataList = new ArrayList<>();
 
+    private static int txnCount = 0; //starts from database startup
     public static List<Object[]> recoveredTuples = new ArrayList<>(); // Stores recovered tuples if recovery() is called. 
     private static Deque<String> versionCounterForCOU = new ArrayDeque<>();
+    private static int lastRecordedIndex = 0;
 
     public CallTablesMemory(CairoEngine engine) throws SqlException{
         try{
@@ -161,7 +164,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     public boolean runSerially() {
         /* Implementation of Snapshot strategies can go in here */
         
-        int lastRecordedIndex = copyOnUpdateSnapshot(0);
+        scheduledSnapshotCreator();
 
 
         if (false) {
@@ -173,9 +176,17 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         return false;
     }
 
-    // private void scheduledSnapshotCreator() {
-    //     int MINUTES = 
-    // }
+    private void scheduledSnapshotCreator() {
+        O3OpenColumnTask oThree = new O3OpenColumnTask(); 
+        int currTxnCount = Math.toIntExact(oThree.getTxn());
+        
+        if (currTxnCount >= txnCount + 100) {
+            int currRecordedIndex = copyOnUpdateSnapshot(lastRecordedIndex);
+            lastRecordedIndex = currRecordedIndex;
+            txnCount = currTxnCount;
+        }
+
+    }
 
 
 
