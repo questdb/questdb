@@ -14,38 +14,23 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.str.DirectString;
-import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Misc;
 
 import java.io.Closeable;
-import java.util.Arrays;
 import java.util.ArrayList;
-import java.util.BitSet;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Timer;
+import java.util.Map;
 
 public class CallTablesMemory extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CallTablesMemory.class);
-    public static List<List<Object[]>> columnDataList_1;
-    public static List<Object[]> columnDataList_2;
-
-    // To handle multiple tables
-    public static ObjIntHashMap<TableToken> tables2idx;
-
-    // a list of bitmaps to indicate the updates
-
-    // filepath required
+    public static Map<TableToken, List<Object>> updatedTuples = new HashMap<>();;
 
     public CallTablesMemory(CairoEngine engine) throws SqlException{
         try{
             ObjHashSet<TableToken> tables = new ObjHashSet<>();
             engine.getTableTokens(tables, false);
-
-            tables2idx = new ObjIntHashMap<>();
-            columnDataList_1 = new ArrayList<>();
-            columnDataList_2 = new ArrayList<>();
-            int idxCounter = 0;
 
             for (int t = 0, n = tables.size(); t < n; t++) {
                 TableToken tableToken = tables.get(t);
@@ -56,59 +41,16 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
                     continue;
                 }
 
-                columnDataList_1.add(new ArrayList<>());
-
                 LOG.info().$("[EDIT] Token Name: ").$(tableToken.getTableName()).$();
-                tables2idx.put(tableToken, idxCounter);
-                LOG.info().$("[EDIT] Token2idx ").$(tables2idx.get(tableToken)).$();
-                LOG.info().$("[EDIT] Reading [table=").$(tableToken).I$();
-                TableReader reader = null;
-
-                // Since at initialization there's no other worker scanning the table
-                // no need to check whether the table is available for the reader or not
-                reader = engine.getReaderWithRepair(tableToken);
-                int partitionCount = reader.getPartitionCount();
-
-                for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                    long rowCount = reader.openPartition(partitionIndex);
-                    if (rowCount > 1){
-                        for (int columnIndex = 0; columnIndex < reader.getColumnCount(); columnIndex++) {
-                            MemoryCR column = null;
-                            int absoluteIndex = reader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), columnIndex);
-                            column = reader.getColumn(absoluteIndex);
-                            Object[] values = readEntireColumn(column, reader.getMetadata().getColumnType(columnIndex), rowCount);
-
-                            
-                            if (values.length == 0) {
-                                LOG.info().$("[EDIT] Skipping empty or unsupported column at index ").$(columnIndex).$();
-                                continue;
-                            }
-                            
-                            // For CoU
-                            columnDataList_1.get(idxCounter).addall(Arrays.asList(values));
-
-                            // For ping-pong
-                            //columnDataList_1.get(idxCounter).addall(Arrays.asList(values));
-                            //columnDataList_2.get(idxCounter).addall(Arrays.asList(values));
-                            
-                            // Timestamp as converted into microseconds since 1970-01-01T00:00:00 UTC
-                            LOG.info().$("[EDIT] [First value of column=").$(values[0]).I$();
-                            //Misc.free(column); [Note] Cleaning column up not necessary and will mess up the existing pointers
-                        }
-                    }
-                    
-                }
-                idxCounter++;
-                Misc.free(reader);
+                updatedTuples.put(tableToken, new ArrayList<>());
             }
-            LOG.info().$("[EDIT] [Size of columnDataList_1=").$(columnDataList_1.size()).I$();
-            LOG.info().$("[EDIT] [Size of columnDataList_1=").$(columnDataList_1).I$();
-        } catch (Throwable th) {
+            LOG.info().$("[EDIT] Size of the global hashmap ").$(updatedTuples.size()).$();
+        } 
+        catch (Throwable th) {
             close();
             throw th;
         }
     }
-
     
     private Object[] readEntireColumn(MemoryCR columnData, int columnType, long rowCount) {
         Object[] values = new Object[(int) rowCount];
@@ -154,7 +96,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() {
-        //Misc.free(columnDataList_1);
+        //Misc.free(updatedTuples);
         //Misc.free(columnDataList_2);
         //Misc.free(tables2idx);
         LOG.info().$("[EDIT] Background worker stopped").$();

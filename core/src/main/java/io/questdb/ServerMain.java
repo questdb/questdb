@@ -333,12 +333,6 @@ public class ServerMain implements Closeable {
                     
                     // [EDIT] A worker procees that brings up existing Tables to in-memory
                     CallTablesMemory CallTablesMemory = new CallTablesMemory(engine);
-                    System.out.println("Testing table2idx " + CallTablesMemory.tables2idx.capacity());
-                    System.out.println("Testing table2idx " + CallTablesMemory.tables2idx.size());
-                    
-                    for (Object[] column : CallTablesMemory.columnDataList_1) {
-                        System.out.println("First value in column: " + column[0]);
-                    }
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPool, engine);
