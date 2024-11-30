@@ -37,9 +37,18 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     public static List<Object[]> columnDataList = new ArrayList<>();
 
     private static int txnCount = 0; //starts from database startup
-    public static List<Object[]> recoveredTuples = new ArrayList<>(); // Stores recovered tuples if recovery() is called. 
-    private static Deque<String> versionCounterForCOU = new ArrayDeque<>();
-    private static int lastRecordedIndex = 0;
+    public static List<Object[]> recoveredTuples = new ArrayList<>(); // Stores recovered tuples if recovery() is called. Size should be 2 if IS is used, 1 if COW is used
+    private static Deque<String> snapshotVersionCounter = new ArrayDeque<>();
+
+    /*
+    * Choosing between Incremental Snapshot and Copy on Write:
+    * - If Copy on Write is used, set boolean COW = true
+    * - If Incremental Snapshot is used, set COW = false
+    */
+    private static boolean COW = false;
+
+    
+    private static int lastRecordedIndex = 0; // utility for incremental snapshot
 
     public CallTablesMemory(CairoEngine engine) throws SqlException{
         try{
@@ -164,7 +173,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     public boolean runSerially() {
         /* Implementation of Snapshot strategies can go in here */
         
-        scheduledSnapshotCreator();
+        scheduledSnapshotCreator(COW);
 
 
         if (false) {
@@ -176,26 +185,53 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         return false;
     }
 
-    private void scheduledSnapshotCreator() {
+    private void scheduledSnapshotCreator(boolean cow) {
+        /*
+        * Creates a snaphot ater every STEPS trasactions have occured since the last snapshot
+        * To change the number of transactions after which to take a snapshot, change the STEPS variable
+        */
+        int STEPS = 100;
+
         O3OpenColumnTask oThree = new O3OpenColumnTask(); 
         int currTxnCount = Math.toIntExact(oThree.getTxn());
         
-        if (currTxnCount >= txnCount + 100) {
-            int currRecordedIndex = copyOnUpdateSnapshot(lastRecordedIndex);
-            lastRecordedIndex = currRecordedIndex;
+        if (currTxnCount >= txnCount + STEPS) {
+            if (cow) {
+                copyOnWrite();
+
+            } else {
+                
+                int currRecordedIndex = incrementalSnapshot(lastRecordedIndex);
+                lastRecordedIndex = currRecordedIndex;
+            }
+            
             txnCount = currTxnCount;
         }
 
     }
 
+    private void copyOnWrite() {
+        /*
+        * Flow:
+        * (1) Previous snapshots are discarded
+        * (2) All elements in columnDataList is serialized to binary and saved to disk.
+        */
 
+        String latestSnapshotFile = writeToDisk(columnDataList);
 
-    private int copyOnUpdateSnapshot(int lastRecordedIndex) {
+        while (!snapshotVersionCounter.isEmpty()) {
+            disposeSnapshot(snapshotVersionCounter.remove());
+        }
+
+        snapshotVersionCounter.add(latestSnapshotFile);
+    }
+
+    private int incrementalSnapshot(int lastRecordedIndex) {
         /*
         * Flow: 
         * (1) Creates a sublist of columnDataList from the lastRecordedIndex to the end of 
         * (2) Saves everything to disk from versionTwoTuples as a binary file with extension .d (as is common in QuestDB)
-        * (3) Updates the global variable versionCounterForCOU so that at a time we only save two snapshots: the ultimate and penultimate
+        * (3) Updates the global variable snapshotVersionCounter so that at a time we only save two snapshots: the ultimate and penultimate
         * (4) Cleans out previous files from disk
         */
 
@@ -204,26 +240,33 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
 
         int newRecordedIndex = columnDataList.size() - 1;
 
-        versionCounterForCOU.add(latestSnapshotFile);
+        snapshotVersionCounter.add(latestSnapshotFile);
         LOG.info().$("Snapshot successfully saved");
 
-        while (versionCounterForCOU.size() > 2) {
-            String garbage = versionCounterForCOU.remove();
+        while (snapshotVersionCounter.size() > 2) {
 
-            try {
-                Files.deleteIfExists(Paths.get(garbage));
-                LOG.info().$("Removed previous versions");
-            } catch (NoSuchFileException e) {
-                LOG.info().$("Nonexistent file at ").$(garbage).$();
-            } catch (DirectoryNotEmptyException e) {
-                LOG.info().$("Directory is not empty");
-            } catch (IOException e) {
-                LOG.info().$("Invalid permissions to access").$(garbage).$();
-            }
+            disposeSnapshot(snapshotVersionCounter.remove());
         }
 
         return newRecordedIndex;
         
+    }
+
+    private void disposeSnapshot(String garbage) {
+        /*
+        * Removes file from memory
+        */
+
+        try {
+            Files.deleteIfExists(Paths.get(garbage));
+            LOG.info().$("Removed previous versions");
+        } catch (NoSuchFileException e) {
+            LOG.info().$("Nonexistent file at ").$(garbage).$();
+        } catch (DirectoryNotEmptyException e) {
+            LOG.info().$("Directory is not empty");
+        } catch (IOException e) {
+            LOG.info().$("Invalid permissions to access").$(garbage).$();
+        }
     }
 
     private List<Object[]> subListCreator(List<Object[]> originalList, int lastRecordedIndex) {
@@ -257,7 +300,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
 
     private List<Object[]> recoverFromDisk(String filePath) {
         /*
-        Add some flags if we're dong recovery
+        * Utility function for recovery()
         */
         try {
             return BinarySerializer.deserializeFromBinary(filePath);
@@ -267,9 +310,12 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     }
 
     private void recovery() {
-        String temp = versionCounterForCOU.removeLast();
+        /*
+        Add some flags if we're dong recovery
+        */
+        String temp = snapshotVersionCounter.removeLast();
         recoveredTuples = recoverFromDisk(temp);
-        versionCounterForCOU.add(temp);
+        snapshotVersionCounter.add(temp);
 
     }
 
