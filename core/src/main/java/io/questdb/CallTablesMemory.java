@@ -14,32 +14,53 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.str.DirectString;
+import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Misc;
 
 import java.io.Closeable;
+import java.util.Arrays;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
 import java.util.Timer;
 
 public class CallTablesMemory extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CallTablesMemory.class);
-    public static List<Object[]> columnDataList = new ArrayList<>();
+    public static List<List<Object[]>> columnDataList_1;
+    public static List<Object[]> columnDataList_2;
+
+    // To handle multiple tables
+    public static ObjIntHashMap<TableToken> tables2idx;
+
+    // a list of bitmaps to indicate the updates
+
+    // filepath required
 
     public CallTablesMemory(CairoEngine engine) throws SqlException{
         try{
             ObjHashSet<TableToken> tables = new ObjHashSet<>();
             engine.getTableTokens(tables, false);
 
+            tables2idx = new ObjIntHashMap<>();
+            columnDataList_1 = new ArrayList<>();
+            columnDataList_2 = new ArrayList<>();
+            int idxCounter = 0;
+
             for (int t = 0, n = tables.size(); t < n; t++) {
                 TableToken tableToken = tables.get(t);
-                
+
                 // Skipping system-related tables for the snapshot
                 if (tableToken.getTableName().startsWith("sys.") || tableToken.getTableName().startsWith("telemetry")) {
                     LOG.info().$("[EDIT] Skipping system table: ").$(tableToken.getTableName()).$();
                     continue;
                 }
 
+                columnDataList_1.add(new ArrayList<>());
+
+                LOG.info().$("[EDIT] Token Name: ").$(tableToken.getTableName()).$();
+                tables2idx.put(tableToken, idxCounter);
+                LOG.info().$("[EDIT] Token2idx ").$(tables2idx.get(tableToken)).$();
                 LOG.info().$("[EDIT] Reading [table=").$(tableToken).I$();
                 TableReader reader = null;
 
@@ -59,34 +80,29 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
 
                             
                             if (values.length == 0) {
-                                LOG.info().$("Skipping empty or unsupported column at index ").$(columnIndex).$();
+                                LOG.info().$("[EDIT] Skipping empty or unsupported column at index ").$(columnIndex).$();
                                 continue;
                             }
+                            
+                            // For CoU
+                            columnDataList_1.get(idxCounter).addall(Arrays.asList(values));
 
-                            columnDataList.add(values);
+                            // For ping-pong
+                            //columnDataList_1.get(idxCounter).addall(Arrays.asList(values));
+                            //columnDataList_2.get(idxCounter).addall(Arrays.asList(values));
+                            
                             // Timestamp as converted into microseconds since 1970-01-01T00:00:00 UTC
                             LOG.info().$("[EDIT] [First value of column=").$(values[0]).I$();
-                            Misc.free(column);
+                            //Misc.free(column); [Note] Cleaning column up not necessary and will mess up the existing pointers
                         }
                     }
                     
                 }
-
-                /*
-                for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                    //LOG.info().$("TESTING").$(partitionCount).I$();
-                    long rowCount = reader.openPartition(partitionIndex);
-                    if (rowCount > 1){
-                        for (int columnIndex = 0; columnIndex < reader.getColumnCount(); columnIndex++) {
-                            int absoluteIndex = reader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), columnIndex);
-                            //MemoryR columnData = reader.getColumn(absoluteIndex);
-                            LOG.info().$("[EDIT]").$(reader.getColumn(absoluteIndex));
-                        }
-                    }
-                }
-                */
+                idxCounter++;
                 Misc.free(reader);
             }
+            LOG.info().$("[EDIT] [Size of columnDataList_1=").$(columnDataList_1.size()).I$();
+            LOG.info().$("[EDIT] [Size of columnDataList_1=").$(columnDataList_1).I$();
         } catch (Throwable th) {
             close();
             throw th;
@@ -102,7 +118,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
             long offset = rowIndex * ColumnType.sizeOf(columnType); // Calculate the memory offset
     
             if (columnType == ColumnType.BINARY) {
-                LOG.info().$("Skipping binary column: ");
+                LOG.info().$("[EDIT] Skipping binary column: ");
                 continue;
             }
 
@@ -120,7 +136,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
                     values[rowIndex] = columnData.getFloat(offset);
                     break;
                 case ColumnType.STRING:
-                    columnData.getStr(offset, tempStr); // Retrieve the string
+                    columnData.getStr(offset, tempStr); 
                     values[rowIndex] = tempStr.toString(); // Convert DirectString to regular String
                     break;
                 case ColumnType.TIMESTAMP:
@@ -128,7 +144,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
                     values[rowIndex] = timestampMicros; // Store raw timestamp (or format if needed)
                     break;
                 default:
-                    LOG.info().$("Unsupported column type: ").$(columnType).$();
+                    LOG.info().$("[EDIT] Unsupported column type: ").$(columnType).$();
                     return new Object[0];
             }
         }
@@ -138,13 +154,16 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() {
-        //this.halt();
-        //LOG.info().$("Background worker stopped").$();
+        //Misc.free(columnDataList_1);
+        //Misc.free(columnDataList_2);
+        //Misc.free(tables2idx);
+        LOG.info().$("[EDIT] Background worker stopped").$();
     }
 
     @Override
     public boolean runSerially() {
         /* Implementation of Snapshot strategies can go in here */
+        
         return false;
     }
 }
