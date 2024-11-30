@@ -5,7 +5,6 @@
 package io.questdb;
 
 import java.io.Closeable;
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.Files;
@@ -36,7 +35,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CallTablesMemory.class);
     public static List<Object[]> columnDataList = new ArrayList<>();
 
-    public static List<Object[]> recoveredTuples = new ArrayList<>(); // Can be updated if we're doing recovery
+    public static List<Object[]> recoveredTuples = new ArrayList<>(); // Stores recovered tuples if recovery() is called. 
     private static Deque<String> versionCounterForCOU = new ArrayDeque<>();
 
     public CallTablesMemory(CairoEngine engine) throws SqlException{
@@ -100,6 +99,9 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
                 */
                 Misc.free(reader);
             }
+
+            runSerially();
+            
         } catch (Throwable th) {
             close();
             throw th;
@@ -158,7 +160,10 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     @Override
     public boolean runSerially() {
         /* Implementation of Snapshot strategies can go in here */
-        copyOnUpdateSnapshot();
+        
+        int lastRecordedIndex = copyOnUpdateSnapshot(0);
+
+
         if (false) {
             /*
             * Add appropriate flags if doing recovery
@@ -168,14 +173,25 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         return false;
     }
 
-    private void copyOnUpdateSnapshot() {
+    // private void scheduledSnapshotCreator() {
+    //     int MINUTES = 
+    // }
+
+
+
+    private int copyOnUpdateSnapshot(int lastRecordedIndex) {
         /*
         * Flow: 
-        * (1) Saves everything to disk from columnDataList as a binary file with extension .d (as is common in QuestDB)
-        * (2) Updates the global variable versionCounterForCOU so that at a time we only save two snapshots: the ultimate and penultimate
-        * (3) Cleans out previous files from disk
+        * (1) Creates a sublist of columnDataList from the lastRecordedIndex to the end of 
+        * (2) Saves everything to disk from versionTwoTuples as a binary file with extension .d (as is common in QuestDB)
+        * (3) Updates the global variable versionCounterForCOU so that at a time we only save two snapshots: the ultimate and penultimate
+        * (4) Cleans out previous files from disk
         */
-        String latestSnapshotFile = writeToDisk(columnDataList);
+
+        List<Object[]> versionTwoTuples = subListCreator(columnDataList, lastRecordedIndex);
+        String latestSnapshotFile = writeToDisk(versionTwoTuples);
+
+        int newRecordedIndex = columnDataList.size() - 1;
 
         versionCounterForCOU.add(latestSnapshotFile);
         LOG.info().$("Snapshot successfully saved");
@@ -194,7 +210,20 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
                 LOG.info().$("Invalid permissions to access").$(garbage).$();
             }
         }
+
+        return newRecordedIndex;
         
+    }
+
+    private List<Object[]> subListCreator(List<Object[]> originalList, int lastRecordedIndex) {
+        /*
+        * Creates a sublist of columnDataList
+        */
+        if (lastRecordedIndex > 0) {
+            return originalList.subList(lastRecordedIndex, originalList.size());
+        } else {
+            return originalList;
+        }
     }
 
     private String writeToDisk(List<Object[]> versionTwoTuples) {
@@ -202,13 +231,11 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         * Custom writer which serializes versionTwoTuples into a file with .d extension
         */
 
-       String snapshotDir = "data/snapshots/" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss"));
-       new File(snapshotDir).mkdirs();
-       String filePath = snapshotDir + "/output.d";
+       String filePath = "data/snapshots/snapshotAt__" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss")) + ".d";
        
 
        try {
-            BinarySerializer.serializeToBinary(versionTwoTuples, "data/output.d");
+            BinarySerializer.serializeToBinary(versionTwoTuples, filePath);
         } catch (IOException e) {
             e.printStackTrace();  // or handle the error appropriately
         }
