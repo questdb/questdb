@@ -18,7 +18,7 @@ START_TIME = [
 QUERY_TEMPLATE = "UPDATE table{} SET value = value + {} WHERE ts = '{}';"
 
 # Function to generate queries
-def generate_queries(start_times, duration_seconds=20, random_min=1, random_max=10):
+def generate_queries(start_times, duration_seconds=5, random_min=1, random_max=10):
     queries = []
     for table_id, start_time in enumerate(start_times, start=1):
         start_dt = datetime.strptime(start_time, '%Y-%m-%dT%H:%M:%SZ')
