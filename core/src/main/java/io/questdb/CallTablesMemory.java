@@ -1,5 +1,5 @@
 /*******************************************************************************
- *  Custom data snapshot scheduler
+ *  Custom in-memory data loader
  ******************************************************************************/
 
 package io.questdb;
@@ -25,7 +25,7 @@ import java.util.Map;
 
 public class CallTablesMemory extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CallTablesMemory.class);
-    public static Map<TableToken, List<Object>> updatedTuples = new HashMap<>();;
+    public static Map<TableTokenTimestampKey, Object> updatedTuples = new HashMap<>();
 
     public CallTablesMemory(CairoEngine engine) throws SqlException{
         try{
@@ -41,8 +41,43 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
                     continue;
                 }
 
+                TableReader reader = null;
+
+                // Since at initialization there's no other worker scanning the table
+                // no need to check whether the table is available for the reader or not
+                reader = engine.getReaderWithRepair(tableToken);
+                int partitionCount = reader.getPartitionCount();
+
+                for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                    long rowCount = reader.openPartition(partitionIndex);
+                    if (rowCount > 1){
+                        int columnIndex = 0; // 0th column is the index (timestamp)
+                        MemoryCR column = null;
+                        int absoluteIndex = reader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), columnIndex);
+                        column = reader.getColumn(absoluteIndex);
+                        Object[] values = readEntireColumn(column, reader.getMetadata().getColumnType(columnIndex), rowCount);
+                                                    
+                        if (values.length == 0) {
+                            LOG.info().$("[EDIT] Skipping empty or unsupported column at index ").$(columnIndex).$();
+                            continue;
+                        }
+
+                        for (Object obj : values) {
+                            Long timestamp = (Long) obj;
+                            // Create the composite key
+                            TableTokenTimestampKey key = new TableTokenTimestampKey(tableToken, timestamp);
+                            updatedTuples.put(key, 0);
+                        }
+                        
+                            
+                        // Timestamp as converted into microseconds since 1970-01-01T00:00:00 UTC
+                        LOG.info().$("[EDIT] [First value of column=").$(values[0]).I$();
+                        //Misc.free(column); [Note] Cleaning column up not necessary and will mess up the existing pointers
+                    }
+                }
+                Misc.free(reader);
                 LOG.info().$("[EDIT] Token Name: ").$(tableToken.getTableName()).$();
-                updatedTuples.put(tableToken, new ArrayList<>());
+                //updatedTuples.put(tableToken, new ArrayList<>());
             }
             LOG.info().$("[EDIT] Size of the global hashmap ").$(updatedTuples.size()).$();
         } 
@@ -51,7 +86,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
             throw th;
         }
     }
-    
+
     private Object[] readEntireColumn(MemoryCR columnData, int columnType, long rowCount) {
         Object[] values = new Object[(int) rowCount];
         DirectString tempStr = new DirectString(); // Temporary storage for strings
@@ -93,18 +128,13 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         return values;
     }
     
-
     @Override
     public void close() {
-        //Misc.free(updatedTuples);
-        //Misc.free(columnDataList_2);
-        //Misc.free(tables2idx);
         LOG.info().$("[EDIT] Background worker stopped").$();
     }
 
     @Override
     public boolean runSerially() {
-        /* Implementation of Snapshot strategies can go in here */
         
         return false;
     }
