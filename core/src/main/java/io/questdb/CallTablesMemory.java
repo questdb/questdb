@@ -125,8 +125,6 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         }
 
         runSerially();
-
-        closingTimeCleanUo();
     }
 
     private Object[] getColumnValues(TableReader reader, int partitionIndex, int columnIndex, long rowCount) {
@@ -338,16 +336,16 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
 
     }
 
-    private void closingTimeCleanUo() {
+    public void closingTimeCleanUp() {
         /*
         * Cleans disk when QuestDB shuts down
         * Erases all files from snapshotVersionCounter
         */
-       if (closeTime) {
+    //    if (closeTime) {
             while (!snapshotVersionCounter.isEmpty()) {
                 disposeSnapshot(snapshotVersionCounter.removeLast());
             }
-       }
+    //    }
        
     }
 
