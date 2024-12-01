@@ -7,9 +7,7 @@ import java.io.DataOutputStream;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 import io.questdb.cairo.TableToken;
@@ -22,29 +20,30 @@ public class BinarySerializer {
     private static final byte TYPE_STRING = 4;
     private static final byte TYPE_BOOLEAN = 5;
     private static final byte TYPE_TABLE_TOKEN = 6;
+    private static final byte TYPE_TIMESTAMP_KEY = 7;
 
-    public static void serializeToBinary(Map<TableToken, List<Object>> data, String outputPath) throws IOException {
+    public static void serializeToBinary(Map<TableTokenTimestampKey, Object> data, String outputPath) throws IOException {
         try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(
                 new FileOutputStream(outputPath)))) {
             
-            // Write number of tables
+            // Write number of entries
             out.writeInt(data.size());
             
-            // Write each table's data
-            for (Map.Entry<TableToken, List<Object>> entry : data.entrySet()) {
-                // Serialize TableToken
-                writeTableToken(out, entry.getKey());
+            // Write each entry
+            for (Map.Entry<TableTokenTimestampKey, Object> entry : data.entrySet()) {
+                // Serialize TableTokenTimestampKey
+                writeTableTokenTimestampKey(out, entry.getKey());
                 
-                List<Object> values = entry.getValue();
-                // Write number of values
-                out.writeInt(values.size());
-                
-                // Write each value
-                for (Object value : values) {
-                    writeValue(out, value);
-                }
+                // Write value
+                writeValue(out, entry.getValue());
             }
         }
+    }
+
+    private static void writeTableTokenTimestampKey(DataOutputStream out, TableTokenTimestampKey key) throws IOException {
+        out.writeByte(TYPE_TIMESTAMP_KEY);
+        writeTableToken(out, key.getTableToken());
+        out.writeLong(key.getTimestampMacro());
     }
 
     private static void writeTableToken(DataOutputStream out, TableToken token) throws IOException {
@@ -92,38 +91,43 @@ public class BinarySerializer {
             out.writeBoolean((Boolean) value);
         } else if (value instanceof TableToken) {
             writeTableToken(out, (TableToken) value);
+        } else if (value instanceof TableTokenTimestampKey) {
+            writeTableTokenTimestampKey(out, (TableTokenTimestampKey) value);
         } else {
             throw new IllegalArgumentException("Unsupported type: " + value.getClass());
         }
     }
 
-    public static Map<TableToken, List<Object>> deserializeFromBinary(String inputPath) throws IOException {
-        Map<TableToken, List<Object>> result = new HashMap<>();
+    public static Map<TableTokenTimestampKey, Object> deserializeFromBinary(String inputPath) throws IOException {
+        Map<TableTokenTimestampKey, Object> result = new HashMap<>();
         
         try (DataInputStream in = new DataInputStream(new BufferedInputStream(
                 new FileInputStream(inputPath)))) {
             
-            // Read number of tables
-            int numTables = in.readInt();
+            // Read number of entries
+            int numEntries = in.readInt();
             
-            // Read each table's data
-            for (int i = 0; i < numTables; i++) {
-                // Read TableToken
-                TableToken tableToken = readTableToken(in);
-                
-                // Read number of values
-                int numValues = in.readInt();
-                List<Object> values = new ArrayList<>(numValues);
-                
-                // Read each value
-                for (int j = 0; j < numValues; j++) {
-                    values.add(readValue(in));
-                }
-                
-                result.put(tableToken, values);
+            // Read each entry
+            for (int i = 0; i < numEntries; i++) {
+                TableTokenTimestampKey key = readTableTokenTimestampKey(in);
+                Object value = readValue(in);
+                result.put(key, value);
             }
+            
             return result;
         }
+    }
+
+    private static TableTokenTimestampKey readTableTokenTimestampKey(DataInputStream in) throws IOException {
+        byte type = in.readByte();
+        if (type != TYPE_TIMESTAMP_KEY) {
+            throw new IOException("Expected TIMESTAMP_KEY type but got: " + type);
+        }
+        
+        TableToken tableToken = readTableToken(in);
+        long timestamp = in.readLong();
+        
+        return new TableTokenTimestampKey(tableToken, timestamp);
     }
 
     private static TableToken readTableToken(DataInputStream in) throws IOException {
@@ -167,6 +171,8 @@ public class BinarySerializer {
                 return in.readBoolean();
             case TYPE_TABLE_TOKEN:
                 return readTableToken(in);
+            case TYPE_TIMESTAMP_KEY:
+                return readTableTokenTimestampKey(in);
             default:
                 throw new IOException("Unknown type: " + type);
         }

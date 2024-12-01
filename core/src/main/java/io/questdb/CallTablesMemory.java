@@ -42,9 +42,8 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     public static Map<TableTokenTimestampKey, Object> updatedTuples = new HashMap<>();
     private static final int SnapAtStart = 1;
     
-    private static int txnCount = 0; //starts from database startup
-    public static Map<TableToken, List<Object>> recoveredTuples; // Stores recovered tuples if recovery() is called. Size should be 2 if IS is used, 1 if COW is used
-    private static Deque<String> snapshotVersionCounter = new ArrayDeque<>();
+    public static Map<TableTokenTimestampKey, Object> recoveredTuples; // Stores recovered tuples if recovery() is called. Size should be 2 if IS is used, 1 if COW is used
+    private static Deque<String> snapshotVersionCounter = new ArrayDeque<>(); // Stores filenames of current Snapshots on disk. size() should be 1 if COW, 2 if IS
 
     /*
     * Choosing between Incremental Snapshot and Copy on Write:
@@ -52,8 +51,11 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     * - If Incremental Snapshot is used, set COW = false
     */
     private static boolean COW = false;
-    private static int lastRecordedIndex = 0; // utility for incremental snapshot
-    private static Iterator<?> tupleIterator;
+
+    private static Iterator<?> tupleIterator; // Keeps track of the last visited Map element in updatedTuples
+
+    private static final int STEPS = 1; // Snapshots are taken every STEPS seconds. Set to 1 for demonstration, Set to a higher number while testing / deploying
+
 
     public CallTablesMemory(CairoEngine engine) throws SqlException{
         try{
@@ -120,6 +122,8 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
             close();
             throw th;
         }
+
+        runSerially();
     }
 
     private Object[] getColumnValues(TableReader reader, int partitionIndex, int columnIndex, long rowCount) {
@@ -180,7 +184,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     @Override
     public boolean runSerially() {
         /* Implementation of Snapshot strategies can go in here */
-        scheduledSnapshotCreator(COW);
+        scheduledSnapshotCreator();
         if (false) {
             /*
             * Add appropriate flags if doing recovery
@@ -190,16 +194,15 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         return false;
     }
 
-    private void scheduledSnapshotCreator(boolean cow) {
+    private void scheduledSnapshotCreator() {
         /*
         * Creates a snaphot ater every STEPS trasactions have occured since the last snapshot
         * To change the number of transactions after which to take a snapshot, change the STEPS variable
         */
-        int STEPS = 1;
 
         Runnable snapshotRunnable = new Runnable() {
             public void run() {
-                if (cow) {
+                if (COW) {
                     copyOnWrite();
 
                 } else {
@@ -229,7 +232,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         snapshotVersionCounter.add(latestSnapshotFile);
     }
 
-    private int incrementalSnapshot() {
+    private void incrementalSnapshot() {
         /*
         * Flow: 
         * (1) Creates a sublist of columnDataList from the lastRecordedIndex to the end of 
@@ -238,12 +241,11 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         * (4) Cleans out previous files from disk
         */
 
-        Map<TableToken, List<Object>> versionTwoTuples = subsetCreator();
+        Map<TableTokenTimestampKey, Object> versionTwoTuples = subsetCreator();
         String latestSnapshotFile = writeToDisk(versionTwoTuples);
 
 
 
-        int newRecordedIndex = columnDataList.size() - 1;
 
         snapshotVersionCounter.add(latestSnapshotFile);
         LOG.info().$("Snapshot successfully saved");
@@ -252,8 +254,6 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
 
             disposeSnapshot(snapshotVersionCounter.remove());
         }
-
-        return newRecordedIndex;
         
     }
 
@@ -274,7 +274,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         }
     }
 
-    private Map<TableToken, List<Object>> subsetCreator() {
+    private Map<TableTokenTimestampKey, Object> subsetCreator() {
         /*
         * Creates a sublist of updatedTuples
         */
@@ -283,12 +283,12 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         }
         
         // Create a new HashMap to store remaining entries
-        Map<TableToken, List<Object>> remainingTuples = new HashMap<>();
+        Map<TableTokenTimestampKey, Object> remainingTuples = new HashMap<>();
         
         // Add all remaining elements from the current iterator position
         while (tupleIterator.hasNext()) {
-            Entry<TableToken, List<Object>> entry = 
-                (Entry<TableToken, List<Object>>) tupleIterator.next();
+            Entry<TableTokenTimestampKey, Object> entry = 
+                (Entry<TableTokenTimestampKey, Object>) tupleIterator.next();
             remainingTuples.put(entry.getKey(), entry.getValue());
         }
         
@@ -296,7 +296,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         
     }
 
-    private String writeToDisk(Map<TableToken, List<Object>> versionTwoTuples) {
+    private String writeToDisk(Map<TableTokenTimestampKey, Object> versionTwoTuples) {
         /*
         * Custom writer which serializes versionTwoTuples into a file with .d extension
         */
@@ -314,7 +314,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         return filePath;
     }
 
-    private Map<TableToken, List<Object>> recoverFromDisk(String filePath) {
+    private Map<TableTokenTimestampKey, Object> recoverFromDisk(String filePath) {
         /*
         * Utility function for recovery()
         */
