@@ -1,0 +1,51 @@
+-- Create first 5 tables with TIMESTAMP and INT columns
+CREATE TABLE table1 (ts TIMESTAMP, value INT);
+CREATE TABLE table2 (ts TIMESTAMP, value INT);
+CREATE TABLE table3 (ts TIMESTAMP, value INT);
+CREATE TABLE table4 (ts TIMESTAMP, value INT);
+CREATE TABLE table5 (ts TIMESTAMP, value INT);
+
+INSERT INTO table1
+SELECT dateadd('s', cast(x as int), '2024-01-01T00:00:00Z'), rnd_int() FROM long_sequence(100);
+
+-- Insert into table2
+INSERT INTO table2
+SELECT dateadd('s', cast(x as int), '2024-01-01T01:00:00Z'), rnd_int() FROM long_sequence(100);
+
+-- Insert into table3
+INSERT INTO table3
+SELECT dateadd('s', cast(x as int), '2024-01-01T02:00:00Z'), rnd_int() FROM long_sequence(100);
+
+-- Insert into table4
+INSERT INTO table4
+SELECT dateadd('s', cast(x as int), '2024-01-01T03:00:00Z'), rnd_int() FROM long_sequence(100);
+
+-- Insert into table5
+INSERT INTO table5
+SELECT dateadd('s', cast(x as int), '2024-01-01T04:00:00Z'), rnd_int() FROM long_sequence(100);
+
+-- Create next 5 tables with TIMESTAMP and DOUBLE columns
+CREATE TABLE table6 (ts TIMESTAMP, value DOUBLE);
+CREATE TABLE table7 (ts TIMESTAMP, value DOUBLE);
+CREATE TABLE table8 (ts TIMESTAMP, value DOUBLE);
+CREATE TABLE table9 (ts TIMESTAMP, value DOUBLE);
+CREATE TABLE table10 (ts TIMESTAMP, value DOUBLE);
+
+INSERT INTO table6
+SELECT dateadd('s', cast(x as int), '2024-01-01T05:00:00Z'), rnd_double(0) FROM long_sequence(100);
+
+-- Insert into table7
+INSERT INTO table7
+SELECT dateadd('s', cast(x as int), '2024-01-01T06:00:00Z'), rnd_double() FROM long_sequence(100);
+
+-- Insert into table8
+INSERT INTO table8
+SELECT dateadd('s', cast(x as int), '2024-01-01T07:00:00Z'), rnd_double(100) FROM long_sequence(100);
+
+-- Insert into table9
+INSERT INTO table9
+SELECT dateadd('s', cast(x as int), '2024-01-01T08:00:00Z'), rnd_double(200) FROM long_sequence(100);
+
+-- Insert into table10
+INSERT INTO table10
+SELECT dateadd('s', cast(x as int), '2024-01-01T09:00:00Z'), rnd_double(300) FROM long_sequence(100);
