@@ -266,7 +266,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
             Files.deleteIfExists(Paths.get(garbage));
             LOG.info().$("Removed previous versions");
         } catch (NoSuchFileException e) {
-            LOG.info().$("Nonexistent file at ").$(garbage).$();
+            LOG.info().$("[DATABASE START-UP, updatedTuples IS EMPTY] Nonexistent file at ").$(garbage).$();
         } catch (DirectoryNotEmptyException e) {
             LOG.info().$("Directory is not empty");
         } catch (IOException e) {
