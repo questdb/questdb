@@ -87,6 +87,8 @@ public class ServerMain implements Closeable {
         this(new Bootstrap(args));
     }
 
+    private CallTablesMemory callTablesMemory;
+
     public ServerMain(final Bootstrap bootstrap) {
         this.bootstrap = bootstrap;
         // create cairo engine
@@ -210,6 +212,7 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
+            callTablesMemory.closingTimeCleanUp();
             System.err.println("QuestDB is shutting down...");
             System.out.println("QuestDB is shutting down...");
             if (bootstrap != null && bootstrap.getLog() != null) {
@@ -221,6 +224,7 @@ public class ServerMain implements Closeable {
                 fileWatcher = Misc.free(fileWatcher);
             }
             freeOnExit.close();
+            callTablesMemory = null;
         }
     }
 
@@ -332,7 +336,7 @@ public class ServerMain implements Closeable {
                     WorkerPoolUtils.setupQueryJobs(sharedPool, engine);
                     
                     // [EDIT] A worker procees that brings up existing Tables to in-memory
-                    CallTablesMemory CallTablesMemory = new CallTablesMemory(engine);
+                    callTablesMemory = new CallTablesMemory(engine);
 
                     if (!isReadOnly) {
                         WorkerPoolUtils.setupWriterJobs(sharedPool, engine);

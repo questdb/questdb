@@ -56,6 +56,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
 
     private static final int STEPS = 1; // Snapshots are taken every STEPS seconds. Set to 1 for demonstration, Set to a higher number while testing / deploying
 
+    public static boolean closeTime; // Cleans disk if QuestDB is shutting down.
 
     public CallTablesMemory(CairoEngine engine) throws SqlException{
         try{
@@ -333,6 +334,19 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         recoveredTuples = recoverFromDisk(temp);
         snapshotVersionCounter.add(temp);
 
+    }
+
+    public void closingTimeCleanUp() {
+        /*
+        * Cleans disk when QuestDB shuts down
+        * Erases all files from snapshotVersionCounter
+        */
+    //    if (closeTime) {
+            while (!snapshotVersionCounter.isEmpty()) {
+                disposeSnapshot(snapshotVersionCounter.removeLast());
+            }
+    //    }
+       
     }
 
 
