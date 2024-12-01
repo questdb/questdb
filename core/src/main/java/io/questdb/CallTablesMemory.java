@@ -26,19 +26,21 @@ import java.util.concurrent.TimeUnit;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.DirectString;
 
 public class CallTablesMemory extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CallTablesMemory.class);
     public static Map<TableTokenTimestampKey, Object> updatedTuples = new HashMap<>();
-    private static final int SnapAtStart = 0;
+    private static final int SnapAtStart = 1;
     
     private static int txnCount = 0; //starts from database startup
     public static Map<TableToken, List<Object>> recoveredTuples; // Stores recovered tuples if recovery() is called. Size should be 2 if IS is used, 1 if COW is used
@@ -118,7 +120,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
             close();
             throw th;
         }
-
+    }
 
     private Object[] getColumnValues(TableReader reader, int partitionIndex, int columnIndex, long rowCount) {
         MemoryCR column = null;
