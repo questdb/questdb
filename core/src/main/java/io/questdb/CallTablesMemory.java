@@ -1,5 +1,5 @@
 /*******************************************************************************
- *  Custom data snapshot scheduler
+ *  Custom in-memory data loader
  ******************************************************************************/
 
 package io.questdb;
@@ -35,12 +35,11 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.DirectString;
 
-
 public class CallTablesMemory extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(CallTablesMemory.class);
-    public static List<Object[]> columnDataList = new ArrayList<>();
-    public static Map<TableToken, List<Object>> updatedTuples = new HashMap<>();
-
+    public static Map<TableTokenTimestampKey, Object> updatedTuples = new HashMap<>();
+    private static final int SnapAtStart = 0;
+    
     private static int txnCount = 0; //starts from database startup
     public static Map<TableToken, List<Object>> recoveredTuples; // Stores recovered tuples if recovery() is called. Size should be 2 if IS is used, 1 if COW is used
     private static Deque<String> snapshotVersionCounter = new ArrayDeque<>();
@@ -51,29 +50,67 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     * - If Incremental Snapshot is used, set COW = false
     */
     private static boolean COW = false;
-
-    
     private static int lastRecordedIndex = 0; // utility for incremental snapshot
     private static Iterator<?> tupleIterator;
 
-    
-
     public CallTablesMemory(CairoEngine engine) throws SqlException{
         try{
-            ObjHashSet<TableToken> tables = new ObjHashSet<>();
-            engine.getTableTokens(tables, false);
+            if (SnapAtStart != 0){
+                ObjHashSet<TableToken> tables = new ObjHashSet<>();
+                engine.getTableTokens(tables, false);
 
-            for (int t = 0, n = tables.size(); t < n; t++) {
-                TableToken tableToken = tables.get(t);
+                for (int t = 0, n = tables.size(); t < n; t++) {
+                    TableToken tableToken = tables.get(t);
 
-                // Skipping system-related tables for the snapshot
-                if (tableToken.getTableName().startsWith("sys.") || tableToken.getTableName().startsWith("telemetry")) {
-                    LOG.info().$("[EDIT] Skipping system table: ").$(tableToken.getTableName()).$();
-                    continue;
+                    // Skipping system-related tables for the snapshot
+                    if (tableToken.getTableName().startsWith("sys.") || tableToken.getTableName().startsWith("telemetry")) {
+                        LOG.info().$("[EDIT] Skipping system table: ").$(tableToken.getTableName()).$();
+                        continue;
+                    }
+
+                    TableReader reader = null;
+
+                    // Since at initialization there's no other worker scanning the table
+                    // no need to check whether the table is available for the reader or not
+                    reader = engine.getReaderWithRepair(tableToken);
+                    int partitionCount = reader.getPartitionCount();
+
+                    for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                        long rowCount = reader.openPartition(partitionIndex);
+                        if (rowCount > 1){
+                            Object[] keys = getColumnValues(reader, partitionIndex, 0, rowCount);
+
+                            for (int columnIndex = 1; columnIndex < reader.getColumnCount(); columnIndex++) {   
+                                Object[] values = getColumnValues(reader, partitionIndex, 0, rowCount);
+
+                                if (values.length == 0) {
+                                    LOG.info().$("[EDIT] Skipping empty or unsupported column at index ").$(columnIndex).$();
+                                    continue;
+                                }
+
+                                if (keys.length != values.length) {
+                                    throw new IllegalStateException("[EDIT] Mismatched lengths between keys and values. Keys length: "
+                                            + keys.length + ", Values length: " + values.length);
+                                }
+                            
+                                for (int i = 0; i < keys.length; i++) {
+                                    Long timestamp = (Long) keys[i];
+                                    Object value = values[i];  
+                                    TableTokenTimestampKey key = new TableTokenTimestampKey(tableToken, timestamp);
+                                    updatedTuples.put(key, value);
+                                } 
+
+                                // Timestamp as converted into microseconds since 1970-01-01T00:00:00 UTC
+                                LOG.info().$("[EDIT] [First value of column=").$(values[0]).I$();
+                                //Misc.free(column); [Note] Cleaning column up not necessary and will mess up the existing pointers
+                            }
+                        }
+                    }
+                    Misc.free(reader);
+                    LOG.info().$("[EDIT] Token Name: ").$(tableToken.getTableName()).$();
+                    //updatedTuples.put(tableToken, new ArrayList<>());
                 }
 
-                LOG.info().$("[EDIT] Token Name: ").$(tableToken.getTableName()).$();
-                updatedTuples.put(tableToken, new ArrayList<>());
             }
             LOG.info().$("[EDIT] Size of the global hashmap ").$(updatedTuples.size()).$();
         } 
@@ -82,9 +119,15 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
             throw th;
         }
 
-        runSerially();
+
+    private Object[] getColumnValues(TableReader reader, int partitionIndex, int columnIndex, long rowCount) {
+        MemoryCR column = null;
+        int absoluteIndex = reader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), columnIndex);
+        column = reader.getColumn(absoluteIndex);
+        Object[] values = readEntireColumn(column, reader.getMetadata().getColumnType(columnIndex), rowCount);
+        return values;
     }
-    
+
     private Object[] readEntireColumn(MemoryCR columnData, int columnType, long rowCount) {
         Object[] values = new Object[(int) rowCount];
         DirectString tempStr = new DirectString(); // Temporary storage for strings
@@ -126,12 +169,8 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
         return values;
     }
     
-
     @Override
     public void close() {
-        //Misc.free(updatedTuples);
-        //Misc.free(columnDataList_2);
-        //Misc.free(tables2idx);
         LOG.info().$("[EDIT] Background worker stopped").$();
     }
 
@@ -139,10 +178,7 @@ public class CallTablesMemory extends SynchronizedJob implements Closeable {
     @Override
     public boolean runSerially() {
         /* Implementation of Snapshot strategies can go in here */
-        
         scheduledSnapshotCreator(COW);
-
-
         if (false) {
             /*
             * Add appropriate flags if doing recovery
