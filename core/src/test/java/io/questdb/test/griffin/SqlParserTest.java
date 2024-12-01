@@ -6302,7 +6302,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testNonWindowFunctionInWindowContext() throws Exception {
         assertException(
-                "select max(price) over (partition by symbol) from trades",
+                "select ksum(price) over (partition by symbol) from trades",
                 "create table trades " +
                         "(" +
                         " price double," +

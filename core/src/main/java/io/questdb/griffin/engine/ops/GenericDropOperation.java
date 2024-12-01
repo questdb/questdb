@@ -10,9 +10,9 @@ import org.jetbrains.annotations.Nullable;
 public class GenericDropOperation implements Operation {
     private final String entityName;
     private final int entityNamePosition;
+    private final DoneOperationFuture future = new DoneOperationFuture();
     private final boolean ifExists;
     private final int operationCode;
-    private final DoneOperationFuture future = new DoneOperationFuture();
 
     public GenericDropOperation(int operationCode, String entityName, int entityNamePosition, boolean ifExists) {
         this.operationCode = operationCode;
