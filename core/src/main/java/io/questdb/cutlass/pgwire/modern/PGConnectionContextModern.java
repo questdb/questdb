@@ -81,6 +81,7 @@ import io.questdb.std.SimpleAssociativeCache;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StdoutSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -143,6 +144,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
     private static final int SSL_REQUEST = 80877103;
+    // Timeout to prevent getting stuck while draining socket's receive buffer
+    // before closing the socket. Ensures exit if malformed client keeps sending data.
+    private static final long MALFORMED_CLIENT_READ_TIMEOUT_MILLIS = 5000;
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     private final BindVariableService bindVariableService;
@@ -300,9 +304,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             if (pipelineCurrentEntry != null) {
                 // do not return named portals and statements, since they are returned later
                 if (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal()) {
-                    Misc.free(pipelineCurrentEntry);
-                    pipelineCurrentEntry.clearForPooling();
-                    entryPool.release(pipelineCurrentEntry);
+                    releaseToPool(pipelineCurrentEntry);
                 }
             }
         } while ((pipelineCurrentEntry = pipeline.poll()) != null);
@@ -404,6 +406,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException e) {
             // BAU, not error metric
             throw e;
+        } catch (BadProtocolException bpe) {
+            shutdownSocketGracefully();
+            throw bpe; // request disconnection
         } catch (Throwable th) {
             metrics.pgWire().getErrorCounter().inc();
             throw th;
@@ -491,6 +496,20 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         this.suspendEvent = suspendEvent;
     }
 
+    private static void sendErrorResponseAndReset(PGResponseSink sink, CharSequence message) throws PeerIsSlowToReadException, PeerDisconnectedException {
+        sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
+        long addr = sink.skipInt();
+        sink.put('C');
+        sink.putZ("08P01"); // protocol violation
+        sink.put('M');
+        sink.putZ(message);
+        sink.put('S');
+        sink.putZ("ERROR");
+        sink.put((char) 0);
+        sink.putLen(addr);
+        sink.sendBufferAndReset();
+    }
+
     private void addPipelineEntry() {
         if (pipelineCurrentEntry != null) {
             pipeline.add(pipelineCurrentEntry);
@@ -554,9 +573,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             pe.setStateClosed(true, isStatementClose);
             // return the factory back to global cache in case of a select
             pe.cacheIfPossible(tasCache, null);
-            Misc.free(pe);
-            pe.clearForPooling();
-            entryPool.release(pe);
+            releaseToPool(pe);
         }
         cache.clear();
     }
@@ -639,6 +656,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
         if (len != expectedLen) {
             LOG.error().$("request SSL message expected [actualLen=").$(len).I$();
+            sendErrorResponseAndReset(responseUtf8Sink, "request SSL message expected");
             throw BadProtocolException.INSTANCE;
         }
         long address = recvBuffer + recvBufferReadOffset;
@@ -647,12 +665,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         address += Integer.BYTES;
         if (msgLen != expectedLen) {
             LOG.error().$("unexpected request SSL message [msgLen=").$(msgLen).I$();
+            sendErrorResponseAndReset(responseUtf8Sink, "unexpected request SSL message");
             throw BadProtocolException.INSTANCE;
         }
         int request = getIntUnsafe(address);
         recvBufferReadOffset += Integer.BYTES;
         if (request != SSL_REQUEST) {
             LOG.error().$("unexpected request SSL message [request=").$(msgLen).I$();
+            sendErrorResponseAndReset(responseUtf8Sink, "unexpected request SSL message");
             throw BadProtocolException.INSTANCE;
         }
         // tell the client that SSL is supported
@@ -744,7 +764,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     final TypesAndSelectModern tas = tasCache.poll(pipelineCurrentEntry.getSqlText());
                     if (tas != null) {
                         if (pe.msgParseReconcileParameterTypes(tas)) {
-                            pe.ofSelect(pipelineCurrentEntry.getSqlText(), tas);
+                            pe.ofCachedSelect(pipelineCurrentEntry.getSqlText(), tas);
                             cachedStatus = CACHE_HIT_SELECT_VALID;
                         } else {
                             tas.close();
@@ -892,7 +912,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             throw msgKaput().put("spurious describe message received");
         }
 
-        pipelineCurrentEntry.setStateDesc(nullTargetName ? 1 : isPortal ? 2 : 3);
+        pipelineCurrentEntry.setStateDesc(nullTargetName || isPortal ? PGPipelineEntry.SYNC_DESC_ROW_DESCRIPTION : PGPipelineEntry.SYNC_DESC_PARAMETER_DESCRIPTION);
     }
 
     private void msgExecute(long lo, long msgLimit) throws BadProtocolException {
@@ -1032,7 +1052,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         final TypesAndInsertModern tai = taiCache.peek(taiKeyIndex);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
-                pipelineCurrentEntry.ofInsert(utf16SqlText, tai);
+                pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
                 cachedStatus = CACHE_HIT_INSERT_VALID;
             } else {
                 TypesAndInsertModern tai2 = taiCache.poll(taiKeyIndex);
@@ -1046,7 +1066,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             final TypesAndSelectModern tas = tasCache.poll(utf16SqlText);
             if (tas != null) {
                 if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
-                    pipelineCurrentEntry.ofSelect(utf16SqlText, tas);
+                    pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
                     cachedStatus = CACHE_HIT_SELECT_VALID;
                 } else {
                     tas.close();
@@ -1148,8 +1168,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         outReadForNewQuery();
         resumeCallback = null;
         responseUtf8Sink.sendBufferAndReset();
-
-        // todo: this is a wrap, prepare for new query execution
         prepareForNewQuery();
     }
 
@@ -1255,18 +1273,18 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    // clears whole state except for characterStore because top-level batch text is using it
-    private void prepareForNewBatchQuery() {
+    private void prepareForNewQuery() {
         LOG.debug().$("prepare for new query").$();
         Misc.clear(bindVariableService);
         freezeRecvBuffer = false;
         sqlExecutionContext.setCacheHit(false);
         sqlExecutionContext.containsSecret(false);
+        Misc.clear(characterStore);
     }
 
-    private void prepareForNewQuery() {
-        prepareForNewBatchQuery();
-        Misc.clear(characterStore);
+    private void releaseToPool(@NotNull PGPipelineEntry pe) {
+        pe.close();
+        entryPool.release(pe);
     }
 
     private void replaceCurrentPipelineEntry(PGPipelineEntry nextEntry) {
@@ -1296,6 +1314,25 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         Vect.memmove(recvBuffer, recvBuffer + readOffsetBeforeParse, len);
         recvBufferWriteOffset = len;
         recvBufferReadOffset = 0;
+    }
+
+    private void shutdownSocketGracefully() {
+        // calling close on a socket with a
+        // non-empty receive kernel-buffer cause the connection to be RST and
+        // the send buffer discarded and not sent
+
+        socket.shutdown(Net.SHUT_WR); // sends a FIN packet and flushes the send buffer
+        final MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
+        final long startTime = clock.getTicks();
+        // drain the kernel receive-buffer until we either receive all data or hit the timeout
+        while (true) {
+            final int n = socket.recv(recvBuffer, recvBufferSize);
+            // receive buffer is empty or connection is closed
+            // the timeout ensures that the loop exits if all data isn't drained within the specified time limit.
+            if (n <= 0 || clock.getTicks() - startTime > MALFORMED_CLIENT_READ_TIMEOUT_MILLIS) {
+                break;
+            }
+        }
     }
 
     // Send responses from the pipeline entries we have accumulated so far.
@@ -1333,16 +1370,22 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     }
                 }
             } while (true);
+
+            // we want the pipelineCurrentEntry to retain the last entry of the pipeline
+            // unless this entry was already executed, closed and is an error
+            // additionally, we do not want to "cacheIfPossible" the last entry, because
+            // "cacheIfPossible" has side effects on the entry.
+
             PGPipelineEntry nextEntry = pipeline.poll();
             if (nextEntry != null || isExec || isError || isClosed) {
-                pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
+                if (!isError) {
+                    pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
+                }
                 releaseToPoolIfAbandoned(pipelineCurrentEntry);
                 pipelineCurrentEntry = nextEntry;
             } else {
                 LOG.debug().$("pipeline entry not consumed [instance=)").$(pipelineCurrentEntry)
                         .$(", sql=").$(pipelineCurrentEntry.getSqlText())
-                        .$(", isExec=").$(isExec)
-                        .$(", isError=").$(isError)
                         .$(", stmt=").$(pipelineCurrentEntry.getPreparedStatementName())
                         .$(", portal=").$(pipelineCurrentEntry.getPortalName())
                         .I$();
@@ -1444,9 +1487,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     void releaseToPoolIfAbandoned(PGPipelineEntry pe) {
         if (pe != null) {
             if (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal())) {
-                Misc.free(pe);
-                pe.clearForPooling();
-                entryPool.release(pe);
+                releaseToPool(pe);
             } else {
                 pe.clearState();
             }

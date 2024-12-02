@@ -24,13 +24,16 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.WindowColumn;
+import io.questdb.std.LongList;
+import io.questdb.std.Vect;
 
-public abstract class AbsWindowFunctionFactory implements FunctionFactory {
+public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
     protected long rowsLo;
     protected long rowsHi;
@@ -87,5 +90,58 @@ public abstract class AbsWindowFunctionFactory implements FunctionFactory {
         if (windowContext.getFramingMode() == WindowColumn.FRAMING_GROUPS) {
             throw SqlException.$(position, "function not implemented for given window parameters");
         }
+    }
+
+    static class RingBufferDesc {
+        long capacity;
+        long startOffset;
+        long size;
+        long firstIdx;
+        LongList freeList;
+
+        void reset(long capacity, long startOffset, long size, long firstIdx, LongList freeList) {
+            this.capacity = capacity;
+            this.startOffset = startOffset;
+            this.size = size;
+            this.firstIdx = firstIdx;
+            this.freeList = freeList;
+        }
+    }
+
+    static void expandRingBuffer(MemoryARW memory, RingBufferDesc desc, int recordSize) {
+        desc.capacity <<= 1;
+        long oldAddress = memory.getPageAddress(0) + desc.startOffset;
+        long newAddress = -1;
+
+        // try to find matching block in free list
+        for (int i = 0, n = desc.freeList.size(); i < n; i += 2) {
+            if (desc.freeList.getQuick(i) == desc.capacity) {
+                newAddress = memory.getPageAddress(0) + desc.freeList.getQuick(i + 1);
+                // replace block info with ours
+                desc.freeList.setQuick(i, desc.size);
+                desc.freeList.setQuick(i + 1, desc.startOffset);
+                break;
+            }
+        }
+
+        if (newAddress == -1) {
+            newAddress = memory.appendAddressFor(desc.capacity * recordSize);
+            // call above can end up resizing and thus changing memory start address
+            oldAddress = memory.getPageAddress(0) + desc.startOffset;
+            desc.freeList.add(desc.size, desc.startOffset);
+        }
+
+        if (desc.firstIdx == 0) {
+            Vect.memcpy(newAddress, oldAddress, desc.size * recordSize);
+        } else {
+            desc.firstIdx %= desc.size;
+            //we can't simply copy because that'd leave a gap in the middle
+            long firstPieceSize = (desc.size - desc.firstIdx) * recordSize;
+            Vect.memcpy(newAddress, oldAddress + desc.firstIdx * recordSize, firstPieceSize);
+            Vect.memcpy(newAddress + firstPieceSize, oldAddress, desc.firstIdx * recordSize);
+            desc.firstIdx = 0;
+        }
+
+        desc.startOffset = newAddress - memory.getPageAddress(0);
     }
 }
