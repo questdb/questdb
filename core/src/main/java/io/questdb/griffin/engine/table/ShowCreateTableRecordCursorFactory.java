@@ -170,38 +170,42 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
         }
 
+        protected void putColumn(CairoConfiguration config, CairoColumn column) {
+            sink.put('\t')
+                    .put(column.getName())
+                    .putAscii(' ')
+                    .put(ColumnType.nameOf(column.getType()));
+
+            if (column.getType() == ColumnType.SYMBOL) {
+                // CAPACITY value (NO)CACHE
+                int symbolCapacity = column.getSymbolCapacity();
+
+                // some older versions of QuestDB can have `0` written to the metadata file
+                // this will produce an incorrect DDL if we print it
+                // so we fall back to default capacity
+                if (symbolCapacity < 2) {
+                    symbolCapacity = config.getDefaultSymbolCapacity();
+                }
+
+                sink.putAscii(" CAPACITY ").put(symbolCapacity);
+                sink.putAscii(column.getSymbolCached() ? " CACHE" : " NOCACHE");
+
+                if (column.getIsIndexed()) {
+                    // INDEX CAPACITY value
+                    sink.putAscii(" INDEX CAPACITY ")
+                            .put(column.getIndexBlockCapacity());
+                }
+            }
+        }
+
         protected void putColumns(CairoConfiguration config) {
             for (int i = 0, n = table.getColumnCount(); i < n; i++) {
-                final CairoColumn column = table.getColumnQuiet(i);
-                sink.put('\t')
-                        .put(column.getName())
-                        .putAscii(' ')
-                        .put(ColumnType.nameOf(column.getType()));
-
-                if (column.getType() == ColumnType.SYMBOL) {
-                    // CAPACITY value (NO)CACHE
-                    int symbolCapacity = column.getSymbolCapacity();
-
-                    // some older versions of QuestDB can have `0` written to the metadata file
-                    // this will produce an incorrect DDL if we print it
-                    // so we fallback to default capacity
-                    if (symbolCapacity < 2) {
-                        symbolCapacity = config.getDefaultSymbolCapacity();
-                    }
-
-                    sink.putAscii(" CAPACITY ").put(symbolCapacity);
-                    sink.putAscii(column.getSymbolCached() ? " CACHE" : " NOCACHE");
-
-                    if (column.getIsIndexed()) {
-                        // INDEX CAPACITY value
-                        sink.putAscii(" INDEX CAPACITY ")
-                                .put(column.getIndexBlockCapacity());
-                    }
-                }
+                putColumn(config, table.getColumnQuiet(i));
 
                 if (i < n - 1) {
                     sink.putAscii(',');
                 }
+
                 sink.putAscii('\n');
             }
             sink.putAscii(')');
