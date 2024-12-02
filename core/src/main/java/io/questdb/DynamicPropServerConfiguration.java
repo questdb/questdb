@@ -35,15 +35,12 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationWrapper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.line.udp.LineUdpReceiverConfigurationWrapper;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireConfigurationWrapper;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.MetricsConfiguration;
-import io.questdb.metrics.MetricsConfigurationWrapper;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.mp.WorkerPoolConfigurationWrapper;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
@@ -98,21 +95,16 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     private final FactoryProviderFactory fpf;
     private final HttpServerConfigurationImpl httpServerConfig;
     private final LineTcpReceiverConfigurationImpl lineTcpConfig;
-    private final LineUdpReceiverConfigurationImpl lineUdpConfig;
     private final boolean loadAdditionalConfigurations;
     private final Log log;
     private final MemoryConfigurationImpl memoryConfig;
-    private final MetricsConfigurationImpl metricsConfig;
     private final MicrosecondClock microsecondClock;
     private final HttpMinServerConfigurationImpl minHttpServerConfig;
     private final PGWireConfigurationImpl pgWireConfig;
     private final Properties properties;
-    private final PublicPassthroughConfigurationImpl publicPassThroughConfig;
     private final Object reloadLock = new Object();
     private final String root;
     private final AtomicReference<PropServerConfiguration> serverConfig;
-    private final WorkerPoolConfigurationImpl walApplyPoolConfig;
-    private final WorkerPoolConfigurationImpl workerPoolConfig;
     private long lastModified;
     private long version;
 
@@ -152,16 +144,11 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         this.minHttpServerConfig = new HttpMinServerConfigurationImpl();
         this.httpServerConfig = new HttpServerConfigurationImpl();
         this.lineTcpConfig = new LineTcpReceiverConfigurationImpl();
-        this.lineUdpConfig = new LineUdpReceiverConfigurationImpl();
         this.memoryConfig = new MemoryConfigurationImpl();
-        this.metricsConfig = new MetricsConfigurationImpl();
         this.pgWireConfig = new PGWireConfigurationImpl();
-        this.publicPassThroughConfig = new PublicPassthroughConfigurationImpl();
-        this.workerPoolConfig = new WorkerPoolConfigurationImpl();
-        this.walApplyPoolConfig = new WorkerPoolConfigurationImpl();
         reloadNestedConfigurations(serverConfig);
         this.version = 0;
-        this.confPath = Paths.get(this.getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
+        this.confPath = Paths.get(getCairoConfiguration().getConfRoot().toString(), Bootstrap.CONFIG_FILE);
         this.configReloadEnabled = serverConfig.isConfigReloadEnabled();
         try (Path p = new Path()) {
             // we assume the config file does exist, otherwise we should not
@@ -296,7 +283,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
     @Override
     public LineUdpReceiverConfiguration getLineUdpReceiverConfiguration() {
-        return lineUdpConfig;
+        // nested object is kept non-reloadable
+        return serverConfig.get().getLineUdpReceiverConfiguration();
     }
 
     @Override
@@ -306,7 +294,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
     @Override
     public MetricsConfiguration getMetricsConfiguration() {
-        return metricsConfig;
+        // nested object is kept non-reloadable
+        return serverConfig.get().getMetricsConfiguration();
     }
 
     @Override
@@ -316,7 +305,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
     @Override
     public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
-        return publicPassThroughConfig;
+        // nested object is kept non-reloadable
+        return serverConfig.get().getPublicPassthroughConfiguration();
     }
 
     @Override
@@ -326,12 +316,14 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
 
     @Override
     public WorkerPoolConfiguration getWalApplyPoolConfiguration() {
-        return walApplyPoolConfig;
+        // nested object is kept non-reloadable
+        return serverConfig.get().getWalApplyPoolConfiguration();
     }
 
     @Override
     public WorkerPoolConfiguration getWorkerPoolConfiguration() {
-        return workerPoolConfig;
+        // nested object is kept non-reloadable
+        return serverConfig.get().getWorkerPoolConfiguration();
     }
 
     @Override
@@ -408,13 +400,8 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         minHttpServerConfig.setDelegate(serverConfig.getHttpMinServerConfiguration());
         httpServerConfig.setDelegate(serverConfig.getHttpServerConfiguration());
         lineTcpConfig.setDelegate(serverConfig.getLineTcpReceiverConfiguration());
-        lineUdpConfig.setDelegate(serverConfig.getLineUdpReceiverConfiguration());
         memoryConfig.setDelegate(serverConfig.getMemoryConfiguration());
-        metricsConfig.setDelegate(serverConfig.getMetricsConfiguration());
         pgWireConfig.setDelegate(serverConfig.getPGWireConfiguration());
-        publicPassThroughConfig.setDelegate(serverConfig.getPublicPassthroughConfiguration());
-        workerPoolConfig.setDelegate(serverConfig.getWorkerPoolConfiguration());
-        walApplyPoolConfig.setDelegate(serverConfig.getWalApplyPoolConfiguration());
     }
 
     private static class CairoConfigurationImpl extends CairoConfigurationWrapper {
@@ -469,19 +456,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         }
     }
 
-    private static class LineUdpReceiverConfigurationImpl extends LineUdpReceiverConfigurationWrapper {
-        private final AtomicReference<LineUdpReceiverConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public LineUdpReceiverConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(LineUdpReceiverConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
     private static class MemoryConfigurationImpl extends MemoryConfigurationWrapper {
         private final AtomicReference<MemoryConfiguration> delegate = new AtomicReference<>();
 
@@ -495,19 +469,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         }
     }
 
-    private static class MetricsConfigurationImpl extends MetricsConfigurationWrapper {
-        private final AtomicReference<MetricsConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public MetricsConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(MetricsConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
     private static class PGWireConfigurationImpl extends PGWireConfigurationWrapper {
         private final AtomicReference<PGWireConfiguration> delegate = new AtomicReference<>();
 
@@ -517,32 +478,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
         }
 
         public void setDelegate(PGWireConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class PublicPassthroughConfigurationImpl extends PublicPassthroughConfigurationWrapper {
-        private final AtomicReference<PublicPassthroughConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public PublicPassthroughConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(PublicPassthroughConfiguration delegate) {
-            this.delegate.set(delegate);
-        }
-    }
-
-    private static class WorkerPoolConfigurationImpl extends WorkerPoolConfigurationWrapper {
-        private final AtomicReference<WorkerPoolConfiguration> delegate = new AtomicReference<>();
-
-        @Override
-        public WorkerPoolConfiguration getDelegate() {
-            return delegate.get();
-        }
-
-        public void setDelegate(WorkerPoolConfiguration delegate) {
             this.delegate.set(delegate);
         }
     }
