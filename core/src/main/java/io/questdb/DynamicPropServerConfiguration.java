@@ -391,7 +391,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                     loadAdditionalConfigurations
             );
         } catch (ServerConfigurationException | JsonException e) {
-            log.error().$(e);
+            log.error().$(e).$();
             return;
         }
 
