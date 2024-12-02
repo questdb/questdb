@@ -24,6 +24,7 @@
 
 package io.questdb.metrics;
 
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.mp.ValueHolder;
 import io.questdb.std.Misc;
 
@@ -32,12 +33,14 @@ import java.io.Closeable;
 public class QueryMetrics implements ValueHolder<QueryMetrics> {
 
     public long executionNanos;
+    public int jitMode = SqlJitMode.JIT_MODE_ENABLED;
     public CharSequence queryText;
     public long timestamp;
 
     @Override
     public void clear() {
         executionNanos = 0;
+        jitMode = SqlJitMode.JIT_MODE_ENABLED;
         if (queryText instanceof Closeable) {
             Misc.free((Closeable) queryText);
         }
@@ -47,8 +50,9 @@ public class QueryMetrics implements ValueHolder<QueryMetrics> {
 
     @Override
     public void copyTo(QueryMetrics dest) {
-        dest.timestamp = timestamp;
         dest.executionNanos = executionNanos;
+        dest.jitMode = jitMode;
         dest.queryText = queryText;
+        dest.timestamp = timestamp;
     }
 }

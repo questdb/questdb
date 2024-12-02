@@ -552,6 +552,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
                     );
                     if (engine.getConfiguration().isQueryMetricsEnabled()) {
                         long executionEnd = nanosecondClock.getTicks();
+                        queryMetrics.jitMode = sqlExecutionContext.getJitMode();
                         queryMetrics.timestamp = microsecondClock.getTicks();
                         queryMetrics.queryText = query;
                         queryMetrics.executionNanos = TimeUnit.NANOSECONDS.toMicros(executionEnd - executionStart);
