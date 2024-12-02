@@ -269,7 +269,7 @@ public class NdArrayView {
         return strides;
     }
 
-    public boolean isDefaultStrides() {
+    public boolean hasDefaultStrides() {
         return NdArrayMeta.isDefaultStrides(shape, strides);
     }
 
@@ -289,7 +289,7 @@ public class NdArrayView {
                 // We simplify this even further by not supporting `valuesOffset` at all yet.
                 throw new UnsupportedOperationException("nyi");
             }
-            if (!isDefaultStrides()) {
+            if (!hasDefaultStrides()) {
                 throw new UnsupportedOperationException("nyi");
             }
             crc = CRC16XModem.calc(checksum, values.ptr(), values.size());

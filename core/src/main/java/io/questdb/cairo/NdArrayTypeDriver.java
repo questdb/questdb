@@ -35,6 +35,7 @@ import io.questdb.std.DirectIntSlice;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ndarr.NdArrayMeta;
+import io.questdb.std.ndarr.NdArrayValuesSlice;
 import io.questdb.std.ndarr.NdArrayView;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.NotNull;
@@ -121,36 +122,6 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
 
         final long offset = writeDataEntry(dataMem, array);
         writeAuxEntry(auxMem, array, offset);
-
-        if (NdArrayMeta.isDefaultStrides(array.getShape(), array.getStrides())) {
-
-        } else {
-            throw new UnsupportedOperationException("not yet implemented");
-        }
-    }
-
-    private static long writeDataEntry(@NotNull MemoryA dataMem, @Nullable NdArrayView array) {
-        throw new UnsupportedOperationException("not yet implemented");
-    }
-
-    private static void writeAuxEntry(MemoryA auxMem, @NotNull NdArrayView array, long offset) {
-        final DirectIntSlice shape = array.getShape();
-        final int nDims = array.getShape().length();
-
-        // The fields we will hold in the aux header.
-        final boolean manyDims = nDims > 2;
-        final int dim0 = shape.get(0);
-        final int dim1 = nDims >= 2 ? shape.get(1) : 0;
-        assert dim0 <= NdArrayMeta.MAX_DIM_SIZE;
-        assert dim1 <= NdArrayMeta.MAX_DIM_SIZE;
-        assert offset <= MAX_OFFSET;
-        final short crc = array.getCrc();
-
-        // Encoded into 128 bits.
-        final long auxHiHi = (manyDims ? (1L << 31) : 0) | dim0;
-        final long auxHi = (auxHiHi << 32) | dim1;
-        final long auxLo = (((long) crc) << 48) | offset;
-        auxMem.putLong128(auxLo, auxHi);
     }
 
     @Override
@@ -292,5 +263,84 @@ public class NdArrayTypeDriver implements ColumnTypeDriver {
     @Override
     public void shiftCopyAuxVector(long shift, long src, long srcLo, long srcHi, long dstAddr, long dstAddrSize) {
         throw new UnsupportedOperationException("nyi");
+    }
+
+    private static void padTo(@NotNull MemoryA dataMem, long byteAlignment) {
+        final long requiredPadding = dataMem.getAppendOffset() % byteAlignment;
+        for (long paddingIndex = 0; paddingIndex < requiredPadding; ++paddingIndex) {
+            dataMem.putByte((byte) 0);
+        }
+    }
+
+    private static void writeAuxEntry(MemoryA auxMem, @NotNull NdArrayView array, long offset) {
+        final DirectIntSlice shape = array.getShape();
+        final int nDims = array.getShape().length();
+
+        // The fields we will hold in the aux header.
+        final boolean manyDims = nDims > 2;
+        final int dim0 = shape.get(0);
+        final int dim1 = nDims >= 2 ? shape.get(1) : 0;
+        assert dim0 <= NdArrayMeta.MAX_DIM_SIZE;
+        assert dim1 <= NdArrayMeta.MAX_DIM_SIZE;
+        assert offset <= MAX_OFFSET;
+        final short crc = array.getCrc();
+
+        // Encoded into 128 bits.
+        final long auxHiHi = (manyDims ? (1L << 31) : 0) | dim0;
+        final long auxHi = (auxHiHi << 32) | dim1;
+        final long auxLo = (((long) crc) << 48) | offset;
+        auxMem.putLong128(auxLo, auxHi);
+    }
+
+    private static long writeDataEntry(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+        final long offset = writeExtraDims(dataMem, array);
+        writeValues(dataMem, array);
+        return offset;
+    }
+
+    /**
+     * Write the additional dimensions and return the starting offset that we will hold in the aux entry.
+     */
+    private static long writeExtraDims(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+
+        if (array.getShape().length() <= 2) {
+            return dataMem.getAppendOffset();
+        }
+
+        // If we have extra dims, we first need to pad for integer access.
+        padTo(dataMem, Integer.BYTES);
+
+        final long offset = dataMem.getAppendOffset();
+
+        final DirectIntSlice shape = array.getShape();
+        for (int dimIndex = 2, nDims = shape.length(); dimIndex < nDims; ++dimIndex) {
+            final int dim = shape.get(dimIndex);
+            final boolean isLast = dimIndex == nDims - 1;
+            if (isLast) {
+                dataMem.putInt(dim * -1);  // the last value is stored negative as marker that there's no more.
+            } else {
+                dataMem.putInt(dim);
+            }
+        }
+
+        return offset;
+    }
+
+    private static void writeValues(@NotNull MemoryA dataMem, @NotNull NdArrayView array) {
+        // We could be storing values of different datatypes.
+        // We thus need to align accordingly. I.e., if we store doubles, we need to align on an 8-byte boundary.
+        // for shorts, it's on a 2-byte boundary. For booleans, we align to the byte.
+        final int bitWidth = 1 << ColumnType.getNdArrayElementTypePrecision(array.getType());
+        final int requiredByteAlignment = Math.max(1, bitWidth / 8);
+        padTo(dataMem, requiredByteAlignment);
+
+        final NdArrayValuesSlice values = array.getValues();
+        if (array.hasDefaultStrides()) {
+            // Optimised path.
+            dataMem.putBlockOfBytes(values.ptr(), values.size());
+        } else {
+            // Stride-walking path.
+            throw new UnsupportedOperationException("nyi");
+        }
     }
 }
