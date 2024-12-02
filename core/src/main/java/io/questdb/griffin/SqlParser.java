@@ -1159,7 +1159,7 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "empty declaration");
             }
 
-            if (expr.queryModel != null) {
+            if (expr.rhs.queryModel != null) {
                 // throw because we don't support variables as subqueries
                 throw SqlException.$(lexer.lastTokenPosition(), "variables cannot be subqueries");
             }
