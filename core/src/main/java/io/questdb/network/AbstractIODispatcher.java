@@ -37,7 +37,6 @@ import io.questdb.mp.SPSequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjLongMatrix;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -339,12 +338,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
             final int sndBufSize = configuration.getNetSendBufferSize();
             if (sndBufSize > 0) {
-                nf.setSndBuf(fd, Numbers.ceilPow2(sndBufSize));
+                nf.setSndBuf(fd, sndBufSize);
             }
 
             final int rcvBufSize = configuration.getNetRecvBufferSize();
             if (rcvBufSize > 0) {
-                nf.setRcvBuf(fd, Numbers.ceilPow2(rcvBufSize));
+                nf.setRcvBuf(fd, rcvBufSize);
             }
             nf.configureKeepAlive(fd);
 
