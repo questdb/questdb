@@ -284,19 +284,26 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 }
 
                 try (FileWriter w = new FileWriter(serverConf)) {
-                    w.write("pg.net.connection.limit=2\n");
+                    w.write("pg.net.connection.limit=10\n");
                 }
 
-                assertReloadConfig(true);
+                // call the reload method directly instead of using the reload_config() SQL function
+                // to avoid opening a PGWire connection;
+                // there is no reliable way to wait until the server listener is re-registered
+                serverMain.getEngine().getConfigReloader().reload();
 
-                // we should be able to open two connections now
-                try (Connection conn1 = getConnection("admin", "quest")) {
-                    Assert.assertFalse(conn1.isClosed());
+                // we should be able to open two connections eventually
+                TestUtils.assertEventually(() -> {
+                    try (Connection conn1 = getConnection("admin", "quest")) {
+                        Assert.assertFalse(conn1.isClosed());
 
-                    try (Connection conn2 = getConnection("admin", "quest")) {
-                        Assert.assertFalse(conn2.isClosed());
+                        try (Connection conn2 = getConnection("admin", "quest")) {
+                            Assert.assertFalse(conn2.isClosed());
+                        }
+                    } catch (SQLException e) {
+                        throw new RuntimeException(e);
                     }
-                }
+                });
             }
         });
     }

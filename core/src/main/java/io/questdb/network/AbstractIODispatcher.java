@@ -399,7 +399,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         disconnectSubSeq.consumeAll(disconnectQueue, disconnectContextRef);
         if (!listening && serverFd >= 0 && epochMs >= closeListenFdEpochMs) {
             LOG.error().$("been unable to accept connections for ").$(queuedConnectionTimeoutMs)
-                    .$("ms, closing listener [serverFd=").$(serverFd).I$();
+                    .$("ms, closing listener [serverFd=").$(serverFd)
+                    .I$();
             nf.close(serverFd);
             serverFd = -1;
         }
@@ -413,7 +414,8 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         ioEventPubSeq.done(cursor);
         LOG.debug().$("fired [fd=").$(context.getFd())
                 .$(", op=").$(operation)
-                .$(", pos=").$(cursor).I$();
+                .$(", pos=").$(cursor)
+                .I$();
     }
 
     protected abstract void registerListenerFd();
