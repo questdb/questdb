@@ -542,6 +542,7 @@ public class WriterPool extends AbstractPool {
         if (isDistressed) {
             entries.remove(tableToken.getDirName());
             closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_DISTRESSED);
+            notifyListener(thread, tableToken, PoolListener.EV_RETURN);
             return true;
         }
 
