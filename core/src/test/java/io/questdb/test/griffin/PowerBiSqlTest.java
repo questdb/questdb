@@ -142,9 +142,9 @@ public class PowerBiSqlTest extends AbstractCairoTest {
         execute("create table trades(a int, b double, t timestamp) timestamp(t) partition by hour");
         assertSql(
                 "COLUMN_NAME\tORDINAL_POSITION\tIS_NULLABLE\tDATA_TYPE\n" +
-                        "a\t0\tyes\tINT\n" +
-                        "b\t1\tyes\tDOUBLE\n" +
-                        "t\t2\tyes\tTIMESTAMP\n",
+                        "a\t0\tyes\tinteger\n" +
+                        "b\t1\tyes\tdouble precision\n" +
+                        "t\t2\tyes\ttimestamp without time zone\n",
                 "select COLUMN_NAME, ORDINAL_POSITION, IS_NULLABLE, case when (data_type like '%unsigned%') then DATA_TYPE || ' unsigned' else DATA_TYPE end as DATA_TYPE\n" +
                         "from INFORMATION_SCHEMA.columns\n" +
                         "where TABLE_SCHEMA = 'public' and TABLE_NAME = 'trades'\n" +
