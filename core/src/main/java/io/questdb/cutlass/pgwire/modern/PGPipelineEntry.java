@@ -1391,7 +1391,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
             sqlExecutionContext.getCircuitBreaker().resetTimer();
             sqlExecutionContext.setCacheHit(cacheHit);
-            if (preparedStatement && !cacheHit) {
+            // if the current execution is in the execute stage of prepare-execute mode, we always set the `cacheHit` to true after the first execution.
+            // (The execute stage always does not compile the query, while the first execution corresponds to the prepare stage's cacheHit flag.)
+            if (preparedStatement) {
                 cacheHit = true;
             }
 
