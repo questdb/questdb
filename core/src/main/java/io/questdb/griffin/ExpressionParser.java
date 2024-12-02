@@ -421,6 +421,21 @@ public class ExpressionParser {
                         break;
                     case 'd':
                     case 'D':
+                        if (parsedDeclaration && prevBranch != BRANCH_LEFT_PARENTHESIS && SqlKeywords.isDeclareKeyword(tok)) {
+                            lexer.unparseLast();
+                            break OUT;
+                        }
+
+                        if (prevBranch != BRANCH_LITERAL && SqlKeywords.isDeclareKeyword(tok)) {
+                            thisBranch = BRANCH_LAMBDA;
+                            if (betweenCount > 0) {
+                                throw SqlException.$(lastPos, "constant expected");
+                            }
+                            argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback);
+                            processDefaultBranch = false;
+                            break;
+                        }
+
                         if (prevBranch == BRANCH_LEFT_PARENTHESIS && SqlKeywords.isDistinctKeyword(tok)) {
                             // rewrite count(distinct x) to count_distinct(x)
                             // and string_agg(distinct x) to string_distinct_agg(x)

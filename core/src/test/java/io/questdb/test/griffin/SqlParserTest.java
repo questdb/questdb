@@ -3766,6 +3766,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareVariableAsSubQueryWithNestedVariable() throws Exception {
+        assertModel("select-choose y from (select-virtual [4 y] 4 y from (long_sequence(1)))",
+                "DECLARE @x := (DECLARE @y := 4 SELECT @y as y) SELECT * FROM @x", ExecutionModel.QUERY);
+    }
+
+
+    @Test
     public void testDeclareVariableDefinedByAnotherVariable() throws Exception {
         assertModel("select-virtual 2 2, 2 * 2 column from (long_sequence(1))",
                 "DECLARE @y := 2, @y2 := (@y * @y) SELECT @y, @y2", ExecutionModel.QUERY);

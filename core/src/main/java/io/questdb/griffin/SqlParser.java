@@ -1150,6 +1150,22 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "expected variable assignment operator `:=`");
             }
 
+//            CharSequence possibleBracket = optTok(lexer);
+//            ExpressionNode expr;
+//
+//            // expect "(" in case of sub-query
+//            if (Chars.equals(tok, '(')) {
+//                QueryModel subquery = parseAsSubQueryAndExpectClosingBrace(lexer, model.getWithClauses(), true, sqlParserCallback, model.getDecls());
+//
+//                if (subquery == null) {
+//                    throw SqlException.$(lexer.lastTokenPosition(), "could not parse subquery in declared variable");
+//                }
+//
+//                expr = expressionNodePool.next().of(ExpressionNode.OPERATION, ":=", 100, lexer.lastTokenPosition());
+//                expr.lhs = expressionNodePool.next().of(ExpressionNode.LITERAL, tok, 0, pos);
+//                expr.rhs = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, lexer.lastTokenPosition());
+//            }
+
             lexer.goToPosition(pos);
 
 
