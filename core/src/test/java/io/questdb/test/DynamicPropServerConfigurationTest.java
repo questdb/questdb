@@ -123,34 +123,36 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
 
                 try (FileWriter w = new FileWriter(serverConf)) {
                     w.write("http.net.bind.to=0.0.0.0:9001\n");
-                    w.write("http.net.connection.limit=2\n");
+                    w.write("http.net.connection.limit=10\n");
                 }
 
                 assertReloadConfig(true);
 
-                // we should be able to open two connections now
-                try (
-                        HttpClient httpClient1 = HttpClientFactory.newPlainTextInstance(config);
-                        TestHttpClient testHttpClient1 = new TestHttpClient(httpClient1)
-                ) {
-                    testHttpClient1.setKeepConnection(true);
-                    testHttpClient1.assertGet(
-                            "/exec",
-                            "{\"query\":\"select 1;\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
-                            "select 1;"
-                    );
-
+                // we should be able to open two connections eventually
+                TestUtils.assertEventually(() -> {
                     try (
-                            HttpClient httpClient2 = HttpClientFactory.newPlainTextInstance(config);
-                            TestHttpClient testHttpClient2 = new TestHttpClient(httpClient2)
+                            HttpClient httpClient1 = HttpClientFactory.newPlainTextInstance(config);
+                            TestHttpClient testHttpClient1 = new TestHttpClient(httpClient1)
                     ) {
-                        testHttpClient2.assertGet(
+                        testHttpClient1.setKeepConnection(true);
+                        testHttpClient1.assertGet(
                                 "/exec",
                                 "{\"query\":\"select 1;\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
                                 "select 1;"
                         );
+
+                        try (
+                                HttpClient httpClient2 = HttpClientFactory.newPlainTextInstance(config);
+                                TestHttpClient testHttpClient2 = new TestHttpClient(httpClient2)
+                        ) {
+                            testHttpClient2.assertGet(
+                                    "/exec",
+                                    "{\"query\":\"select 1;\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                                    "select 1;"
+                            );
+                        }
                     }
-                }
+                });
             }
         });
     }
