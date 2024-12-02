@@ -303,7 +303,9 @@ public class FuzzRunner {
             Misc.free(rdr1);
             Misc.free(rdr2);
             Misc.free(writer);
-            ff.clearFailures();
+            if (ff != null) {
+                ff.clearFailures();
+            }
         }
     }
 
@@ -473,9 +475,6 @@ public class FuzzRunner {
     }
 
     public FilesFacade getFileFacade() {
-        if (ff == null) {
-            this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
-        }
         return ff;
     }
 
@@ -533,6 +532,7 @@ public class FuzzRunner {
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         this.engine = engine;
         this.sqlExecutionContext = sqlExecutionContext;
+        this.ff = new FailureFileFacade(engine.getConfiguration().getFilesFacade());
     }
 
     private static void reloadPartitions(TableReader rdr1) {

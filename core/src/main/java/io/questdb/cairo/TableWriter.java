@@ -976,16 +976,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Column converted, add new one to _meta file and remove the existing column
             addColumnToMeta(
-                        columnName,
-                        newType,
-                        symbolCapacity,
-                        symbolCacheFlag,
-                        isIndexed,
-                        indexValueBlockCapacity,
-                        isDedupKey,
-                        columnNameTxn,
-                        existingColIndex
-                );
+                    columnName,
+                    newType,
+                    symbolCapacity,
+                    symbolCacheFlag,
+                    isIndexed,
+                    indexValueBlockCapacity,
+                    isDedupKey,
+                    columnNameTxn,
+                    existingColIndex
+            );
 
             // close old column files
             freeColumnMemory(existingColIndex);
@@ -996,15 +996,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // remove old column to in-memory metadata object and add new one
             metadata.removeColumn(existingColIndex);
             metadata.addColumn(
-                        columnName,
-                        newType, isIndexed,
-                        indexValueBlockCapacity,
-                        existingColIndex,
-                        symbolCapacity,
-                        isDedupKey,
-                        existingColIndex + 1,
-                        symbolCacheFlag
-                ); // by convention, replacingIndex is +1
+                    columnName,
+                    newType, isIndexed,
+                    indexValueBlockCapacity,
+                    existingColIndex,
+                    symbolCapacity,
+                    isDedupKey,
+                    existingColIndex + 1,
+                    symbolCacheFlag
+            ); // by convention, replacingIndex is +1
 
             // open new column files
             if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
