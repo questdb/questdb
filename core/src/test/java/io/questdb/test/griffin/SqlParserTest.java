@@ -3752,6 +3752,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelectWithFunction2() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(tradesDdl);
+            drainWalQueue();
+            assertSql("column\n" +
+                            "true\n",
+                    "DECLARE\n" +
+                            "    @today := today(),\n" +
+                            "    @start := interval_start(@today),\n" +
+                            "    @end := interval_end(@today)\n" +
+                            "    SELECT @today = interval(@start, @end)");
+        });
+    }
+
+    @Test
     public void testDeclareSelectWrongAssignmentOperator() throws Exception {
         assertException("DECLARE @x = 5 SELECT @x;", 11, "expected variable assignment operator");
     }
